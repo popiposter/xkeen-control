@@ -189,7 +189,7 @@ func TestSubscriptionRefreshPreservesIdentityAndRequiresMissingAcceptance(t *tes
 		t.Fatal(err)
 	}
 	if len(updated.Nodes) != 2 || !updated.Nodes[0].Missing {
-		t.Fatalf("stale node was not preserved: %+v, %v", updated, err)
+		t.Fatalf("stale node was not preserved: %+v", updated.Nodes)
 	}
 	if updated.Subscriptions[0].URL != "https://subscription.example/new-token" {
 		t.Fatal("subscription source was not updated in local registry")
