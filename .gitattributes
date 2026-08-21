@@ -1,0 +1,2 @@
+# Linux-executed repository scripts must stay LF in every checkout.
+*.sh text eol=lf
