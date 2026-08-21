@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package xray.app.router;
+
+option go_package = "github.com/popiposter/xkeen-keenetic/internal/xrayapi;xrayapi";
+
+import "typed_message.proto";
+
+// Minimal routing configuration subset used to construct the temporary probe
+// rule. Field numbers match Xray-core v26.3.27 app/router/config.proto.
+message RoutingRule {
+  oneof target_tag {
+    string tag = 1;
+    string balancing_tag = 12;
+  }
+  string rule_tag = 19;
+  repeated string inbound_tag = 8;
+}
+
+message Config {
+  enum DomainStrategy {
+    AsIs = 0;
+    IpIfNonMatch = 2;
+    IpOnDemand = 3;
+  }
+  DomainStrategy domain_strategy = 1;
+  repeated RoutingRule rule = 2;
+}

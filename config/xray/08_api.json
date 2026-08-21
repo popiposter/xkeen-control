@@ -1,0 +1,27 @@
+{
+  "api": {
+    "services": [
+      "RoutingService",
+      "ObservatoryService",
+      "StatsService"
+    ],
+    "tag": "api"
+  },
+  "inbounds": [
+    {
+      "protocol": "tunnel",
+      "listen": "127.0.0.1",
+      "port": 10085,
+      "settings": {
+        "address": "127.0.0.1"
+      },
+      "tag": "api"
+    },
+    {
+      "protocol": "http",
+      "listen": "127.0.0.1",
+      "port": 10808,
+      "tag": "probe"
+    }
+  ]
+}
