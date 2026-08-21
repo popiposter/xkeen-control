@@ -121,14 +121,14 @@ func (*gateRollbackBudgetActivator) VerifyOutboundTags(context.Context, []string
 
 func TestApplyGateWaitDoesNotConsumeRollbackBudget(t *testing.T) {
 	manager, _, _ := testManager(t, nil, nil)
-	manager.gateTimeout = 500 * time.Millisecond
+	manager.gateTimeout = 2 * time.Second
 	activator := &gateRollbackBudgetActivator{}
 	manager.tx.Activator = activator
 	manager.tx.Budget = TransactionBudget{
-		CandidateValidation: 10 * time.Millisecond,
-		Activation:          40 * time.Millisecond,
-		Rollback:            100 * time.Millisecond,
-		Total:               140 * time.Millisecond,
+		CandidateValidation: 50 * time.Millisecond,
+		Activation:          100 * time.Millisecond,
+		Rollback:            300 * time.Millisecond,
+		Total:               900 * time.Millisecond,
 	}
 	preview, err := manager.PreviewImport("csrf", syntheticProfile)
 	if err != nil {
@@ -140,7 +140,10 @@ func TestApplyGateWaitDoesNotConsumeRollbackBudget(t *testing.T) {
 		_, applyErr := manager.Apply(context.Background(), "csrf", preview.Token, false)
 		result <- applyErr
 	}()
-	time.Sleep(100 * time.Millisecond)
+	// Keep the gate wait long enough that a transaction budget started before
+	// gate acquisition would leave less than the rollback floor below, while a
+	// correctly post-gate budget still has ample scheduler/filesystem margin.
+	time.Sleep(750 * time.Millisecond)
 	<-manager.applyGate
 	if err := <-result; err == nil || !strings.Contains(err.Error(), "previous generation restored") {
 		t.Fatalf("activation rollback result = %v", err)
@@ -148,7 +151,7 @@ func TestApplyGateWaitDoesNotConsumeRollbackBudget(t *testing.T) {
 	if len(activator.restartRemaining) != 2 {
 		t.Fatalf("restart calls = %d", len(activator.restartRemaining))
 	}
-	if activator.restartRemaining[1] < 70*time.Millisecond {
+	if activator.restartRemaining[1] < 200*time.Millisecond {
 		t.Fatalf("rollback reserve was consumed by gate wait: %s", activator.restartRemaining[1])
 	}
 }
@@ -186,7 +189,7 @@ func TestSubscriptionRefreshPreservesIdentityAndRequiresMissingAcceptance(t *tes
 		t.Fatal(err)
 	}
 	if len(updated.Nodes) != 2 || !updated.Nodes[0].Missing {
-		t.Fatalf("stale node was not preserved: %+v", updated.Nodes)
+		t.Fatalf("stale node was not preserved: %+v, %v", updated, err)
 	}
 	if updated.Subscriptions[0].URL != "https://subscription.example/new-token" {
 		t.Fatal("subscription source was not updated in local registry")
