@@ -1,2 +1,2 @@
-# Linux-executed repository scripts must stay LF in every checkout.
-*.sh text eol=lf
+# Keep repository text portable between Windows and Linux qualification.
+* text=auto eol=lf
