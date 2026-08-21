@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package xray.common.serial;
 
-option go_package = "github.com/popiposter/xkeen-keenetic/internal/xrayapi;xrayapi";
+option go_package = "github.com/popiposter/xkeen-control/internal/xrayapi;xrayapi";
 
 // Minimal copy of Xray-core v26.3.27 common/serial/TypedMessage.  The Go
 // package is intentionally shared with this repository's small API subset;

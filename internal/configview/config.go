@@ -11,7 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/popiposter/xkeen-keenetic/internal/benchmarkpolicy"
+	"github.com/popiposter/xkeen-control/internal/benchmarkpolicy"
 )
 
 const maxConfigFileSize = 4 << 20

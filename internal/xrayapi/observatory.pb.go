@@ -165,7 +165,7 @@ const file_observatory_proto_rawDesc = "" +
 	"\x11last_error_reason\x18\x03 \x01(\tR\x0flastErrorReason\x12!\n" +
 	"\foutbound_tag\x18\x04 \x01(\tR\voutboundTag\x12$\n" +
 	"\x0elast_seen_time\x18\x05 \x01(\x03R\flastSeenTime\x12\"\n" +
-	"\rlast_try_time\x18\x06 \x01(\x03R\vlastTryTimeB?Z=github.com/popiposter/xkeen-keenetic/internal/xrayapi;xrayapib\x06proto3"
+	"\rlast_try_time\x18\x06 \x01(\x03R\vlastTryTimeB>Z<github.com/popiposter/xkeen-control/internal/xrayapi;xrayapib\x06proto3"
 
 var (
 	file_observatory_proto_rawDescOnce sync.Once

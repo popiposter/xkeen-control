@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/popiposter/xkeen-keenetic/internal/nodes"
+	"github.com/popiposter/xkeen-control/internal/nodes"
 )
 
 func TestListenAddressAllowsOnlyLoopbackOrExactPrivateLAN(t *testing.T) {

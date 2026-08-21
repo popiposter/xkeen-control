@@ -83,7 +83,7 @@ const file_typed_message_proto_rawDesc = "" +
 	"\x13typed_message.proto\x12\x12xray.common.serial\"8\n" +
 	"\fTypedMessage\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05valueB?Z=github.com/popiposter/xkeen-keenetic/internal/xrayapi;xrayapib\x06proto3"
+	"\x05value\x18\x02 \x01(\fR\x05valueB>Z<github.com/popiposter/xkeen-control/internal/xrayapi;xrayapib\x06proto3"
 
 var (
 	file_typed_message_proto_rawDescOnce sync.Once

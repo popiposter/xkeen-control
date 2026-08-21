@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/popiposter/xkeen-keenetic/internal/xrayapi"
+	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
 
 type NodeReader func(context.Context) []NodeState
