@@ -31,6 +31,9 @@ button:hover:not(:disabled) { filter: brightness(1.08); }
 .ghost { color: #bed0e2; background: #162231; border: 1px solid #2b3c50; }
 .notice { margin: 8px 0; padding: 8px 10px; color: #ffbcc1; background: rgba(104, 40, 48, .25); border: 1px solid #704449; border-radius: 6px; font-size: 12px; }
 .notice.success { color: #8af0b8; background: rgba(39, 111, 78, .2); border-color: #28684c; }
+.setup-banner { display: flex; align-items: center; justify-content: space-between; border-color: #846b35; }
+.setup-banner strong, .setup-banner small { display: block; margin-top: 3px; }
+.setup-banner small { font-size: 10px; }
 
 .topbar { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
 .product-name { font-size: 15px; }

@@ -4,7 +4,7 @@
 
 Manage VPN nodes and subscriptions, understand what Xray is doing, keep the active proxy stable, run bounded performance checks, and apply changes transactionally — from one small Go binary with an embedded web UI.
 
-> **Status:** the current C.1 generation is production-validated on Keenetic `linux/arm64`. Signed GitHub Releases, one-command installation and panel self-update are the active next slice ([#2](../../issues/2)); do not treat those planned features as shipped yet.
+> **Status:** the current C.1 generation is production-validated on Keenetic `linux/arm64`. Issue #2 implementation is under review in a Draft PR; no signed stable Release or production-ready installer command exists yet.
 
 ## Why this project
 
@@ -46,6 +46,8 @@ Node changes build a complete candidate, validate Xray, snapshot the previous lo
 The current source baseline still uses the developer/operator deployment path documented in [Operations](docs/OPERATIONS.md) and [Fresh Keenetic](docs/FRESH-KEENETIC.md).
 
 The active [Slice D / #2](../../issues/2) will replace that distribution path with signed GitHub Releases and a safe one-command bootstrap. The final public install command must not be advertised as available until the release manifest, signature verification, installer fixtures and updater rollback are qualified.
+
+The implementation paths are documented in [Releases](docs/RELEASES.md). They remain gated on protected release signing provisioning, post-merge published-release re-verification and bounded real-router panel qualification.
 
 The historical repository `popiposter/xkeen-keenetic` is private quarantine/history only. `popiposter/xkeen-control` is the public source/CI/release authority; old Git history must never be imported here.
 

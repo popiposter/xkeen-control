@@ -2,7 +2,7 @@
 
 `xkeen-control` is the lightweight management process around XKeen + Xray. Xray remains the traffic data plane; the panel owns typed local operations, safe projections, stable selection and bounded coordination.
 
-This document describes the **current production-qualified runtime**. Planned releases/bootstrap/local appliance state/component updates are summarized separately and are not yet active behavior.
+This document describes the **current production-qualified runtime**. Planned releases/bootstrap/local appliance state/component updates are summarized separately and are not yet active production behavior.
 
 ## Current runtime shape
 
@@ -54,7 +54,7 @@ The current service reads bounded structured state from:
 
 ## Current API domains
 
-Session/runtime endpoints include:
+Session/runtime endpoints currently qualified in production include:
 
 ```text
 POST /api/v1/session/login
@@ -119,11 +119,32 @@ Persistent writes are purpose-specific and bounded, currently including auth/lis
 
 No SQLite/Redis/Prometheus/Grafana/growing revision history belongs on the router.
 
+## Issue #2 implementation under review — not production-qualified
+
+PR implementation for Issue #2 adds code for signed release discovery, bootstrap/setup state, password replacement and panel-only update/rollback. Until that PR is merged **and** a protected signed release plus bounded real-Keenetic panel qualification succeeds, none of the following is production-qualified behavior:
+
+```text
+/opt/etc/xkeen-control/previous/panel/
+/opt/etc/xkeen-control/state/installed-release.json
+/opt/etc/xkeen-control/state/update-policy.json
+/opt/libexec/xkeen-control-updater
+/tmp/xkeen-control/panel-update/
+
+GET  /api/v1/update
+POST /api/v1/update/check
+POST /api/v1/update/policy
+POST /api/v1/update/apply
+POST /api/v1/update/rollback
+POST /api/v1/session/password
+```
+
+The implementation reuses the C.1 coordinator for panel lifecycle exclusion and is intentionally panel-only: it does not install/repair XKeen/Xray or rewrite routing, DNS, Observatory or the node registry. Missing components remain a typed Setup Mode state. `docs/RELEASES.md` and Issue #2 describe the implementation contract and qualification gates without promoting them to current production authority.
+
 ## Planned product capabilities — not yet deployed
 
 ### #2 — releases/bootstrap/panel self-update
 
-This public repository becomes the signed software distribution channel. The panel will gain signed release discovery, one-command bootstrap, setup mode and transactional self-update with one previous binary generation. Normal panel install/update will not require a GitHub credential.
+This public repository becomes the signed software distribution channel after the protected release gate and real-router qualification complete. The panel gains signed release discovery, one-command bootstrap, setup mode and transactional self-update with one previous panel generation. Normal panel install/update requires no GitHub credential.
 
 ### #3 — local appliance state / backup
 

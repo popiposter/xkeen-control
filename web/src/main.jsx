@@ -116,13 +116,14 @@ function App() {
 
   const loadDashboard = useCallback(async () => {
     try {
-      const [status, nodes, performance, config] = await Promise.all([
+      const [status, nodes, performance, config, update] = await Promise.all([
         api('/api/v1/status'),
         api('/api/v1/nodes'),
         api('/api/v1/performance'),
         api('/api/v1/config-summary'),
+        api('/api/v1/update'),
       ])
-      setDashboard({ status, nodes, performance, config })
+      setDashboard({ status, nodes, performance, config, update })
       setError('')
     } catch (cause) {
       if (cause.status === 401) setSession(null)
@@ -192,11 +193,24 @@ function App() {
     setSession(null)
   }
 
+  const checkUpdate = async () => {
+    try {
+      await api('/api/v1/update/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session?.csrfToken || '' },
+        body: JSON.stringify({ channel: dashboard?.update?.policy?.channel || 'stable' }),
+      })
+      await loadDashboard()
+    } catch (cause) {
+      setError(cause.message)
+    }
+  }
+
   if (!session) return <Login error={error} password={password} setPassword={setPassword} onSubmit={login} />
   if (loading && !dashboard) return <Shell><div className="loading">Reading current router state…</div></Shell>
   if (!dashboard) return <Shell><Notice message={error || 'Runtime state is unavailable.'} /></Shell>
 
-  return <Dashboard dashboard={dashboard} session={session} error={error} onRefresh={loadDashboard} onLogout={logout} onRunBenchmark={runBenchmark} />
+  return <Dashboard dashboard={dashboard} session={session} error={error} onRefresh={loadDashboard} onLogout={logout} onRunBenchmark={runBenchmark} onCheckUpdate={checkUpdate} />
 }
 
 function Login({ error, password, setPassword, onSubmit }) {
@@ -213,8 +227,8 @@ function Login({ error, password, setPassword, onSubmit }) {
   </main>
 }
 
-function Dashboard({ dashboard, session, error, onRefresh, onLogout, onRunBenchmark }) {
-  const { status, nodes, config } = dashboard
+function Dashboard({ dashboard, session, error, onRefresh, onLogout, onRunBenchmark, onCheckUpdate }) {
+  const { status, nodes, config, update } = dashboard
   const [section, setSection] = useState('overview')
   const [nodeView, setNodeView] = useState(createNodeViewState)
   const registryNodes = nodes.nodes || []
@@ -236,7 +250,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onLogout, onRunBenchm
     {error && <Notice message={error} />}
     {section === 'overview' && <Overview status={status} nodeTotal={nodes.total || 0} nodesByTag={nodesByTag} onRunBenchmark={onRunBenchmark} />}
     {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} manualOverride={status.selection?.manualOverride || ''} csrf={session.csrfToken} onRefresh={onRefresh} viewState={nodeView} onViewStateChange={setNodeView} />}
-    {section === 'system' && <SystemSection status={status} config={config} nodesByTag={nodesByTag} />}
+    {section === 'system' && <SystemSection status={status} config={config} nodesByTag={nodesByTag} update={update} onCheckUpdate={onCheckUpdate} />}
   </Shell>
 }
 
@@ -245,6 +259,7 @@ function Overview({ status, nodeTotal, nodesByTag, onRunBenchmark }) {
   const total = status.observatory?.total || nodeTotal
   const healthText = total ? `${healthy}/${total} healthy` : 'No node data'
   return <div className="section-stack">
+    <section className="panel setup-banner"><div><span className="panel-label">Panel readiness</span><strong>{status.setup?.runtime || 'setup'} · credential {status.setup?.credential || 'unknown'}</strong><small>XKeen {status.setup?.xkeen || 'missing'} · Xray {status.setup?.xray || 'missing'} · configuration {status.setup?.configuration || 'missing'}</small></div></section>
     <section className="hero-grid">
       <HealthCard label="Xray" ok={status.xray?.running && status.xray?.apiReachable} detail={status.xray?.apiReachable ? 'API reachable' : 'Degraded'} />
       <HealthCard label="Probe" ok={status.xray?.probeReachable} detail={status.xray?.probeReachable ? '127.0.0.1:10808' : 'Unavailable'} />
@@ -524,7 +539,7 @@ function Pagination({ page, totalPages, onPage }) {
   </nav>
 }
 
-function SystemSection({ status, config, nodesByTag }) {
+function SystemSection({ status, config, nodesByTag, update, onCheckUpdate }) {
   const dnsServers = (config.dns?.upstreams || []).map((upstream) => upstream.host || upstream.tag).filter(Boolean)
   const healthSelectors = config.observatory?.subjectSelectors || []
   const activeTag = status.selection?.effectiveTarget || status.balancer?.effective
@@ -538,6 +553,7 @@ function SystemSection({ status, config, nodesByTag }) {
   return <section className="lower-grid system-section">
     <div className="panel"><span className="panel-label">Network policy</span><h2>How traffic is handled</h2><div className="metric-row"><span>Routing rules</span><strong>{config.routing?.ruleCount ?? '—'}</strong></div><div className="metric-row"><span>DNS servers</span><div className="metric-value-list">{dnsServers.length ? dnsServers.map((server) => <code key={server}>{server}</code>) : <strong>—</strong>}</div></div><div className="metric-row"><span>Proxy pool</span><strong>Unified proxy pool</strong></div><div className="metric-row"><span>Health-check scope</span><div className="metric-value-list">{healthSelectors.length ? healthSelectors.map((selector) => <code key={selector}>{selector}</code>) : <strong>—</strong>}</div></div></div>
     <div className="panel"><span className="panel-label">Runtime</span><h2>Current state</h2><div className="metric-row"><span>Active proxy</span><div className="metric-value">{activeNode ? <strong>{visibleNodeName(activeNode)}</strong> : <strong>{activeTag || 'Automatic selection'}</strong>}{activeNode?.address && <small>{activeNode.address}</small>}</div></div><div className="metric-row"><span>Healthy proxies</span><strong>{status.observatory?.healthy ?? 0} / {status.observatory?.total ?? 0}</strong></div><div className="metric-row"><span>Full benchmark</span><div className="metric-value"><strong>{benchmarkDetails}</strong>{benchmark?.nextRunAt && <small>Next: {formatTime(benchmark.nextRunAt)}</small>}</div></div><div className="metric-row"><span>Control plane uptime</span><strong>{formatUptime(status.controlPlane?.uptimeSeconds)}</strong></div></div>
+    <div className="panel"><span className="panel-label">Signed panel release</span><h2>{update?.installed?.version || 'development'}</h2><div className="metric-row"><span>Channel</span><strong>{update?.channel || 'stable'}</strong></div><div className="metric-row"><span>Latest compatible</span><strong>{update?.latestCompatibleVersion || 'Not checked'}</strong></div><div className="metric-row"><span>Rollback</span><strong>{update?.rollbackAvailable ? 'Available' : 'None'}</strong></div><button type="button" onClick={onCheckUpdate}>Check fixed GitHub release</button></div>
   </section>
 }
 

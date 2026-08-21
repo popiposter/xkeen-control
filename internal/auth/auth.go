@@ -21,10 +21,11 @@ import (
 )
 
 const (
-	SessionCookieName = "xkeen_session"
-	CSRFHeader        = "X-CSRF-Token"
-	PasswordHashPath  = "/opt/etc/xkeen-control/auth/password.bcrypt"
-	passwordCost      = 12
+	SessionCookieName   = "xkeen_session"
+	CSRFHeader          = "X-CSRF-Token"
+	PasswordHashPath    = "/opt/etc/xkeen-control/auth/password.bcrypt"
+	BootstrapMarkerPath = "/opt/etc/xkeen-control/auth/bootstrap-required"
+	passwordCost        = 12
 )
 
 var (
@@ -35,12 +36,13 @@ var (
 )
 
 type Config struct {
-	HashPath      string
-	SecureCookies bool
-	SessionTTL    time.Duration
-	LockoutAfter  int
-	LockoutFor    time.Duration
-	Now           func() time.Time
+	HashPath            string
+	BootstrapMarkerPath string
+	SecureCookies       bool
+	SessionTTL          time.Duration
+	LockoutAfter        int
+	LockoutFor          time.Duration
+	Now                 func() time.Time
 }
 
 type Manager struct {
@@ -69,6 +71,9 @@ type attempt struct {
 func NewManager(config Config) *Manager {
 	if config.HashPath == "" {
 		config.HashPath = PasswordHashPath
+	}
+	if config.BootstrapMarkerPath == "" {
+		config.BootstrapMarkerPath = filepath.Join(filepath.Dir(config.HashPath), "bootstrap-required")
 	}
 	if config.SessionTTL <= 0 {
 		config.SessionTTL = 8 * time.Hour
@@ -167,6 +172,50 @@ func (m *Manager) Logout(r *http.Request) {
 	m.mu.Unlock()
 }
 
+// CredentialState is intentionally a small allowlisted state projection. It
+// never returns a password, hash or marker contents.
+func (m *Manager) CredentialState() string {
+	if m == nil {
+		return "unavailable"
+	}
+	if _, err := os.Stat(m.config.HashPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "bootstrap-required"
+		}
+		return "unavailable"
+	}
+	if _, err := os.Stat(m.config.BootstrapMarkerPath); err == nil {
+		return "bootstrap-required"
+	}
+	return "normal"
+}
+
+// ReplacePassword is only called after the HTTP layer has checked an active
+// session and CSRF token. It atomically replaces the bcrypt hash, clears the
+// setup marker and invalidates every RAM-only session.
+func (m *Manager) ReplacePassword(password []byte) error {
+	if m == nil {
+		return ErrNotConfigured
+	}
+	if err := SetPassword(m.config.HashPath, password); err != nil {
+		return err
+	}
+	if err := os.Remove(m.config.BootstrapMarkerPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	m.InvalidateAll()
+	return nil
+}
+
+func (m *Manager) InvalidateAll() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.sessions = make(map[string]session)
+	m.mu.Unlock()
+}
+
 func (m *Manager) ClearSessionCookie(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     SessionCookieName,
@@ -235,7 +284,80 @@ func SetPassword(path string, password []byte) error {
 	}
 	data := append([]byte(nil), hash...)
 	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	return writeProtectedAtomic(path, data)
+}
+
+// InitializeBootstrap creates a high-entropy password and a non-secret setup
+// marker for a genuinely new install. The returned credential is meant for
+// exactly one terminal print by the caller and is never written elsewhere.
+func InitializeBootstrap(hashPath, markerPath string) (string, error) {
+	if _, err := os.Stat(hashPath); err == nil {
+		return "", errors.New("password is already initialized")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", errors.New("cannot inspect password hash")
+	}
+	if _, err := os.Stat(markerPath); err == nil {
+		return "", errors.New("bootstrap setup is already initialized")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", errors.New("cannot inspect bootstrap marker")
+	}
+	random := make([]byte, 24)
+	if _, err := rand.Read(random); err != nil {
+		return "", errors.New("unable to generate bootstrap credential")
+	}
+	password := base64.RawURLEncoding.EncodeToString(random)
+	if err := SetPassword(hashPath, []byte(password)); err != nil {
+		return "", err
+	}
+	if err := writeProtectedAtomic(markerPath, []byte("bootstrap-required\n")); err != nil {
+		_ = os.Remove(hashPath)
+		return "", err
+	}
+	return password, nil
+}
+
+func RunBootstrapCommand(hashPath, markerPath string, out io.Writer) error {
+	if out == nil {
+		return errors.New("bootstrap output is unavailable")
+	}
+	password, err := InitializeBootstrap(hashPath, markerPath)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(out, "Bootstrap password (shown once): %s\n", password)
+	return err
+}
+
+func writeProtectedAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(dir, ".xkeen-auth-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
 		return err
 	}
 	return os.Chmod(path, 0o600)

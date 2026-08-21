@@ -14,10 +14,12 @@ go vet ./...
 go test -race ./...
 
 echo "== Benchmark policy fixtures =="
-bash -n scripts/disable-legacy-speed-balancer.sh scripts/run-bounded-speed-benchmark.sh scripts/test-benchmark-policy.sh scripts/test-c1.sh scripts/install-performance-schedule.sh scripts/run-xkeen-foreground.sh scripts/test-xkeen-foreground.sh scripts/deploy.sh scripts/verify.sh
+bash -n scripts/disable-legacy-speed-balancer.sh scripts/run-bounded-speed-benchmark.sh scripts/test-benchmark-policy.sh scripts/test-c1.sh scripts/install-performance-schedule.sh scripts/run-xkeen-foreground.sh scripts/test-xkeen-foreground.sh scripts/deploy.sh scripts/verify.sh scripts/install.sh scripts/xkeen-control-updater scripts/release-build.sh scripts/test-release.sh scripts/test-bootstrap.sh scripts/test-updater.sh scripts/test-public-hygiene.sh
 bash scripts/test-benchmark-policy.sh
 bash scripts/test-c1.sh
 bash scripts/test-xkeen-foreground.sh
+bash scripts/test-release.sh
+bash scripts/test-public-hygiene.sh
 
 echo "== Web checks =="
 npm --prefix web ci --prefer-offline
@@ -34,7 +36,7 @@ mkdir -p dist
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
   -trimpath \
   -buildvcs=false \
-  -ldflags='-s -w -X main.version=dev' \
+  -ldflags='-s -w -X github.com/popiposter/xkeen-control/internal/buildinfo.Version=dev -X github.com/popiposter/xkeen-control/internal/buildinfo.Commit=dev -X github.com/popiposter/xkeen-control/internal/buildinfo.Channel=development' \
   -o dist/xkeen-control-linux-arm64 \
   ./cmd/xkeen-control
 

@@ -86,9 +86,10 @@ Use an SSH tunnel or one explicitly configured private LAN bind. Do not expose t
 
 Target UX after `/opt`/Entware is available:
 
-```sh
-sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/latest/download/install.sh)"
-```
+The release-specific installer is served only from an exact semver GitHub
+Release asset after the protected release gate has been completed. No
+`latest/download`, branch, archive, or pre-release command is advertised from
+this Draft implementation.
 
 **This command is not ready for use until the first signed release is published and qualified.**
 
@@ -102,6 +103,8 @@ The #2 installer contract is:
 - choose only loopback/exact private management address;
 - detect XKeen/Xray state and leave a usable Setup Mode if components still need typed installation;
 - preserve existing local settings/secrets on repeated runs.
+
+The implementation is currently Draft/review-only. Keep the installer description as a warning until a post-merge signed release has been published, downloaded and re-verified, and the bounded panel-only Keenetic qualification has passed. The installer does not invoke the upstream interactive component installer; absent XKeen/Xray/configuration is Setup Mode and is owned by #4.
 
 Fresh destructive Entware/KeeneticOS provisioning remains outside the normal panel installer and must not be tested against the production router merely to qualify #2.
 

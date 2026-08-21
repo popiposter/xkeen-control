@@ -1,11 +1,13 @@
 package auth
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	stdruntime "runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -92,5 +94,49 @@ func TestOriginPolicyRejectsCrossOrigin(t *testing.T) {
 	request.Header.Set("Origin", "http://127.0.0.1:8787")
 	if !manager.OriginAllowed(request) {
 		t.Fatal("same-origin request rejected")
+	}
+}
+
+func TestBootstrapCredentialIsOneTimeAndPasswordReplacementInvalidatesSessions(t *testing.T) {
+	dir := t.TempDir()
+	hash := filepath.Join(dir, "auth", "password.bcrypt")
+	marker := filepath.Join(dir, "auth", "bootstrap-required")
+	var output bytes.Buffer
+	if err := RunBootstrapCommand(hash, marker, &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.Len() == 0 || strings.Count(output.String(), "Bootstrap password") != 1 {
+		t.Fatalf("bootstrap output = %q", output.String())
+	}
+	if info, err := os.Stat(hash); err != nil || (stdruntime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
+		t.Fatalf("password hash mode = %v, %v", info, err)
+	}
+	if info, err := os.Stat(marker); err != nil || (stdruntime.GOOS != "windows" && info.Mode().Perm() != 0o600) {
+		t.Fatalf("bootstrap marker mode = %v, %v", info, err)
+	}
+	if err := RunBootstrapCommand(hash, marker, &output); err == nil {
+		t.Fatal("bootstrap credential was reset on rerun")
+	}
+	manager := NewManager(Config{HashPath: hash, BootstrapMarkerPath: marker})
+	if manager.CredentialState() != "bootstrap-required" {
+		t.Fatal("bootstrap state was not reported")
+	}
+	_, token, err := manager.Login("127.0.0.1", strings.TrimSpace(strings.Split(output.String(), ": ")[1]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.AddCookie(&http.Cookie{Name: SessionCookieName, Value: token})
+	if _, ok := manager.SessionFromRequest(request); !ok {
+		t.Fatal("synthetic bootstrap session was not created")
+	}
+	if err := manager.ReplacePassword([]byte("synthetic-new-password")); err != nil {
+		t.Fatal(err)
+	}
+	if manager.CredentialState() != "normal" {
+		t.Fatal("password replacement did not clear bootstrap state")
+	}
+	if _, ok := manager.SessionFromRequest(request); ok {
+		t.Fatal("password replacement did not invalidate sessions")
 	}
 }

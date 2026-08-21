@@ -65,6 +65,8 @@ The release design requires:
 - one bounded previous panel generation and health-verified rollback;
 - no GitHub write credential on the router.
 
+The production Ed25519 public key is a release trust anchor and must be source-controlled only after the operator has provisioned the matching protected `release` environment private key. Synthetic fixture keys must never be copied into release configuration. Until that gate is complete, update checks fail closed and no stable release is published.
+
 Normal public release install/update should require no GitHub credential.
 
 ## Control-plane UI

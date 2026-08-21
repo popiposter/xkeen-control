@@ -5,6 +5,8 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 GO_BIN="${GO_BIN:-go}"
 NPM_BIN="${NPM_BIN:-npm}"
 VERSION="${VERSION:-$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo dev)}"
+COMMIT="${COMMIT:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo dev)}"
+CHANNEL="${CHANNEL:-development}"
 ASSET_DIR="$ROOT/internal/webassets/dist"
 WEB_DIR="$ROOT/web"
 OUTPUT="${OUTPUT:-$ROOT/dist/xkeen-control-linux-arm64}"
@@ -25,7 +27,7 @@ find "$ASSET_DIR" -type f -exec sed -i 's/\r$//' {} +
 
 mkdir -p "$(dirname -- "$OUTPUT")"
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 "$GO_BIN" build \
-  -trimpath -buildvcs=false -ldflags="-s -w -X main.version=$VERSION" \
+  -trimpath -buildvcs=false -ldflags="-s -w -X github.com/popiposter/xkeen-control/internal/buildinfo.Version=$VERSION -X github.com/popiposter/xkeen-control/internal/buildinfo.Commit=$COMMIT -X github.com/popiposter/xkeen-control/internal/buildinfo.Channel=$CHANNEL" \
   -o "$OUTPUT" "$ROOT/cmd/xkeen-control"
 
 file "$OUTPUT" 2>/dev/null || true
