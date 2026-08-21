@@ -9,20 +9,38 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/popiposter/xkeen-control/internal/buildinfo"
 	"github.com/popiposter/xkeen-control/internal/release"
 )
 
-type fakeLifecycle struct{ entered int }
-
-func (f *fakeLifecycle) BeginApply(context.Context) (func(), error) {
-	f.entered++
-	return func() {}, nil
+type fakeLifecycle struct {
+	mu      sync.Mutex
+	entered int
+	exited  int
 }
 
-func TestManagerAppliesVerifiedCandidateUnderLifecycleAndCleansCandidate(t *testing.T) {
+func (f *fakeLifecycle) BeginApply(context.Context) (func(), error) {
+	f.mu.Lock()
+	f.entered++
+	f.mu.Unlock()
+	return func() {
+		f.mu.Lock()
+		f.exited++
+		f.mu.Unlock()
+	}, nil
+}
+
+func (f *fakeLifecycle) counts() (int, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.entered, f.exited
+}
+
+func TestManagerStagesMarkerAndHandsOffUnderLifecycle(t *testing.T) {
 	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -42,28 +60,63 @@ func TestManagerAppliesVerifiedCandidateUnderLifecycleAndCleansCandidate(t *test
 		}
 	}))
 	defer server.Close()
+
 	dir := t.TempDir()
+	candidateDir := filepath.Join(dir, "candidate")
 	lifecycle := &fakeLifecycle{}
-	actions := []string{}
+	done := make(chan struct{})
+	var helperAction string
+	var markerContents []byte
 	manager := NewManager(Config{
 		Current:   buildinfo.Info{Product: "xkeen-control", Version: "1.0.0", SourceCommit: strings.Repeat("b", 40), Channel: "stable"},
 		Client:    release.NewClientForTest(server.URL, privateKey.Public().(ed25519.PublicKey)),
 		Lifecycle: lifecycle,
-		Paths:     Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: filepath.Join(dir, "previous"), MarkerPath: filepath.Join(dir, "state", "installed-release.json"), PolicyPath: filepath.Join(dir, "state", "update-policy.json"), HelperPath: filepath.Join(dir, "helper")},
-		RunHelper: func(_ context.Context, action string) error { actions = append(actions, action); return nil },
+		Paths:     Paths{CandidateDir: candidateDir, PreviousDir: filepath.Join(dir, "previous"), MarkerPath: filepath.Join(dir, "state", "installed-release.json"), PolicyPath: filepath.Join(dir, "state", "update-policy.json"), HelperPath: filepath.Join(dir, "helper")},
+		RunHelper: func(_ context.Context, action string) error {
+			helperAction = action
+			markerContents, _ = os.ReadFile(filepath.Join(candidateDir, "installed-release.json"))
+			_ = os.RemoveAll(candidateDir)
+			close(done)
+			return nil
+		},
 	})
 	if err := manager.Apply(context.Background(), "stable", "1.2.3"); err != nil {
 		t.Fatal(err)
 	}
-	if lifecycle.entered != 1 || len(actions) != 1 || actions[0] != "install" {
-		t.Fatalf("lifecycle/helper evidence = %d/%v", lifecycle.entered, actions)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("helper handoff did not run")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "candidate")); !os.IsNotExist(err) {
-		t.Fatalf("candidate directory remains: %v", err)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		entered, exited := lifecycle.counts()
+		if entered == 1 && exited == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("lifecycle evidence = entered:%d exited:%d", entered, exited)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	marker, err := os.ReadFile(filepath.Join(dir, "state", "installed-release.json"))
-	if err != nil || !strings.Contains(string(marker), `"version":"1.2.3"`) {
-		t.Fatalf("installed marker = %q, %v", marker, err)
+	if helperAction != "install" || !strings.Contains(string(markerContents), `"version":"1.2.3"`) {
+		t.Fatalf("helper=%q marker=%q", helperAction, markerContents)
+	}
+	if _, err := os.Stat(candidateDir); !os.IsNotExist(err) {
+		t.Fatalf("synthetic helper did not clean candidate: %v", err)
+	}
+}
+
+func TestRollbackStartsHelperOnlyWhenPreviousGenerationExists(t *testing.T) {
+	dir := t.TempDir()
+	lifecycle := &fakeLifecycle{}
+	manager := NewManager(Config{
+		Current:   buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
+		Lifecycle: lifecycle,
+		Paths:     Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: filepath.Join(dir, "previous"), MarkerPath: filepath.Join(dir, "state", "installed-release.json"), PolicyPath: filepath.Join(dir, "state", "update-policy.json"), HelperPath: filepath.Join(dir, "helper")},
+	})
+	if err := manager.Rollback(context.Background()); err == nil {
+		t.Fatal("rollback without previous generation was accepted")
 	}
 }
 

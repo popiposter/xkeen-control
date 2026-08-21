@@ -14,29 +14,41 @@ on:
         type: choice
         options: [stable, beta]
       source_ref:
-        description: "Exact reviewed main commit or tag"
+        description: "Exact reviewed current main commit SHA"
         required: true
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
-    environment: release
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_ref }}
           fetch-depth: 0
-      - name: Verify exact reviewed source
+          persist-credentials: false
+      - name: Verify exact current main source
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
-          test "$(git rev-parse HEAD)" = "${{ inputs.source_ref }}" || {
-            echo "source_ref must be the exact reviewed commit SHA" >&2
+          printf '%s\n' "$SOURCE_REF" | grep -Eq '^[0-9a-f]{40}$' || {
+            echo "source_ref must be a full lowercase commit SHA" >&2
             exit 1
           }
-          test "$(git branch --show-current)" = "" || true
+          test "$(git rev-parse HEAD)" = "$SOURCE_REF" || {
+            echo "checkout does not match source_ref" >&2
+            exit 1
+          }
+          remote_main="$(git ls-remote https://github.com/popiposter/xkeen-control.git refs/heads/main | awk '{print $1}')"
+          test "$remote_main" = "$SOURCE_REF" || {
+            echo "release source must be the current reviewed main commit" >&2
+            exit 1
+          }
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -51,48 +63,153 @@ jobs:
           go test -count=1 ./...
           go vet ./...
           go test -race ./...
+          bash -n scripts/*.sh
+          bash scripts/test-benchmark-policy.sh
+          bash scripts/test-c1.sh
+          bash scripts/test-xkeen-foreground.sh
           bash scripts/test-release.sh
+          bash scripts/test-public-hygiene.sh
           npm --prefix web ci --ignore-scripts
           npm --prefix web run check
           npm --prefix web audit --audit-level=high
+          npm --prefix web run build
+          diff -ru --strip-trailing-cr web/dist internal/webassets/dist
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -buildvcs=false \
+            -ldflags='-s -w -X github.com/popiposter/xkeen-control/internal/buildinfo.Version=dev -X github.com/popiposter/xkeen-control/internal/buildinfo.Commit=dev -X github.com/popiposter/xkeen-control/internal/buildinfo.Channel=development' \
+            -o dist/xkeen-control-linux-arm64 ./cmd/xkeen-control
           git diff --check
-      - name: Require protected production signing material
+      - name: Assemble unsigned deterministic release inputs
         env:
-          RELEASE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY_B64 }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          RELEASE_BUILD_MODE: unsigned
+        run: ./scripts/release-build.sh
+      - name: Upload secretless release handoff
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-release-${{ inputs.source_ref }}
+          path: |
+            dist/release/xkeen-control-linux-arm64
+            dist/release/S99xkeen-control
+            dist/release/xkeen-control-updater
+            dist/release/install.sh
+            dist/release/release-manifest.json
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Re-check current main and compile narrow verifier/signer
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_REF"
+          remote_main="$(git ls-remote https://github.com/popiposter/xkeen-control.git refs/heads/main | awk '{print $1}')"
+          test "$remote_main" = "$SOURCE_REF" || {
+            echo "main moved after release build; re-review and re-run" >&2
+            exit 1
+          }
+          go build -trimpath -o "$RUNNER_TEMP/xkeen-release" ./cmd/xkeen-release
+      - name: Download and verify unsigned handoff
+        uses: actions/download-artifact@v4
+        with:
+          name: unsigned-release-${{ inputs.source_ref }}
+          path: dist/release
+      - name: Verify unsigned manifest binds the handoff assets
+        run: |
+          expected="$(printf '%s\n' S99xkeen-control install.sh release-manifest.json xkeen-control-linux-arm64 xkeen-control-updater | sort)"
+          actual="$(find dist/release -maxdepth 1 -type f -printf '%f\n' | sort)"
+          test "$actual" = "$expected" || { echo "unexpected unsigned release asset set" >&2; exit 1; }
+          "$RUNNER_TEMP/xkeen-release" verify-assets \
+            --manifest dist/release/release-manifest.json \
+            --asset-dir dist/release
+      - name: Require source-pinned production public key
+        env:
           RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ secrets.RELEASE_SIGNING_PUBLIC_KEY_B64 }}
         run: |
-          test -n "$RELEASE_SIGNING_PRIVATE_KEY_B64" || { echo "operator gate: provision release environment private key" >&2; exit 1; }
           test -n "$RELEASE_SIGNING_PUBLIC_KEY_B64" || { echo "operator gate: provision release environment public key" >&2; exit 1; }
           umask 077
-          printf '%s' "$RELEASE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$RUNNER_TEMP/release-private.key"
           printf '%s' "$RELEASE_SIGNING_PUBLIC_KEY_B64" | base64 --decode > "$RUNNER_TEMP/release-public.key"
-      - name: Build deterministic signed release assets
+          "$RUNNER_TEMP/xkeen-release" verify-pinned-key --public-key-file "$RUNNER_TEMP/release-public.key"
+      - name: Sign exact manifest with protected private key
         env:
-          VERSION: ${{ inputs.version }}
-          CHANNEL: ${{ inputs.channel }}
-          RELEASE_SIGNING_KEY_FILE: ${{ runner.temp }}/release-private.key
-        run: ./scripts/release-build.sh
-      - name: Create intended release
+          RELEASE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY_B64 }}
+        run: |
+          test -n "$RELEASE_SIGNING_PRIVATE_KEY_B64" || { echo "operator gate: provision release environment private key" >&2; exit 1; }
+          umask 077
+          key="$RUNNER_TEMP/release-private.key"
+          trap 'rm -f "$key"' EXIT
+          printf '%s' "$RELEASE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
+          "$RUNNER_TEMP/xkeen-release" sign \
+            --manifest dist/release/release-manifest.json \
+            --key-file "$key" \
+            --output dist/release/release-manifest.sig
+          rm -f "$key"
+          trap - EXIT
+      - name: Verify signature and finalize checksum list
+        run: |
+          "$RUNNER_TEMP/xkeen-release" verify \
+            --manifest dist/release/release-manifest.json \
+            --signature dist/release/release-manifest.sig \
+            --public-key-file "$RUNNER_TEMP/release-public.key"
+          (cd dist/release && sha256sum xkeen-control-linux-arm64 S99xkeen-control xkeen-control-updater install.sh release-manifest.json release-manifest.sig > SHA256SUMS)
+      - name: Create non-public draft release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
           CHANNEL: ${{ inputs.channel }}
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
           tag="v${VERSION}"
-          if [ "$CHANNEL" = beta ]; then
-            gh release create "$tag" dist/release/* --target "$(git rev-parse HEAD)" --title "$tag" --notes "Signed xkeen-control ${VERSION}" --prerelease
-          else
-            gh release create "$tag" dist/release/* --target "$(git rev-parse HEAD)" --title "$tag" --notes "Signed xkeen-control ${VERSION}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release/tag already exists: $tag" >&2
+            exit 1
           fi
-      - name: Re-download and independently verify published assets
+          if [ "$CHANNEL" = beta ]; then
+            gh release create "$tag" dist/release/* --target "$SOURCE_REF" --title "$tag" --notes "Signed xkeen-control ${VERSION}" --draft --prerelease
+          else
+            gh release create "$tag" dist/release/* --target "$SOURCE_REF" --title "$tag" --notes "Signed xkeen-control ${VERSION}" --draft
+          fi
+      - name: Re-download draft and independently verify signed asset set
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
         run: |
-          mkdir -p "$RUNNER_TEMP/published"
-          gh release download "v${VERSION}" --dir "$RUNNER_TEMP/published"
-          (cd "$RUNNER_TEMP/published" && sha256sum -c SHA256SUMS)
-          go run ./cmd/xkeen-release verify \
-            --manifest "$RUNNER_TEMP/published/release-manifest.json" \
-            --signature "$RUNNER_TEMP/published/release-manifest.sig" \
+          published="$RUNNER_TEMP/published"
+          mkdir -p "$published"
+          gh release download "v${VERSION}" --dir "$published"
+          expected="$(printf '%s\n' SHA256SUMS S99xkeen-control install.sh release-manifest.json release-manifest.sig xkeen-control-linux-arm64 xkeen-control-updater | sort)"
+          actual="$(find "$published" -maxdepth 1 -type f -printf '%f\n' | sort)"
+          test "$actual" = "$expected" || { echo "published draft has unexpected asset set" >&2; exit 1; }
+          (cd "$published" && sha256sum -c SHA256SUMS)
+          "$RUNNER_TEMP/xkeen-release" verify \
+            --manifest "$published/release-manifest.json" \
+            --signature "$published/release-manifest.sig" \
             --public-key-file "$RUNNER_TEMP/release-public.key"
+          "$RUNNER_TEMP/xkeen-release" verify-assets \
+            --manifest "$published/release-manifest.json" \
+            --asset-dir "$published"
+      - name: Publish only the verified draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          remote_main="$(git ls-remote https://github.com/popiposter/xkeen-control.git refs/heads/main | awk '{print $1}')"
+          test "$remote_main" = "$SOURCE_REF" || { echo "main moved before publication; leaving draft non-public" >&2; exit 1; }
+          gh release edit "v${VERSION}" --draft=false

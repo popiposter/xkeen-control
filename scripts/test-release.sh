@@ -2,7 +2,7 @@
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-go test -count=1 ./internal/release ./internal/update ./internal/auth ./internal/httpapi ./cmd/xkeen-control
+go test -count=1 ./internal/release ./internal/update ./internal/auth ./internal/httpapi ./cmd/xkeen-control ./cmd/xkeen-release
 if grep -Eq 'xkeen[[:space:]]+-i' "$ROOT/scripts/install.sh"; then
 	echo 'upstream interactive installer must not be invoked' >&2
 	exit 1
@@ -21,3 +21,7 @@ grep -Fq 'STABLE_RELEASE_VERSION' "$ROOT/scripts/install.sh"
 grep -Fq 'full prerelease semver' "$ROOT/scripts/install.sh"
 grep -Fq '/opt/etc/xkeen-control/previous/panel' "$ROOT/scripts/xkeen-control-updater"
 grep -Fq 'panel-update' "$ROOT/scripts/xkeen-control-updater"
+grep -Fq 'release-assets.githubusercontent.com' "$ROOT/scripts/install.sh"
+
+bash "$ROOT/scripts/test-bootstrap.sh"
+bash "$ROOT/scripts/test-updater.sh"

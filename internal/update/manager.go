@@ -115,15 +115,10 @@ func NewManager(config Config) *Manager {
 	if config.Now == nil {
 		config.Now = time.Now
 	}
-	manager := &Manager{current: config.Current, client: config.Client, lifecycle: config.Lifecycle, paths: config.Paths, now: config.Now}
-	if config.RunHelper != nil {
-		manager.runHelper = config.RunHelper
-	} else {
-		manager.runHelper = func(ctx context.Context, action string) error {
-			return exec.CommandContext(ctx, manager.paths.HelperPath, action).Run()
-		}
+	return &Manager{
+		current: config.Current, client: config.Client, lifecycle: config.Lifecycle,
+		paths: config.Paths, now: config.Now, runHelper: config.RunHelper,
 	}
-	return manager
 }
 
 func (m *Manager) Status(_ context.Context) Status {
@@ -134,7 +129,7 @@ func (m *Manager) Status(_ context.Context) Status {
 	installed := m.current
 	if marker, err := os.ReadFile(m.paths.MarkerPath); err == nil {
 		var value buildinfo.Info
-		if json.Unmarshal(marker, &value) == nil && value.Product == buildinfo.Current().Product {
+		if json.Unmarshal(marker, &value) == nil && value.Validate() == nil {
 			installed = value
 		}
 	}
@@ -200,6 +195,10 @@ func (m *Manager) SetPolicy(policy Policy) (Status, error) {
 	return m.Status(context.Background()), nil
 }
 
+// Apply verifies and stages the complete candidate before entering the shared
+// lifecycle barrier. Once admitted, it starts the fixed external helper and
+// returns. The helper owns all post-stop commit/rollback work; the serving Go
+// process must not be required to execute code after it has been stopped.
 func (m *Manager) Apply(ctx context.Context, channel, version string) error {
 	channel, err := release.ParseChannel(channel)
 	if err != nil {
@@ -215,34 +214,35 @@ func (m *Manager) Apply(ctx context.Context, channel, version string) error {
 	if err := release.VerifyCandidate(candidate); err != nil {
 		return err
 	}
+
 	releaseToken, err := m.beginLifecycle(ctx)
 	if err != nil {
 		return err
 	}
-	defer releaseToken()
 	if err := m.stage(candidate); err != nil {
+		releaseToken()
 		return err
 	}
-	if err := m.runHelper(ctx, "install"); err != nil {
+	if err := m.launchHelper("install", releaseToken); err != nil {
 		_ = os.RemoveAll(m.paths.CandidateDir)
-		return errors.New("panel update failed and helper did not commit")
+		return errors.New("panel update helper could not start")
 	}
-	if err := writeJSONAtomic(m.paths.MarkerPath, buildinfo.Info{Product: release.Product, Version: candidate.Manifest.Version, SourceCommit: candidate.Manifest.SourceCommit, Channel: candidate.Manifest.Channel}, 0o600); err != nil {
-		_ = m.runHelper(ctx, "rollback")
-		return errors.New("panel update committed without an installed marker")
-	}
-	_ = os.RemoveAll(m.paths.CandidateDir)
 	return nil
 }
 
+// Rollback admits the fixed helper under the same lifecycle barrier and then
+// returns so the HTTP layer can deliver 202 before the helper's bounded handoff
+// grace expires and process replacement begins.
 func (m *Manager) Rollback(ctx context.Context) error {
+	if _, err := os.Stat(filepath.Join(m.paths.PreviousDir, "xkeen-control-linux-arm64")); err != nil {
+		return errors.New("panel rollback is unavailable")
+	}
 	releaseToken, err := m.beginLifecycle(ctx)
 	if err != nil {
 		return err
 	}
-	defer releaseToken()
-	if err := m.runHelper(ctx, "rollback"); err != nil {
-		return errors.New("panel rollback failed")
+	if err := m.launchHelper("rollback", releaseToken); err != nil {
+		return errors.New("panel rollback helper could not start")
 	}
 	return nil
 }
@@ -252,6 +252,33 @@ func (m *Manager) beginLifecycle(ctx context.Context) (func(), error) {
 		return func() {}, nil
 	}
 	return m.lifecycle.BeginApply(ctx)
+}
+
+// launchHelper starts a process that is intentionally independent from the
+// request context: an admitted update must survive the HTTP connection and the
+// old panel process going away. The helper itself waits one bounded second
+// before stop/swap, giving the handler time to flush its accepted response.
+// The lifecycle token remains held while this process is alive; if the helper
+// fails before stopping the panel, Wait releases the token in the old process.
+func (m *Manager) launchHelper(action string, releaseToken func()) error {
+	if m.runHelper != nil {
+		go func() {
+			defer releaseToken()
+			_ = m.runHelper(context.Background(), action)
+		}()
+		return nil
+	}
+	cmd := exec.Command(m.paths.HelperPath, action)
+	cmd.Env = append(os.Environ(), "XKEEN_CONTROL_HANDOFF_DELAY=1")
+	if err := cmd.Start(); err != nil {
+		releaseToken()
+		return err
+	}
+	go func() {
+		defer releaseToken()
+		_ = cmd.Wait()
+	}()
+	return nil
 }
 
 func (m *Manager) stage(candidate release.Candidate) error {
@@ -267,12 +294,23 @@ func (m *Manager) stage(candidate release.Candidate) error {
 			return errors.New("candidate asset could not be staged")
 		}
 	}
-	if manifest, err := candidate.Manifest.MarshalDeterministic(); err != nil {
-		return err
-	} else if err := writeFile(filepath.Join(m.paths.CandidateDir, "release-manifest.json"), manifest, 0o600); err != nil {
+	manifest, err := candidate.Manifest.MarshalDeterministic()
+	if err != nil {
 		return err
 	}
-	return writeFile(filepath.Join(m.paths.CandidateDir, "release-manifest.sig"), candidate.Signature, 0o600)
+	if err := writeFile(filepath.Join(m.paths.CandidateDir, "release-manifest.json"), manifest, 0o600); err != nil {
+		return err
+	}
+	if err := writeFile(filepath.Join(m.paths.CandidateDir, "release-manifest.sig"), candidate.Signature, 0o600); err != nil {
+		return err
+	}
+	marker := buildinfo.Info{
+		Product:      release.Product,
+		Version:      candidate.Manifest.Version,
+		SourceCommit: candidate.Manifest.SourceCommit,
+		Channel:      candidate.Manifest.Channel,
+	}
+	return writeJSONAtomic(filepath.Join(m.paths.CandidateDir, "installed-release.json"), marker, 0o600)
 }
 
 func (m *Manager) readPolicy() Policy {

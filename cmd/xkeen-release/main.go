@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"crypto/ed25519"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/popiposter/xkeen-control/internal/release"
@@ -31,7 +34,7 @@ func (value *assetsFlag) Set(raw string) error {
 
 func main() {
 	if len(os.Args) < 2 {
-		fatal("usage: xkeen-release {manifest|sign|verify}")
+		fatal("usage: xkeen-release {manifest|sign|verify|verify-assets|verify-pinned-key}")
 	}
 	switch os.Args[1] {
 	case "manifest":
@@ -40,6 +43,10 @@ func main() {
 		signCommand(os.Args[2:])
 	case "verify":
 		verifyCommand(os.Args[2:])
+	case "verify-assets":
+		verifyAssetsCommand(os.Args[2:])
+	case "verify-pinned-key":
+		verifyPinnedKeyCommand(os.Args[2:])
 	default:
 		fatal("unsupported release operation")
 	}
@@ -84,6 +91,9 @@ func signCommand(args []string) {
 	if err != nil {
 		fatal("manifest read failed")
 	}
+	if _, err := release.ParseManifest(manifest); err != nil {
+		fatal("manifest is invalid")
+	}
 	keyContents, err := os.ReadFile(*keyPath)
 	if err != nil {
 		fatal("signing key is unavailable")
@@ -121,7 +131,57 @@ func verifyCommand(args []string) {
 	if err != nil {
 		fatal("signature read failed")
 	}
-	keyContents, err := os.ReadFile(*keyPath)
+	publicKey := readPublicKey(*keyPath)
+	if err := release.Verify(manifest, signature, publicKey); err != nil {
+		fatal("signature verification failed")
+	}
+}
+
+func verifyAssetsCommand(args []string) {
+	flags := flag.NewFlagSet("verify-assets", flag.ExitOnError)
+	manifestPath := flags.String("manifest", "", "manifest path")
+	assetDir := flags.String("asset-dir", "", "directory containing release assets")
+	_ = flags.Parse(args)
+	if *manifestPath == "" || *assetDir == "" {
+		fatal("verify-assets arguments are incomplete")
+	}
+	manifestBytes, err := os.ReadFile(*manifestPath)
+	if err != nil {
+		fatal("manifest read failed")
+	}
+	manifest, err := release.ParseManifest(manifestBytes)
+	if err != nil {
+		fatal("manifest is invalid")
+	}
+	assets := make(map[string][]byte, len(manifest.Artifacts))
+	for _, item := range manifest.Artifacts {
+		contents, err := os.ReadFile(filepath.Join(*assetDir, item.Name))
+		if err != nil {
+			fatal("release asset is unavailable")
+		}
+		assets[item.Name] = contents
+	}
+	if err := release.VerifyCandidate(release.Candidate{Manifest: manifest, Assets: assets}); err != nil {
+		fatal("release assets do not match signed manifest metadata")
+	}
+}
+
+func verifyPinnedKeyCommand(args []string) {
+	flags := flag.NewFlagSet("verify-pinned-key", flag.ExitOnError)
+	keyPath := flags.String("public-key-file", "", "public key path")
+	_ = flags.Parse(args)
+	if *keyPath == "" {
+		fatal("verify-pinned-key arguments are incomplete")
+	}
+	provided := readPublicKey(*keyPath)
+	pinned, err := release.DecodePublicKey([]byte(release.StablePublicKeyHex))
+	if err != nil || !bytes.Equal(pinned, provided) {
+		fatal("source-pinned production public key is missing or does not match release environment")
+	}
+}
+
+func readPublicKey(path string) ed25519.PublicKey {
+	keyContents, err := os.ReadFile(path)
 	if err != nil {
 		fatal("public key is unavailable")
 	}
@@ -129,9 +189,7 @@ func verifyCommand(args []string) {
 	if err != nil {
 		fatal("public key is invalid")
 	}
-	if err := release.Verify(manifest, signature, publicKey); err != nil {
-		fatal("signature verification failed")
-	}
+	return publicKey
 }
 
 func fatal(message string) {

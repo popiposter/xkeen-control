@@ -1,36 +1,53 @@
 #!/bin/sh
 set -eu
+set -f
 
 # This is the public bootstrap entrypoint. The release URL, repository and
 # asset names are constants; there is deliberately no URL or command input.
 REPO="https://github.com/popiposter/xkeen-control"
 # release-build.sh replaces this line in the published installer asset with
-# the exact stable semver that owns the asset. The source checkout remains an
+# the exact semver that owns the asset. The source checkout remains an
 # explicit operator-gated template and never falls back to a mutable URL.
 STABLE_RELEASE_VERSION=""
 DOWNLOAD_ROOT=""
 CHANNEL="${XKEEN_CONTROL_CHANNEL:-stable}"
 VERSION="${XKEEN_CONTROL_VERSION:-}"
-BIN="/opt/sbin/xkeen-control"
-INIT="/opt/etc/init.d/S99xkeen-control"
-UPDATER="/opt/libexec/xkeen-control-updater"
-ROOT_DIR="/opt/etc/xkeen-control"
+TEST_MODE="${XKEEN_CONTROL_TEST_MODE:-0}"
+ROOT_PREFIX="${XKEEN_CONTROL_TEST_ROOT:-}"
+
+if [ "$TEST_MODE" = "1" ]; then
+	case "$ROOT_PREFIX" in
+		/tmp/*) ;;
+		*) echo "ERROR: test root must be an absolute /tmp path" >&2; exit 1 ;;
+	esac
+else
+	[ -z "$ROOT_PREFIX" ] || { echo "ERROR: test root is not available in production mode" >&2; exit 1; }
+	ROOT_PREFIX=""
+fi
+
+OPT_ROOT="${ROOT_PREFIX}/opt"
+BIN="${OPT_ROOT}/sbin/xkeen-control"
+INIT="${OPT_ROOT}/etc/init.d/S99xkeen-control"
+UPDATER="${OPT_ROOT}/libexec/xkeen-control-updater"
+ROOT_DIR="${OPT_ROOT}/etc/xkeen-control"
 AUTH_DIR="${ROOT_DIR}/auth"
 STATE_DIR="${ROOT_DIR}/state"
-TMP_ROOT="/tmp/xkeen-control/panel-bootstrap"
+TMP_ROOT="${ROOT_PREFIX}/tmp/xkeen-control/panel-bootstrap"
 
 fail() { echo "ERROR: $1" >&2; exit 1; }
-[ "$(id -u)" = "0" ] || fail "root is required"
-[ -d /opt ] || fail "/opt is required"
+if [ "$TEST_MODE" != "1" ]; then
+	[ "$(id -u)" = "0" ] || fail "root is required"
+fi
+[ -d "$OPT_ROOT" ] || fail "/opt is required"
 command -v opkg >/dev/null 2>&1 || fail "Entware opkg is required"
-[ -w /opt ] || fail "/opt is not writable"
+[ -w "$OPT_ROOT" ] || fail "/opt is not writable"
 
 case "$(uname -m)" in
 	aarch64|arm64) ;;
 	*) fail "unsupported architecture; only linux/arm64 is supported" ;;
 esac
 
-free_kb="$(df -Pk /opt | awk 'NR == 2 { print $4 }')"
+free_kb="$(df -Pk "$OPT_ROOT" | awk 'NR == 2 { print $4 }')"
 case "$free_kb" in ''|*[!0-9]*) fail "unable to determine free space" ;; esac
 [ "$free_kb" -ge 131072 ] || fail "at least 128 MiB free space is required"
 
@@ -58,7 +75,7 @@ if [ -e "$BIN" ]; then
 	metadata="$($BIN version --json 2>/dev/null || true)"
 	echo "$metadata" | jq -e '.product == "xkeen-control" and (.version | type == "string") and (.sourceCommit | type == "string")' >/dev/null 2>&1 || fail "existing panel identity is not trusted"
 	# Existing installs use the installed binary's pinned-signature path. The
-	# bootstrap never replaces a valid install from mutable bootstrap URLs.
+	# bootstrap never replaces a valid install from bootstrap-only HTTPS checks.
 	if [ "$CHANNEL" = "beta" ] && [ -z "$VERSION" ]; then fail "beta rerun requires an explicit version"; fi
 	if [ "$CHANNEL" = "stable" ] && [ -n "$VERSION" ]; then fail "stable rerun does not accept an arbitrary version"; fi
 	if [ -n "$VERSION" ]; then
@@ -70,9 +87,9 @@ fi
 case "$CHANNEL" in
 	stable)
 		[ -z "$VERSION" ] || fail "stable bootstrap does not accept an arbitrary version"
-	[ -n "$STABLE_RELEASE_VERSION" ] || fail "stable installer is not pinned to a qualified release"
-	DOWNLOAD_ROOT="${REPO}/releases/download/v${STABLE_RELEASE_VERSION}"
-	EXPECTED_VERSION="$STABLE_RELEASE_VERSION"
+		[ -n "$STABLE_RELEASE_VERSION" ] || fail "stable installer is not pinned to a qualified release"
+		DOWNLOAD_ROOT="${REPO}/releases/download/v${STABLE_RELEASE_VERSION}"
+		EXPECTED_VERSION="$STABLE_RELEASE_VERSION"
 		;;
 	beta)
 		[ -n "$VERSION" ] || fail "beta bootstrap requires an explicit version"
@@ -89,16 +106,23 @@ chmod 700 "$TMP_ROOT" "$TMP_ROOT/assets" "$ROOT_DIR" "$AUTH_DIR" "$STATE_DIR"
 
 fetch() {
 	name="$1"
-	curl --fail --silent --show-error --location --max-redirs 3 \
+	destination="$2"
+	effective="$(curl --fail --silent --show-error --location --max-redirs 3 \
 		--connect-timeout 10 --max-time 120 --proto '=https' --proto-redir '=https' \
-		--user-agent 'xkeen-control-installer/1' \
-		"${DOWNLOAD_ROOT}/${name}" -o "${TMP_ROOT}/${name}"
+		--user-agent 'xkeen-control-installer/1' --write-out '%{url_effective}' \
+		"${DOWNLOAD_ROOT}/${name}" -o "$destination")" || fail "release download failed"
+	case "$effective" in
+		https://github.com/*|https://objects.githubusercontent.com/*|https://release-assets.githubusercontent.com/*|https://github-releases.githubusercontent.com/*) ;;
+		*) rm -f "$destination"; fail "release redirect host is not supported" ;;
+	esac
 }
 
-fetch release-manifest.json
-fetch release-manifest.sig
-fetch SHA256SUMS
-for name in xkeen-control-linux-arm64 S99xkeen-control xkeen-control-updater install.sh; do fetch "$name"; done
+fetch release-manifest.json "$TMP_ROOT/release-manifest.json"
+fetch release-manifest.sig "$TMP_ROOT/release-manifest.sig"
+fetch SHA256SUMS "$TMP_ROOT/SHA256SUMS"
+for name in xkeen-control-linux-arm64 S99xkeen-control xkeen-control-updater install.sh; do
+	fetch "$name" "$TMP_ROOT/assets/$name"
+done
 
 jq -e --arg channel "$CHANNEL" --arg version "$EXPECTED_VERSION" '.schemaVersion == 1 and .product == "xkeen-control" and .version == $version and .channel == $channel and .os == "linux" and .architecture == "arm64" and ((.artifacts | map(.name) | sort) == ["S99xkeen-control", "install.sh", "xkeen-control-linux-arm64", "xkeen-control-updater"])' "$TMP_ROOT/release-manifest.json" >/dev/null || fail "release manifest identity does not match bootstrap policy"
 
@@ -116,9 +140,9 @@ while IFS="$(printf '\t')" read -r name size hash; do
 	[ "$actual_size" = "$size" ] || fail "release asset size mismatch"
 	actual_hash="$(sha256sum "$file" | awk '{print $1}')"
 	[ "$actual_hash" = "$hash" ] || fail "release asset hash mismatch"
-done <<EOF
+done <<EOF_MANIFEST
 $(jq -r '.artifacts[] | [.name, (.size | tostring), .sha256] | @tsv' "$TMP_ROOT/release-manifest.json")
-EOF
+EOF_MANIFEST
 
 sum_count=0
 sum_names=""
@@ -149,6 +173,8 @@ mv -f "$UPDATER.new" "$UPDATER"
 rm -rf "$TMP_ROOT"
 
 if [ ! -e "${AUTH_DIR}/password.bcrypt" ]; then
+	XKEEN_CONTROL_AUTH_HASH="${AUTH_DIR}/password.bcrypt" \
+	XKEEN_CONTROL_BOOTSTRAP_MARKER="${AUTH_DIR}/bootstrap-required" \
 	"$BIN" password bootstrap
 fi
 

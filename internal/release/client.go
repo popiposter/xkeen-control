@@ -149,13 +149,19 @@ func (c *Client) download(ctx context.Context, target string, limit int64) ([]by
 }
 
 func newHTTPClient(testHost string) *http.Client {
-	return &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(request *http.Request, _ []*http.Request) error {
+	return &http.Client{Timeout: 2 * time.Minute, CheckRedirect: func(request *http.Request, via []*http.Request) error {
+		if len(via) >= 3 {
+			return errors.New("release redirect limit exceeded")
+		}
 		host := strings.ToLower(request.URL.Host)
 		if testHost != "" && strings.EqualFold(host, testHost) {
 			return nil
 		}
+		if !strings.EqualFold(request.URL.Scheme, "https") {
+			return errors.New("release redirect must use HTTPS")
+		}
 		switch host {
-		case "github.com", "api.github.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com":
+		case "github.com", "api.github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com", "github-releases.githubusercontent.com":
 			return nil
 		default:
 			return errors.New("release redirect host is not supported")
