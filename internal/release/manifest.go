@@ -30,9 +30,9 @@ var RequiredArtifacts = []string{
 	"xkeen-control-updater",
 }
 
-// StablePublicKeyHex is intentionally empty until the operator provisions the
-// production release key pair. No fixture key is a production trust anchor.
-const StablePublicKeyHex = ""
+// StablePublicKeyHex is the source-pinned production release trust anchor.
+// The matching private key must remain confined to the protected release environment.
+const StablePublicKeyHex = "70cf46c44b6c3598e68b6100c2f67b101d1a5d6905dd0dc5a8e2a2d48dc25e8b"
 
 type Artifact struct {
 	Name   string `json:"name"`
