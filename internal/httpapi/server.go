@@ -15,6 +15,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
+	panelupdate "github.com/popiposter/xkeen-control/internal/update"
 )
 
 const (
@@ -36,6 +37,7 @@ type Server struct {
 	selection interface {
 		SetManualOverride(context.Context, string) error
 	}
+	updates panelupdate.Service
 }
 
 type Config struct {
@@ -50,13 +52,14 @@ type Config struct {
 	Selection interface {
 		SetManualOverride(context.Context, string) error
 	}
+	Updates panelupdate.Service
 }
 
 func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, selection: config.Selection}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, selection: config.Selection, updates: config.Updates}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +77,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case "/api/v1/session/login", "/api/v1/session/logout", "/api/v1/session",
 		"/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary",
+		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
+		"/api/v1/session/password",
 		"/api/v1/benchmark/run",
 		"/api/v1/nodes/import/preview", "/api/v1/nodes/replace/preview",
 		"/api/v1/subscriptions/refresh/preview", "/api/v1/subscriptions/state/preview", "/api/v1/subscriptions/remove/preview",
@@ -120,6 +125,12 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.logout(w, r)
+	case "/api/v1/session/password":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.replacePassword(w, r)
 	case "/api/v1/session":
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w, http.MethodGet)
@@ -204,6 +215,36 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.cancelNodeChange(w, r)
+	case "/api/v1/update":
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w, http.MethodGet)
+			return
+		}
+		s.updateStatus(w, r)
+	case "/api/v1/update/check":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.updateCheck(w, r)
+	case "/api/v1/update/policy":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.updatePolicy(w, r)
+	case "/api/v1/update/apply":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.updateApply(w, r)
+	case "/api/v1/update/rollback":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.updateRollback(w, r)
 	default:
 		if isNodeMutationPath(r.URL.Path) {
 			s.handleDynamicNodeMutation(w, r)
@@ -296,6 +337,150 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, struct {
 		Authenticated bool `json:"authenticated"`
 	}{Authenticated: false})
+}
+
+func (s *Server) replacePassword(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	var request struct {
+		NewPassword string `json:"newPassword"`
+	}
+	if !s.decodeMutation(w, r, &request) {
+		return
+	}
+	if err := s.auth.ReplacePassword([]byte(request.NewPassword)); err != nil {
+		if errors.Is(err, auth.ErrInvalidPassword) {
+			writeError(w, http.StatusBadRequest, "password is outside the allowed bounds")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "password replacement failed")
+		return
+	}
+	s.auth.ClearSessionCookie(w)
+	writeJSON(w, http.StatusOK, struct {
+		Authenticated bool   `json:"authenticated"`
+		State         string `json:"state"`
+	}{Authenticated: false, State: "reauthentication-required"})
+}
+
+func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	if s.updates == nil {
+		writeError(w, http.StatusServiceUnavailable, "update service unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.updates.Status(r.Context()))
+}
+
+func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
+	if s.updates == nil {
+		writeError(w, http.StatusServiceUnavailable, "update service unavailable")
+		return
+	}
+	session, ok := s.requireSession(w, r)
+	if !ok || !auth.ValidateCSRF(r, session) {
+		if ok {
+			writeError(w, http.StatusForbidden, "forbidden")
+		}
+		return
+	}
+	var request struct {
+		Channel string `json:"channel"`
+		Version string `json:"version"`
+	}
+	if !s.decodeMutation(w, r, &request) {
+		return
+	}
+	status, err := s.updates.Check(r.Context(), request.Channel, request.Version)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "release check failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) updatePolicy(w http.ResponseWriter, r *http.Request) {
+	if s.updates == nil {
+		writeError(w, http.StatusServiceUnavailable, "update service unavailable")
+		return
+	}
+	session, ok := s.requireSession(w, r)
+	if !ok || !auth.ValidateCSRF(r, session) {
+		if ok {
+			writeError(w, http.StatusForbidden, "forbidden")
+		}
+		return
+	}
+	var policy panelupdate.Policy
+	if !s.decodeMutation(w, r, &policy) {
+		return
+	}
+	status, err := s.updates.SetPolicy(policy)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "update policy rejected")
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) updateApply(w http.ResponseWriter, r *http.Request) {
+	if s.updates == nil {
+		writeError(w, http.StatusServiceUnavailable, "update service unavailable")
+		return
+	}
+	session, ok := s.requireSession(w, r)
+	if !ok || !auth.ValidateCSRF(r, session) {
+		if ok {
+			writeError(w, http.StatusForbidden, "forbidden")
+		}
+		return
+	}
+	var request struct {
+		Channel string `json:"channel"`
+		Version string `json:"version"`
+	}
+	if !s.decodeMutation(w, r, &request) {
+		return
+	}
+	// The external helper must outlive the HTTP handler: it stops/replaces the
+	// running panel after this accepted response has been written.
+	go func(channel, version string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+		defer cancel()
+		_ = s.updates.Apply(ctx, channel, version)
+	}(request.Channel, request.Version)
+	writeJSON(w, http.StatusAccepted, struct {
+		Accepted bool `json:"accepted"`
+	}{Accepted: true})
+}
+
+func (s *Server) updateRollback(w http.ResponseWriter, r *http.Request) {
+	if s.updates == nil {
+		writeError(w, http.StatusServiceUnavailable, "update service unavailable")
+		return
+	}
+	session, ok := s.requireSession(w, r)
+	if !ok || !auth.ValidateCSRF(r, session) {
+		if ok {
+			writeError(w, http.StatusForbidden, "forbidden")
+		}
+		return
+	}
+	if err := s.updates.Rollback(r.Context()); err != nil {
+		writeError(w, http.StatusConflict, "panel rollback rejected")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, struct {
+		Accepted bool `json:"accepted"`
+	}{Accepted: true})
 }
 
 func (s *Server) readNodes(w http.ResponseWriter, r *http.Request) {

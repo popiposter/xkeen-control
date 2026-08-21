@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  qualification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Go tests and static checks
+        run: |
+          go test -count=1 ./...
+          go vet ./...
+          go test -race ./...
+      - name: Focused shell and release fixtures
+        run: |
+          bash -n scripts/*.sh
+          bash scripts/test-benchmark-policy.sh
+          bash scripts/test-c1.sh
+          bash scripts/test-xkeen-foreground.sh
+          bash scripts/test-release.sh
+          bash scripts/test-public-hygiene.sh
+      - name: Frontend checks and audit
+        run: |
+          npm --prefix web ci --ignore-scripts
+          npm --prefix web run check
+          npm --prefix web audit --audit-level=high
+      - name: Embedded asset consistency
+        run: |
+          npm --prefix web run build
+          diff -ru --strip-trailing-cr web/dist internal/webassets/dist
+      - name: Static arm64 build and hygiene
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -buildvcs=false \
+            -ldflags='-s -w -X github.com/popiposter/xkeen-control/internal/buildinfo.Version=dev -X github.com/popiposter/xkeen-control/internal/buildinfo.Commit=dev -X github.com/popiposter/xkeen-control/internal/buildinfo.Channel=development' \
+            -o dist/xkeen-control-linux-arm64 ./cmd/xkeen-control
+          sha256sum dist/xkeen-control-linux-arm64
+          git diff --check

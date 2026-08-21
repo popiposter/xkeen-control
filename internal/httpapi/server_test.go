@@ -18,6 +18,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/configview"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
+	panelupdate "github.com/popiposter/xkeen-control/internal/update"
 	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
@@ -74,6 +75,51 @@ type selectionRequestStub struct{ target string }
 func (stub *selectionRequestStub) SetManualOverride(_ context.Context, target string) error {
 	stub.target = target
 	return nil
+}
+
+type updateRequestStub struct{ checks atomic.Int32 }
+
+func (stub *updateRequestStub) Status(context.Context) panelupdate.Status {
+	return panelupdate.Status{Channel: "stable", Policy: panelupdate.Policy{Channel: "stable", Mode: "manual", CheckCadenceMinutes: 360}}
+}
+func (stub *updateRequestStub) Check(context.Context, string, string) (panelupdate.Status, error) {
+	stub.checks.Add(1)
+	return stub.Status(context.Background()), nil
+}
+func (stub *updateRequestStub) SetPolicy(policy panelupdate.Policy) (panelupdate.Status, error) {
+	return panelupdate.Status{Channel: policy.Channel, Policy: policy}, nil
+}
+func (stub *updateRequestStub) Apply(context.Context, string, string) error { return nil }
+func (stub *updateRequestStub) Rollback(context.Context) error              { return nil }
+
+func TestUpdateRoutesAreAuthenticatedAndCSRFBound(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "password.bcrypt")
+	if err := auth.SetPassword(path, []byte("synthetic-control-password")); err != nil {
+		t.Fatal(err)
+	}
+	updates := &updateRequestStub{}
+	server := httptest.NewServer(New(Config{Auth: auth.NewManager(auth.Config{HashPath: path}), Updates: updates}))
+	defer server.Close()
+	client := &http.Client{Jar: mustCookieJar(t)}
+	response := postJSON(t, client, server.URL+"/api/v1/session/login", map[string]string{"password": "synthetic-control-password"}, "")
+	var login struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	decodeResponse(t, response, &login)
+	response = postJSON(t, client, server.URL+"/api/v1/update/check", map[string]string{"channel": "stable"}, "")
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("update check without csrf = %d", response.StatusCode)
+	}
+	response.Body.Close()
+	response = postJSON(t, client, server.URL+"/api/v1/update/check", map[string]string{"channel": "stable"}, login.CSRFToken)
+	if response.StatusCode != http.StatusOK || updates.checks.Load() != 1 {
+		t.Fatalf("update check = %d calls=%d body=%s", response.StatusCode, updates.checks.Load(), readBody(response))
+	}
+	response, err := client.Get(server.URL + "/api/v1/update")
+	if err != nil || response.StatusCode != http.StatusOK {
+		t.Fatalf("update status = %d, %v", response.StatusCode, err)
+	}
+	response.Body.Close()
 }
 
 func TestManualOverrideRouteRequiresCSRFAndPersistsTarget(t *testing.T) {
@@ -191,7 +237,7 @@ func TestServerAuthReadOnlyRoutesAndHealthBoundary(t *testing.T) {
 	}
 	var status controlruntime.Status
 	decodeResponse(t, response, &status)
-	if status.Balancer.NativeSelected != "proxy-main-01" || !status.Xray.APIReachable {
+	if status.Balancer.NativeSelected != "proxy-main-01" || !status.Xray.APIReachable || status.Setup.Xkeen != "ready" || status.Setup.Xray != "ready" || status.Setup.Configuration != "ready" || status.Setup.Runtime != "running" {
 		t.Fatalf("status = %+v", status)
 	}
 

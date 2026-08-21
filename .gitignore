@@ -12,6 +12,7 @@ secrets/
 .secrets/
 *.secret.json
 *.credentials.json
+keenetic_cred.txt
 
 # Local build outputs; the embedded frontend under internal/webassets/dist is
 # intentionally tracked as the Go embed input, while the arm64 binary is not.

@@ -1,0 +1,128 @@
+#!/bin/sh
+set -eu
+
+# Fixed, purpose-built panel rollback helper. It accepts only install or
+# rollback and has no arbitrary command, path, URL or file API.
+BIN="/opt/sbin/xkeen-control"
+INIT="/opt/etc/init.d/S99xkeen-control"
+HELPER="/opt/libexec/xkeen-control-updater"
+PREVIOUS="/opt/etc/xkeen-control/previous/panel"
+CANDIDATE="/tmp/xkeen-control/panel-update"
+TEMP="/tmp/xkeen-control/panel-update-rollback"
+STATE="/opt/etc/xkeen-control/state"
+
+fail() { echo "ERROR: panel updater rejected operation" >&2; exit 1; }
+action="${1:-}"
+case "$action" in install|rollback) ;; *) fail ;; esac
+
+health() {
+	command -v curl >/dev/null 2>&1 || return 1
+	curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8787/healthz >/dev/null 2>&1
+}
+
+stop_panel() { "$INIT" stop >/dev/null 2>&1 || true; }
+start_panel() { "$INIT" start >/dev/null 2>&1; }
+
+copy_panel() {
+	source="$1"
+	destination="$2"
+	[ -f "$source" ] || fail
+	cp "$source" "$destination.new"
+	chmod 755 "$destination.new"
+	mv -f "$destination.new" "$destination"
+}
+
+restore_previous() {
+	[ -f "$PREVIOUS/xkeen-control-linux-arm64" ] || return 1
+	copy_panel "$PREVIOUS/xkeen-control-linux-arm64" "$BIN"
+	copy_panel "$PREVIOUS/S99xkeen-control" "$INIT"
+	copy_panel "$PREVIOUS/xkeen-control-updater" "$HELPER"
+	if [ -f "$PREVIOUS/installed-release.json" ]; then
+		mkdir -p "$STATE"
+		chmod 700 "$STATE"
+		cp "$PREVIOUS/installed-release.json" "${PREVIOUS}/installed-release.json.new"
+		chmod 600 "${PREVIOUS}/installed-release.json.new"
+		mv -f "${PREVIOUS}/installed-release.json.new" "$STATE/installed-release.json"
+	else
+		rm -f "$STATE/installed-release.json"
+	fi
+}
+
+verify_previous() {
+	if [ -f "$PREVIOUS/installed-release.json" ]; then
+		verify_build "$(jq -r '.version' "$PREVIOUS/installed-release.json" 2>/dev/null || true)" "$(jq -r '.sourceCommit' "$PREVIOUS/installed-release.json" 2>/dev/null || true)" "$(jq -r '.channel' "$PREVIOUS/installed-release.json" 2>/dev/null || true)"
+	else
+		return 0
+	fi
+}
+
+verify_build() {
+	version="$1"
+	commit="$2"
+	channel="$3"
+	[ -n "$version" ] && [ -n "$commit" ] && [ -n "$channel" ] || return 1
+	"$BIN" version --json 2>/dev/null | jq -e --arg version "$version" --arg commit "$commit" --arg channel "$channel" \
+		'.product == "xkeen-control" and .version == $version and .sourceCommit == $commit and .channel == $channel' >/dev/null 2>&1
+}
+
+if [ "$action" = "install" ]; then
+	[ -f "$CANDIDATE/xkeen-control-linux-arm64" ] || fail
+	[ -f "$CANDIDATE/S99xkeen-control" ] || fail
+	[ -f "$CANDIDATE/xkeen-control-updater" ] || fail
+	command -v jq >/dev/null 2>&1 || fail
+	expected_version="$(jq -r '.version' "$CANDIDATE/release-manifest.json" 2>/dev/null || true)"
+	expected_commit="$(jq -r '.sourceCommit' "$CANDIDATE/release-manifest.json" 2>/dev/null || true)"
+	expected_channel="$(jq -r '.channel' "$CANDIDATE/release-manifest.json" 2>/dev/null || true)"
+	mkdir -p "$TEMP"
+	chmod 700 "$TEMP"
+	if [ -f "$BIN" ]; then
+		rm -rf "$PREVIOUS"
+		mkdir -p "$PREVIOUS"
+		chmod 700 "$PREVIOUS"
+		cp "$BIN" "$PREVIOUS/xkeen-control-linux-arm64"
+		cp "$INIT" "$PREVIOUS/S99xkeen-control"
+		cp "$HELPER" "$PREVIOUS/xkeen-control-updater"
+		if [ -f "/opt/etc/xkeen-control/state/installed-release.json" ]; then cp "/opt/etc/xkeen-control/state/installed-release.json" "$PREVIOUS/installed-release.json"; fi
+		chmod 755 "$PREVIOUS/xkeen-control-linux-arm64" "$PREVIOUS/S99xkeen-control" "$PREVIOUS/xkeen-control-updater"
+		chmod 600 "$PREVIOUS/installed-release.json" 2>/dev/null || true
+	fi
+	stop_panel
+	copy_panel "$CANDIDATE/xkeen-control-linux-arm64" "$BIN"
+	copy_panel "$CANDIDATE/S99xkeen-control" "$INIT"
+	copy_panel "$CANDIDATE/xkeen-control-updater" "$HELPER"
+	if start_panel && health && verify_build "$expected_version" "$expected_commit" "$expected_channel"; then
+		rm -rf "$TEMP" "$CANDIDATE"
+		exit 0
+	fi
+	stop_panel
+	if [ -f "$PREVIOUS/xkeen-control-linux-arm64" ]; then
+		restore_previous || { rm -rf "$TEMP" "$CANDIDATE"; fail; }
+	else
+		rm -f "$BIN" "$INIT" "$HELPER"
+		rm -f "$STATE/installed-release.json"
+		rm -rf "$TEMP" "$CANDIDATE"
+		fail
+	fi
+	start_panel && health && verify_previous || fail
+	rm -rf "$TEMP" "$CANDIDATE"
+	fail
+fi
+
+[ -f "$PREVIOUS/xkeen-control-linux-arm64" ] || fail
+mkdir -p "$TEMP"
+stop_panel
+cp "$BIN" "$TEMP/current-binary"
+cp "$INIT" "$TEMP/current-init"
+cp "$HELPER" "$TEMP/current-helper"
+restore_previous || fail
+if start_panel && health; then
+	rm -rf "$PREVIOUS" "$TEMP"
+	exit 0
+fi
+stop_panel
+copy_panel "$TEMP/current-binary" "$BIN"
+copy_panel "$TEMP/current-init" "$INIT"
+copy_panel "$TEMP/current-helper" "$HELPER"
+start_panel && health || fail
+rm -rf "$TEMP"
+fail

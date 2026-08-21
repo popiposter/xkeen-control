@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/popiposter/xkeen-control/internal/buildinfo"
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/configview"
 	"github.com/popiposter/xkeen-control/internal/redact"
@@ -30,10 +31,12 @@ type Dependencies struct {
 	OutboundTags     OutboundTagReader
 	OutboundTagsPath string
 	C1               *c1.Coordinator
+	Setup            func() SetupStatus
 }
 
 type Collector struct {
 	version   string
+	build     buildinfo.Info
 	startedAt time.Time
 	ttl       time.Duration
 	deps      Dependencies
@@ -60,12 +63,24 @@ type Status struct {
 	Benchmark    BenchmarkStatus    `json:"benchmark"`
 	Watchdog     WatchdogStatus     `json:"watchdog"`
 	Selection    c1.SelectionStatus `json:"selection"`
+	Setup        SetupStatus        `json:"setup"`
 }
 
 type ControlPlaneStatus struct {
 	Version       string `json:"version"`
+	SourceCommit  string `json:"sourceCommit"`
+	Channel       string `json:"channel"`
 	StartedAt     string `json:"startedAt"`
 	UptimeSeconds int64  `json:"uptimeSeconds"`
+}
+
+type SetupStatus struct {
+	Panel         string `json:"panel"`
+	Credential    string `json:"credential"`
+	Xkeen         string `json:"xkeen"`
+	Xray          string `json:"xray"`
+	Configuration string `json:"configuration"`
+	Runtime       string `json:"runtime"`
 }
 
 type XrayStatus struct {
@@ -193,7 +208,17 @@ func NewCollector(version string, startedAt time.Time, deps Dependencies) *Colle
 	if deps.OutboundTagsPath == "" {
 		deps.OutboundTagsPath = "/opt/etc/xkeen-control/secrets/nodes.json"
 	}
-	return &Collector{version: version, startedAt: startedAt, ttl: defaultCacheTTL, deps: deps}
+	return &Collector{version: version, build: buildinfo.Info{Product: "xkeen-control", Version: version, SourceCommit: "dev", Channel: "development"}, startedAt: startedAt, ttl: defaultCacheTTL, deps: deps}
+}
+
+func (c *Collector) SetBuildInfo(value buildinfo.Info) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.build = value
+	c.version = value.Version
+	c.mu.Unlock()
 }
 
 func (c *Collector) SetCacheTTL(ttl time.Duration) {
@@ -327,6 +352,8 @@ func (c *Collector) collect(ctx context.Context) View {
 	status := Status{
 		ControlPlane: ControlPlaneStatus{
 			Version:       c.version,
+			SourceCommit:  c.build.SourceCommit,
+			Channel:       c.build.Channel,
 			StartedAt:     formatTime(c.startedAt),
 			UptimeSeconds: nonNegativeInt64(int64(time.Since(c.startedAt).Seconds())),
 		},
@@ -362,6 +389,7 @@ func (c *Collector) collect(ctx context.Context) View {
 		Watchdog:  WatchdogStatus{Installed: xkeenState.Watchdog.Installed, Enabled: xkeenState.Watchdog.Enabled},
 		Selection: c1State.Selection,
 	}
+	status.Setup = c.setupStatus(status, xkeenState, xrayState, configState)
 
 	performanceNodes := make([]Throughput, 0, len(nodes))
 	for _, node := range nodes {
@@ -388,6 +416,32 @@ func (c *Collector) collect(ctx context.Context) View {
 		},
 		ConfigSummary: buildConfigSummary(configState, benchmarkSchedule),
 	}
+}
+
+func (c *Collector) setupStatus(status Status, xkeenState xkeen.Snapshot, xrayState xrayapi.Snapshot, configState configview.Summary) SetupStatus {
+	result := SetupStatus{Panel: "ready", Xkeen: "missing", Xray: "missing", Configuration: "missing", Runtime: "setup"}
+	if c.deps.Setup != nil {
+		result = c.deps.Setup()
+	}
+	if xrayState.APIReachable || xkeenState.XrayRunning {
+		result.Xray = "ready"
+	}
+	if xkeenState.XkeenRunning {
+		result.Xkeen = "ready"
+	}
+	if configState.Available {
+		result.Configuration = "ready"
+	}
+	if result.Xkeen == "ready" && result.Xray == "ready" && result.Configuration == "ready" {
+		if xrayState.APIReachable && status.Observatory.APIReachable {
+			result.Runtime = "running"
+		} else {
+			result.Runtime = "degraded"
+		}
+	} else {
+		result.Runtime = "setup"
+	}
+	return result
 }
 
 func buildConfigSummary(source configview.Summary, schedule string) ConfigSummary {

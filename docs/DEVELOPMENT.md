@@ -74,7 +74,7 @@ output: dist/xkeen-control-linux-arm64
 
 The binary is built off-router. Record exact source HEAD and artifact SHA-256 for production evidence.
 
-Slice D / #2 will promote this into signed GitHub Releases with full build revision metadata and a compatibility manifest. Until #2 merges, `dist/` remains a local build output rather than a public release authority.
+Slice D / #2 promotes this into signed GitHub Releases with full build revision metadata and a compatibility manifest. Until #2 merges and the release gate is qualified, `dist/` remains a local build output rather than a public release authority. The deterministic signed asset assembly helper is `scripts/release-build.sh`; it requires a protected key file and must not be run with a fixture key for a production release.
 
 ## Frontend embedding
 
@@ -100,6 +100,14 @@ This repository is public, but hosted CI/release behavior is still planned until
 - release signing material is scoped to the protected release environment and never exposed to PR code.
 
 Local Docker qualification remains useful after hosted CI exists; record which evidence came from which environment.
+
+Issue #2 focused fixtures are:
+
+```sh
+bash scripts/test-release.sh
+```
+
+They cover manifest/signature tamper rejection, candidate hash/size validation, policy bounds, bootstrap idempotence, update lifecycle wiring and the absence of blanket package upgrades or upstream interactive installer invocation.
 
 ## Fresh-checkout expectation
 

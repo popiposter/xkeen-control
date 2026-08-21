@@ -78,9 +78,10 @@ ssh -L 8787:127.0.0.1:8787 <router>
 
 После первого подписанного GitHub Release целевой UX будет таким:
 
-```sh
-sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/latest/download/install.sh)"
-```
+В Draft-реализации команда установки не рекламируется: опубликованный
+installer должен быть asset конкретного квалифицированного semver-релиза
+GitHub Release. Mutable `latest/download`, branch/archive и непроверенный
+pre-release URL запрещены до прохождения release operator gate.
 
 **Пока первого квалифицированного Release нет, эту команду использовать нельзя.**
 

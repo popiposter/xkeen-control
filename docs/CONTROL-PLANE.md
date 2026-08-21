@@ -21,7 +21,12 @@ Current local state:
 /opt/etc/xkeen-control/secrets/nodes.json         authoritative VPN/subscription registry
 /opt/etc/xkeen-control/state/                     small bounded persistent runtime state
 /opt/etc/xkeen-control/previous/                  bounded rollback material
+/opt/etc/xkeen-control/previous/panel/            exactly one previous panel generation
+/opt/etc/xkeen-control/state/installed-release.json last successful panel release
+/opt/etc/xkeen-control/state/update-policy.json  bounded update policy
+/opt/libexec/xkeen-control-updater                fixed panel rollback helper
 /tmp/xkeen-control/                               transient work
+/tmp/xkeen-control/panel-update/                 release candidate assets
 ```
 
 The binary contains the React/Vite UI. Go/Node toolchains stay off-router.
@@ -65,6 +70,12 @@ GET  /api/v1/nodes
 GET  /api/v1/performance
 GET  /api/v1/config-summary
 GET  /healthz
+GET  /api/v1/update
+POST /api/v1/update/check
+POST /api/v1/update/policy
+POST /api/v1/update/apply
+POST /api/v1/update/rollback
+POST /api/v1/session/password
 ```
 
 Typed node/subscription mutations include preview/cancel/apply operations for import, replacement, subscription refresh, node enable/disable/remove and manual selection. The exact endpoint list lives in code/tests; this document describes domain boundaries rather than duplicating every route.
@@ -110,6 +121,8 @@ Benchmark working state stays in RAM/`/tmp`; one compact completed-run snapshot 
 Explicit lifecycle operations must not race selection/probe/benchmark work. Current node Apply uses the shared coordinator to preempt benchmark work, drain relevant supervisor/probe activity, hold the mutation critical section through Xray activation/rollback, then trigger immediate reconciliation.
 
 Future panel/component/import operations must reuse or extend this same maintenance ownership model rather than start independent mutation goroutines.
+
+Issue #2 panel update and rollback are typed lifecycle mutations backed by the same coordinator. They operate only on the panel binary/init/helper and do not install or repair XKeen/Xray or rewrite routing, DNS, Observatory or the node registry. Missing components are reported in the authenticated setup projection as `missing` while the panel remains usable.
 
 ## Write model
 

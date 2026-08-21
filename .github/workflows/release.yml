@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semver release version (stable or beta prerelease)"
+        required: true
+        type: string
+      channel:
+        description: "Release channel"
+        required: true
+        default: stable
+        type: choice
+        options: [stable, beta]
+      source_ref:
+        description: "Exact reviewed main commit or tag"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+      - name: Verify exact reviewed source
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ inputs.source_ref }}" || {
+            echo "source_ref must be the exact reviewed commit SHA" >&2
+            exit 1
+          }
+          test "$(git branch --show-current)" = "" || true
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Full release qualification
+        run: |
+          go test -count=1 ./...
+          go vet ./...
+          go test -race ./...
+          bash scripts/test-release.sh
+          npm --prefix web ci --ignore-scripts
+          npm --prefix web run check
+          npm --prefix web audit --audit-level=high
+          git diff --check
+      - name: Require protected production signing material
+        env:
+          RELEASE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY_B64 }}
+          RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ secrets.RELEASE_SIGNING_PUBLIC_KEY_B64 }}
+        run: |
+          test -n "$RELEASE_SIGNING_PRIVATE_KEY_B64" || { echo "operator gate: provision release environment private key" >&2; exit 1; }
+          test -n "$RELEASE_SIGNING_PUBLIC_KEY_B64" || { echo "operator gate: provision release environment public key" >&2; exit 1; }
+          umask 077
+          printf '%s' "$RELEASE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$RUNNER_TEMP/release-private.key"
+          printf '%s' "$RELEASE_SIGNING_PUBLIC_KEY_B64" | base64 --decode > "$RUNNER_TEMP/release-public.key"
+      - name: Build deterministic signed release assets
+        env:
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          RELEASE_SIGNING_KEY_FILE: ${{ runner.temp }}/release-private.key
+        run: ./scripts/release-build.sh
+      - name: Create intended release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          tag="v${VERSION}"
+          if [ "$CHANNEL" = beta ]; then
+            gh release create "$tag" dist/release/* --target "$(git rev-parse HEAD)" --title "$tag" --notes "Signed xkeen-control ${VERSION}" --prerelease
+          else
+            gh release create "$tag" dist/release/* --target "$(git rev-parse HEAD)" --title "$tag" --notes "Signed xkeen-control ${VERSION}"
+          fi
+      - name: Re-download and independently verify published assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/published"
+          gh release download "v${VERSION}" --dir "$RUNNER_TEMP/published"
+          (cd "$RUNNER_TEMP/published" && sha256sum -c SHA256SUMS)
+          go run ./cmd/xkeen-release verify \
+            --manifest "$RUNNER_TEMP/published/release-manifest.json" \
+            --signature "$RUNNER_TEMP/published/release-manifest.sig" \
+            --public-key-file "$RUNNER_TEMP/release-public.key"

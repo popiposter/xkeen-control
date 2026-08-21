@@ -17,17 +17,17 @@ import (
 	"time"
 
 	"github.com/popiposter/xkeen-control/internal/auth"
+	"github.com/popiposter/xkeen-control/internal/buildinfo"
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/configview"
 	"github.com/popiposter/xkeen-control/internal/httpapi"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
+	panelupdate "github.com/popiposter/xkeen-control/internal/update"
 	"github.com/popiposter/xkeen-control/internal/webassets"
 	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
-
-var version = "dev"
 
 const (
 	defaultListenAddress   = "127.0.0.1:8787"
@@ -36,13 +36,41 @@ const (
 )
 
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "version" {
+		if len(os.Args) != 3 || os.Args[2] != "--json" {
+			log.Print("usage: xkeen-control version --json")
+			os.Exit(2)
+		}
+		contents, err := buildinfo.Current().JSON()
+		if err != nil {
+			log.Print("build metadata unavailable")
+			os.Exit(1)
+		}
+		_, _ = os.Stdout.Write(contents)
+		return
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "password" {
 		if len(os.Args) != 3 {
-			log.Print("usage: xkeen-control password {init|change}")
+			log.Print("usage: xkeen-control password {init|change|bootstrap}")
 			os.Exit(2)
 		}
 		path := getenv("XKEEN_CONTROL_AUTH_HASH", auth.PasswordHashPath)
+		if os.Args[2] == "bootstrap" {
+			marker := getenv("XKEEN_CONTROL_BOOTSTRAP_MARKER", auth.BootstrapMarkerPath)
+			if err := auth.RunBootstrapCommand(path, marker, os.Stdout); err != nil {
+				log.Print("bootstrap credential generation failed")
+				os.Exit(1)
+			}
+			return
+		}
 		if err := auth.RunPasswordCommand(path, os.Args[2], os.Stdin, os.Stderr); err != nil {
+			log.Print(err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "self-update" {
+		if err := runSelfUpdateCommand(os.Args[2:]); err != nil {
 			log.Print(err)
 			os.Exit(1)
 		}
@@ -63,8 +91,9 @@ func main() {
 	}
 	startedAt := time.Now().UTC()
 	authManager := auth.NewManager(auth.Config{
-		HashPath:      getenv("XKEEN_CONTROL_AUTH_HASH", auth.PasswordHashPath),
-		SecureCookies: envBool("XKEEN_CONTROL_TLS"),
+		HashPath:            getenv("XKEEN_CONTROL_AUTH_HASH", auth.PasswordHashPath),
+		BootstrapMarkerPath: getenv("XKEEN_CONTROL_BOOTSTRAP_MARKER", auth.BootstrapMarkerPath),
+		SecureCookies:       envBool("XKEEN_CONTROL_TLS"),
 	})
 	xrayReader := xrayapi.NewClient(
 		getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress),
@@ -103,13 +132,18 @@ func main() {
 	runner := c1.NewBenchmarkRunner(policy, probeRouter, c1.BenchmarkStore{Path: getenv("XKEEN_CONTROL_BENCHMARK_PATH", c1.DefaultBenchmarkPath)})
 	coordinator := c1.NewCoordinator(policy, supervisor, runner, nodeReader)
 	nodeManager = newNodeManager(coordinator)
-	collector := controlruntime.NewCollector(version, startedAt, controlruntime.Dependencies{
+	collector := controlruntime.NewCollector(buildinfo.Current().Version, startedAt, controlruntime.Dependencies{
 		Xray:             xrayReader,
 		Xkeen:            xkeenReader,
 		Config:           configReader,
 		OutboundTagsPath: getenv("XKEEN_NODES_PATH", defaultNodesPath),
 		C1:               coordinator,
+		Setup: func() controlruntime.SetupStatus {
+			return controlruntime.SetupStatus{Panel: "ready", Credential: authManager.CredentialState()}
+		},
 	})
+	collector.SetBuildInfo(buildinfo.Current())
+	updateManager := panelupdate.NewManager(panelupdate.Config{Current: buildinfo.Current(), Lifecycle: coordinator})
 	handler := httpapi.New(httpapi.Config{
 		Collector: collector,
 		Auth:      authManager,
@@ -118,6 +152,7 @@ func main() {
 		Selection: coordinator,
 		Assets:    webassets.Handler(),
 		StartedAt: startedAt,
+		Updates:   updateManager,
 	})
 
 	server := &http.Server{
@@ -144,7 +179,7 @@ func main() {
 	}()
 	coordinator.Start(context.Background())
 
-	log.Printf("xkeen-control %s listening on %s", version, listenAddress)
+	log.Printf("xkeen-control %s listening on %s", buildinfo.Current().Version, listenAddress)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Print(err)
 		os.Exit(1)
@@ -281,4 +316,36 @@ func envBool(name string) bool {
 	default:
 		return false
 	}
+}
+
+func runSelfUpdateCommand(args []string) error {
+	channel := "stable"
+	apply := false
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--channel":
+			if index+1 >= len(args) {
+				return errors.New("usage: xkeen-control self-update --channel {stable|beta} --apply [version]")
+			}
+			channel = args[index+1]
+			index++
+		case "--apply":
+			apply = true
+		default:
+			if strings.HasPrefix(args[index], "-") || index != len(args)-1 {
+				return errors.New("usage: xkeen-control self-update --channel {stable|beta} --apply [version]")
+			}
+			version := args[index]
+			if !apply {
+				return errors.New("self-update requires --apply")
+			}
+			manager := panelupdate.NewManager(panelupdate.Config{Current: buildinfo.Current()})
+			return manager.Apply(context.Background(), channel, version)
+		}
+	}
+	if !apply {
+		return errors.New("self-update requires --apply")
+	}
+	manager := panelupdate.NewManager(panelupdate.Config{Current: buildinfo.Current()})
+	return manager.Apply(context.Background(), channel, "")
 }
