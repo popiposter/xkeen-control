@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package xray.core.app.observatory;
+
+option go_package = "github.com/popiposter/xkeen-keenetic/internal/xrayapi;xrayapi";
+
+// This is the response subset of the official Xray Observatory contract.
+// Field numbers and fully-qualified names match Xray-core v26.3.27
+// (https://github.com/XTLS/Xray-core/tree/v26.3.27).
+message ObservationResult {
+  repeated OutboundStatus status = 1;
+}
+
+message OutboundStatus {
+  bool alive = 1;
+  int64 delay = 2;
+  string last_error_reason = 3;
+  string outbound_tag = 4;
+  int64 last_seen_time = 5;
+  int64 last_try_time = 6;
+}

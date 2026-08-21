@@ -1,0 +1,25 @@
+*.log
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
+router-backups/
+
+# Live VPN/auth material must never be committed.
+config/xray/04_outbounds.json
+profiles/*.txt
+secrets/
+.secrets/
+*.secret.json
+*.credentials.json
+
+# Local build outputs; the embedded frontend under internal/webassets/dist is
+# intentionally tracked as the Go embed input, while the arm64 binary is not.
+dist/
+web/dist/
+web/node_modules/
+
+# The Go embed input must be versioned so a fresh checkout compiles before
+# the workstation-only frontend build runs.
+!internal/webassets/dist/
+!internal/webassets/dist/**

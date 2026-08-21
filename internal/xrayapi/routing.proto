@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package xray.app.router.command;
+
+option go_package = "github.com/popiposter/xkeen-keenetic/internal/xrayapi;xrayapi";
+
+import "router_config.proto";
+import "typed_message.proto";
+
+// This is the deliberately small subset of the official Xray RoutingService
+// contract used by the control plane. Field numbers and fully-qualified names
+// match Xray-core v26.3.27.
+message PrincipleTargetInfo {
+  repeated string tag = 1;
+}
+
+message OverrideInfo {
+  string target = 2;
+}
+
+message BalancerMsg {
+  OverrideInfo override = 5;
+  PrincipleTargetInfo principle_target = 6;
+}
+
+message GetBalancerInfoRequest {
+  string tag = 1;
+}
+
+message GetBalancerInfoResponse {
+  BalancerMsg balancer = 1;
+}
+
+service RoutingService {
+  rpc GetBalancerInfo(GetBalancerInfoRequest)
+      returns (GetBalancerInfoResponse) {}
+  rpc OverrideBalancerTarget(OverrideBalancerTargetRequest)
+      returns (OverrideBalancerTargetResponse) {}
+  rpc AddRule(AddRuleRequest) returns (AddRuleResponse) {}
+  rpc RemoveRule(RemoveRuleRequest) returns (RemoveRuleResponse) {}
+  rpc ListRule(ListRuleRequest) returns (ListRuleResponse) {}
+}
+
+message OverrideBalancerTargetRequest {
+  string balancerTag = 1;
+  string target = 2;
+}
+
+message OverrideBalancerTargetResponse {}
+
+message AddRuleRequest {
+  xray.common.serial.TypedMessage config = 1;
+  bool shouldAppend = 2;
+}
+
+message AddRuleResponse {}
+
+message RemoveRuleRequest {
+  string ruleTag = 1;
+}
+
+message RemoveRuleResponse {}
+
+message ListRuleRequest {}
+
+message ListRuleItem {
+  string tag = 1;
+  string ruleTag = 2;
+}
+
+message ListRuleResponse {
+  repeated ListRuleItem rules = 1;
+}

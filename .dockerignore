@@ -1,0 +1,11 @@
+.git
+.gitignore
+dist
+web/node_modules
+keenetic_cred.txt
+**/04_outbounds.json
+**/nodes.json
+**/*.pem
+**/*.key
+**/*.secret
+**/secrets/

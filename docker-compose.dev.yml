@@ -1,0 +1,27 @@
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: xkeen-keenetic-dev:local
+    working_dir: /workspace
+    environment:
+      CGO_ENABLED: "1"
+      GOTOOLCHAIN: local
+      npm_config_cache: /root/.npm
+    volumes:
+      - .:/workspace
+      - xkeen-go-mod:/go/pkg/mod
+      - xkeen-go-build:/root/.cache/go-build
+      - xkeen-npm-cache:/root/.npm
+      - xkeen-node-modules:/workspace/web/node_modules
+    init: true
+    stdin_open: true
+    tty: true
+    command: ["bash"]
+
+volumes:
+  xkeen-go-mod:
+  xkeen-go-build:
+  xkeen-npm-cache:
+  xkeen-node-modules:

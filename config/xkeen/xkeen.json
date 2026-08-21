@@ -1,0 +1,18 @@
+{
+  "xkeen": {
+    "xray": {
+      "speed_balancer": {
+        "enabled": false,
+        "log": true,
+        "interval": 1440,
+        "hysteresis": 20,
+        "balancer": "bal-proxy",
+        "max_nodes": 128,
+        "max_time": 10,
+        "test_url": "https://speed.cloudflare.com/__down?bytes=20971520",
+        "routing_file": "05_routing.json",
+        "outbounds_file": "../../../../tmp/xkeen-control/benchmark-outbounds.json"
+      }
+    }
+  }
+}

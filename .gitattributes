@@ -1,0 +1,2 @@
+# Keep repository text portable between Windows and Linux qualification.
+* text=auto eol=lf
