@@ -679,7 +679,7 @@ const file_routing_proto_rawDesc = "" +
 	"\aAddRule\x12'.xray.app.router.command.AddRuleRequest\x1a(.xray.app.router.command.AddRuleResponse\"\x00\x12g\n" +
 	"\n" +
 	"RemoveRule\x12*.xray.app.router.command.RemoveRuleRequest\x1a+.xray.app.router.command.RemoveRuleResponse\"\x00\x12a\n" +
-	"\bListRule\x12(.xray.app.router.command.ListRuleRequest\x1a).xray.app.router.command.ListRuleResponse\"\x00B?Z=github.com/popiposter/xkeen-keenetic/internal/xrayapi;xrayapib\x06proto3"
+	"\bListRule\x12(.xray.app.router.command.ListRuleRequest\x1a).xray.app.router.command.ListRuleResponse\"\x00B>Z<github.com/popiposter/xkeen-control/internal/xrayapi;xrayapib\x06proto3"
 
 var (
 	file_routing_proto_rawDescOnce sync.Once

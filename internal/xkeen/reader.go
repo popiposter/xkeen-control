@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/popiposter/xkeen-keenetic/internal/benchmarkpolicy"
-	"github.com/popiposter/xkeen-keenetic/internal/redact"
+	"github.com/popiposter/xkeen-control/internal/benchmarkpolicy"
+	"github.com/popiposter/xkeen-control/internal/redact"
 )
 
 const (

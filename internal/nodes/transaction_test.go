@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/popiposter/xkeen-keenetic/internal/xrayapi"
+	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
 
 type fakeActivator struct {

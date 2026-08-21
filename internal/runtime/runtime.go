@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/popiposter/xkeen-keenetic/internal/c1"
-	"github.com/popiposter/xkeen-keenetic/internal/configview"
-	"github.com/popiposter/xkeen-keenetic/internal/redact"
-	"github.com/popiposter/xkeen-keenetic/internal/xkeen"
-	"github.com/popiposter/xkeen-keenetic/internal/xrayapi"
+	"github.com/popiposter/xkeen-control/internal/c1"
+	"github.com/popiposter/xkeen-control/internal/configview"
+	"github.com/popiposter/xkeen-control/internal/redact"
+	"github.com/popiposter/xkeen-control/internal/xkeen"
+	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
 
 const defaultCacheTTL = 3 * time.Second

@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/popiposter/xkeen-keenetic/internal/auth"
-	"github.com/popiposter/xkeen-keenetic/internal/c1"
-	"github.com/popiposter/xkeen-keenetic/internal/nodes"
-	controlruntime "github.com/popiposter/xkeen-keenetic/internal/runtime"
+	"github.com/popiposter/xkeen-control/internal/auth"
+	"github.com/popiposter/xkeen-control/internal/c1"
+	"github.com/popiposter/xkeen-control/internal/nodes"
+	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
 )
 
 const (

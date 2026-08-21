@@ -110,7 +110,7 @@ const file_observatory_command_proto_rawDesc = "" +
 	"\x19GetOutboundStatusResponse\x12D\n" +
 	"\x06status\x18\x01 \x01(\v2,.xray.core.app.observatory.ObservationResultR\x06status2\xa7\x01\n" +
 	"\x12ObservatoryService\x12\x90\x01\n" +
-	"\x11GetOutboundStatus\x12;.xray.core.app.observatory.command.GetOutboundStatusRequest\x1a<.xray.core.app.observatory.command.GetOutboundStatusResponse\"\x00B?Z=github.com/popiposter/xkeen-keenetic/internal/xrayapi;xrayapib\x06proto3"
+	"\x11GetOutboundStatus\x12;.xray.core.app.observatory.command.GetOutboundStatusRequest\x1a<.xray.core.app.observatory.command.GetOutboundStatusResponse\"\x00B>Z<github.com/popiposter/xkeen-control/internal/xrayapi;xrayapib\x06proto3"
 
 var (
 	file_observatory_command_proto_rawDescOnce sync.Once

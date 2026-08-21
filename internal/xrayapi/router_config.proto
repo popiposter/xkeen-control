@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package xray.app.router;
 
-option go_package = "github.com/popiposter/xkeen-keenetic/internal/xrayapi;xrayapi";
+option go_package = "github.com/popiposter/xkeen-control/internal/xrayapi;xrayapi";
 
 import "typed_message.proto";
 

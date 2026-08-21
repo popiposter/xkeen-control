@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/popiposter/xkeen-keenetic/internal/auth"
-	"github.com/popiposter/xkeen-keenetic/internal/nodes"
-	controlruntime "github.com/popiposter/xkeen-keenetic/internal/runtime"
+	"github.com/popiposter/xkeen-control/internal/auth"
+	"github.com/popiposter/xkeen-control/internal/nodes"
+	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
 )
 
 func TestMutationRoutesRequireCSRFAndReturnSanitizedPreview(t *testing.T) {

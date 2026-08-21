@@ -1,4 +1,4 @@
-module github.com/popiposter/xkeen-keenetic
+module github.com/popiposter/xkeen-control
 
 go 1.27
 
