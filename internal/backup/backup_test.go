@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"reflect"
 	"strings"
 	"sync"
@@ -176,25 +177,82 @@ func TestSafeExportRequiresStoredApplianceAuthority(t *testing.T) {
 	}
 }
 
-func TestBackupExportDoesNotCreateFilesOrEchoSensitiveInputs(t *testing.T) {
-	temporary := t.TempDir()
-	before, err := os.ReadDir(temporary)
-	if err != nil {
-		t.Fatal(err)
-	}
-	const passphrase = "correct synthetic passphrase"
+func TestBundleValidatesBuildProvenanceAndExplicitDevelopmentIdentity(t *testing.T) {
 	service := testService(t, &incrementingReader{}, nil)
-	if _, err := service.ExportSecret(context.Background(), passphrase); err != nil {
-		t.Fatal(err)
-	}
-	after, err := os.ReadDir(temporary)
+	contents, err := service.Export(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(before) != len(after) {
-		t.Fatalf("backup export created %d filesystem entries", len(after)-len(before))
+	var bundle Bundle
+	if err := decodeStrict(contents, &bundle); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name  string
+		build buildinfo.Info
+	}{
+		{name: "invalid version", build: buildinfo.Info{Product: "xkeen-control", Version: "banana", SourceCommit: strings.Repeat("a", 40), Channel: "stable"}},
+		{name: "short source commit", build: buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: "x", Channel: "stable"}},
+		{name: "unsupported channel", build: buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("a", 40), Channel: "nightly"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			mutated := bundle
+			mutated.Manifest.Build = test.build
+			encoded, err := json.Marshal(mutated)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ParseBundle(append(encoded, '\n')); !errors.Is(err, ErrInvalidBundle) {
+				t.Fatalf("invalid build was accepted: %v", err)
+			}
+		})
 	}
 
+	development := NewService(Config{
+		Appliance: testApplianceSource{value: testAppliance(t)}, Build: buildinfo.Info{
+			Product: "xkeen-control", Version: "dev", SourceCommit: "dev", Channel: "development",
+		}, Now: func() time.Time { return time.Unix(1_750_000_000, 0).UTC() },
+	})
+	if _, err := development.Export(context.Background()); err != nil {
+		t.Fatalf("explicit development identity was rejected: %v", err)
+	}
+}
+
+func TestBackupExportDoesNotCreateFilesOrEchoSensitiveInputs(t *testing.T) {
+	const helperEnv = "XKEEN_BACKUP_FILESYSTEM_HELPER"
+	if os.Getenv(helperEnv) == "1" {
+		service := testService(t, &incrementingReader{}, nil)
+		if _, err := service.ExportSecret(context.Background(), "correct synthetic passphrase"); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+
+	temporary := t.TempDir()
+	command := exec.Command(os.Args[0], "-test.run", "^TestBackupExportDoesNotCreateFilesOrEchoSensitiveInputs$")
+	command.Dir = temporary
+	command.Env = replaceTestEnv(os.Environ(), helperEnv, "1")
+	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
+		command.Env = replaceTestEnv(command.Env, key, temporary)
+	}
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("isolated backup export failed: %v\n%s", err, output)
+	}
+	entries, err := os.ReadDir(temporary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("isolated backup export created filesystem entries: %v", entries)
+	}
+	for _, marker := range []string{"synthetic-current-password", "correct synthetic passphrase", "https://subscription.example/synthetic-token"} {
+		if bytes.Contains(output, []byte(marker)) {
+			t.Fatalf("isolated backup export echoed sensitive marker %q", marker)
+		}
+	}
+
+	const passphrase = "correct synthetic passphrase"
 	currentPassword := "synthetic-current-password"
 	registryMarker := "https://subscription.example/synthetic-token"
 	failed := NewService(Config{
@@ -205,6 +263,26 @@ func TestBackupExportDoesNotCreateFilesOrEchoSensitiveInputs(t *testing.T) {
 	if _, err := failed.ExportSecret(context.Background(), passphrase); err == nil || strings.Contains(err.Error(), currentPassword) || strings.Contains(err.Error(), passphrase) || strings.Contains(err.Error(), registryMarker) {
 		t.Fatalf("sensitive export error = %v", err)
 	}
+}
+
+func replaceTestEnv(environment []string, key, value string) []string {
+	prefix := key + "="
+	result := make([]string, 0, len(environment)+1)
+	replaced := false
+	for _, entry := range environment {
+		if strings.HasPrefix(entry, prefix) {
+			if !replaced {
+				result = append(result, prefix+value)
+				replaced = true
+			}
+			continue
+		}
+		result = append(result, entry)
+	}
+	if !replaced {
+		result = append(result, prefix+value)
+	}
+	return result
 }
 
 func TestEncryptedRoundTripUsesBoundedEnvelopeAndFreshRandomness(t *testing.T) {

@@ -163,6 +163,43 @@ func TestBackupHTTPAuthOriginAndDownloadBoundary(t *testing.T) {
 	response.Body.Close()
 }
 
+func TestSecretExportHTTPReturnsSafeLockoutResponse(t *testing.T) {
+	hashPath := filepath.Join(t.TempDir(), "auth", "password.bcrypt")
+	const password = "synthetic-current-password"
+	if err := auth.SetPassword(hashPath, []byte(password)); err != nil {
+		t.Fatal(err)
+	}
+	manager := auth.NewManager(auth.Config{HashPath: hashPath, LockoutAfter: 2, LockoutFor: time.Hour})
+	server := httptest.NewServer(New(Config{Auth: manager, Backup: httpBackupService(t, fastHTTPBackupDeriver)}))
+	defer server.Close()
+	client := &http.Client{Jar: mustCookieJar(t)}
+	loginResponse := postJSON(t, client, server.URL+"/api/v1/session/login", map[string]string{"password": password}, "")
+	var login struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	decodeResponse(t, loginResponse, &login)
+
+	for attempt := 0; attempt < 2; attempt++ {
+		response := postJSON(t, client, server.URL+"/api/v1/backup/export-secret", map[string]string{
+			"currentPassword": "wrong synthetic password", "passphrase": "correct synthetic passphrase",
+		}, login.CSRFToken)
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		if response.StatusCode != http.StatusUnauthorized || bytes.Contains(body, []byte(password)) {
+			t.Fatalf("failed reauthentication attempt = %d %s", response.StatusCode, body)
+		}
+	}
+
+	locked := postJSON(t, client, server.URL+"/api/v1/backup/export-secret", map[string]string{
+		"currentPassword": password, "passphrase": "correct synthetic passphrase",
+	}, login.CSRFToken)
+	body, _ := io.ReadAll(locked.Body)
+	locked.Body.Close()
+	if locked.StatusCode != http.StatusTooManyRequests || !bytes.Contains(body, []byte("temporarily unavailable")) || bytes.Contains(body, []byte(password)) || bytes.Contains(body, []byte("correct synthetic passphrase")) {
+		t.Fatalf("lockout response = %d %s", locked.StatusCode, body)
+	}
+}
+
 func TestSecretExportDoesNotWriteAfterConcurrentSessionInvalidation(t *testing.T) {
 	hashPath := filepath.Join(t.TempDir(), "auth", "password.bcrypt")
 	const password = "synthetic-current-password"

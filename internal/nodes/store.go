@@ -30,7 +30,14 @@ func (s Store) Load() (Registry, error) {
 	if err != nil || len(contents) > MaxRegistryDocument {
 		return Registry{}, errors.New("registry exceeds bounded size")
 	}
-	return ParseCanonical(contents)
+	var registry Registry
+	if err := json.Unmarshal(contents, &registry); err != nil {
+		return Registry{}, errors.New("invalid registry JSON")
+	}
+	if err := registry.Validate(); err != nil {
+		return Registry{}, errors.New("invalid registry")
+	}
+	return registry, nil
 }
 
 func (s Store) Save(registry Registry) error {
@@ -66,14 +73,40 @@ func ParseCanonical(contents []byte) (Registry, error) {
 	if len(contents) == 0 || len(contents) > MaxRegistryDocument {
 		return Registry{}, errors.New("registry exceeds bounded size")
 	}
-	var registry Registry
-	if err := decodeStrictJSON(contents, &registry); err != nil {
+	var wire strictRegistry
+	if err := decodeStrictJSON(contents, &wire); err != nil {
 		return Registry{}, errors.New("invalid registry JSON")
+	}
+	registry := Registry{SchemaVersion: wire.SchemaVersion, Nodes: wire.Nodes}
+	if wire.Subscriptions != nil {
+		registry.Subscriptions = make([]Subscription, len(wire.Subscriptions))
+		for index, subscription := range wire.Subscriptions {
+			registry.Subscriptions[index] = Subscription{
+				ID: subscription.ID, Name: subscription.Name, URL: subscription.URL,
+				Enabled: subscription.Enabled == nil || *subscription.Enabled,
+			}
+		}
 	}
 	if err := registry.Validate(); err != nil {
 		return Registry{}, errors.New("invalid registry")
 	}
 	return registry, nil
+}
+
+// strictRegistry is only the backup/import wire shape. Production Store.Load
+// intentionally retains its compatibility decoder, including the historical
+// missing-subscription-enabled default and ignored additive fields.
+type strictRegistry struct {
+	SchemaVersion int                  `json:"schemaVersion"`
+	Nodes         []Node               `json:"nodes"`
+	Subscriptions []strictSubscription `json:"subscriptions,omitempty"`
+}
+
+type strictSubscription struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	URL     string `json:"url"`
+	Enabled *bool  `json:"enabled"`
 }
 
 func decodeStrictJSON(contents []byte, target any) error {

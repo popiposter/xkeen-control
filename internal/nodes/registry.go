@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -65,7 +66,7 @@ func (s *Subscription) UnmarshalJSON(data []byte) error {
 		URL     string `json:"url"`
 		Enabled *bool  `json:"enabled"`
 	}
-	if err := decodeStrictJSON(data, &record); err != nil {
+	if err := json.Unmarshal(data, &record); err != nil {
 		return err
 	}
 	s.ID, s.Name, s.URL = record.ID, record.Name, record.URL

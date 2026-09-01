@@ -453,7 +453,12 @@ func matchesSection(section Section, name string, contents []byte) bool {
 }
 
 func validBuild(value buildinfo.Info) bool {
-	return value.Product == "xkeen-control" && validHeaderToken(value.Product) && validHeaderToken(value.Version) && validHeaderToken(value.SourceCommit) && validHeaderToken(value.Channel)
+	if value.Channel == "development" {
+		// Development exports use the explicit identity retained by ordinary
+		// source builds; they do not pretend to carry release provenance.
+		return value.Product == "xkeen-control" && value.Version == "dev" && value.SourceCommit == "dev"
+	}
+	return value.Validate() == nil
 }
 
 func validHeaderToken(value string) bool {

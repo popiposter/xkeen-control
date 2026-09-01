@@ -1,6 +1,6 @@
 # Control plane
 
-`xkeen-control` is the lightweight management process around XKeen + Xray. Xray remains the traffic data plane; the panel owns typed local operations, safe projections, stable selection, signed panel lifecycle, bounded coordination and the Phase B backup export boundary.
+`xkeen-control` is the lightweight management process around XKeen + Xray. Xray remains the traffic data plane; the panel owns typed local operations, safe projections, stable selection, signed panel lifecycle and bounded coordination.
 
 This document describes the **current production-qualified runtime** after Slice D / Issue #2. D.1 / Issue #3 is the current product slice and remains planned until its implementation and production qualification complete.
 
@@ -99,15 +99,6 @@ POST /api/v1/update/rollback
 
 They use fixed product release policy rather than arbitrary URLs and preserve the same session/origin/CSRF/body-limit boundary as other mutations.
 
-Phase B backup export endpoints are:
-
-```text
-GET  /api/v1/backup/export
-POST /api/v1/backup/export-secret
-```
-
-The safe export requires an authenticated same-origin session and contains only typed `appliance` state. The secret export additionally requires the session CSRF token and one request body containing the current password and a 12–256-byte passphrase; it returns a bounded Argon2id/XChaCha20-Poly1305 envelope. Neither route writes backup material to persistent storage. Phase B has no import/apply or UI surface.
-
 ## Node activation transaction
 
 `nodes.json` is authoritative; active `04_outbounds.json` is generated.
@@ -183,6 +174,15 @@ active supported Xray policy files                  deterministic generated arti
 The first D.1 phase is intentionally zero-runtime-mutation adoption: strict-parse current supported DNS/routing/Observatory policy, prove fixed companion files and generated outbounds are compatible, validate a complete rendered candidate, then atomically write only `appliance.json` after equivalence is proven.
 
 Phase B adds a safe export with no VPN/subscription secrets by default and an explicitly re-authenticated encrypted secret-bearing export. Phase C will add bounded session-bound preview/apply restore. Secret-bearing backups must never be uploaded to public GitHub evidence.
+
+The Phase B source implementation on the Issue #3 Draft PR (not yet deployed or production-qualified) adds these routes:
+
+```text
+GET  /api/v1/backup/export
+POST /api/v1/backup/export-secret
+```
+
+The safe export requires an authenticated same-origin session and contains only typed `appliance` state. The secret export additionally requires the session CSRF token and one request body containing the current password and a 12–256-byte passphrase; it returns a bounded Argon2id/XChaCha20-Poly1305 envelope. Neither route writes backup material to persistent storage. Phase B has no import/apply or UI surface.
 
 D.1 does not expose raw JSON/Xray/XKeen editing, does not clone panel auth/listener/update state and does not install/repair XKeen/Xray. Component lifecycle remains #4; broad visual typed configuration remains #5.
 
