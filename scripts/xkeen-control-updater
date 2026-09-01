@@ -224,8 +224,7 @@ restore_node_file() {
 	destination="$2"
 	temporary="${destination}.adoption-recovery.new"
 	bounded_regular_file "$source" 8388608 || return 1
-
-[ -d "$(dirname "$destination")" ] || return 1
+	[ -d "$(dirname "$destination")" ] || return 1
 	if [ -e "$destination" ] || [ -L "$destination" ]; then
 		[ -f "$destination" ] && [ ! -L "$destination" ] || return 1
 	fi
@@ -241,8 +240,7 @@ restore_node_file() {
 node_snapshot_matches_live() {
 	bounded_regular_file "$NODE_REGISTRY" 4194304 || return 1
 	bounded_regular_file "$NODE_OUTBOUNDS" 8388608 || return 1
-
-[ "$(sha256sum "$NODE_REGISTRY" | awk '{print $1}')" = "$(sha256sum "$ADOPTION_RECOVERY/nodes.json" | awk '{print $1}')" ] || return 1
+	[ "$(sha256sum "$NODE_REGISTRY" | awk '{print $1}')" = "$(sha256sum "$ADOPTION_RECOVERY/nodes.json" | awk '{print $1}')" ] || return 1
 	[ "$(sha256sum "$NODE_OUTBOUNDS" | awk '{print $1}')" = "$(sha256sum "$ADOPTION_RECOVERY/04_outbounds.json" | awk '{print $1}')" ]
 }
 
@@ -273,12 +271,18 @@ recover_node_state() {
 			write_adoption_phase recovered
 			return 0
 		fi
+		# The persistent pair is coherent but runtime proof failed. The attempted
+		# reconciliation may itself have touched Xray, so restore the known
+		# snapshot and explicitly converge runtime to it before panel replacement.
+		restore_node_snapshot || return 1
+		reconcile_node_runtime || return 1
+		write_adoption_phase recovered
+		return 0
 	fi
-	# An incoherent pair cannot be committed. A coherent pair whose runtime
-	# reconciliation failed is also unsafe. Restore the known snapshot, then
-	# explicitly reload and verify that snapshot before panel replacement.
+	# An incoherent pair can only be before the legacy transaction's activation
+	# phase: that phase starts after both persistent writes. Restore the known
+	# snapshot; Xray is therefore still on that pre-activation generation.
 	restore_node_snapshot || return 1
-	reconcile_node_runtime || return 1
 	write_adoption_phase recovered
 }
 
