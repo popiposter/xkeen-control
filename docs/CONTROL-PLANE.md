@@ -1,27 +1,31 @@
 # Control plane
 
-`xkeen-control` is the lightweight management process around XKeen + Xray. Xray remains the traffic data plane; the panel owns typed local operations, safe projections, stable selection and bounded coordination.
+`xkeen-control` is the lightweight management process around XKeen + Xray. Xray remains the traffic data plane; the panel owns typed local operations, safe projections, stable selection, signed panel lifecycle and bounded coordination.
 
-This document describes the **current production-qualified runtime**. Planned releases/bootstrap/local appliance state/component updates are summarized separately and are not yet active production behavior.
+This document describes the **current production-qualified runtime** after Slice D / Issue #2. D.1 / Issue #3 is the current product slice and remains planned until its implementation and production qualification complete.
 
 ## Current runtime shape
 
-Production currently installs one pre-built Linux ARM64 binary and init script:
+Production installs pre-built Linux ARM64 panel artifacts from signed GitHub Releases:
 
 ```text
 /opt/sbin/xkeen-control
 /opt/etc/init.d/S99xkeen-control
+/opt/libexec/xkeen-control-updater
 ```
 
-Current local state:
+Current local state includes:
 
 ```text
 /opt/etc/xkeen-control/auth/password.bcrypt
-/opt/etc/xkeen-control/listen-address             optional exact private LAN bind
-/opt/etc/xkeen-control/secrets/nodes.json         authoritative VPN/subscription registry
-/opt/etc/xkeen-control/state/                     small bounded persistent runtime state
-/opt/etc/xkeen-control/previous/                  bounded rollback material
-/tmp/xkeen-control/                               transient work
+/opt/etc/xkeen-control/listen-address                  optional exact private LAN bind
+/opt/etc/xkeen-control/secrets/nodes.json              authoritative VPN/subscription registry
+/opt/etc/xkeen-control/state/installed-release.json    bounded installed-release marker
+/opt/etc/xkeen-control/state/update-policy.json        bounded panel update policy
+/opt/etc/xkeen-control/state/                          other small bounded operational state
+/opt/etc/xkeen-control/previous/panel/                 one previous panel generation
+/opt/etc/xkeen-control/previous/                       bounded node rollback material
+/tmp/xkeen-control/                                    transient preview/update/runtime work
 ```
 
 The binary contains the React/Vite UI. Go/Node toolchains stay off-router.
@@ -40,7 +44,19 @@ Authentication uses a local bcrypt hash, random RAM sessions, HttpOnly/SameSite 
 
 There is no generic shell, PTY, arbitrary command endpoint, filesystem API or raw configuration editor.
 
-Public/API projections are allowlisted. They may show safe operator fields such as display name, endpoint host/port, source, canonical tag/state and runtime telemetry. They must never expose UUIDs, REALITY key material, short IDs, subscription URLs/tokens, raw VLESS strings or complete secret-bearing registry/outbound objects.
+Public/API projections are allowlisted. They may show safe operator fields such as display name, endpoint host/port, source, canonical tag/state, release/build identity and runtime telemetry. They must never expose UUIDs, REALITY key material, short IDs, subscription URLs/tokens, raw VLESS strings or complete secret-bearing registry/outbound objects.
+
+## Current authority split
+
+```text
+GitHub Releases                                      software distribution authority
+/opt/etc/xkeen-control/secrets/nodes.json           node/subscription secret authority
+/opt/etc/xray/configs/04_outbounds.json             generated from nodes.json
+config/xray/*.json + config/xkeen/xkeen.json        current non-secret policy source
+RAM + /tmp/xkeen-control                            high-churn preview/update/runtime state
+```
+
+Until D.1 adoption succeeds, routing/DNS/Observatory policy remains repository-derived. The planned local `/opt/etc/xkeen-control/config/appliance.json` authority does not exist yet in current production behavior.
 
 ## Data sources
 
@@ -50,15 +66,17 @@ The current service reads bounded structured state from:
 2. Xray `ObservatoryService.GetOutboundStatus()`;
 3. `nodes.json` through typed registry code and safe projections;
 4. current non-secret Xray/XKeen policy summaries;
-5. C.1 selection/benchmark state.
+5. C.1 selection/benchmark state;
+6. current panel release/update state.
 
 ## Current API domains
 
-Session/runtime endpoints currently qualified in production include:
+Session/runtime endpoints include:
 
 ```text
 POST /api/v1/session/login
 POST /api/v1/session/logout
+POST /api/v1/session/password
 GET  /api/v1/session
 GET  /api/v1/status
 GET  /api/v1/nodes
@@ -67,9 +85,19 @@ GET  /api/v1/config-summary
 GET  /healthz
 ```
 
-Typed node/subscription mutations include preview/cancel/apply operations for import, replacement, subscription refresh, node enable/disable/remove and manual selection. The exact endpoint list lives in code/tests; this document describes domain boundaries rather than duplicating every route.
+Typed node/subscription mutations include preview/cancel/apply operations for import, replacement, subscription refresh, node enable/disable/remove and manual selection. Preview candidates are RAM-only, session-bound, bounded, expiring and one-shot. Apply receives a server-issued preview token rather than posting the secret payload again.
 
-Preview candidates are RAM-only, session-bound, bounded, expiring and one-shot. Apply receives a server-issued preview token rather than posting the secret payload again.
+Current panel lifecycle endpoints are:
+
+```text
+GET  /api/v1/update
+POST /api/v1/update/check
+POST /api/v1/update/policy
+POST /api/v1/update/apply
+POST /api/v1/update/rollback
+```
+
+They use fixed product release policy rather than arbitrary URLs and preserve the same session/origin/CSRF/body-limit boundary as other mutations.
 
 ## Node activation transaction
 
@@ -107,48 +135,49 @@ Benchmark working state stays in RAM/`/tmp`; one compact completed-run snapshot 
 
 ## Shared runtime coordinator
 
-Explicit lifecycle operations must not race selection/probe/benchmark work. Current node Apply uses the shared coordinator to preempt benchmark work, drain relevant supervisor/probe activity, hold the mutation critical section through Xray activation/rollback, then trigger immediate reconciliation.
+Explicit lifecycle operations must not race selection/probe/benchmark work. Node Apply, manual selection mutation and panel update/rollback share the coordinator lifecycle barrier. The barrier gives explicit operator mutations priority, drains/cancels managed work, holds the mutation critical section through activation/rollback and triggers immediate reconciliation after release.
 
-Future panel/component/import operations must reuse or extend this same maintenance ownership model rather than start independent mutation goroutines.
+D.1 import Apply and later component lifecycle must reuse this same maintenance ownership model rather than start independent mutation goroutines.
+
+## Signed panel release / update boundary
+
+Slice D / Issue #2 is production-qualified. `v0.1.1` completed protected publication and bounded live historical C.1 adoption → exact legacy rollback → re-adoption qualification.
+
+Normal managed update uses the installed binary's source-pinned Ed25519 trust anchor, fixed GitHub release discovery, bounded HTTPS/redirect/body policy and manifest-bound artifact hashes/sizes. Candidate assets stay under `/tmp/xkeen-control/panel-update`.
+
+The fixed external updater owns only panel lifecycle operations and fixed panel paths. It verifies generic health plus exact local version/source/channel and PID/path. One previous panel generation is retained. It is not a generic command runner or file manager.
+
+The known pre-#2 C.1 layout has a release-owned fingerprint-gated adoption path. Unknown/partial layouts fail closed. The adoption bridge includes bounded recovery for an interrupted legacy node transaction; it does not create a generic Xray mutation surface.
+
+Panel install/update does not install or repair XKeen/Xray and does not rewrite routing, DNS, Observatory or node authority state. Missing components remain a typed Setup Mode state.
 
 ## Write model
 
-Normal polling and runtime telemetry cause no persistent writes.
+Normal polling, update checks and runtime telemetry cause no persistent writes unless the operator deliberately changes policy or applies a release/state mutation.
 
-Persistent writes are purpose-specific and bounded, currently including auth/listener changes, explicit `nodes.json` mutations plus generated active outbounds, real stable-selection changes, one compact completed benchmark snapshot and bounded rollback generations.
+Persistent writes are purpose-specific and bounded, including auth/listener changes, explicit `nodes.json` mutations plus generated active outbounds, real stable-selection changes, one compact completed benchmark snapshot, compact panel release/update markers and bounded rollback generations.
 
 No SQLite/Redis/Prometheus/Grafana/growing revision history belongs on the router.
 
-## Issue #2 implementation under review — not production-qualified
+## D.1 / Issue #3 — current product slice, not yet deployed
 
-PR implementation for Issue #2 adds code for signed release discovery, bootstrap/setup state, password replacement and panel-only update/rollback. Until that PR is merged **and** a protected signed release plus bounded real-Keenetic panel qualification succeeds, none of the following is production-qualified behavior:
+D.1 introduces a schema-versioned local non-secret appliance authority and portable backup/import/restore. The detailed contract lives in Issue #3.
+
+Planned authority after successful D.1 adoption:
 
 ```text
-/opt/etc/xkeen-control/previous/panel/
-/opt/etc/xkeen-control/state/installed-release.json
-/opt/etc/xkeen-control/state/update-policy.json
-/opt/libexec/xkeen-control-updater
-/tmp/xkeen-control/panel-update/
-
-GET  /api/v1/update
-POST /api/v1/update/check
-POST /api/v1/update/policy
-POST /api/v1/update/apply
-POST /api/v1/update/rollback
-POST /api/v1/session/password
+/opt/etc/xkeen-control/config/appliance.json        portable supported non-secret policy
+/opt/etc/xkeen-control/secrets/nodes.json           separate VPN/subscription secret authority
+active supported Xray policy files                  deterministic generated artifacts
 ```
 
-The implementation reuses the C.1 coordinator for panel lifecycle exclusion and is intentionally panel-only: it does not install/repair XKeen/Xray or rewrite routing, DNS, Observatory or the node registry. Missing components remain a typed Setup Mode state. `docs/RELEASES.md` and Issue #2 describe the implementation contract and qualification gates without promoting them to current production authority.
+The first D.1 phase is intentionally zero-runtime-mutation adoption: strict-parse current supported DNS/routing/Observatory policy, prove fixed companion files and generated outbounds are compatible, validate a complete rendered candidate, then atomically write only `appliance.json` after equivalence is proven.
 
-## Planned product capabilities — not yet deployed
+Later D.1 phases add a safe export with no VPN/subscription secrets by default, an explicitly re-authenticated encrypted secret-bearing export, and bounded session-bound preview/apply restore. Secret-bearing backups must never be uploaded to public GitHub evidence.
 
-### #2 — releases/bootstrap/panel self-update
+D.1 does not expose raw JSON/Xray/XKeen editing, does not clone panel auth/listener/update state and does not install/repair XKeen/Xray. Component lifecycle remains #4; broad visual typed configuration remains #5.
 
-This public repository becomes the signed software distribution channel after the protected release gate and real-router qualification complete. The panel gains signed release discovery, one-command bootstrap, setup mode and transactional self-update with one previous panel generation. Normal panel install/update requires no GitHub credential.
-
-### #3 — local appliance state / backup
-
-A schema-versioned local `appliance.json` will become the non-secret supported settings authority. Portable safe export excludes VPN/subscription secrets by default; optional secret-bearing backup is encrypted. This file does not exist as authority yet.
+## Planned later capabilities
 
 ### #4 — component lifecycle
 
@@ -156,13 +185,13 @@ Typed/version-aware XKeen/Xray/geodata inventory/update/rollback will share the 
 
 ### #5 — visual configuration
 
-Supported routing, DNS, XKeen/Xray, performance and panel settings will be rendered from typed local state into complete runtime candidates with preview/validation/apply/rollback. No raw JSON editor.
+Supported routing, DNS, XKeen/Xray, performance and panel settings will be edited as typed domains and rendered into complete runtime candidates with preview/validation/apply/rollback. No raw JSON editor.
 
 ## Authorities
 
 - Current system architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - Sequencing: [`ROADMAP.md`](ROADMAP.md)
+- Active D.1 contract: [Issue #3](https://github.com/popiposter/xkeen-control/issues/3)
 - Build/test: [`DEVELOPMENT.md`](DEVELOPMENT.md)
 - Production operations: [`OPERATIONS.md`](OPERATIONS.md)
-- Fresh install/restore: [`FRESH-KEENETIC.md`](FRESH-KEENETIC.md)
 - Security: [`../SECURITY.md`](../SECURITY.md)
