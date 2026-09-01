@@ -18,8 +18,8 @@ ROOT_PREFIX="${XKEEN_CONTROL_TEST_ROOT:-}"
 # The only legacy generation eligible for published-installer adoption is the
 # historical manual C.1 panel. These fingerprints are intentionally fixed in
 # the release-owned installer; they are not operator or environment inputs.
-LEGACY_PANEL_BINARY_SHA256="e8d9d02d0093c62ac4eb330cd28f15ee5fd640db2be4c7788b958f64cefdd937"
-LEGACY_PANEL_INIT_SHA256="6dc8d8fd7315acd746e0729e2291dd198511cb9bbd214be6d13400a654813085"
+LEGACY_PANEL_BINARY_SHA256="89f7ef1a75b1f928e998fdfa7a8b6ea86e4d544534625c9b483104a31b5d4826"
+LEGACY_PANEL_INIT_SHA256="2976e5ddaa076031e416d77da5ae865a921a7b00692c8000bf8d71a16927475d"
 
 if [ "$TEST_MODE" = "1" ]; then
 	case "$ROOT_PREFIX" in
@@ -79,6 +79,64 @@ need_tool curl curl
 need_tool jq jq
 need_tool sha256sum coreutils-sha256sum
 
+validate_buildinfo_json() {
+	jq -e -s '
+		def identifier_valid($value; $prerelease):
+			if ($value | type) != "string" or $value == "" then false
+			elif (($value | test("^[A-Za-z0-9-]+$")) | not) then false
+			elif $prerelease and (($value | test("^[0-9]+$")) == true) and ($value | length) > 1 and (($value | startswith("0")) == true) then false
+			else true
+			end;
+		def identifiers_valid($value; $prerelease):
+			if ($value | type) != "string" or $value == "" then false
+			else ($value | split(".") | map(identifier_valid(.; $prerelease)) | all)
+			end;
+		def numeric_valid($value):
+			if ($value | type) != "string" or $value == "" or (($value | test("^[0-9]+$")) | not) then false
+			elif ($value | length) > 1 and (($value | startswith("0")) == true) then false
+			else true
+			end;
+		def core_valid($value):
+			if ($value | type) != "string" then false
+			else ($value | split(".")) as $parts
+				| (($parts | length) == 3 and ($parts | map(numeric_valid(.)) | all))
+			end;
+		def semver_valid($input):
+			if ($input | type) != "string" then false
+			else
+				(if ($input | startswith("v")) then $input[1:] else $input end) as $value
+				| if $value == "" or (($value | test("[ /\\\\]")) == true) then false
+				  else ($value | split("+")) as $parts
+					| if ($parts | length) > 2 or $parts[0] == "" then false
+					  elif ($parts | length) == 2 and ((identifiers_valid($parts[1]; false)) | not) then false
+					  else $parts[0] as $core_and_prerelease
+						| if ($core_and_prerelease | contains("-")) then
+							($core_and_prerelease | index("-")) as $separator
+							| ($core_and_prerelease[0:$separator]) as $core
+							| ($core_and_prerelease[($separator + 1):]) as $prerelease
+							| (core_valid($core) and identifiers_valid($prerelease; true))
+						  else core_valid($core_and_prerelease)
+						  end
+					  end
+				  end
+			end;
+		def commit_valid($value):
+			if ($value | type) != "string" then false
+			else (($value | test("^[0-9a-f]{40}$")) == true)
+			end;
+		def info_valid:
+			if type != "object" or .product != "xkeen-control" then false
+			elif (.version | type) != "string" or (.sourceCommit | type) != "string" then false
+			elif (.channel | type) != "string" or ((semver_valid(.version)) | not) then false
+			elif .channel == "development" then (.sourceCommit == "dev" or commit_valid(.sourceCommit))
+			elif .channel == "stable" then (commit_valid(.sourceCommit) and ((.version | contains("-")) | not))
+			elif .channel == "beta" then (commit_valid(.sourceCommit) and (.version | contains("-")))
+			else false
+			end;
+		(length == 1) and (.[0] | info_valid)
+	' >/dev/null 2>&1
+}
+
 legacy_layout() {
 	[ -f "$BIN" ] && [ -x "$BIN" ] && [ ! -L "$BIN" ] || return 1
 	[ -f "$INIT" ] && [ -x "$INIT" ] && [ ! -L "$INIT" ] || return 1
@@ -97,11 +155,16 @@ if [ -e "$BIN" ] || [ -L "$BIN" ]; then
 		[ -f "$INIT" ] && [ -x "$INIT" ] && [ ! -L "$INIT" ] || fail "managed panel init path is not trusted"
 		if [ -e "$STATE_DIR/installed-release.json" ] || [ -L "$STATE_DIR/installed-release.json" ]; then
 			[ -f "$STATE_DIR/installed-release.json" ] && [ ! -L "$STATE_DIR/installed-release.json" ] || fail "installed release marker is not trusted"
-			jq -e '.product == "xkeen-control" and (.version | type == "string") and (.sourceCommit | type == "string") and (.channel == "stable" or .channel == "beta")' "$STATE_DIR/installed-release.json" >/dev/null 2>&1 || fail "installed release marker is not trusted"
+			validate_buildinfo_json < "$STATE_DIR/installed-release.json" || fail "installed release marker is not trusted"
 		fi
 		[ -f "$UPDATER" ] && [ -x "$UPDATER" ] && [ ! -L "$UPDATER" ] || fail "managed updater helper is missing or invalid"
 		metadata="$($BIN version --json 2>/dev/null || true)"
-		echo "$metadata" | jq -e '.product == "xkeen-control" and (.version | type == "string") and (.sourceCommit | type == "string")' >/dev/null 2>&1 || fail "existing panel identity is not trusted"
+		printf '%s\n' "$metadata" | validate_buildinfo_json || fail "existing panel identity is not trusted"
+		if [ -e "$STATE_DIR/installed-release.json" ] || [ -L "$STATE_DIR/installed-release.json" ]; then
+			binary_identity="$(printf '%s\n' "$metadata" | jq -c '{product,version,sourceCommit,channel}')"
+			marker_identity="$(jq -c '{product,version,sourceCommit,channel}' "$STATE_DIR/installed-release.json")"
+			[ "$binary_identity" = "$marker_identity" ] || fail "installed release marker does not match the panel identity"
+		fi
 		# Existing installs use the installed binary's pinned-signature path. The
 		# bootstrap never replaces a valid install from bootstrap-only HTTPS checks.
 		if [ "$CHANNEL" = "beta" ] && [ -z "$VERSION" ]; then fail "beta rerun requires an explicit version"; fi
@@ -237,7 +300,7 @@ fi
 health="$(curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8787/healthz)" || fail "panel health check failed"
 [ "$health" = "ok" ] || fail "panel health response was not generic ok"
 metadata="$($BIN version --json)" || fail "installed build metadata is unavailable"
-echo "$metadata" | jq -e '.product == "xkeen-control" and (.sourceCommit | type == "string") and (.sourceCommit | length == 40)' >/dev/null || fail "installed build provenance is invalid"
+printf '%s\n' "$metadata" | validate_buildinfo_json || fail "installed build provenance is invalid"
 echo "xkeen-control installed: $metadata"
 echo "Management listener remains loopback by default; use an SSH tunnel unless an exact private address is configured explicitly."
 echo "XKeen/Xray/configuration readiness is reported by the authenticated panel. Missing components remain Setup Mode; no upstream interactive installer was invoked."

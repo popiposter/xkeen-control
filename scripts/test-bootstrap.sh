@@ -158,6 +158,18 @@ setup_legacy_root() {
 	printf '%s\n' existing-xray-fixture > "$root/opt/etc/xray/configs/protected-config"
 }
 
+setup_managed_root() {
+	root="$1"
+	mkdir -p "$root/opt/sbin" "$root/opt/etc/init.d" "$root/opt/libexec" \
+		"$root/opt/etc/xkeen-control/auth" "$root/opt/etc/xkeen-control/state" \
+		"$root/tmp"
+	cp "$fixture/xkeen-control-linux-arm64" "$root/opt/sbin/xkeen-control"
+	cp "$fixture/S99xkeen-control" "$root/opt/etc/init.d/S99xkeen-control"
+	cp "$fixture/xkeen-control-updater" "$root/opt/libexec/xkeen-control-updater"
+	chmod 755 "$root/opt/sbin/xkeen-control" "$root/opt/etc/init.d/S99xkeen-control" "$root/opt/libexec/xkeen-control-updater"
+	printf '%s\n' existing-auth-hash > "$root/opt/etc/xkeen-control/auth/password.bcrypt"
+}
+
 run_installer "$testroot" >/dev/null
 
 [ -x "$testroot/opt/sbin/xkeen-control" ]
@@ -173,6 +185,45 @@ after_hash="$(sha256sum "$testroot/opt/etc/xkeen-control/auth/password.bcrypt" |
 [ "$before_hash" = "$after_hash" ]
 [ "$(wc -l < "$testroot/bootstrap-calls" | tr -d '[:space:]')" -eq 1 ]
 grep -Fq 'self-update --channel stable --apply' "$testroot/self-update-calls"
+
+malformed_marker_root="$tmp/malformed-marker-root"
+setup_managed_root "$malformed_marker_root"
+printf '%s\n' '{"product":"xkeen-control","version":"","sourceCommit":"","channel":"stable"}' > "$malformed_marker_root/opt/etc/xkeen-control/state/installed-release.json"
+malformed_marker_before="$(sha256sum "$malformed_marker_root/opt/etc/xkeen-control/state/installed-release.json" | awk '{print $1}')"
+malformed_binary_before="$(sha256sum "$malformed_marker_root/opt/sbin/xkeen-control" | awk '{print $1}')"
+if run_installer "$malformed_marker_root" >/dev/null 2>&1; then
+	echo "malformed managed marker unexpectedly delegated" >&2
+	exit 1
+fi
+[ "$(sha256sum "$malformed_marker_root/opt/etc/xkeen-control/state/installed-release.json" | awk '{print $1}')" = "$malformed_marker_before" ]
+[ "$(sha256sum "$malformed_marker_root/opt/sbin/xkeen-control" | awk '{print $1}')" = "$malformed_binary_before" ]
+[ ! -e "$malformed_marker_root/curl-calls" ]
+[ ! -e "$malformed_marker_root/self-update-calls" ]
+
+mismatched_marker_root="$tmp/mismatched-marker-root"
+setup_managed_root "$mismatched_marker_root"
+printf '%s\n' '{"product":"xkeen-control","version":"1.2.4","sourceCommit":"cccccccccccccccccccccccccccccccccccccccc","channel":"stable"}' > "$mismatched_marker_root/opt/etc/xkeen-control/state/installed-release.json"
+mismatched_marker_before="$(sha256sum "$mismatched_marker_root/opt/etc/xkeen-control/state/installed-release.json" | awk '{print $1}')"
+mismatched_binary_before="$(sha256sum "$mismatched_marker_root/opt/sbin/xkeen-control" | awk '{print $1}')"
+if run_installer "$mismatched_marker_root" >/dev/null 2>&1; then
+	echo "mismatched managed marker unexpectedly delegated" >&2
+	exit 1
+fi
+[ "$(sha256sum "$mismatched_marker_root/opt/etc/xkeen-control/state/installed-release.json" | awk '{print $1}')" = "$mismatched_marker_before" ]
+[ "$(sha256sum "$mismatched_marker_root/opt/sbin/xkeen-control" | awk '{print $1}')" = "$mismatched_binary_before" ]
+[ ! -e "$mismatched_marker_root/curl-calls" ]
+[ ! -e "$mismatched_marker_root/self-update-calls" ]
+
+invalid_binary_root="$tmp/invalid-binary-root"
+setup_managed_root "$invalid_binary_root"
+sed 's/cccccccccccccccccccccccccccccccccccccccc/CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC/' "$fixture/xkeen-control-linux-arm64" > "$invalid_binary_root/opt/sbin/xkeen-control"
+chmod 755 "$invalid_binary_root/opt/sbin/xkeen-control"
+if run_installer "$invalid_binary_root" >/dev/null 2>&1; then
+	echo "invalid managed binary unexpectedly delegated" >&2
+	exit 1
+fi
+[ ! -e "$invalid_binary_root/curl-calls" ]
+[ ! -e "$invalid_binary_root/self-update-calls" ]
 
 candidate_binary_hash="$(sha256sum "$fixture/xkeen-control-linux-arm64" | awk '{print $1}')"
 candidate_init_hash="$(sha256sum "$fixture/S99xkeen-control" | awk '{print $1}')"
