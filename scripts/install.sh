@@ -15,6 +15,12 @@ VERSION="${XKEEN_CONTROL_VERSION:-}"
 TEST_MODE="${XKEEN_CONTROL_TEST_MODE:-0}"
 ROOT_PREFIX="${XKEEN_CONTROL_TEST_ROOT:-}"
 
+# The only legacy generation eligible for published-installer adoption is the
+# historical manual C.1 panel. These fingerprints are intentionally fixed in
+# the release-owned installer; they are not operator or environment inputs.
+LEGACY_PANEL_BINARY_SHA256="e8d9d02d0093c62ac4eb330cd28f15ee5fd640db2be4c7788b958f64cefdd937"
+LEGACY_PANEL_INIT_SHA256="6dc8d8fd7315acd746e0729e2291dd198511cb9bbd214be6d13400a654813085"
+
 if [ "$TEST_MODE" = "1" ]; then
 	case "$ROOT_PREFIX" in
 		/tmp/*) ;;
@@ -32,7 +38,10 @@ UPDATER="${OPT_ROOT}/libexec/xkeen-control-updater"
 ROOT_DIR="${OPT_ROOT}/etc/xkeen-control"
 AUTH_DIR="${ROOT_DIR}/auth"
 STATE_DIR="${ROOT_DIR}/state"
-TMP_ROOT="${ROOT_PREFIX}/tmp/xkeen-control/panel-bootstrap"
+BOOTSTRAP_TMP_ROOT="${ROOT_PREFIX}/tmp/xkeen-control/panel-bootstrap"
+UPDATE_TMP_ROOT="${ROOT_PREFIX}/tmp/xkeen-control/panel-update"
+TMP_ROOT="$BOOTSTRAP_TMP_ROOT"
+LEGACY_ADOPTION=0
 
 fail() { echo "ERROR: $1" >&2; exit 1; }
 if [ "$TEST_MODE" != "1" ]; then
@@ -70,18 +79,50 @@ need_tool curl curl
 need_tool jq jq
 need_tool sha256sum coreutils-sha256sum
 
-if [ -e "$BIN" ]; then
-	[ -x "$BIN" ] || fail "existing panel path is not an executable managed install"
-	metadata="$($BIN version --json 2>/dev/null || true)"
-	echo "$metadata" | jq -e '.product == "xkeen-control" and (.version | type == "string") and (.sourceCommit | type == "string")' >/dev/null 2>&1 || fail "existing panel identity is not trusted"
-	# Existing installs use the installed binary's pinned-signature path. The
-	# bootstrap never replaces a valid install from bootstrap-only HTTPS checks.
-	if [ "$CHANNEL" = "beta" ] && [ -z "$VERSION" ]; then fail "beta rerun requires an explicit version"; fi
-	if [ "$CHANNEL" = "stable" ] && [ -n "$VERSION" ]; then fail "stable rerun does not accept an arbitrary version"; fi
-	if [ -n "$VERSION" ]; then
-		exec "$BIN" self-update --channel "$CHANNEL" --apply "$VERSION"
+legacy_layout() {
+	[ -f "$BIN" ] && [ -x "$BIN" ] && [ ! -L "$BIN" ] || return 1
+	[ -f "$INIT" ] && [ -x "$INIT" ] && [ ! -L "$INIT" ] || return 1
+	[ ! -e "$STATE_DIR/installed-release.json" ] && [ ! -L "$STATE_DIR/installed-release.json" ] || return 1
+	[ ! -e "$UPDATER" ] && [ ! -L "$UPDATER" ] || return 1
+	[ "$(sha256sum "$BIN" | awk '{print $1}')" = "$LEGACY_PANEL_BINARY_SHA256" ] || return 1
+	[ "$(sha256sum "$INIT" | awk '{print $1}')" = "$LEGACY_PANEL_INIT_SHA256" ] || return 1
+}
+
+if [ -e "$BIN" ] || [ -L "$BIN" ]; then
+	if legacy_layout; then
+		LEGACY_ADOPTION=1
+		TMP_ROOT="$UPDATE_TMP_ROOT"
+	else
+		[ -f "$BIN" ] && [ -x "$BIN" ] && [ ! -L "$BIN" ] || fail "existing panel path is not an executable managed install"
+		[ -f "$INIT" ] && [ -x "$INIT" ] && [ ! -L "$INIT" ] || fail "managed panel init path is not trusted"
+		if [ -e "$STATE_DIR/installed-release.json" ] || [ -L "$STATE_DIR/installed-release.json" ]; then
+			[ -f "$STATE_DIR/installed-release.json" ] && [ ! -L "$STATE_DIR/installed-release.json" ] || fail "installed release marker is not trusted"
+			jq -e '.product == "xkeen-control" and (.version | type == "string") and (.sourceCommit | type == "string") and (.channel == "stable" or .channel == "beta")' "$STATE_DIR/installed-release.json" >/dev/null 2>&1 || fail "installed release marker is not trusted"
+		fi
+		[ -f "$UPDATER" ] && [ -x "$UPDATER" ] && [ ! -L "$UPDATER" ] || fail "managed updater helper is missing or invalid"
+		metadata="$($BIN version --json 2>/dev/null || true)"
+		echo "$metadata" | jq -e '.product == "xkeen-control" and (.version | type == "string") and (.sourceCommit | type == "string")' >/dev/null 2>&1 || fail "existing panel identity is not trusted"
+		# Existing installs use the installed binary's pinned-signature path. The
+		# bootstrap never replaces a valid install from bootstrap-only HTTPS checks.
+		if [ "$CHANNEL" = "beta" ] && [ -z "$VERSION" ]; then fail "beta rerun requires an explicit version"; fi
+		if [ "$CHANNEL" = "stable" ] && [ -n "$VERSION" ]; then fail "stable rerun does not accept an arbitrary version"; fi
+		if [ -n "$VERSION" ]; then
+			exec "$BIN" self-update --channel "$CHANNEL" --apply "$VERSION"
+		fi
+		exec "$BIN" self-update --channel "$CHANNEL" --apply
 	fi
-	exec "$BIN" self-update --channel "$CHANNEL" --apply
+fi
+
+if [ ! -e "$BIN" ] && [ ! -L "$BIN" ]; then
+	[ ! -e "$INIT" ] && [ ! -L "$INIT" ] && \
+	[ ! -e "$UPDATER" ] && [ ! -L "$UPDATER" ] && \
+	[ ! -e "$STATE_DIR/installed-release.json" ] && [ ! -L "$STATE_DIR/installed-release.json" ] || \
+		fail "partial managed install is not eligible for bootstrap"
+fi
+
+if [ "$LEGACY_ADOPTION" = "1" ]; then
+	[ "$CHANNEL" = "stable" ] || fail "legacy adoption requires the stable channel"
+	[ -z "$VERSION" ] || fail "legacy adoption does not accept an arbitrary version"
 fi
 
 case "$CHANNEL" in
@@ -124,7 +165,7 @@ for name in xkeen-control-linux-arm64 S99xkeen-control xkeen-control-updater ins
 	fetch "$name" "$TMP_ROOT/assets/$name"
 done
 
-jq -e --arg channel "$CHANNEL" --arg version "$EXPECTED_VERSION" '.schemaVersion == 1 and .product == "xkeen-control" and .version == $version and .channel == $channel and .os == "linux" and .architecture == "arm64" and ((.artifacts | map(.name) | sort) == ["S99xkeen-control", "install.sh", "xkeen-control-linux-arm64", "xkeen-control-updater"])' "$TMP_ROOT/release-manifest.json" >/dev/null || fail "release manifest identity does not match bootstrap policy"
+jq -e --arg channel "$CHANNEL" --arg version "$EXPECTED_VERSION" '.schemaVersion == 1 and .product == "xkeen-control" and .version == $version and .channel == $channel and (.sourceCommit | type == "string" and length == 40) and .os == "linux" and .architecture == "arm64" and ((.artifacts | map(.name) | sort) == ["S99xkeen-control", "install.sh", "xkeen-control-linux-arm64", "xkeen-control-updater"])' "$TMP_ROOT/release-manifest.json" >/dev/null || fail "release manifest identity does not match bootstrap policy"
 
 # First-install trust starts at GitHub HTTPS. Internal manifest, size and hash
 # consistency is checked before any asset is installed; the downloaded panel
@@ -161,6 +202,20 @@ while read -r expected name; do
 	sum_names="$sum_names $name"
 done < "$TMP_ROOT/SHA256SUMS"
 [ "$sum_count" -eq 6 ] || fail "checksum list is incomplete"
+
+if [ "$LEGACY_ADOPTION" = "1" ]; then
+	# The fixed updater owns stop/swap/health/rollback. The installer only
+	# moves the already-consistency-checked release into its fixed candidate
+	# boundary and invokes that staged updater; it never installs a helper first.
+	for name in xkeen-control-linux-arm64 S99xkeen-control xkeen-control-updater; do
+		cp "$TMP_ROOT/assets/$name" "$TMP_ROOT/$name"
+		chmod 755 "$TMP_ROOT/$name"
+	done
+	jq -c '{product,version,sourceCommit,channel}' "$TMP_ROOT/release-manifest.json" > "$TMP_ROOT/.installed-release.json.new" || fail "release marker could not be prepared"
+	chmod 600 "$TMP_ROOT/.installed-release.json.new"
+	mv -f "$TMP_ROOT/.installed-release.json.new" "$TMP_ROOT/installed-release.json"
+	exec "$TMP_ROOT/xkeen-control-updater" install
+fi
 
 mkdir -p "$(dirname "$BIN")" "$(dirname "$INIT")" "$(dirname "$UPDATER")"
 cp "$TMP_ROOT/assets/xkeen-control-linux-arm64" "$BIN.new"

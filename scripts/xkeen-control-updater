@@ -23,6 +23,7 @@ HELPER="${ROOT_PREFIX}/opt/libexec/xkeen-control-updater"
 PREVIOUS="${ROOT_PREFIX}/opt/etc/xkeen-control/previous/panel"
 CANDIDATE="${ROOT_PREFIX}/tmp/xkeen-control/panel-update"
 TEMP="${ROOT_PREFIX}/tmp/xkeen-control/panel-update-rollback"
+TEMP_HELPER_ABSENT="${TEMP}/.helper-absent"
 STATE="${ROOT_PREFIX}/opt/etc/xkeen-control/state"
 LISTEN_FILE="${ROOT_PREFIX}/opt/etc/xkeen-control/listen-address"
 HANDOFF_DELAY="${XKEEN_CONTROL_HANDOFF_DELAY:-0}"
@@ -98,6 +99,50 @@ copy_panel() {
 	mv -f "$destination.new" "$destination"
 }
 
+snapshot_helper_state() {
+	source="$1"
+	destination_dir="$2"
+	if [ -e "$source" ] || [ -L "$source" ]; then
+		[ -f "$source" ] && [ -x "$source" ] && [ ! -L "$source" ] || return 1
+		cp "$source" "$destination_dir/xkeen-control-updater"
+		chmod 755 "$destination_dir/xkeen-control-updater"
+		rm -f "$destination_dir/.helper-absent"
+	else
+		: > "$destination_dir/.helper-absent"
+		chmod 600 "$destination_dir/.helper-absent"
+	fi
+}
+
+restore_helper_state() {
+	source_dir="$1"
+	destination="$2"
+	if [ -f "$source_dir/.helper-absent" ]; then
+		[ ! -e "$source_dir/xkeen-control-updater" ] && [ ! -L "$source_dir/xkeen-control-updater" ] || return 1
+		if [ -e "$destination" ] || [ -L "$destination" ]; then
+			[ -f "$destination" ] && [ ! -L "$destination" ] || return 1
+			rm -f "$destination" || return 1
+		fi
+		return 0
+	fi
+	[ -f "$source_dir/xkeen-control-updater" ] && [ -x "$source_dir/xkeen-control-updater" ] && [ ! -L "$source_dir/xkeen-control-updater" ] || return 1
+	copy_panel "$source_dir/xkeen-control-updater" "$destination"
+}
+
+snapshot_generation() {
+	destination_dir="$1"
+	[ -f "$BIN" ] && [ ! -L "$BIN" ] || return 1
+	[ -f "$INIT" ] && [ ! -L "$INIT" ] || return 1
+	cp "$BIN" "$destination_dir/xkeen-control-linux-arm64"
+	cp "$INIT" "$destination_dir/S99xkeen-control"
+	snapshot_helper_state "$HELPER" "$destination_dir" || return 1
+	if [ -e "$STATE/installed-release.json" ] || [ -L "$STATE/installed-release.json" ]; then
+		[ -f "$STATE/installed-release.json" ] && [ ! -L "$STATE/installed-release.json" ] || return 1
+		cp "$STATE/installed-release.json" "$destination_dir/installed-release.json"
+		chmod 600 "$destination_dir/installed-release.json"
+	fi
+	chmod 755 "$destination_dir/xkeen-control-linux-arm64" "$destination_dir/S99xkeen-control"
+}
+
 write_marker_from() {
 	source="$1"
 	[ -f "$source" ] || return 1
@@ -112,7 +157,7 @@ restore_previous() {
 	[ -f "$PREVIOUS/xkeen-control-linux-arm64" ] || return 1
 	copy_panel "$PREVIOUS/xkeen-control-linux-arm64" "$BIN"
 	copy_panel "$PREVIOUS/S99xkeen-control" "$INIT"
-	copy_panel "$PREVIOUS/xkeen-control-updater" "$HELPER"
+	restore_helper_state "$PREVIOUS" "$HELPER" || return 1
 	if [ -f "$PREVIOUS/installed-release.json" ]; then
 		write_marker_from "$PREVIOUS/installed-release.json"
 	else
@@ -155,16 +200,13 @@ if [ "$action" = "install" ]; then
 	expected_version="$(jq -r '.version' "$CANDIDATE/installed-release.json" 2>/dev/null || true)"
 	expected_commit="$(jq -r '.sourceCommit' "$CANDIDATE/installed-release.json" 2>/dev/null || true)"
 	expected_channel="$(jq -r '.channel' "$CANDIDATE/installed-release.json" 2>/dev/null || true)"
-	if [ -f "$BIN" ]; then
+	if [ -e "$BIN" ] || [ -L "$BIN" ]; then
 		rm -rf "$PREVIOUS"
 		mkdir -p "$PREVIOUS"
 		chmod 700 "$PREVIOUS"
-		cp "$BIN" "$PREVIOUS/xkeen-control-linux-arm64"
-		cp "$INIT" "$PREVIOUS/S99xkeen-control"
-		cp "$HELPER" "$PREVIOUS/xkeen-control-updater"
-		if [ -f "$STATE/installed-release.json" ]; then cp "$STATE/installed-release.json" "$PREVIOUS/installed-release.json"; fi
-		chmod 755 "$PREVIOUS/xkeen-control-linux-arm64" "$PREVIOUS/S99xkeen-control" "$PREVIOUS/xkeen-control-updater"
-		chmod 600 "$PREVIOUS/installed-release.json" 2>/dev/null || true
+		snapshot_generation "$PREVIOUS" || { rm -rf "$PREVIOUS"; fail; }
+	elif [ -e "$INIT" ] || [ -L "$INIT" ] || [ -e "$HELPER" ] || [ -L "$HELPER" ] || [ -e "$STATE/installed-release.json" ] || [ -L "$STATE/installed-release.json" ]; then
+		fail
 	fi
 	stop_panel
 	copy_panel "$CANDIDATE/xkeen-control-linux-arm64" "$BIN"
@@ -188,12 +230,15 @@ if [ "$action" = "install" ]; then
 fi
 
 [ -f "$PREVIOUS/xkeen-control-linux-arm64" ] || fail
+rm -rf "$TEMP"
 mkdir -p "$TEMP"
 chmod 700 "$TEMP"
-cp "$BIN" "$TEMP/current-binary"
-cp "$INIT" "$TEMP/current-init"
-cp "$HELPER" "$TEMP/current-helper"
-if [ -f "$STATE/installed-release.json" ]; then cp "$STATE/installed-release.json" "$TEMP/current-installed-release.json"; fi
+snapshot_generation "$TEMP" || fail
+mv "$TEMP/xkeen-control-linux-arm64" "$TEMP/current-binary"
+mv "$TEMP/S99xkeen-control" "$TEMP/current-init"
+if [ -f "$TEMP/xkeen-control-updater" ]; then mv "$TEMP/xkeen-control-updater" "$TEMP/current-helper"; fi
+if [ -f "$TEMP/installed-release.json" ]; then mv "$TEMP/installed-release.json" "$TEMP/current-installed-release.json"; fi
+if [ -f "$TEMP_HELPER_ABSENT" ]; then mv "$TEMP_HELPER_ABSENT" "$TEMP/.current-helper-absent"; fi
 stop_panel
 restore_previous || fail
 if start_panel && health && verify_marker "$PREVIOUS/installed-release.json"; then
@@ -203,7 +248,15 @@ fi
 stop_panel
 copy_panel "$TEMP/current-binary" "$BIN"
 copy_panel "$TEMP/current-init" "$INIT"
-copy_panel "$TEMP/current-helper" "$HELPER"
+if [ -f "$TEMP/current-helper" ]; then
+	copy_panel "$TEMP/current-helper" "$HELPER"
+else
+	[ -f "$TEMP/.current-helper-absent" ] || fail
+	if [ -e "$HELPER" ] || [ -L "$HELPER" ]; then
+		[ -f "$HELPER" ] && [ ! -L "$HELPER" ] || fail
+		rm -f "$HELPER"
+	fi
+fi
 restore_current_marker
 start_panel && health && verify_marker "$TEMP/current-installed-release.json" || fail
 rm -rf "$TEMP"
