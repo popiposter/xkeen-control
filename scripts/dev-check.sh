@@ -14,7 +14,7 @@ go vet ./...
 go test -race ./...
 
 echo "== Benchmark policy fixtures =="
-bash -n scripts/disable-legacy-speed-balancer.sh scripts/run-bounded-speed-benchmark.sh scripts/test-benchmark-policy.sh scripts/test-c1.sh scripts/install-performance-schedule.sh scripts/run-xkeen-foreground.sh scripts/test-xkeen-foreground.sh scripts/deploy.sh scripts/verify.sh scripts/install.sh scripts/xkeen-control-updater scripts/release-build.sh scripts/test-release.sh scripts/test-bootstrap.sh scripts/test-updater.sh scripts/test-public-hygiene.sh scripts/test-appliance.sh
+bash -n scripts/disable-legacy-speed-balancer.sh scripts/run-bounded-speed-benchmark.sh scripts/test-benchmark-policy.sh scripts/test-c1.sh scripts/install-performance-schedule.sh scripts/run-xkeen-foreground.sh scripts/test-xkeen-foreground.sh scripts/deploy.sh scripts/prepare-deploy-candidate.sh scripts/verify.sh scripts/install.sh scripts/xkeen-control-updater scripts/release-build.sh scripts/test-release.sh scripts/test-bootstrap.sh scripts/test-updater.sh scripts/test-public-hygiene.sh scripts/test-appliance.sh
 bash scripts/test-benchmark-policy.sh
 bash scripts/test-c1.sh
 bash scripts/test-xkeen-foreground.sh
