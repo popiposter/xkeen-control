@@ -10,6 +10,7 @@ NODES_REGISTRY="$SECRET_DIR/nodes.json"
 SECRET_OUTBOUNDS="$SECRET_DIR/04_outbounds.json"
 CONTROL_BIN="${XKEEN_CONTROL_BIN:-/opt/sbin/xkeen-control}"
 CONTROL_DIR="${XKEEN_CONTROL_DIR:-/opt/etc/xkeen-control}"
+APPLIANCE_PATH="${XKEEN_APPLIANCE_PATH:-$CONTROL_DIR/config/appliance.json}"
 XKEEN_LIFECYCLE="$ROOT/scripts/run-xkeen-foreground.sh"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP="/opt/backups/xkeen-repo-$STAMP"
@@ -101,20 +102,36 @@ fi
 rm -rf "$CANDIDATE" "$XRAY_STAGE" "$XRAY_PREV"
 mkdir -p "$CANDIDATE/xray" "$CANDIDATE/xkeen" "$XRAY_STAGE" "$XKEEN_DST" "$BACKUP/xray" "$BACKUP/xkeen"
 
-for f in "$ROOT"/config/xray/*.json; do
-  [ -f "$f" ] || continue
-  [ "$(basename "$f")" = "04_outbounds.json" ] && {
-    echo "ERROR: tracked config/xray/04_outbounds.json must not exist in a secretless checkout" >&2
-    exit 1
-  }
-  cp "$f" "$CANDIDATE/xray/$(basename "$f")"
-done
-if [ -f "$NODES_REGISTRY" ]; then
-  "$CONTROL_BIN" nodes render --output "$CANDIDATE/xray/04_outbounds.json"
+if [ -e "$APPLIANCE_PATH" ] || [ -L "$APPLIANCE_PATH" ]; then
+  [ -x "$CONTROL_BIN" ] || { echo "ERROR: xkeen-control is required to render appliance.json" >&2; exit 1; }
+  XKEEN_APPLIANCE_PATH="$APPLIANCE_PATH" \
+  XKEEN_NODES_PATH="$NODES_REGISTRY" \
+  XKEEN_ACTIVE_OUTBOUNDS="$XRAY_DST/04_outbounds.json" \
+  XKEEN_XRAY_CONFIG_DIR="$XRAY_DST" \
+  XKEEN_CONFIG_PATH="$XKEEN_DST/xkeen.json" \
+  "$CONTROL_BIN" appliance validate >/dev/null
+  XKEEN_APPLIANCE_PATH="$APPLIANCE_PATH" \
+  XKEEN_NODES_PATH="$NODES_REGISTRY" \
+  XKEEN_ACTIVE_OUTBOUNDS="$XRAY_DST/04_outbounds.json" \
+  XKEEN_XRAY_CONFIG_DIR="$XRAY_DST" \
+  XKEEN_CONFIG_PATH="$XKEEN_DST/xkeen.json" \
+  "$CONTROL_BIN" appliance render --output "$CANDIDATE" >/dev/null
 else
-  cp "$SECRET_OUTBOUNDS" "$CANDIDATE/xray/04_outbounds.json"
+  for f in "$ROOT"/config/xray/*.json; do
+    [ -f "$f" ] || continue
+    [ "$(basename "$f")" = "04_outbounds.json" ] && {
+      echo "ERROR: tracked config/xray/04_outbounds.json must not exist in a secretless checkout" >&2
+      exit 1
+    }
+    cp "$f" "$CANDIDATE/xray/$(basename "$f")"
+  done
+  if [ -f "$NODES_REGISTRY" ]; then
+    "$CONTROL_BIN" nodes render --output "$CANDIDATE/xray/04_outbounds.json"
+  else
+    cp "$SECRET_OUTBOUNDS" "$CANDIDATE/xray/04_outbounds.json"
+  fi
+  cp "$ROOT/config/xkeen/xkeen.json" "$CANDIDATE/xkeen/xkeen.json"
 fi
-cp "$ROOT/config/xkeen/xkeen.json" "$CANDIDATE/xkeen/xkeen.json"
 chmod 600 "$CANDIDATE/xray/04_outbounds.json"
 
 for f in "$CANDIDATE"/xray/*.json "$CANDIDATE"/xkeen/*.json; do

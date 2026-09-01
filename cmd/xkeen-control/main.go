@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/popiposter/xkeen-control/internal/appliance"
 	"github.com/popiposter/xkeen-control/internal/auth"
 	"github.com/popiposter/xkeen-control/internal/buildinfo"
 	"github.com/popiposter/xkeen-control/internal/c1"
@@ -78,6 +79,13 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "nodes" {
 		if err := runNodesCommand(os.Args[2:]); err != nil {
+			log.Print(err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "appliance" {
+		if err := runApplianceCommand(os.Args[2:]); err != nil {
 			log.Print(err)
 			os.Exit(1)
 		}
@@ -191,7 +199,23 @@ const (
 	defaultLegacyPath      = "/opt/etc/xkeen-control/secrets/04_outbounds.json"
 	defaultActiveOutbounds = "/opt/etc/xray/configs/04_outbounds.json"
 	defaultNodePreviousDir = "/opt/etc/xkeen-control/previous"
+	defaultAppliancePath   = "/opt/etc/xkeen-control/config/appliance.json"
 )
+
+func newApplianceService() *appliance.Service {
+	configDir := getenv("XKEEN_XRAY_CONFIG_DIR", "/opt/etc/xray/configs")
+	return appliance.NewService(appliance.Config{
+		AppliancePath:       getenv("XKEEN_APPLIANCE_PATH", defaultAppliancePath),
+		ConfigDir:           configDir,
+		XkeenConfigPath:     getenv("XKEEN_CONFIG_PATH", "/opt/etc/xkeen/xkeen.json"),
+		NodesPath:           getenv("XKEEN_NODES_PATH", defaultNodesPath),
+		ActiveOutboundsPath: getenv("XKEEN_ACTIVE_OUTBOUNDS", filepath.Join(configDir, "04_outbounds.json")),
+		Validator: nodes.CommandActivator{
+			XrayBinary:   getenv("XKEEN_XRAY_BINARY", "xray"),
+			XrayAssetDir: getenv("XKEEN_XRAY_ASSET_DIR", "/opt/etc/xray/dat"),
+		},
+	})
+}
 
 func newNodeManager(coordinator interface {
 	BeginApply(context.Context) (func(), error)
@@ -261,6 +285,54 @@ func runNodesCommand(args []string) error {
 		return err
 	default:
 		return errors.New("usage: xkeen-control nodes {validate|render --output PATH|reconcile-runtime|migrate-legacy}")
+	}
+}
+
+func runApplianceCommand(args []string) error {
+	usage := "usage: xkeen-control appliance {validate|adopt|verify|render --output DIR}"
+	if len(args) == 0 {
+		return errors.New(usage)
+	}
+	service := newApplianceService()
+	switch args[0] {
+	case "validate":
+		if len(args) != 1 {
+			return errors.New(usage)
+		}
+		if err := service.ValidateStored(); err != nil {
+			return errors.New("appliance authority validation failed")
+		}
+		_, err := io.WriteString(os.Stdout, "appliance authority valid\n")
+		return err
+	case "adopt":
+		if len(args) != 1 {
+			return errors.New(usage)
+		}
+		if err := service.Adopt(context.Background()); err != nil {
+			return errors.New("appliance authority adoption failed")
+		}
+		_, err := io.WriteString(os.Stdout, "appliance authority adopted\n")
+		return err
+	case "verify":
+		if len(args) != 1 {
+			return errors.New(usage)
+		}
+		if err := service.Verify(context.Background()); err != nil {
+			return errors.New("appliance authority verification failed")
+		}
+		_, err := io.WriteString(os.Stdout, "appliance authority verified\n")
+		return err
+	case "render":
+		if len(args) != 3 || args[1] != "--output" || args[2] == "" {
+			return errors.New(usage)
+		}
+		if err := service.Render(args[2]); err != nil {
+			return errors.New("appliance candidate render failed")
+		}
+		_, err := io.WriteString(os.Stdout, "appliance candidate rendered\n")
+		return err
+	default:
+		return errors.New(usage)
 	}
 }
 
