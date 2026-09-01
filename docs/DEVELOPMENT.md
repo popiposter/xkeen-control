@@ -121,6 +121,16 @@ It covers manifest/signature tamper rejection, candidate hash/size validation, p
 
 These fixtures remain regression coverage after #2 completion; later slices must not weaken them.
 
+## Issue #3 Phase B focused fixtures
+
+The typed backup/export qualification fixture is:
+
+```sh
+bash scripts/test-backup.sh
+```
+
+It covers deterministic secretless export, typed section metadata, encrypted round trips, strict envelope tamper rejection, coherent node snapshots, single-flight crypto, HTTP session/origin/CSRF/re-authentication and session invalidation. It uses synthetic credentials and never reads router state.
+
 ## Fresh-checkout expectation
 
 A fresh clone/checkout of PR HEAD must be sufficient for documented qualification. Do not depend on untracked generated files, local secrets, an already-built binary, host npm/go packages or production registry/config files.

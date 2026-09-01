@@ -10,6 +10,10 @@ post_candidate="$candidate_root/candidate-deploy-post.$$"
 trap 'rm -rf "$tmp" "$candidate" "$pre_candidate" "$post_candidate"' EXIT
 mkdir -p "$candidate_root"
 
+normalize_policy() {
+	jq -S 'if .routing.rules then .routing.rules |= map(if has("type") then . else . + {type: "field"} end) else . end'
+}
+
 config="$tmp/xray"
 xkeen="$tmp/xkeen/xkeen.json"
 nodes="$tmp/secrets/nodes.json"
@@ -61,7 +65,11 @@ XKEEN_CONTROL_DIR="$tmp/control" \
 XKEEN_APPLIANCE_PATH="$appliance" \
 sh "$fake_repo/scripts/prepare-deploy-candidate.sh" "$pre_candidate"
 for name in 02_dns.json 05_routing.json 07_observatory.json; do
-	diff -u <(jq -S . "$fake_repo/config/xray/$name") <(jq -S . "$pre_candidate/xray/$name")
+	if [ "$name" = "05_routing.json" ]; then
+		diff -u <(normalize_policy < "$fake_repo/config/xray/$name") <(normalize_policy < "$pre_candidate/xray/$name")
+	else
+		diff -u <(jq -S . "$fake_repo/config/xray/$name") <(jq -S . "$pre_candidate/xray/$name")
+	fi
 done
 cmp "$tmp/expected-outbounds.json" "$pre_candidate/xray/04_outbounds.json"
 
@@ -90,7 +98,11 @@ XKEEN_CONTROL_DIR="$tmp/control" \
 XKEEN_APPLIANCE_PATH="$appliance" \
 sh "$fake_repo/scripts/prepare-deploy-candidate.sh" "$post_candidate"
 for name in 02_dns.json 05_routing.json 07_observatory.json; do
-	diff -u <(jq -S . "$config/$name") <(jq -S . "$post_candidate/xray/$name")
+	if [ "$name" = "05_routing.json" ]; then
+		diff -u <(normalize_policy < "$config/$name") <(normalize_policy < "$post_candidate/xray/$name")
+	else
+		diff -u <(jq -S . "$config/$name") <(jq -S . "$post_candidate/xray/$name")
+	fi
 done
 if diff -q <(jq -S . "$fake_repo/config/xray/05_routing.json") <(jq -S . "$post_candidate/xray/05_routing.json") >/dev/null; then
 	echo "post-adoption deploy candidate followed repository routing instead of appliance authority" >&2

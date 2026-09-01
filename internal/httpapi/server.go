@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/popiposter/xkeen-control/internal/auth"
+	"github.com/popiposter/xkeen-control/internal/backup"
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
@@ -24,6 +25,11 @@ const (
 	maxJSONResponse  = 512 << 10
 	csrfRequiredPath = "/api/v1/session/logout"
 )
+
+type BackupService interface {
+	Export(context.Context) ([]byte, error)
+	ExportSecret(context.Context, string) ([]byte, error)
+}
 
 type Server struct {
 	collector *controlruntime.Collector
@@ -38,6 +44,7 @@ type Server struct {
 		SetManualOverride(context.Context, string) error
 	}
 	updates panelupdate.Service
+	backup  BackupService
 }
 
 type Config struct {
@@ -53,13 +60,14 @@ type Config struct {
 		SetManualOverride(context.Context, string) error
 	}
 	Updates panelupdate.Service
+	Backup  BackupService
 }
 
 func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, selection: config.Selection, updates: config.Updates}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, selection: config.Selection, updates: config.Updates, backup: config.Backup}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -80,6 +88,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
 		"/api/v1/session/password",
 		"/api/v1/benchmark/run",
+		"/api/v1/backup/export", "/api/v1/backup/export-secret",
 		"/api/v1/nodes/import/preview", "/api/v1/nodes/replace/preview",
 		"/api/v1/subscriptions/refresh/preview", "/api/v1/subscriptions/state/preview", "/api/v1/subscriptions/remove/preview",
 		"/api/v1/selection/override",
@@ -167,6 +176,18 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.runBenchmark(w, r)
+	case "/api/v1/backup/export":
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w, http.MethodGet)
+			return
+		}
+		s.exportBackup(w, r)
+	case "/api/v1/backup/export-secret":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.exportSecretBackup(w, r)
 	case "/api/v1/nodes/import/preview":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -282,6 +303,81 @@ func (s *Server) runBenchmark(w http.ResponseWriter, r *http.Request) {
 		Accepted bool   `json:"accepted"`
 		State    string `json:"state"`
 	}{Accepted: true, State: "accepted"})
+}
+
+func (s *Server) exportBackup(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	if s.backup == nil {
+		writeError(w, http.StatusServiceUnavailable, "backup unavailable")
+		return
+	}
+	contents, err := s.backup.Export(r.Context())
+	if err != nil {
+		writeBackupError(w, err)
+		return
+	}
+	writeBackupDownload(w, contents, backup.SafeFilename, backup.BackupMediaType)
+}
+
+func (s *Server) exportSecretBackup(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	var request struct {
+		CurrentPassword string `json:"currentPassword"`
+		Passphrase      string `json:"passphrase"`
+	}
+	if !s.decodeSecretBackupRequest(w, r, &request) {
+		return
+	}
+	if request.CurrentPassword == "" {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+	if err := backup.ValidatePassphrase(request.Passphrase); err != nil {
+		writeError(w, http.StatusBadRequest, "passphrase is outside the allowed bounds")
+		return
+	}
+	if err := s.auth.Reauthenticate(remoteIP(r), request.CurrentPassword); err != nil {
+		s.writeReauthenticationError(w, err)
+		return
+	}
+	if s.backup == nil {
+		writeError(w, http.StatusServiceUnavailable, "backup unavailable")
+		return
+	}
+	contents, err := s.backup.ExportSecret(r.Context(), request.Passphrase)
+	if err != nil {
+		writeBackupError(w, err)
+		return
+	}
+	defer clearBytes(contents)
+	// Password replacement and logout invalidate all sessions in RAM. The
+	// encrypted bytes are not committed to the response until this check wins.
+	current, valid := s.auth.SessionFromRequest(r)
+	if !valid || current.CSRFToken != session.CSRFToken {
+		writeError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	writeBackupDownload(w, contents, backup.SecretFilename, backup.EncryptedBackupMediaType)
+}
+
+func (s *Server) writeReauthenticationError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, auth.ErrLocked):
+		writeError(w, http.StatusTooManyRequests, "temporarily unavailable")
+	case errors.Is(err, auth.ErrNotConfigured):
+		writeError(w, http.StatusServiceUnavailable, "authentication unavailable")
+	default:
+		writeError(w, http.StatusUnauthorized, "reauthentication failed")
+	}
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
@@ -808,6 +904,23 @@ func (s *Server) decodeMutation(w http.ResponseWriter, r *http.Request, value an
 	return true
 }
 
+func (s *Server) decodeSecretBackupRequest(w http.ResponseWriter, r *http.Request, value any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, backup.MaxSecretRequestBody)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return false
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return false
+	}
+	return true
+}
+
 func (s *Server) writeNodeOperationResult(w http.ResponseWriter, preview nodes.Preview, err error) {
 	if err != nil {
 		s.writeNodeOperationError(w, err)
@@ -907,6 +1020,33 @@ func (s *Server) originAllowed(r *http.Request) bool {
 		return true
 	}
 	return s.auth.OriginAllowed(r)
+}
+
+func writeBackupError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, backup.ErrBusy):
+		writeError(w, http.StatusConflict, "backup export busy")
+	case errors.Is(err, backup.ErrInvalidPassphrase):
+		writeError(w, http.StatusBadRequest, "passphrase is outside the allowed bounds")
+	case errors.Is(err, backup.ErrUnavailable):
+		writeError(w, http.StatusServiceUnavailable, "backup unavailable")
+	default:
+		writeError(w, http.StatusInternalServerError, "backup unavailable")
+	}
+}
+
+func writeBackupDownload(w http.ResponseWriter, contents []byte, filename, mediaType string) {
+	w.Header().Set("Content-Type", mediaType)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(contents)
+}
+
+func clearBytes(contents []byte) {
+	for index := range contents {
+		contents[index] = 0
+	}
 }
 
 func setSecurityHeaders(w http.ResponseWriter, api bool) {
