@@ -175,7 +175,7 @@ The first D.1 phase is intentionally zero-runtime-mutation adoption: strict-pars
 
 Phase B adds a safe export with no VPN/subscription secrets by default and an explicitly re-authenticated encrypted secret-bearing export. Phase C will add bounded session-bound preview/apply restore. Secret-bearing backups must never be uploaded to public GitHub evidence.
 
-The Phase B source implementation on the Issue #3 Draft PR (not yet deployed or production-qualified) adds these routes:
+The Phase B source implementation (not yet deployed or production-qualified) adds these routes:
 
 ```text
 GET  /api/v1/backup/export
