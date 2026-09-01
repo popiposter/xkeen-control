@@ -43,7 +43,7 @@ It was initialized on 2026-08-21 from the validated secretless source tree of th
 a1b8c3ce4e7f1914312b23b52c3b96269865e90e
 ```
 
-Only current source content is migrated into fresh Git history. Old commits, branches, pull-request refs, cached PR views, releases, Actions artifacts, issues, credentials, router backups and other historical Git objects are not imported.
+Only current source content was migrated into fresh Git history. Old commits, branches, pull-request refs, cached PR views, releases, Actions artifacts, issues, credentials, router backups and other historical Git objects are not imported.
 
 The former `popiposter/xkeen-keenetic` repository remains private historical/quarantine storage and is not a software or release authority. Do not merge, mirror or import its Git history into this repository.
 
@@ -53,21 +53,22 @@ Before accepting migration or release changes, verify that current public histor
 
 ## Releases and update supply chain
 
-Slice D / Issue #2 is introducing signed releases, one-command bootstrap and transactional panel self-update. Until it is merged and qualified, those capabilities are planned rather than current production behavior.
+Slice D / Issue #2 is production-qualified. Signed public releases, bounded bootstrap and transactional panel self-update/rollback are current behavior for the qualified `linux/arm64` target. Stable release `v0.1.1` was built from exact reviewed source `8f15246099538426ef08163b832c3aa6f73e8265`, passed the protected release workflow, and completed bounded live legacy adoption → rollback → re-adoption qualification.
 
-The release design requires:
+The release/update design requires:
 
-- no production secrets available to build/release jobs;
+- no production router secrets available to build/release jobs;
 - exact source revision provenance;
+- a source-pinned Ed25519 public trust anchor with the matching private key confined to the protected GitHub `release` environment;
 - signed release manifest plus artifact hashes/sizes;
 - architecture/compatibility validation before install;
 - candidate downloads in `/tmp`;
-- one bounded previous panel generation and health-verified rollback;
+- one bounded previous panel generation and health/version/PID-path-verified rollback;
 - no GitHub write credential on the router.
 
-The production Ed25519 public key is a release trust anchor and must be source-controlled only after the operator has provisioned the matching protected `release` environment private key. Synthetic fixture keys must never be copied into release configuration. Until that gate is complete, update checks fail closed and no stable release is published.
+Synthetic fixture keys remain test-only and must never be copied into release configuration. Release publication must continue to fail closed if protected signing material or the source-pinned public-key match is unavailable.
 
-Normal public release install/update should require no GitHub credential.
+Normal public release install/update requires no GitHub credential. Existing managed installs use the installed binary's pinned-signature update path. The historical C.1 bridge is fingerprint-gated and exists only to adopt the known pre-#2 panel layout; unknown or partial layouts fail closed.
 
 ## Control-plane UI
 

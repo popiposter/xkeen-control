@@ -1,26 +1,62 @@
 # Fresh Keenetic / restore
 
-This document separates the **current C.1 restore path** from the planned one-command product bootstrap in Issue #2.
+This document describes the current qualified panel bootstrap boundary and separates it from destructive Entware/KeeneticOS provisioning and the planned D.1 portable restore model.
 
-Target currently qualified in production: Keenetic Ultra KN-1811, KeeneticOS 5+, Entware/Open Package, XKeen + Xray.
+Target currently qualified in production: Keenetic `linux/arm64`, KeeneticOS 5+, Entware/Open Package, XKeen + Xray.
 
-> Git/source is secretless. A real restore also needs the router's secret node registry or a future D.1 encrypted backup.
+> **Secret boundary:** Git/source/releases are secretless. Restoring an existing VPN configuration still requires the router's local secret node registry or the future D.1 encrypted backup format.
 
 ## Current prerequisites
 
-Before repository deployment, the router needs:
+Before panel bootstrap, the router needs:
 
 - working `/opt` / Entware/Open Package;
-- SSH administration;
-- XKeen + Xray installed;
-- current required geodata/runtime dependencies;
-- local VPN secret material when restoring an existing configuration.
+- root administration;
+- supported `linux/arm64` architecture;
+- network access to the fixed public GitHub release hosts.
 
-Do not run blanket `opkg upgrade` as a routine product bootstrap step. Install/update only prerequisites intentionally required by the active procedure. The historical repository `bootstrap.sh` is deliberately not part of this fresh public baseline because it predates the #2 installer architecture and used blanket package upgrade behavior.
+XKeen/Xray may already be installed for a running appliance, but the panel bootstrap does not install or repair them. Missing XKeen/Xray/configuration is reported as Setup Mode.
+
+Do not run blanket `opkg upgrade` as a routine product bootstrap step. Install/update only prerequisites intentionally required by the active procedure. The historical repository `bootstrap.sh` is deliberately not part of the public product path because it predates the bounded installer architecture and used blanket package upgrade behavior.
+
+## Qualified panel bootstrap
+
+The currently production-qualified release-specific installer is:
+
+```sh
+sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.1.1/install.sh)"
+```
+
+It requires root, `/opt`, Entware `opkg`, supported architecture and bounded free space; installs only explicitly missing prerequisites; verifies the release's expected manifest/hash/size set; installs the panel binary/init/fixed updater; preserves existing router-local state; and verifies generic health plus exact local build identity.
+
+For a genuinely new panel auth state, bootstrap credential generation is Go-owned, uses `crypto/rand`, stores only a bcrypt hash and prints the plaintext once to the invoking terminal. Reruns do not reset an existing credential.
+
+The panel remains loopback by default or may use one exact private management address. It never opens a wildcard/public listener or WAN firewall rule.
+
+## Existing managed installs
+
+If `/opt/sbin/xkeen-control` is already a valid managed #2 install, rerunning the installer preserves auth/listener/state/secrets and delegates to the installed binary's source-pinned Ed25519 update path rather than downgrading trust to bootstrap-only HTTPS checks.
+
+## Historical C.1 adoption
+
+The known pre-#2 manual C.1 panel is supported through a narrow release-owned adoption bridge. Adoption is allowed only when the fixed historical binary/init SHA-256 fingerprints match and the managed helper/marker state matches the legacy layout; unknown, partial or corrupt layouts fail closed.
+
+The bridge snapshots only the bounded node authority/generated-outbounds pair required to survive an old-process Apply interruption. After stopping the exact legacy process it distinguishes unchanged state, incoherent mid-write state and coherent post-write/pre-activation state. Coherent changed state must pass typed full Xray runtime reconciliation; failure restores the validated snapshot and converges runtime before panel replacement.
+
+Production qualification for `v0.1.1` completed the full sequence:
+
+```text
+legacy exact
+  -> v0.1.1 adoption
+  -> rollback to exact legacy binary/init with helper absent
+  -> v0.1.1 re-adoption
+```
+
+All transitions passed generic health, exact version/source/channel and single PID-file-backed process checks while bounded non-secret fingerprints for auth/listener/node/Xray/XKeen/selection/benchmark state remained unchanged.
 
 ## Current secret restore
 
-Authoritative current registry:
+Authoritative node/subscription registry:
 
 ```text
 /opt/etc/xkeen-control/secrets/nodes.json
@@ -33,13 +69,13 @@ parent directory 0700
 nodes.json        0600
 ```
 
-For migration of an older working installation, `scripts/migrate-secrets.sh` is a one-time compatibility path. Do not print or copy secret contents into GitHub evidence.
+For migration of an older working configuration, `scripts/migrate-secrets.sh` remains a one-time compatibility path where applicable. Do not print or copy secret contents into GitHub evidence.
 
 Generated active `04_outbounds.json` is not a backup authority. Restore the registry, then use the product transaction/render path so outbounds and runtime readiness are verified together.
 
-## Current repository deployment
+## Advanced repository deployment
 
-Until #2 ships signed public releases:
+Repository deployment remains available for deliberate development/operator work but is not the normal public distribution path:
 
 1. obtain the intended `popiposter/xkeen-control` revision on a workstation;
 2. build/test `xkeen-control` off-router;
@@ -60,15 +96,13 @@ It also preserves C.1 ownership: legacy XKeen Speed Balancer/watchdog/full-bench
 
 ## Verification
 
-Use:
+For repository deployment use:
 
 ```sh
 ./scripts/verify.sh
 ```
 
-Then verify the intended traffic behavior from a trusted LAN client: ordinary traffic remains DIRECT while explicitly proxied services use the unified `bal-proxy` pool.
-
-Never use a heavy benchmark merely as a restore smoke test.
+For installed panel readiness use generic `/healthz`, local `xkeen-control version --json` and init/PID status. Verify intended traffic behavior from a trusted LAN client when the active issue requires it. Never use a heavy benchmark merely as a restore smoke test.
 
 ## Panel access
 
@@ -80,37 +114,9 @@ Default management endpoint is loopback:
 
 Use an SSH tunnel or one explicitly configured private LAN bind. Do not expose the panel to WAN or wildcard address.
 
-## Planned one-command install — Issue #2
-
-#2 replaces the workstation/manual software distribution step with a signed public GitHub Release and idempotent installer.
-
-Target UX after `/opt`/Entware is available:
-
-The release-specific installer is served only from an exact semver GitHub
-Release asset after the protected release gate has been completed. No
-`latest/download`, branch, archive, or pre-release command is advertised from
-this Draft implementation.
-
-**This command is not ready for use until the first signed release is published and qualified.**
-
-The #2 installer contract is:
-
-- detect root, `/opt`, CPU/ABI, free space and required dependencies;
-- use `opkg update` + explicit missing packages only, never blanket `opkg upgrade`;
-- verify signed/checksummed panel release artifact;
-- install/start panel transactionally;
-- generate a one-time setup credential and print it once without logging;
-- choose only loopback/exact private management address;
-- detect XKeen/Xray state and leave a usable Setup Mode if components still need typed installation;
-- preserve existing local settings/secrets on repeated runs.
-
-The implementation is currently Draft/review-only. Keep the installer description as a warning until a post-merge signed release has been published, downloaded and re-verified, and the bounded panel-only Keenetic qualification has passed. The installer does not invoke the upstream interactive component installer; absent XKeen/Xray/configuration is Setup Mode and is owned by #4.
-
-Fresh destructive Entware/KeeneticOS provisioning remains outside the normal panel installer and must not be tested against the production router merely to qualify #2.
-
 ## Planned portable restore — Issue #3
 
-D.1 adds a schema-versioned appliance backup:
+D.1 is the current product slice and will add a schema-versioned appliance backup:
 
 - safe export without VPN/subscription secrets by default;
 - optional passphrase-encrypted secret-bearing backup;
@@ -118,8 +124,8 @@ D.1 adds a schema-versioned appliance backup:
 - hardware-local settings validated before restore;
 - preview-first transactional import.
 
-Until #3 is merged, raw `nodes.json` backups remain secret operator-managed material.
+Until #3 is merged and production-qualified, raw `nodes.json` backups remain secret operator-managed material and there is no product portable restore bundle.
 
-## Component lifecycle — Issue #4
+## Planned component lifecycle — Issue #4
 
-D.2 will make XKeen/Xray/geodata versions and update/rollback visible and manageable in the panel through typed capability-aware operations. Do not assume those controls exist in the current C.1 generation.
+D.2 will make XKeen/Xray/geodata versions and update/rollback visible and manageable in the panel through typed capability-aware operations. Do not assume those controls exist in the current release.

@@ -57,7 +57,7 @@ The repository is bind-mounted; Go/npm caches and `web/node_modules` use Docker 
 
 ## Release artifact
 
-Current build helper:
+Developer/local build helper:
 
 ```sh
 ./scripts/build-control-plane.sh
@@ -74,7 +74,9 @@ output: dist/xkeen-control-linux-arm64
 
 The binary is built off-router. Record exact source HEAD and artifact SHA-256 for production evidence.
 
-Slice D / #2 promotes this into signed GitHub Releases with full build revision metadata and a compatibility manifest. Until #2 merges and the release gate is qualified, `dist/` remains a local build output rather than a public release authority. The deterministic signed asset assembly helper is `scripts/release-build.sh`; it requires a protected key file and must not be run with a fixture key for a production release.
+For production distribution, Slice D / Issue #2 is complete: signed GitHub Releases are the software authority. `scripts/release-build.sh` assembles deterministic release inputs, while `.github/workflows/release.yml` performs protected signing/publication from one exact current reviewed `main` SHA. Production signing material is confined to the protected `release` environment; fixture keys are never valid production material.
+
+Stable release `v0.1.1` from source `8f15246099538426ef08163b832c3aa6f73e8265` completed protected publication and bounded live legacy adoption/rollback/re-adoption qualification.
 
 ## Frontend embedding
 
@@ -87,27 +89,37 @@ When frontend source changes:
 3. run full qualification;
 4. verify generated assets contain no secrets/local paths.
 
-## Public GitHub Actions direction
+## Public GitHub Actions
 
-Issue #2 owns the CI/release implementation.
+PR/main CI is current repository behavior. It runs on standard GitHub-hosted Linux runners with read-only repository contents permission and covers Go/vet/race, focused shell/runtime fixtures, frontend install/check/build/audit, embedded-asset consistency, static `linux/arm64` build and repository/public-hygiene checks.
 
-This repository is public, but hosted CI/release behavior is still planned until #2 implements and qualifies it:
+Do not use `pull_request_target` to execute PR code with privileged secrets. PR/main CI receives no production release signing key and no router credentials/configuration.
 
-- PR/main CI should run the Linux-equivalent full qualification on standard GitHub-hosted runners;
-- release workflow runs only from reviewed exact tags/commits and re-verifies uploaded release assets;
-- no production secrets/router SSH credentials are available to CI;
-- tests use synthetic fixtures;
-- release signing material is scoped to the protected release environment and never exposed to PR code.
+The protected manual Release workflow:
 
-Local Docker qualification remains useful after hosted CI exists; record which evidence came from which environment.
+- takes explicit `version`, `channel` and full `source_ref` inputs;
+- checks that `source_ref` equals the exact checkout and current remote `main`;
+- runs full release qualification;
+- assembles unsigned deterministic assets in the unprivileged build job;
+- transfers only secretless release inputs to the protected `release` environment;
+- verifies the protected public key matches the compiled/source-pinned trust anchor;
+- signs the exact manifest with the protected private key;
+- creates a non-public draft, re-downloads and independently verifies the exact signed seven-asset set;
+- re-checks current `main` before publishing the verified draft.
 
-Issue #2 focused fixtures are:
+Actions artifacts are build handoff only, not release authority.
+
+## Issue #2 focused fixtures
+
+The release/bootstrap/updater qualification fixture is:
 
 ```sh
 bash scripts/test-release.sh
 ```
 
-They cover manifest/signature tamper rejection, candidate hash/size validation, policy bounds, bootstrap idempotence, update lifecycle wiring and the absence of blanket package upgrades or upstream interactive installer invocation.
+It covers manifest/signature tamper rejection, candidate hash/size validation, policy bounds, bootstrap idempotence, managed rerun trust, historical C.1 adoption, updater lifecycle/rollback, legacy node-Apply recovery, and absence of blanket package upgrades or upstream interactive installer invocation.
+
+These fixtures remain regression coverage after #2 completion; later slices must not weaken them.
 
 ## Fresh-checkout expectation
 
@@ -117,6 +129,6 @@ A fresh clone/checkout of PR HEAD must be sufficient for documented qualificatio
 
 Router qualification is host-side and issue-authorized. Never mount router credentials/private keys, production registry files or subscription credentials into the development container or CI.
 
-Build/test first, then copy only the exact artifact/scripts required for the bounded smoke. Snapshot affected state, use repository/typed transactions, sanitize evidence and remove temporary uploads/tunnels afterward.
+Build/test first, then copy/use only the exact release/artifact/scripts required for the bounded smoke. Snapshot affected state, use repository/typed transactions, sanitize evidence and remove temporary uploads/tunnels afterward.
 
 Go/Node/build tooling is never installed on Keenetic.
