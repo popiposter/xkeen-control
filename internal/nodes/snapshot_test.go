@@ -120,7 +120,8 @@ func TestSnapshotWaitsForApplyAndReturnsFinallyCommittedGeneration(t *testing.T)
 }
 
 func TestSnapshotDoesNotEnterRuntimeCoordinator(t *testing.T) {
-	manager, _, _ := testManager(t, nil, nil)
+	registry := NewRegistry()
+	manager, _, _ := testManager(t, &registry, nil)
 	manager.coordinator = coordinatorRejectsSnapshot{}
 	if _, err := manager.Snapshot(context.Background()); err != nil {
 		t.Fatal(err)
