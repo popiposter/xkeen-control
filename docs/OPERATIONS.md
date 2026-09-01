@@ -1,6 +1,6 @@
 # Operations
 
-This runbook describes the **current production-qualified C.1 generation**. Planned one-command bootstrap, panel self-update, portable backup and component update management are owned by Issues #2–#5 and are not current operator commands yet.
+This runbook describes the **currently production-qualified** control-plane generation. Slice D / Issue #2 is complete: signed public releases, bounded bootstrap and transactional panel update/rollback are current behavior for qualified `linux/arm64`. D.1 / Issue #3 is the next product slice; portable appliance backup/import/export is not available yet.
 
 Production is a live router. Prefer typed/repository transactions over ad-hoc edits.
 
@@ -10,6 +10,7 @@ Production is a live router. Prefer typed/repository transactions over ad-hoc ed
 xkeen -status
 xray api bi -s 127.0.0.1:10085 bal-proxy
 /opt/etc/init.d/S99xkeen-control status
+/opt/sbin/xkeen-control version --json
 ```
 
 Control-plane generic health:
@@ -20,9 +21,50 @@ GET /healthz
 
 The panel is loopback or one exact trusted-LAN address only.
 
-## Current deployment path
+## Supported panel installation
 
-Until #2 replaces workstation distribution with signed Releases, repository deployment remains an advanced/operator path:
+For an Entware/Open Package-ready `linux/arm64` Keenetic, the currently qualified release-specific installer is:
+
+```sh
+sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.1.1/install.sh)"
+```
+
+The installer requires root, `/opt`, `opkg`, supported architecture and bounded free space. It may install explicitly missing prerequisites but never performs blanket `opkg upgrade`. It does not install/repair XKeen or Xray and does not rewrite node/Xray/XKeen/routing/DNS/Observatory policy.
+
+A fresh panel can generate a one-time setup credential. Existing auth/listener/state is preserved on rerun. Missing XKeen/Xray/configuration is a supported Setup Mode state.
+
+Existing managed installs use the installed binary's pinned-signature update path. The known historical C.1 manual panel has a release-owned fingerprint-gated adoption bridge; unknown/partial legacy layouts fail closed.
+
+## Panel self-update / rollback
+
+Normal update is product-owned and uses fixed GitHub release policy rather than arbitrary URLs. The installed binary verifies the signed manifest using the source-pinned Ed25519 trust anchor, checks architecture/compatibility/names/sizes/hashes, stages candidates under `/tmp`, then hands lifecycle control to the fixed external updater.
+
+Persistent panel lifecycle paths are bounded:
+
+```text
+/tmp/xkeen-control/panel-update/                     candidate work
+/opt/etc/xkeen-control/previous/panel/              one previous panel generation
+/opt/etc/xkeen-control/state/installed-release.json compact success marker
+/opt/etc/xkeen-control/state/update-policy.json     narrow deliberate policy
+/opt/libexec/xkeen-control-updater                  fixed lifecycle helper
+```
+
+The updater supports only its fixed panel lifecycle operations. It is not a generic command runner/file manager. Readiness is generic health plus exact local version/source/channel and PID/path verification.
+
+The `v0.1.1` production qualification proved:
+
+```text
+legacy exact
+  -> signed adoption v0.1.1
+  -> exact legacy rollback including helper absence
+  -> signed re-adoption v0.1.1
+```
+
+During that sequence bounded non-secret fingerprints for auth/listener/node/Xray/XKeen/selection/benchmark state remained unchanged.
+
+## Historical repository deployment
+
+Repository deployment remains an advanced developer/operator path for deliberate development qualification, not the normal production distribution path:
 
 ```sh
 cd /opt/etc/xkeen/repo
@@ -56,7 +98,7 @@ Do **not** run a full benchmark merely because Xray restarted.
 
 ## Stable selection / benchmark
 
-Current C.1 behavior:
+Current behavior:
 
 - active stable target probe: every 60 s, 1 KiB;
 - two consecutive active failures clear stale override before replacement validation;
@@ -82,16 +124,17 @@ The authoritative registry is:
 
 It is secret material. Never print/copy its contents into public logs/issues/PRs.
 
+Node mutations build and validate a complete Xray candidate, snapshot the logical generation, activate, wait for readiness/inventory and roll back coherently on failure. Node-only operations must not regenerate unrelated routing/DNS/Observatory policy.
+
 ## Panel service
 
-Current manual install helper expects an already-built artifact:
+Current installed service files include:
 
-```sh
-./scripts/install-control-plane.sh
-/opt/etc/init.d/S99xkeen-control start
+```text
+/opt/sbin/xkeen-control
+/opt/etc/init.d/S99xkeen-control
+/opt/libexec/xkeen-control-updater
 ```
-
-Authentication initialization/change is local/interactive through the product command; never script or log plaintext credentials.
 
 Default listener:
 
@@ -107,21 +150,19 @@ ssh -L 8787:127.0.0.1:8787 <router>
 
 An exact private LAN bind may be configured; wildcard/public/hostname binds fail closed. No WAN firewall opening is required or authorized.
 
-## Planned distribution / updates
+## Current distribution / update authority
 
-### #2 panel releases and self-update
+GitHub Releases from `popiposter/xkeen-control` are software distribution authority. Stable/beta publication must continue to use the protected release workflow from an exact current reviewed `main` SHA; raw `main`, branch archives and Actions artifacts are not install/update authorities.
 
-After #2 ships, normal installation/update moves to public signed GitHub Releases. The installer will be one-command and idempotent, will avoid blanket `opkg upgrade`, generate a one-time setup credential, start the panel and print safe access instructions.
+The router requires no GitHub write token. Normal managed updates use the compiled source-pinned public key. First-install trust begins with GitHub HTTPS plus exact release-internal manifest/hash/size checks.
 
-Panel update will use signed manifest/hash/architecture verification, `/tmp` staging, one bounded previous panel generation, health verification and automatic rollback. Do not advertise the final installer command until a real qualified release exists.
+## Planned D.1 backup / restore
 
-### #3 backup / restore
+Portable typed export/import is the current product slice (#3), not current behavior yet. Safe export will exclude VPN/subscription secrets by default; secret-bearing backup will be explicit and encrypted. Until #3 is merged and qualified, `nodes.json` backups are secret operator material.
 
-Portable typed export/import is planned. Safe export will exclude VPN/subscription secrets by default; secret-bearing backup will be explicit and encrypted. Until then, `nodes.json` backups are secret operator material.
+## Planned D.2 component lifecycle
 
-### #4 component lifecycle
-
-XKeen/Xray/geodata inventory/update/rollback will be managed through typed capability-aware operations. Until #4 ships, do not treat planned UI update controls as available and do not add generic shell/package-manager endpoints.
+XKeen/Xray/geodata inventory/update/rollback will be managed through typed capability-aware operations in #4. Until then, do not add generic shell/package-manager endpoints and do not treat component lifecycle controls as available.
 
 ## Geodata
 

@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the **currently production-qualified architecture** represented by the migrated C.1 source baseline. Planned product evolution is called out separately and must not be treated as deployed behavior. Detailed design for active work lives in the active GitHub issue.
+This document describes the **currently production-qualified architecture**. Slices A/B/C/C.1 and D are qualified; D.1 and later product evolution are called out separately and must not be treated as deployed behavior. Detailed design for active work lives in the active GitHub issue.
 
 ## System goal
 
@@ -22,17 +22,19 @@ xkeen-control
   ├─ typed preview/apply transactions
   ├─ runtime/Observatory projection
   ├─ stable-selection supervisor
-  └─ bounded benchmark / lifecycle coordinator
+  ├─ bounded benchmark / lifecycle coordinator
+  └─ signed release/bootstrap/panel-update client
 ```
 
 ## Current authority split
 
 ```text
+GitHub Releases                             software distribution authority
 /opt/etc/xkeen-control/secrets/nodes.json   authoritative VPN/subscription secrets
 /opt/etc/xray/configs/04_outbounds.json     generated runtime artifact
 config/xray/*.json                          current non-secret Xray policy source
 config/xkeen/xkeen.json                     current non-secret XKeen policy source
-RAM + /tmp/xkeen-control                    preview/runtime/high-churn state
+RAM + /tmp/xkeen-control                    preview/runtime/update/high-churn state
 ```
 
 `nodes.json` is schema-versioned and root-only. Generated outbounds are never restored independently over a different registry.
@@ -127,13 +129,48 @@ Targeted samples use the dedicated loopback `probe` inbound and typed Xray `Rout
 
 Benchmark work never owns the fast health plane. Explicit lifecycle mutations preempt/cancel benchmark work through the shared coordinator.
 
+## Signed releases, bootstrap and panel lifecycle
+
+`popiposter/xkeen-control` GitHub Releases are the software distribution authority. The first production-qualified stable release after Slice D completion is `v0.1.1`, built from exact source `8f15246099538426ef08163b832c3aa6f73e8265`.
+
+The protected release flow:
+
+```text
+reviewed exact main SHA
+        ↓
+full hosted qualification
+        ↓
+deterministic linux/arm64 assets + manifest
+        ↓
+source-pinned Ed25519 public-key check
+        ↓
+protected manifest signing
+        ↓
+draft release upload
+        ↓
+re-download + exact asset/hash/signature verification
+        ↓
+final main-SHA check
+        ↓
+publish
+```
+
+Public first install starts from GitHub HTTPS plus exact release-internal consistency. Once a trusted panel is installed, normal update checks/apply use the compiled source-pinned Ed25519 trust anchor. The router needs no GitHub write credential.
+
+Panel candidates live under `/tmp/xkeen-control/panel-update`. One previous panel generation is retained under `/opt/etc/xkeen-control/previous/panel`. The fixed external updater owns process stop/swap/start/health/version/PID-path verification and rollback; it is not a generic command runner or file API.
+
+The historical pre-#2 C.1 panel is adopted only when fixed release-owned binary/init fingerprints match. Because the old process could be interrupted during a node Apply, the adoption bridge journals the authoritative node registry plus generated outbounds and deterministically handles unchanged, incoherent and coherent-post-write states. Coherent changed state must pass typed Xray runtime reconciliation; a failed reconcile restores the validated journal snapshot and converges runtime before panel replacement.
+
+Production qualification for `v0.1.1` proved legacy → adoption → exact legacy rollback including helper absence → re-adoption while bounded non-secret fingerprints for auth/listener/node/Xray/XKeen/selection/benchmark state remained unchanged.
+
 ## Control-plane process and UI
 
-Production currently installs:
+Production installs:
 
 ```text
 /opt/sbin/xkeen-control
 /opt/etc/init.d/S99xkeen-control
+/opt/libexec/xkeen-control-updater
 ```
 
 It is a pre-built static Linux ARM64 Go binary with embedded React/Vite assets. No Go/Node toolchain is installed on Keenetic.
@@ -144,17 +181,15 @@ Authentication uses a local bcrypt password hash, RAM sessions, same-origin/CSRF
 
 ## Resource / flash model
 
-RAM or `/tmp` holds sessions/rate limits, status caches, RTT/liveness windows, preview candidates, per-node benchmark work/results and temporary render/validation trees.
+RAM or `/tmp` holds sessions/rate limits, status caches, RTT/liveness windows, preview candidates, per-node benchmark work/results, release/update downloads and temporary render/validation trees.
 
-Persistent writes are tied to real explicit state changes and bounded generations: auth/listener settings, `nodes.json`, generated active outbounds, stable-selection changes, one compact benchmark snapshot and bounded rollback material. No growing metrics database belongs on the router.
+Persistent writes are tied to real explicit state changes and bounded generations: auth/listener settings, `nodes.json`, generated active outbounds, stable-selection changes, one compact benchmark snapshot, one previous panel generation and compact panel release/update policy markers. No growing metrics or update-history database belongs on the router.
 
 ## Planned product evolution — not current runtime
 
-Current sequence is:
+Current sequence after completed Slice D is:
 
 ```text
-#2 public signed releases + bootstrap + panel self-update
- ↓
 #3 local appliance state + portable backup/import/export
  ↓
 #4 managed XKeen/Xray/geodata lifecycle
@@ -167,6 +202,7 @@ After #3/#5, per-router supported non-secret configuration will move from reposi
 ## Architecture invariants
 
 - public source/releases/issues/CI are secretless;
+- GitHub Releases are software authority, never router configuration authority;
 - local `nodes.json` remains the node/subscription secret authority until an explicit migration;
 - generated outbounds are never an independent authority;
 - management access remains private;
