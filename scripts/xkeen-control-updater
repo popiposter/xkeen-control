@@ -224,7 +224,8 @@ restore_node_file() {
 	destination="$2"
 	temporary="${destination}.adoption-recovery.new"
 	bounded_regular_file "$source" 8388608 || return 1
-	[ -d "$(dirname "$destination")" ] || return 1
+
+[ -d "$(dirname "$destination")" ] || return 1
 	if [ -e "$destination" ] || [ -L "$destination" ]; then
 		[ -f "$destination" ] && [ ! -L "$destination" ] || return 1
 	fi
@@ -237,22 +238,48 @@ restore_node_file() {
 	mv -f "$temporary" "$destination"
 }
 
+node_snapshot_matches_live() {
+	bounded_regular_file "$NODE_REGISTRY" 4194304 || return 1
+	bounded_regular_file "$NODE_OUTBOUNDS" 8388608 || return 1
+
+[ "$(sha256sum "$NODE_REGISTRY" | awk '{print $1}')" = "$(sha256sum "$ADOPTION_RECOVERY/nodes.json" | awk '{print $1}')" ] || return 1
+	[ "$(sha256sum "$NODE_OUTBOUNDS" | awk '{print $1}')" = "$(sha256sum "$ADOPTION_RECOVERY/04_outbounds.json" | awk '{print $1}')" ]
+}
+
+reconcile_node_runtime() {
+	XKEEN_NODES_PATH="$NODE_REGISTRY" XKEEN_ACTIVE_OUTBOUNDS="$NODE_OUTBOUNDS" \
+		"$CANDIDATE/xkeen-control-linux-arm64" nodes reconcile-runtime >/dev/null 2>&1
+}
+
 restore_node_snapshot() {
 	write_adoption_phase restoring || return 1
 	restore_node_file "$ADOPTION_RECOVERY/nodes.json" "$NODE_REGISTRY" || return 1
 	restore_node_file "$ADOPTION_RECOVERY/04_outbounds.json" "$NODE_OUTBOUNDS" || return 1
 	validate_node_pair "$CANDIDATE/xkeen-control-linux-arm64" \
 		"$NODE_REGISTRY" "$NODE_OUTBOUNDS" "$ADOPTION_RECOVERY/.current-rendered" || return 1
-	write_adoption_phase recovered
 }
 
 recover_node_state() {
-	if validate_node_pair "$CANDIDATE/xkeen-control-linux-arm64" \
-		"$NODE_REGISTRY" "$NODE_OUTBOUNDS" "$ADOPTION_RECOVERY/.current-rendered"; then
+	# Exact snapshot equality proves no persistent node generation crossed the
+	# handoff. Otherwise a coherent pair is not enough: the legacy process may
+	# have died after both writes but before Xray activation/readiness committed.
+	if node_snapshot_matches_live; then
 		write_adoption_phase recovered
 		return 0
 	fi
-	restore_node_snapshot
+	if validate_node_pair "$CANDIDATE/xkeen-control-linux-arm64" \
+		"$NODE_REGISTRY" "$NODE_OUTBOUNDS" "$ADOPTION_RECOVERY/.current-rendered"; then
+		if reconcile_node_runtime; then
+			write_adoption_phase recovered
+			return 0
+		fi
+	fi
+	# An incoherent pair cannot be committed. A coherent pair whose runtime
+	# reconciliation failed is also unsafe. Restore the known snapshot, then
+	# explicitly reload and verify that snapshot before panel replacement.
+	restore_node_snapshot || return 1
+	reconcile_node_runtime || return 1
+	write_adoption_phase recovered
 }
 
 clear_adoption_recovery() {
