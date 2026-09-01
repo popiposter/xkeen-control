@@ -146,7 +146,9 @@ func (m *Manager) ListSubscriptions() ([]PublicSubscription, error) {
 // Snapshot returns a validated copy of the committed registry. It takes the
 // same gate as Apply, but deliberately does not enter the runtime coordinator:
 // backup reads must wait for an Apply to commit or roll back without cancelling
-// benchmark or supervisor work.
+// benchmark or supervisor work. Unlike ordinary empty-registry node flows,
+// backup export requires the authoritative file to exist and fails closed when
+// it is missing.
 func (m *Manager) Snapshot(ctx context.Context) (Registry, error) {
 	if m == nil {
 		return Registry{}, ErrSnapshotUnavailable
@@ -171,11 +173,7 @@ func (m *Manager) Snapshot(ctx context.Context) (Registry, error) {
 
 	registry, err := m.store.Load()
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			registry = NewRegistry()
-		} else {
-			return Registry{}, ErrSnapshotUnavailable
-		}
+		return Registry{}, ErrSnapshotUnavailable
 	}
 	copy, err := cloneRegistry(registry)
 	if err != nil || copy.Validate() != nil {
