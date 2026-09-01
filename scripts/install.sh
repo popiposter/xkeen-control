@@ -267,17 +267,20 @@ done < "$TMP_ROOT/SHA256SUMS"
 [ "$sum_count" -eq 6 ] || fail "checksum list is incomplete"
 
 if [ "$LEGACY_ADOPTION" = "1" ]; then
-	# The fixed updater owns stop/swap/health/rollback. The installer only
-	# moves the already-consistency-checked release into its fixed candidate
-	# boundary and invokes that staged updater; it never installs a helper first.
+	# The fixed updater owns the legacy quiescence/recovery handoff,
+	# stop/swap/health/rollback. The installer only moves the already-
+	# consistency-checked release into its fixed candidate boundary and invokes
+	# the explicit adoption action; it never installs a helper first.
 	for name in xkeen-control-linux-arm64 S99xkeen-control xkeen-control-updater; do
 		cp "$TMP_ROOT/assets/$name" "$TMP_ROOT/$name"
 		chmod 755 "$TMP_ROOT/$name"
 	done
+	: > "$TMP_ROOT/.legacy-adoption"
+	chmod 600 "$TMP_ROOT/.legacy-adoption"
 	jq -c '{product,version,sourceCommit,channel}' "$TMP_ROOT/release-manifest.json" > "$TMP_ROOT/.installed-release.json.new" || fail "release marker could not be prepared"
 	chmod 600 "$TMP_ROOT/.installed-release.json.new"
 	mv -f "$TMP_ROOT/.installed-release.json.new" "$TMP_ROOT/installed-release.json"
-	exec "$TMP_ROOT/xkeen-control-updater" install
+	exec "$TMP_ROOT/xkeen-control-updater" adopt
 fi
 
 mkdir -p "$(dirname "$BIN")" "$(dirname "$INIT")" "$(dirname "$UPDATER")"

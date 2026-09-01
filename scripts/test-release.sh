@@ -23,9 +23,16 @@ grep -Fq 'legacy_layout' "$ROOT/scripts/install.sh"
 grep -Fq 'LEGACY_PANEL_BINARY_SHA256' "$ROOT/scripts/install.sh"
 grep -Fq 'legacy adoption requires the stable channel' "$ROOT/scripts/install.sh"
 grep -Fq 'panel-update' "$ROOT/scripts/install.sh"
+grep -Fq 'xkeen-control-updater" adopt' "$ROOT/scripts/install.sh"
 grep -Fq '/opt/etc/xkeen-control/previous/panel' "$ROOT/scripts/xkeen-control-updater"
 grep -Fq 'panel-update' "$ROOT/scripts/xkeen-control-updater"
 grep -Fq '.helper-absent' "$ROOT/scripts/xkeen-control-updater"
+grep -Fq 'panel-adoption-recovery' "$ROOT/scripts/xkeen-control-updater"
+grep -Fq 'nodes validate' "$ROOT/scripts/xkeen-control-updater"
+if grep -Eq 'HANDOFF_DELAY|[[:space:]]sleep[[:space:]]' "$ROOT/scripts/xkeen-control-updater"; then
+	echo 'legacy handoff must not use a delay' >&2
+	exit 1
+fi
 grep -Fq 'release-assets.githubusercontent.com' "$ROOT/scripts/install.sh"
 
 bash "$ROOT/scripts/test-bootstrap.sh"

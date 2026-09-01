@@ -51,6 +51,14 @@ case "${1:-} ${2:-}" in
 		printf '%s\n' bootstrap-required > "$root/opt/etc/xkeen-control/auth/bootstrap-required"
 		printf '%s\n' bootstrap >> "$root/bootstrap-calls"
 		;;
+	"nodes validate")
+		jq -e '.schemaVersion == 1 and (.generation | type == "string" and length > 0)' "${XKEEN_NODES_PATH:?}" >/dev/null
+		;;
+	"nodes render")
+		[ "${3:-}" = "--output" ] && [ -n "${4:-}" ] || exit 1
+		generation="$(jq -r '.generation' "${XKEEN_NODES_PATH:?}")"
+		printf '{"schemaVersion":1,"generation":"%s"}\n' "$generation" > "$4"
+		;;
 	"self-update --channel")
 		printf '%s\n' "$*" >> "$root/self-update-calls"
 		;;
@@ -148,7 +156,7 @@ setup_legacy_root() {
 	root="$1"
 	mkdir -p "$root/opt/sbin" "$root/opt/etc/init.d" "$root/opt/libexec" \
 		"$root/opt/etc/xkeen-control/auth" "$root/opt/etc/xkeen-control/state" \
-		"$root/opt/etc/xray/configs" "$root/tmp"
+		"$root/opt/etc/xkeen-control/secrets" "$root/opt/etc/xray/configs" "$root/tmp"
 	cp "$tmp/legacy-panel" "$root/opt/sbin/xkeen-control"
 	cp "$tmp/legacy-init" "$root/opt/etc/init.d/S99xkeen-control"
 	chmod 755 "$root/opt/sbin/xkeen-control" "$root/opt/etc/init.d/S99xkeen-control"
@@ -156,6 +164,8 @@ setup_legacy_root() {
 	printf '%s\n' 192.168.10.2:8787 > "$root/opt/etc/xkeen-control/listen-address"
 	printf '%s\n' existing-state-fixture > "$root/opt/etc/xkeen-control/state/protected-state"
 	printf '%s\n' existing-xray-fixture > "$root/opt/etc/xray/configs/protected-config"
+	printf '%s\n' '{"schemaVersion":1,"generation":"legacy"}' > "$root/opt/etc/xkeen-control/secrets/nodes.json"
+	printf '%s\n' '{"schemaVersion":1,"generation":"legacy"}' > "$root/opt/etc/xray/configs/04_outbounds.json"
 }
 
 setup_managed_root() {
@@ -293,7 +303,6 @@ PATH="$fakebin:$PATH" \
 EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
 XKEEN_CONTROL_TEST_MODE=1 \
 XKEEN_CONTROL_TEST_ROOT="$adoption_root" \
-XKEEN_CONTROL_HANDOFF_DELAY=0 \
 sh "$adoption_root/opt/libexec/xkeen-control-updater" rollback >/dev/null
 
 [ "$(sha256sum "$adoption_root/opt/sbin/xkeen-control" | awk '{print $1}')" = "$adoption_legacy_binary_before" ]

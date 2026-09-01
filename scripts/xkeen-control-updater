@@ -2,8 +2,8 @@
 set -eu
 set -f
 
-# Fixed, purpose-built panel rollback helper. It accepts only install or
-# rollback and has no arbitrary command, path, URL or file API. A /tmp-only
+# Fixed, purpose-built panel lifecycle helper. It accepts only install, adopt
+# or rollback and has no arbitrary command, path, URL or file API. A /tmp-only
 # root prefix exists solely for hermetic off-router fixtures.
 TEST_MODE="${XKEEN_CONTROL_TEST_MODE:-0}"
 ROOT_PREFIX="${XKEEN_CONTROL_TEST_ROOT:-}"
@@ -26,13 +26,13 @@ TEMP="${ROOT_PREFIX}/tmp/xkeen-control/panel-update-rollback"
 TEMP_HELPER_ABSENT="${TEMP}/.helper-absent"
 STATE="${ROOT_PREFIX}/opt/etc/xkeen-control/state"
 LISTEN_FILE="${ROOT_PREFIX}/opt/etc/xkeen-control/listen-address"
-HANDOFF_DELAY="${XKEEN_CONTROL_HANDOFF_DELAY:-0}"
+NODE_REGISTRY="${ROOT_PREFIX}/opt/etc/xkeen-control/secrets/nodes.json"
+NODE_OUTBOUNDS="${ROOT_PREFIX}/opt/etc/xray/configs/04_outbounds.json"
+ADOPTION_RECOVERY="${STATE}/panel-adoption-recovery"
 
 fail() { echo "ERROR: panel updater rejected operation" >&2; exit 1; }
 action="${1:-}"
-case "$action" in install|rollback) ;; *) fail ;; esac
-case "$HANDOFF_DELAY" in 0|1) ;; *) fail ;; esac
-if [ "$HANDOFF_DELAY" = "1" ]; then sleep 1; fi
+case "$action" in install|adopt|rollback) ;; *) fail ;; esac
 
 valid_port() {
 	case "$1" in ''|*[!0-9]*) return 1 ;; esac
@@ -89,6 +89,178 @@ health() {
 
 stop_panel() { "$INIT" stop >/dev/null 2>&1 || true; }
 start_panel() { "$INIT" start >/dev/null 2>&1; }
+
+# The legacy init script is the only lifecycle surface available before #2.
+# Confirming that no process still has the fixed legacy binary in /proc is a
+# state check, not a connection heuristic. If process inspection is
+# unavailable or fails, the adoption handoff refuses to continue.
+panel_running() {
+	command -v awk >/dev/null 2>&1 || return 0
+	command -v tr >/dev/null 2>&1 || return 0
+	[ -d /proc ] || return 0
+	process_seen=0
+	inspection_failed=0
+	panel_found=0
+	set +f
+	for process_dir in /proc/[0-9]*; do
+		[ -d "$process_dir" ] || continue
+		process_seen=1
+		cmdline_inspected=0
+		if [ -r "$process_dir/cmdline" ]; then
+			cmdline_inspected=1
+			if tr '\000' '\n' < "$process_dir/cmdline" | PANEL_BIN="$BIN" awk '
+				$0 == ENVIRON["PANEL_BIN"] { found = 1 }
+				END { if (found) exit 0; exit 1 }
+			'; then
+				panel_found=1
+			fi
+		fi
+		if command -v readlink >/dev/null 2>&1 && [ -r "$process_dir/exe" ]; then
+			executable="$(readlink "$process_dir/exe" 2>/dev/null || true)"
+			if [ "$executable" = "$BIN" ]; then
+				panel_found=1
+			fi
+		elif [ "$cmdline_inspected" -eq 0 ]; then
+			inspection_failed=1
+		fi
+	done
+	set -f
+	[ "$process_seen" -eq 1 ] || return 0
+	[ "$panel_found" -eq 1 ] && return 0
+	[ "$inspection_failed" -eq 0 ] || return 0
+	return 1
+}
+
+stop_panel_for_adoption() {
+	"$INIT" stop >/dev/null 2>&1 || return 1
+	panel_running && return 1
+	return 0
+}
+
+bounded_regular_file() {
+	path="$1"
+	limit="$2"
+	[ -f "$path" ] && [ ! -L "$path" ] || return 1
+	size="$(wc -c < "$path" | tr -d '[:space:]')"
+	case "$size" in ''|*[!0-9]*) return 1 ;; esac
+	[ "$size" -le "$limit" ] 2>/dev/null
+}
+
+validate_node_pair() {
+	binary="$1"
+	registry="$2"
+	outbounds="$3"
+	rendered="$4"
+	bounded_regular_file "$registry" 4194304 || return 1
+	bounded_regular_file "$outbounds" 8388608 || return 1
+	rm -f "$rendered"
+	if ! XKEEN_NODES_PATH="$registry" XKEEN_ACTIVE_OUTBOUNDS="$outbounds" \
+		"$binary" nodes validate >/dev/null 2>&1; then
+		return 1
+	fi
+	if ! XKEEN_NODES_PATH="$registry" XKEEN_ACTIVE_OUTBOUNDS="$outbounds" \
+		"$binary" nodes render --output "$rendered" >/dev/null 2>&1; then
+		rm -f "$rendered"
+		return 1
+	fi
+	if ! bounded_regular_file "$rendered" 8388608; then
+		rm -f "$rendered"
+		return 1
+	fi
+	rendered_hash="$(sha256sum "$rendered" | awk '{print $1}')"
+	outbounds_hash="$(sha256sum "$outbounds" | awk '{print $1}')"
+	rm -f "$rendered"
+	[ "$rendered_hash" = "$outbounds_hash" ]
+}
+
+write_adoption_phase() {
+	phase="$1"
+	case "$phase" in prepared|handoff|restoring|recovered) ;; *) return 1 ;; esac
+	[ -d "$ADOPTION_RECOVERY" ] && [ ! -L "$ADOPTION_RECOVERY" ] || return 1
+	printf '%s\n' "$phase" > "$ADOPTION_RECOVERY/.phase.new"
+	chmod 600 "$ADOPTION_RECOVERY/.phase.new"
+	mv -f "$ADOPTION_RECOVERY/.phase.new" "$ADOPTION_RECOVERY/phase"
+}
+
+read_adoption_phase() {
+	[ -f "$ADOPTION_RECOVERY/phase" ] && [ ! -L "$ADOPTION_RECOVERY/phase" ] || return 1
+	phase="$(sed -n '1p' "$ADOPTION_RECOVERY/phase" | tr -d '\r\n')"
+	case "$phase" in prepared|handoff|restoring|recovered) printf '%s\n' "$phase" ;; *) return 1 ;; esac
+}
+
+prepare_adoption_recovery() {
+	if [ -e "$ADOPTION_RECOVERY" ] || [ -L "$ADOPTION_RECOVERY" ]; then
+		[ -d "$ADOPTION_RECOVERY" ] && [ ! -L "$ADOPTION_RECOVERY" ] || return 1
+		phase="$(read_adoption_phase)" || return 1
+		case "$phase" in prepared|handoff|restoring|recovered) ;; *) return 1 ;; esac
+		bounded_regular_file "$ADOPTION_RECOVERY/nodes.json" 4194304 || return 1
+		bounded_regular_file "$ADOPTION_RECOVERY/04_outbounds.json" 8388608 || return 1
+		validate_node_pair "$CANDIDATE/xkeen-control-linux-arm64" \
+			"$ADOPTION_RECOVERY/nodes.json" "$ADOPTION_RECOVERY/04_outbounds.json" \
+			"$ADOPTION_RECOVERY/.snapshot-rendered" || return 1
+		return 0
+	fi
+	bounded_regular_file "$NODE_REGISTRY" 4194304 || return 1
+	bounded_regular_file "$NODE_OUTBOUNDS" 8388608 || return 1
+	mkdir -p "$ADOPTION_RECOVERY"
+	chmod 700 "$ADOPTION_RECOVERY"
+	if ! cp "$NODE_REGISTRY" "$ADOPTION_RECOVERY/nodes.json" || \
+		! cp "$NODE_OUTBOUNDS" "$ADOPTION_RECOVERY/04_outbounds.json"; then
+		rm -rf "$ADOPTION_RECOVERY"
+		return 1
+	fi
+	chmod 600 "$ADOPTION_RECOVERY/nodes.json" "$ADOPTION_RECOVERY/04_outbounds.json"
+	if ! validate_node_pair "$CANDIDATE/xkeen-control-linux-arm64" \
+		"$ADOPTION_RECOVERY/nodes.json" "$ADOPTION_RECOVERY/04_outbounds.json" \
+		"$ADOPTION_RECOVERY/.snapshot-rendered"; then
+		rm -rf "$ADOPTION_RECOVERY"
+		return 1
+	fi
+	write_adoption_phase prepared
+}
+
+restore_node_file() {
+	source="$1"
+	destination="$2"
+	temporary="${destination}.adoption-recovery.new"
+	bounded_regular_file "$source" 8388608 || return 1
+	[ -d "$(dirname "$destination")" ] || return 1
+	if [ -e "$destination" ] || [ -L "$destination" ]; then
+		[ -f "$destination" ] && [ ! -L "$destination" ] || return 1
+	fi
+	if [ -e "$temporary" ] || [ -L "$temporary" ]; then
+		[ ! -L "$temporary" ] || return 1
+		rm -f "$temporary"
+	fi
+	cp "$source" "$temporary"
+	chmod 600 "$temporary"
+	mv -f "$temporary" "$destination"
+}
+
+restore_node_snapshot() {
+	write_adoption_phase restoring || return 1
+	restore_node_file "$ADOPTION_RECOVERY/nodes.json" "$NODE_REGISTRY" || return 1
+	restore_node_file "$ADOPTION_RECOVERY/04_outbounds.json" "$NODE_OUTBOUNDS" || return 1
+	validate_node_pair "$CANDIDATE/xkeen-control-linux-arm64" \
+		"$NODE_REGISTRY" "$NODE_OUTBOUNDS" "$ADOPTION_RECOVERY/.current-rendered" || return 1
+	write_adoption_phase recovered
+}
+
+recover_node_state() {
+	if validate_node_pair "$CANDIDATE/xkeen-control-linux-arm64" \
+		"$NODE_REGISTRY" "$NODE_OUTBOUNDS" "$ADOPTION_RECOVERY/.current-rendered"; then
+		write_adoption_phase recovered
+		return 0
+	fi
+	restore_node_snapshot
+}
+
+clear_adoption_recovery() {
+	if [ -e "$ADOPTION_RECOVERY" ] || [ -L "$ADOPTION_RECOVERY" ]; then
+		[ -d "$ADOPTION_RECOVERY" ] && [ ! -L "$ADOPTION_RECOVERY" ] || return 1
+		rm -rf "$ADOPTION_RECOVERY"
+	fi
+}
 
 copy_panel() {
 	source="$1"
@@ -190,6 +362,72 @@ restore_current_marker() {
 		rm -f "$STATE/installed-release.json"
 	fi
 }
+
+if [ "$action" = "adopt" ]; then
+	# Adoption is a separate action so the normal managed self-update path keeps
+	# its existing coordinator-owned lifecycle. Only the signed installer can
+	# place this fixed sentinel in the candidate boundary.
+	[ -f "$CANDIDATE/.legacy-adoption" ] && [ ! -L "$CANDIDATE/.legacy-adoption" ] || fail
+	[ -f "$CANDIDATE/xkeen-control-linux-arm64" ] || fail
+	[ -f "$CANDIDATE/S99xkeen-control" ] || fail
+	[ -f "$CANDIDATE/xkeen-control-updater" ] || fail
+	[ -f "$CANDIDATE/installed-release.json" ] || fail
+	[ -f "$BIN" ] && [ ! -L "$BIN" ] || fail
+	[ -f "$INIT" ] && [ ! -L "$INIT" ] || fail
+	[ ! -e "$HELPER" ] && [ ! -L "$HELPER" ] || fail
+	[ ! -e "$STATE/installed-release.json" ] && [ ! -L "$STATE/installed-release.json" ] || fail
+	command -v jq >/dev/null 2>&1 || fail
+	expected_version="$(jq -r '.version' "$CANDIDATE/installed-release.json" 2>/dev/null || true)"
+	expected_commit="$(jq -r '.sourceCommit' "$CANDIDATE/installed-release.json" 2>/dev/null || true)"
+	expected_channel="$(jq -r '.channel' "$CANDIDATE/installed-release.json" 2>/dev/null || true)"
+	[ -n "$expected_version" ] && [ -n "$expected_commit" ] && [ -n "$expected_channel" ] || fail
+
+	adoption_recovery_exists=0
+	if [ -e "$ADOPTION_RECOVERY" ] || [ -L "$ADOPTION_RECOVERY" ]; then
+		adoption_recovery_exists=1
+	fi
+	if [ "$adoption_recovery_exists" -eq 0 ]; then
+		rm -rf "$PREVIOUS"
+		mkdir -p "$PREVIOUS"
+		chmod 700 "$PREVIOUS"
+		snapshot_generation "$PREVIOUS" || { rm -rf "$PREVIOUS"; fail; }
+	else
+		[ -f "$PREVIOUS/xkeen-control-linux-arm64" ] || fail
+		[ -f "$PREVIOUS/S99xkeen-control" ] || fail
+	fi
+	if ! prepare_adoption_recovery; then
+		[ "$adoption_recovery_exists" -eq 1 ] || rm -rf "$PREVIOUS"
+		fail
+	fi
+	adoption_phase="$(read_adoption_phase)" || fail
+	case "$adoption_phase" in
+		prepared|handoff|restoring)
+			write_adoption_phase handoff || fail
+			stop_panel_for_adoption || fail
+			recover_node_state || fail
+			;;
+		recovered)
+			if panel_running; then fail; fi
+			recover_node_state || fail
+			;;
+		*) fail ;;
+	esac
+
+	copy_panel "$CANDIDATE/xkeen-control-linux-arm64" "$BIN"
+	copy_panel "$CANDIDATE/S99xkeen-control" "$INIT"
+	copy_panel "$CANDIDATE/xkeen-control-updater" "$HELPER"
+	if start_panel && health && verify_build "$expected_version" "$expected_commit" "$expected_channel" && write_marker_from "$CANDIDATE/installed-release.json"; then
+		clear_adoption_recovery || fail
+		rm -rf "$TEMP" "$CANDIDATE"
+		exit 0
+	fi
+	stop_panel
+	restore_previous || fail
+	start_panel && health && verify_marker "$PREVIOUS/installed-release.json" || fail
+	clear_adoption_recovery || fail
+	rm -rf "$TEMP" "$CANDIDATE"
+	fail
+fi
 
 if [ "$action" = "install" ]; then
 	[ -f "$CANDIDATE/xkeen-control-linux-arm64" ] || fail
