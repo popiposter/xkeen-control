@@ -221,7 +221,7 @@ func newNodeManager(coordinator interface {
 func runNodesCommand(args []string) error {
 	manager := newNodeManager(nil)
 	if len(args) == 0 {
-		return errors.New("usage: xkeen-control nodes {validate|render --output PATH|migrate-legacy}")
+		return errors.New("usage: xkeen-control nodes {validate|render --output PATH|reconcile-runtime|migrate-legacy}")
 	}
 	switch args[0] {
 	case "validate":
@@ -239,6 +239,17 @@ func runNodesCommand(args []string) error {
 			return errors.New("node registry render failed")
 		}
 		return writeCLIOutput(args[2], contents)
+	case "reconcile-runtime":
+		if len(args) != 1 {
+			return errors.New("usage: xkeen-control nodes reconcile-runtime")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), nodes.DefaultTransactionTimeout)
+		defer cancel()
+		if err := manager.ReconcileRuntime(ctx); err != nil {
+			return errors.New("node runtime reconciliation failed")
+		}
+		_, err := io.WriteString(os.Stdout, "node runtime reconciled\n")
+		return err
 	case "migrate-legacy":
 		if len(args) != 1 {
 			return errors.New("usage: xkeen-control nodes migrate-legacy")
@@ -249,7 +260,7 @@ func runNodesCommand(args []string) error {
 		_, err := io.WriteString(os.Stdout, "legacy node migration applied\n")
 		return err
 	default:
-		return errors.New("usage: xkeen-control nodes {validate|render --output PATH|migrate-legacy}")
+		return errors.New("usage: xkeen-control nodes {validate|render --output PATH|reconcile-runtime|migrate-legacy}")
 	}
 }
 

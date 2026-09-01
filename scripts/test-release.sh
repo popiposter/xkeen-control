@@ -2,7 +2,7 @@
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-go test -count=1 ./internal/release ./internal/update ./internal/auth ./internal/httpapi ./cmd/xkeen-control ./cmd/xkeen-release
+go test -count=1 ./internal/release ./internal/update ./internal/auth ./internal/httpapi ./internal/nodes ./cmd/xkeen-control ./cmd/xkeen-release
 if grep -Eq 'xkeen[[:space:]]+-i' "$ROOT/scripts/install.sh"; then
 	echo 'upstream interactive installer must not be invoked' >&2
 	exit 1
@@ -19,9 +19,23 @@ grep -Fq 'password bootstrap' "$ROOT/scripts/install.sh"
 grep -Fq 'self-update --channel' "$ROOT/scripts/install.sh"
 grep -Fq 'STABLE_RELEASE_VERSION' "$ROOT/scripts/install.sh"
 grep -Fq 'full prerelease semver' "$ROOT/scripts/install.sh"
+grep -Fq 'legacy_layout' "$ROOT/scripts/install.sh"
+grep -Fq 'LEGACY_PANEL_BINARY_SHA256' "$ROOT/scripts/install.sh"
+grep -Fq 'legacy adoption requires the stable channel' "$ROOT/scripts/install.sh"
+grep -Fq 'panel-update' "$ROOT/scripts/install.sh"
+grep -Fq 'xkeen-control-updater" adopt' "$ROOT/scripts/install.sh"
 grep -Fq '/opt/etc/xkeen-control/previous/panel' "$ROOT/scripts/xkeen-control-updater"
 grep -Fq 'panel-update' "$ROOT/scripts/xkeen-control-updater"
+grep -Fq '.helper-absent' "$ROOT/scripts/xkeen-control-updater"
+grep -Fq 'panel-adoption-recovery' "$ROOT/scripts/xkeen-control-updater"
+grep -Fq 'nodes validate' "$ROOT/scripts/xkeen-control-updater"
+grep -Fq 'nodes reconcile-runtime' "$ROOT/scripts/xkeen-control-updater"
+if grep -Eq 'HANDOFF_DELAY|[[:space:]]sleep[[:space:]]' "$ROOT/scripts/xkeen-control-updater"; then
+	echo 'legacy handoff must not use a delay' >&2
+	exit 1
+fi
 grep -Fq 'release-assets.githubusercontent.com' "$ROOT/scripts/install.sh"
 
 bash "$ROOT/scripts/test-bootstrap.sh"
 bash "$ROOT/scripts/test-updater.sh"
+bash "$ROOT/scripts/test-legacy-reconcile.sh"

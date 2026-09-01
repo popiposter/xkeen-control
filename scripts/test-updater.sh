@@ -6,7 +6,15 @@ ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 command -v jq >/dev/null 2>&1 || { echo "jq is required for updater fixture" >&2; exit 1; }
 
 tmp="$(mktemp -d /tmp/xkeen-updater-test.XXXXXX)"
-trap 'rm -rf "$tmp"' EXIT
+background_pid=""
+cleanup() {
+	if [ -n "$background_pid" ]; then
+		kill "$background_pid" 2>/dev/null || true
+		wait "$background_pid" 2>/dev/null || true
+	fi
+	rm -rf "$tmp"
+}
+trap cleanup EXIT
 fakebin="$tmp/fakebin"
 mkdir -p "$fakebin"
 
@@ -33,6 +41,16 @@ if [ "\${1:-} \${2:-}" = "version --json" ]; then
 	printf '%s\\n' '{"product":"xkeen-control","version":"$version","sourceCommit":"$commit","channel":"$channel"}'
 	exit 0
 fi
+if [ "\${1:-}" = "nodes" ] && [ "\${2:-}" = "validate" ]; then
+	jq -e '.schemaVersion == 1 and (.generation | type == "string" and length > 0)' "\${XKEEN_NODES_PATH:?}" >/dev/null
+	exit 0
+fi
+if [ "\${1:-}" = "nodes" ] && [ "\${2:-}" = "render" ]; then
+	[ "\${3:-}" = "--output" ] && [ -n "\${4:-}" ] || exit 1
+	generation="\$(jq -r '.generation' "\${XKEEN_NODES_PATH:?}")"
+	printf '{"schemaVersion":1,"generation":"%s"}\\n' "\$generation" > "\$4"
+	exit 0
+fi
 exit 2
 EOF_BIN
 	chmod 755 "$path"
@@ -47,11 +65,87 @@ EOF_INIT
 	chmod 755 "$path"
 }
 
+make_legacy_apply_binary() {
+	path="$1"
+	cat > "$path" <<'EOF_LEGACY_APPLY'
+#!/bin/sh
+set -eu
+root="${XKEEN_CONTROL_TEST_ROOT:?}"
+nodes="$root/opt/etc/xkeen-control/secrets/nodes.json"
+outbounds="$root/opt/etc/xray/configs/04_outbounds.json"
+case "${1:-}" in
+	hold)
+		printf '%s\n' ready > "${XKEEN_LEGACY_APPLY_READY:?}"
+		IFS= read -r _ < "${XKEEN_LEGACY_APPLY_CONTINUE:?}"
+		;;
+	apply)
+		printf '%s\n' '{"schemaVersion":1,"generation":"in-flight"}' > "$nodes.new"
+		mv -f "$nodes.new" "$nodes"
+		printf '%s\n' ready > "${XKEEN_LEGACY_APPLY_READY:?}"
+		IFS= read -r _ < "${XKEEN_LEGACY_APPLY_CONTINUE:?}"
+		printf '%s\n' '{"schemaVersion":1,"generation":"applied"}' > "$nodes.new"
+		mv -f "$nodes.new" "$nodes"
+		printf '%s\n' '{"schemaVersion":1,"generation":"applied"}' > "$outbounds.new"
+		mv -f "$outbounds.new" "$outbounds"
+		printf '%s\n' complete > "$root/apply-complete"
+		;;
+	*)
+		exit 2
+		;;
+esac
+EOF_LEGACY_APPLY
+	chmod 755 "$path"
+}
+
+make_recording_init() {
+	path="$1"
+	cat > "$path" <<'EOF_RECORDING_INIT'
+#!/bin/sh
+set -eu
+root="${XKEEN_CONTROL_TEST_ROOT:?}"
+case "${1:-}" in
+	stop)
+		: > "$root/legacy-stop-called"
+		;;
+	start|status|restart)
+		;;
+	*)
+		exit 2
+		;;
+esac
+EOF_RECORDING_INIT
+	chmod 755 "$path"
+}
+
+make_racy_init() {
+	path="$1"
+	cat > "$path" <<'EOF_RACY_INIT'
+#!/bin/sh
+set -eu
+root="${XKEEN_CONTROL_TEST_ROOT:?}"
+nodes="$root/opt/etc/xkeen-control/secrets/nodes.json"
+case "${1:-}" in
+	stop)
+		printf '%s\n' '{"schemaVersion":1,"generation":"interrupted"}' > "$nodes.new"
+		mv -f "$nodes.new" "$nodes"
+		: > "$root/legacy-stop-called"
+		;;
+	start|status|restart)
+		;;
+	*)
+		exit 2
+		;;
+esac
+EOF_RACY_INIT
+	chmod 755 "$path"
+}
+
 setup_generation() {
 	root="$1"
 	listen="${2-192.168.10.2:8787}"
 	mkdir -p "$root/opt/sbin" "$root/opt/etc/init.d" "$root/opt/libexec" \
 		"$root/opt/etc/xkeen-control/state" "$root/opt/etc/xkeen-control/previous" \
+		"$root/opt/etc/xkeen-control/secrets" "$root/opt/etc/xray/configs" \
 		"$root/tmp/xkeen-control/panel-update"
 	make_binary "$root/opt/sbin/xkeen-control" "1.0.0" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" stable
 	make_init "$root/opt/etc/init.d/S99xkeen-control"
@@ -59,6 +153,8 @@ setup_generation() {
 	chmod 755 "$root/opt/libexec/xkeen-control-updater"
 	if [ -n "$listen" ]; then printf '%s\n' "$listen" > "$root/opt/etc/xkeen-control/listen-address"; fi
 	printf '%s\n' '{"product":"xkeen-control","version":"1.0.0","sourceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","channel":"stable"}' > "$root/opt/etc/xkeen-control/state/installed-release.json"
+	printf '%s\n' '{"schemaVersion":1,"generation":"legacy"}' > "$root/opt/etc/xkeen-control/secrets/nodes.json"
+	printf '%s\n' '{"schemaVersion":1,"generation":"legacy"}' > "$root/opt/etc/xray/configs/04_outbounds.json"
 
 	candidate="$root/tmp/xkeen-control/panel-update"
 	make_binary "$candidate/xkeen-control-linux-arm64" "1.2.3" "cccccccccccccccccccccccccccccccccccccccc" stable
@@ -69,13 +165,36 @@ setup_generation() {
 	printf '%s\n' '{"version":"1.2.3","sourceCommit":"cccccccccccccccccccccccccccccccccccccccc","channel":"stable"}' > "$candidate/release-manifest.json"
 }
 
+setup_legacy_generation() {
+	root="$1"
+	listen="${2-192.168.10.2:8787}"
+	mkdir -p "$root/opt/sbin" "$root/opt/etc/init.d" "$root/opt/libexec" \
+		"$root/opt/etc/xkeen-control/state" "$root/opt/etc/xkeen-control/previous" \
+		"$root/opt/etc/xkeen-control/secrets" "$root/opt/etc/xray/configs" \
+		"$root/tmp/xkeen-control/panel-update"
+	make_binary "$root/opt/sbin/xkeen-control" "1.0.0" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" stable
+	make_init "$root/opt/etc/init.d/S99xkeen-control"
+	printf '%s\n' '# legacy generation' >> "$root/opt/etc/init.d/S99xkeen-control"
+	if [ -n "$listen" ]; then printf '%s\n' "$listen" > "$root/opt/etc/xkeen-control/listen-address"; fi
+	printf '%s\n' '{"schemaVersion":1,"generation":"legacy"}' > "$root/opt/etc/xkeen-control/secrets/nodes.json"
+	printf '%s\n' '{"schemaVersion":1,"generation":"legacy"}' > "$root/opt/etc/xray/configs/04_outbounds.json"
+
+	candidate="$root/tmp/xkeen-control/panel-update"
+	make_binary "$candidate/xkeen-control-linux-arm64" "1.2.3" "cccccccccccccccccccccccccccccccccccccccc" stable
+	make_init "$candidate/S99xkeen-control"
+	cp "$ROOT/scripts/xkeen-control-updater" "$candidate/xkeen-control-updater"
+	chmod 755 "$candidate/xkeen-control-updater"
+	printf '%s\n' '{"product":"xkeen-control","version":"1.2.3","sourceCommit":"cccccccccccccccccccccccccccccccccccccccc","channel":"stable"}' > "$candidate/installed-release.json"
+	: > "$candidate/.legacy-adoption"
+	chmod 600 "$candidate/.legacy-adoption"
+}
+
 root="$tmp/root"
 setup_generation "$root"
 PATH="$fakebin:$PATH" \
 EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
 XKEEN_CONTROL_TEST_MODE=1 \
 XKEEN_CONTROL_TEST_ROOT="$root" \
-XKEEN_CONTROL_HANDOFF_DELAY=0 \
 sh "$ROOT/scripts/xkeen-control-updater" install
 
 grep -Fq '"version":"1.2.3"' "$root/opt/etc/xkeen-control/state/installed-release.json"
@@ -86,12 +205,171 @@ PATH="$fakebin:$PATH" \
 EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
 XKEEN_CONTROL_TEST_MODE=1 \
 XKEEN_CONTROL_TEST_ROOT="$root" \
-XKEEN_CONTROL_HANDOFF_DELAY=0 \
 sh "$root/opt/libexec/xkeen-control-updater" rollback
 
 grep -Fq '"version":"1.0.0"' "$root/opt/etc/xkeen-control/state/installed-release.json"
 [ ! -e "$root/opt/etc/xkeen-control/previous/panel" ]
 "$root/opt/sbin/xkeen-control" version --json | jq -e '.version == "1.0.0"' >/dev/null
+
+legacy_root="$tmp/legacy-root"
+setup_legacy_generation "$legacy_root"
+legacy_binary_before="$(sha256sum "$legacy_root/opt/sbin/xkeen-control" | awk '{print $1}')"
+legacy_init_before="$(sha256sum "$legacy_root/opt/etc/init.d/S99xkeen-control" | awk '{print $1}')"
+PATH="$fakebin:$PATH" \
+EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
+XKEEN_CONTROL_TEST_MODE=1 \
+XKEEN_CONTROL_TEST_ROOT="$legacy_root" \
+sh "$ROOT/scripts/xkeen-control-updater" adopt
+
+[ "$(sha256sum "$legacy_root/opt/sbin/xkeen-control" | awk '{print $1}')" != "$legacy_binary_before" ]
+[ "$(sha256sum "$legacy_root/opt/etc/init.d/S99xkeen-control" | awk '{print $1}')" != "$legacy_init_before" ]
+[ -x "$legacy_root/opt/libexec/xkeen-control-updater" ]
+[ -f "$legacy_root/opt/etc/xkeen-control/previous/panel/.helper-absent" ]
+[ ! -e "$legacy_root/opt/etc/xkeen-control/previous/panel/xkeen-control-updater" ]
+
+PATH="$fakebin:$PATH" \
+EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
+XKEEN_CONTROL_TEST_MODE=1 \
+XKEEN_CONTROL_TEST_ROOT="$legacy_root" \
+sh "$legacy_root/opt/libexec/xkeen-control-updater" rollback
+
+[ "$(sha256sum "$legacy_root/opt/sbin/xkeen-control" | awk '{print $1}')" = "$legacy_binary_before" ]
+[ "$(sha256sum "$legacy_root/opt/etc/init.d/S99xkeen-control" | awk '{print $1}')" = "$legacy_init_before" ]
+[ ! -e "$legacy_root/opt/libexec/xkeen-control-updater" ]
+[ ! -e "$legacy_root/opt/etc/xkeen-control/state/installed-release.json" ]
+[ ! -e "$legacy_root/opt/etc/xkeen-control/previous/panel" ]
+
+mkdir -p "$legacy_root/tmp/xkeen-control/panel-update"
+make_binary "$legacy_root/tmp/xkeen-control/panel-update/xkeen-control-linux-arm64" "1.2.3" "cccccccccccccccccccccccccccccccccccccccc" stable
+make_init "$legacy_root/tmp/xkeen-control/panel-update/S99xkeen-control"
+cp "$ROOT/scripts/xkeen-control-updater" "$legacy_root/tmp/xkeen-control/panel-update/xkeen-control-updater"
+chmod 755 "$legacy_root/tmp/xkeen-control/panel-update/xkeen-control-updater"
+printf '%s\n' '{"product":"xkeen-control","version":"1.2.3","sourceCommit":"cccccccccccccccccccccccccccccccccccccccc","channel":"stable"}' > "$legacy_root/tmp/xkeen-control/panel-update/installed-release.json"
+: > "$legacy_root/tmp/xkeen-control/panel-update/.legacy-adoption"
+chmod 600 "$legacy_root/tmp/xkeen-control/panel-update/.legacy-adoption"
+PATH="$fakebin:$PATH" \
+EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
+XKEEN_CONTROL_TEST_MODE=1 \
+XKEEN_CONTROL_TEST_ROOT="$legacy_root" \
+sh "$ROOT/scripts/xkeen-control-updater" adopt
+[ -x "$legacy_root/opt/libexec/xkeen-control-updater" ]
+jq -e '.version == "1.2.3"' "$legacy_root/opt/etc/xkeen-control/state/installed-release.json" >/dev/null
+
+concurrent_root="$tmp/concurrent-root"
+setup_legacy_generation "$concurrent_root"
+make_legacy_apply_binary "$concurrent_root/opt/sbin/xkeen-control"
+make_recording_init "$concurrent_root/opt/etc/init.d/S99xkeen-control"
+concurrent_ready="$concurrent_root/apply-ready"
+concurrent_continue="$concurrent_root/apply-continue"
+mkfifo "$concurrent_ready" "$concurrent_continue"
+concurrent_binary_before="$(sha256sum "$concurrent_root/opt/sbin/xkeen-control" | awk '{print $1}')"
+XKEEN_CONTROL_TEST_ROOT="$concurrent_root" \
+XKEEN_LEGACY_APPLY_READY="$concurrent_ready" \
+XKEEN_LEGACY_APPLY_CONTINUE="$concurrent_continue" \
+"$concurrent_root/opt/sbin/xkeen-control" apply &
+background_pid="$!"
+IFS= read -r _ < "$concurrent_ready"
+
+if PATH="$fakebin:$PATH" \
+	EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
+	XKEEN_CONTROL_TEST_MODE=1 \
+	XKEEN_CONTROL_TEST_ROOT="$concurrent_root" \
+	sh "$ROOT/scripts/xkeen-control-updater" adopt >/dev/null 2>&1; then
+	echo "adoption unexpectedly crossed a blocked legacy Apply" >&2
+	exit 1
+fi
+[ ! -e "$concurrent_root/legacy-stop-called" ]
+[ "$(sha256sum "$concurrent_root/opt/sbin/xkeen-control" | awk '{print $1}')" = "$concurrent_binary_before" ]
+[ ! -e "$concurrent_root/opt/libexec/xkeen-control-updater" ]
+[ "$(jq -r '.generation' "$concurrent_root/opt/etc/xkeen-control/secrets/nodes.json")" = "in-flight" ]
+printf '%s\n' continue > "$concurrent_continue"
+wait "$background_pid"
+background_pid=""
+[ -f "$concurrent_root/apply-complete" ]
+[ "$(jq -r '.generation' "$concurrent_root/opt/etc/xkeen-control/secrets/nodes.json")" = "applied" ]
+[ "$(jq -r '.generation' "$concurrent_root/opt/etc/xray/configs/04_outbounds.json")" = "applied" ]
+
+concurrent_rendered="$concurrent_root/rendered.json"
+XKEEN_NODES_PATH="$concurrent_root/opt/etc/xkeen-control/secrets/nodes.json" \
+"$concurrent_root/tmp/xkeen-control/panel-update/xkeen-control-linux-arm64" nodes render --output "$concurrent_rendered"
+[ "$(sha256sum "$concurrent_rendered" | awk '{print $1}')" = "$(sha256sum "$concurrent_root/opt/etc/xray/configs/04_outbounds.json" | awk '{print $1}')" ]
+rm -f "$concurrent_rendered"
+
+PATH="$fakebin:$PATH" \
+	EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
+	XKEEN_CONTROL_TEST_MODE=1 \
+	XKEEN_CONTROL_TEST_ROOT="$concurrent_root" \
+	sh "$ROOT/scripts/xkeen-control-updater" adopt >/dev/null
+[ -x "$concurrent_root/opt/libexec/xkeen-control-updater" ]
+
+running_root="$tmp/running-root"
+setup_legacy_generation "$running_root"
+make_legacy_apply_binary "$running_root/opt/sbin/xkeen-control"
+make_recording_init "$running_root/opt/etc/init.d/S99xkeen-control"
+running_ready="$running_root/hold-ready"
+running_continue="$running_root/hold-continue"
+mkfifo "$running_ready" "$running_continue"
+running_binary_before="$(sha256sum "$running_root/opt/sbin/xkeen-control" | awk '{print $1}')"
+XKEEN_CONTROL_TEST_ROOT="$running_root" \
+XKEEN_LEGACY_APPLY_READY="$running_ready" \
+XKEEN_LEGACY_APPLY_CONTINUE="$running_continue" \
+"$running_root/opt/sbin/xkeen-control" hold &
+background_pid="$!"
+IFS= read -r _ < "$running_ready"
+if PATH="$fakebin:$PATH" \
+	EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
+	XKEEN_CONTROL_TEST_MODE=1 \
+	XKEEN_CONTROL_TEST_ROOT="$running_root" \
+	sh "$ROOT/scripts/xkeen-control-updater" adopt >/dev/null 2>&1; then
+	echo "adoption unexpectedly crossed a running legacy panel" >&2
+	exit 1
+fi
+[ -f "$running_root/legacy-stop-called" ]
+[ "$(sha256sum "$running_root/opt/sbin/xkeen-control" | awk '{print $1}')" = "$running_binary_before" ]
+[ ! -e "$running_root/opt/libexec/xkeen-control-updater" ]
+[ "$(jq -r '.generation' "$running_root/opt/etc/xkeen-control/secrets/nodes.json")" = "legacy" ]
+printf '%s\n' continue > "$running_continue"
+wait "$background_pid"
+background_pid=""
+PATH="$fakebin:$PATH" \
+	EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
+	XKEEN_CONTROL_TEST_MODE=1 \
+	XKEEN_CONTROL_TEST_ROOT="$running_root" \
+	sh "$ROOT/scripts/xkeen-control-updater" adopt >/dev/null
+[ -x "$running_root/opt/libexec/xkeen-control-updater" ]
+
+recovery_root="$tmp/recovery-root"
+setup_legacy_generation "$recovery_root"
+make_racy_init "$recovery_root/opt/etc/init.d/S99xkeen-control"
+PATH="$fakebin:$PATH" \
+	EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
+	XKEEN_CONTROL_TEST_MODE=1 \
+	XKEEN_CONTROL_TEST_ROOT="$recovery_root" \
+	sh "$ROOT/scripts/xkeen-control-updater" adopt >/dev/null
+[ -f "$recovery_root/legacy-stop-called" ]
+[ "$(jq -r '.generation' "$recovery_root/opt/etc/xkeen-control/secrets/nodes.json")" = "legacy" ]
+[ "$(jq -r '.generation' "$recovery_root/opt/etc/xray/configs/04_outbounds.json")" = "legacy" ]
+[ ! -e "$recovery_root/opt/etc/xkeen-control/state/panel-adoption-recovery" ]
+
+legacy_failure_root="$tmp/legacy-failure-root"
+setup_legacy_generation "$legacy_failure_root"
+legacy_failure_binary_before="$(sha256sum "$legacy_failure_root/opt/sbin/xkeen-control" | awk '{print $1}')"
+legacy_failure_init_before="$(sha256sum "$legacy_failure_root/opt/etc/init.d/S99xkeen-control" | awk '{print $1}')"
+make_binary "$legacy_failure_root/tmp/xkeen-control/panel-update/xkeen-control-linux-arm64" "9.9.9" "dddddddddddddddddddddddddddddddddddddddd" stable
+if PATH="$fakebin:$PATH" \
+	EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
+	XKEEN_CONTROL_TEST_MODE=1 \
+	XKEEN_CONTROL_TEST_ROOT="$legacy_failure_root" \
+	sh "$ROOT/scripts/xkeen-control-updater" adopt >/dev/null 2>&1; then
+	echo "legacy failure candidate unexpectedly committed" >&2
+	exit 1
+fi
+[ "$(sha256sum "$legacy_failure_root/opt/sbin/xkeen-control" | awk '{print $1}')" = "$legacy_failure_binary_before" ]
+[ "$(sha256sum "$legacy_failure_root/opt/etc/init.d/S99xkeen-control" | awk '{print $1}')" = "$legacy_failure_init_before" ]
+[ ! -e "$legacy_failure_root/opt/libexec/xkeen-control-updater" ]
+[ ! -e "$legacy_failure_root/opt/etc/xkeen-control/state/installed-release.json" ]
+[ -f "$legacy_failure_root/opt/etc/xkeen-control/previous/panel/.helper-absent" ]
+[ ! -e "$legacy_failure_root/tmp/xkeen-control/panel-update" ]
 
 loopback_root="$tmp/loopback-root"
 setup_generation "$loopback_root" ""
@@ -99,7 +377,6 @@ PATH="$fakebin:$PATH" \
 EXPECTED_HEALTH_URL='http://127.0.0.1:8787/healthz' \
 XKEEN_CONTROL_TEST_MODE=1 \
 XKEEN_CONTROL_TEST_ROOT="$loopback_root" \
-XKEEN_CONTROL_HANDOFF_DELAY=0 \
 sh "$ROOT/scripts/xkeen-control-updater" install
 grep -Fq '"version":"1.2.3"' "$loopback_root/opt/etc/xkeen-control/state/installed-release.json"
 
@@ -110,7 +387,6 @@ if PATH="$fakebin:$PATH" \
 	EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
 	XKEEN_CONTROL_TEST_MODE=1 \
 	XKEEN_CONTROL_TEST_ROOT="$failure_root" \
-	XKEEN_CONTROL_HANDOFF_DELAY=0 \
 	sh "$ROOT/scripts/xkeen-control-updater" install >/dev/null 2>&1; then
 	echo "mismatched candidate unexpectedly committed" >&2
 	exit 1
