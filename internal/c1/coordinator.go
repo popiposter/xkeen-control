@@ -59,6 +59,10 @@ type Coordinator struct {
 	benchmark        BenchmarkStatus
 	applyWaiters     int
 	applyActive      bool
+	// maintenance is set when an interrupted appliance import cannot yet prove
+	// recovery. It is deliberately process-wide for every lifecycle mutation;
+	// only BeginRecovery may enter while it is set.
+	maintenance bool
 	// Test-only synchronization point used to force the Apply admission
 	// interleaving covered by coordinator concurrency regressions.
 	beforeApplyAcquire func()
@@ -159,7 +163,7 @@ func (c *Coordinator) TriggerBenchmark() error {
 	// mutex. Once an Apply caller has entered BeginApply, no benchmark may
 	// acquire the lifecycle token in the gap before Apply starts waiting for
 	// it.
-	if c.applyWaiters > 0 || c.applyActive || c.benchmarkCancel != nil {
+	if c.maintenance || c.applyWaiters > 0 || c.applyActive || c.benchmarkCancel != nil {
 		c.mu.Unlock()
 		cancel()
 		return ErrBenchmarkBusy
@@ -233,10 +237,49 @@ func throughputStatuses(samples map[string]ThroughputSample) map[string]Throughp
 // drains any active benchmark and active supervisor operation (including probe
 // cleanup), then holds the lifecycle token across the node transaction.
 func (c *Coordinator) BeginApply(ctx context.Context) (func(), error) {
+	return c.beginApply(ctx, false)
+}
+
+// BeginRecovery admits the bounded startup recovery path while maintenance is
+// active. It is intentionally separate from BeginApply so an unresolved
+// journal cannot be bypassed by an ordinary lifecycle mutation.
+func (c *Coordinator) BeginRecovery(ctx context.Context) (func(), error) {
+	return c.beginApply(ctx, true)
+}
+
+// EnterMaintenance makes the retained-journal boundary fail closed for every
+// normal lifecycle mutation until a recovery path proves the journal resolved.
+func (c *Coordinator) EnterMaintenance() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.maintenance = true
+	c.mu.Unlock()
+}
+
+// ExitMaintenance reopens normal lifecycle operations after durable recovery.
+func (c *Coordinator) ExitMaintenance() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.maintenance = false
+	c.mu.Unlock()
+}
+
+func (c *Coordinator) beginApply(ctx context.Context, recovery bool) (func(), error) {
 	if c == nil {
 		return func() {}, nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	c.mu.Lock()
+	if c.maintenance && !recovery {
+		c.mu.Unlock()
+		return nil, ErrLifecycleBusy
+	}
 	// Mark Apply as pending before observing/cancelling managed work. This is
 	// the admission point that closes both Apply-vs-benchmark and
 	// Apply-vs-supervisor races.
@@ -277,6 +320,12 @@ func (c *Coordinator) BeginApply(ctx context.Context) (func(), error) {
 	select {
 	case token := <-c.lifecycle:
 		c.mu.Lock()
+		if c.maintenance && !recovery {
+			c.mu.Unlock()
+			c.lifecycle <- token
+			clearPending()
+			return nil, ErrLifecycleBusy
+		}
 		c.applyWaiters--
 		c.applyActive = true
 		c.mu.Unlock()
@@ -355,7 +404,7 @@ func (c *Coordinator) runSupervisorOperation(parent context.Context, operation f
 	ctx, cancel := context.WithCancel(parent)
 	done := make(chan struct{})
 	c.mu.Lock()
-	if c.applyWaiters > 0 || c.applyActive || c.supervisorCancel != nil {
+	if c.maintenance || c.applyWaiters > 0 || c.applyActive || c.supervisorCancel != nil {
 		c.mu.Unlock()
 		cancel()
 		return ErrLifecycleBusy
@@ -405,7 +454,7 @@ func (c *Coordinator) IsLifecycleBusy() bool {
 		return false
 	}
 	c.mu.Lock()
-	pending := c.applyWaiters > 0 || c.applyActive || c.benchmarkCancel != nil
+	pending := c.maintenance || c.applyWaiters > 0 || c.applyActive || c.benchmarkCancel != nil
 	c.mu.Unlock()
 	if pending {
 		return true

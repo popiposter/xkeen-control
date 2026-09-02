@@ -162,17 +162,31 @@ type Config struct {
 	Now                  func() time.Time
 	Random               io.Reader
 	InjectFailure        FailureInjector
+	// SyncDirectory is an internal persistence seam used by focused fixtures;
+	// production uses the platform directory fsync implementation.
+	SyncDirectory func(string) error
 }
 
 type Service struct {
 	config Config
 
-	mu       sync.Mutex
-	previews map[string]previewEntry
-	ready    bool
-	readyErr error
+	mu          sync.Mutex
+	previews    map[string]previewEntry
+	ready       bool
+	readyErr    error
+	maintenance bool
 
-	startupMu sync.Mutex
+	startupMu     sync.Mutex
+	syncDirectory func(string) error
+}
+
+type maintenanceGate interface {
+	EnterMaintenance()
+	ExitMaintenance()
+}
+
+type recoveryCoordinator interface {
+	BeginRecovery(context.Context) (func(), error)
 }
 
 type previewEntry struct {
@@ -272,6 +286,9 @@ func NewService(config Config) *Service {
 	if config.Random == nil {
 		config.Random = rand.Reader
 	}
+	if config.SyncDirectory == nil {
+		config.SyncDirectory = syncDirectory
+	}
 	if config.ConfigDir == "" {
 		config.ConfigDir = "/opt/etc/xray/configs"
 	}
@@ -304,7 +321,14 @@ func NewService(config Config) *Service {
 		ready = false
 		readyErr = ErrRecoveryFailed
 	}
-	return &Service{config: config, previews: make(map[string]previewEntry), ready: ready, readyErr: readyErr}
+	service := &Service{
+		config: config, previews: make(map[string]previewEntry), ready: ready, readyErr: readyErr,
+		syncDirectory: config.SyncDirectory,
+	}
+	if !ready {
+		service.enterMaintenance()
+	}
+	return service
 }
 
 // New is the concise constructor used by package-local callers.
@@ -342,24 +366,32 @@ func (s *Service) RecoverStartup(ctx context.Context) error {
 
 	journal, exists, err := s.readJournal()
 	if err != nil {
+		s.failClosed()
 		s.markNotReady(ErrRecoveryFailed)
 		return ErrRecoveryFailed
 	}
 	if !exists {
+		if s.isMaintenance() {
+			s.failClosed()
+			s.markNotReady(ErrRecoveryFailed)
+			return ErrRecoveryFailed
+		}
 		s.markReady()
 		return nil
 	}
 
 	admissionContext, cancelAdmission := context.WithTimeout(ctx, s.config.AuthorityWaitTimeout)
 	defer cancelAdmission()
-	releaseCoordinator, err := s.beginCoordinator(admissionContext)
+	releaseCoordinator, err := s.beginRecoveryCoordinator(admissionContext)
 	if err != nil {
+		s.failClosed()
 		s.markNotReady(ErrRecoveryFailed)
 		return ErrRecoveryFailed
 	}
 	defer releaseCoordinator()
-	releaseAuthority, err := s.config.AuthorityLease.Acquire(admissionContext, s.config.AuthorityWaitTimeout)
+	releaseAuthority, err := s.config.AuthorityLease.AcquireForRecovery(admissionContext, s.config.AuthorityWaitTimeout)
 	if err != nil {
+		s.failClosed()
 		s.markNotReady(ErrRecoveryFailed)
 		return ErrRecoveryFailed
 	}
@@ -367,13 +399,16 @@ func (s *Service) RecoverStartup(ctx context.Context) error {
 
 	previous, err := s.loadPrevious(journal.Previous)
 	if err != nil || !previous.applianceExists || !previous.nodesExists || !previous.applianceValid || !previous.nodesValid {
+		s.failClosed()
 		s.markNotReady(ErrRecoveryFailed)
 		return ErrRecoveryFailed
 	}
 	if err := s.recoverFromSnapshot(ctx, previous); err != nil {
+		s.failClosed()
 		s.markNotReady(ErrRecoveryFailed)
 		return ErrRecoveryFailed
 	}
+	s.releaseMaintenance()
 	s.markReady()
 	return nil
 }
@@ -667,10 +702,12 @@ func (s *Service) Apply(ctx context.Context, binding, token string) (ApplyResult
 	}
 	journal.Phase = phaseRuntimeVerified
 	if err := s.writeJournal(journal); err != nil {
+		s.failClosed()
 		s.markNotReady(ErrRecoveryFailed)
 		return ApplyResult{}, ErrRecoveryFailed
 	}
 	if err := s.clearJournal(); err != nil {
+		s.failClosed()
 		s.markNotReady(ErrRecoveryFailed)
 		return ApplyResult{}, ErrRecoveryFailed
 	}
@@ -859,7 +896,7 @@ func (s *Service) validateCandidate(ctx context.Context, files map[string][]byte
 		return ErrCandidateInvalid
 	}
 	defer os.RemoveAll(candidate)
-	if err := writeCandidateTree(candidate, files); err != nil {
+	if err := writeCandidateTree(candidate, files, s.syncDirectory); err != nil {
 		return ErrCandidateInvalid
 	}
 	validationContext, cancel := context.WithTimeout(ctx, s.config.CandidateValidation)
@@ -926,7 +963,7 @@ func (s *Service) writeGenerated(files map[string][]byte, inject bool) error {
 		if !ok {
 			return ErrCandidateInvalid
 		}
-		if err := s.writeAuthorityIfChanged(item.path, contents); err != nil {
+		if err := writeAtomicInExistingDir(item.path, contents, 0o600, s.syncDirectory); err != nil {
 			return err
 		}
 		if inject {
@@ -950,6 +987,7 @@ func enabledTags(registry nodes.Registry) []string {
 
 func (s *Service) failAndRecover(ctx context.Context, snapshot authoritySnapshot) (ApplyResult, error) {
 	if err := s.recoverFromSnapshot(ctx, snapshot); err != nil {
+		s.failClosed()
 		s.markNotReady(ErrRecoveryFailed)
 		return ApplyResult{}, ErrRecoveryFailed
 	}
@@ -1000,11 +1038,11 @@ func (s *Service) savePrevious(snapshot authoritySnapshot) error {
 	if err := ensurePrivateDir(staging); err != nil {
 		return err
 	}
-	if err := writePreviousAuthority(staging, "appliance.json", ".appliance-absent", snapshot.applianceExists, snapshot.applianceBytes); err != nil {
+	if err := writePreviousAuthority(staging, "appliance.json", ".appliance-absent", snapshot.applianceExists, snapshot.applianceBytes, s.syncDirectory); err != nil {
 		_ = os.RemoveAll(staging)
 		return err
 	}
-	if err := writePreviousAuthority(staging, "nodes.json", ".nodes-absent", snapshot.nodesExists, snapshot.nodesBytes); err != nil {
+	if err := writePreviousAuthority(staging, "nodes.json", ".nodes-absent", snapshot.nodesExists, snapshot.nodesBytes, s.syncDirectory); err != nil {
 		_ = os.RemoveAll(staging)
 		return err
 	}
@@ -1021,6 +1059,10 @@ func (s *Service) savePrevious(snapshot authoritySnapshot) error {
 			_ = os.RemoveAll(staging)
 			return err
 		}
+		if err := s.syncDirectory(parent); err != nil {
+			_ = os.RemoveAll(staging)
+			return err
+		}
 	}
 	if err := os.Rename(staging, s.config.PreviousDir); err != nil {
 		if _, oldErr := os.Lstat(old); oldErr == nil {
@@ -1029,15 +1071,23 @@ func (s *Service) savePrevious(snapshot authoritySnapshot) error {
 		_ = os.RemoveAll(staging)
 		return err
 	}
-	_ = os.RemoveAll(old)
+	if err := s.syncDirectory(parent); err != nil {
+		return err
+	}
+	if err := removeOwnedPath(old); err != nil {
+		return err
+	}
+	if err := s.syncDirectory(parent); err != nil {
+		return err
+	}
 	return nil
 }
 
-func writePreviousAuthority(root, name, absentName string, exists bool, contents []byte) error {
+func writePreviousAuthority(root, name, absentName string, exists bool, contents []byte, syncDirectory func(string) error) error {
 	if exists {
-		return writeAtomic(filepath.Join(root, name), contents, 0o600)
+		return writeAtomicWithSync(filepath.Join(root, name), contents, 0o600, syncDirectory)
 	}
-	return writeAtomic(filepath.Join(root, absentName), []byte("1\n"), 0o600)
+	return writeAtomicWithSync(filepath.Join(root, absentName), []byte("1\n"), 0o600, syncDirectory)
 }
 
 func (s *Service) writeExactAuthority(path string, exists bool, contents []byte) error {
@@ -1051,14 +1101,17 @@ func (s *Service) writeExactAuthority(path string, exists bool, contents []byte)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return ErrRecoveryFailed
 	}
-	return os.Remove(path)
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	return s.syncDirectory(filepath.Dir(path))
 }
 
 func (s *Service) writeAuthorityIfChanged(path string, contents []byte) error {
 	if existing, err := readRegularFile(path, maxAuthoritySizeForPath(path)); err == nil && bytes.Equal(existing, contents) {
 		return nil
 	}
-	return writeAtomic(path, contents, 0o600)
+	return writeAtomicWithSync(path, contents, 0o600, s.syncDirectory)
 }
 
 func maxAuthoritySizeForPath(path string) int {
@@ -1066,7 +1119,7 @@ func maxAuthoritySizeForPath(path string) int {
 	return max(appliance.MaxDocumentSize, nodes.MaxRegistryDocument)
 }
 
-func writeCandidateTree(root string, files map[string][]byte) error {
+func writeCandidateTree(root string, files map[string][]byte, syncDirectory func(string) error) error {
 	if err := ensurePrivateDir(root); err != nil {
 		return err
 	}
@@ -1086,7 +1139,7 @@ func writeCandidateTree(root string, files map[string][]byte) error {
 		if err := ensurePrivateDir(filepath.Dir(path)); err != nil {
 			return err
 		}
-		if err := writeAtomic(path, files[relative], 0o600); err != nil {
+		if err := writeAtomicWithSync(path, files[relative], 0o600, syncDirectory); err != nil {
 			return err
 		}
 	}
@@ -1132,7 +1185,7 @@ func removeOwnedPath(path string) error {
 	return os.RemoveAll(path)
 }
 
-func writeAtomic(path string, contents []byte, mode os.FileMode) error {
+func writeAtomicWithSync(path string, contents []byte, mode os.FileMode, syncDirectory func(string) error) error {
 	if path == "" {
 		return errors.New("empty write path")
 	}
@@ -1140,6 +1193,25 @@ func writeAtomic(path string, contents []byte, mode os.FileMode) error {
 	if err := ensurePrivateDir(parent); err != nil {
 		return err
 	}
+	return writeAtomicFile(path, contents, mode, syncDirectory)
+}
+
+// writeAtomicInExistingDir is used for active Xray generated files. The
+// directory is an existing runtime-owned path: validate it, but never create
+// or chmod it as part of a restore.
+func writeAtomicInExistingDir(path string, contents []byte, mode os.FileMode, syncDirectory func(string) error) error {
+	if path == "" {
+		return errors.New("empty write path")
+	}
+	parent := filepath.Dir(path)
+	if err := verifyExistingDirectory(parent); err != nil {
+		return err
+	}
+	return writeAtomicFile(path, contents, mode, syncDirectory)
+}
+
+func writeAtomicFile(path string, contents []byte, mode os.FileMode, syncDirectory func(string) error) error {
+	parent := filepath.Dir(path)
 	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("write target is unsafe")
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -1170,21 +1242,47 @@ func writeAtomic(path string, contents []byte, mode os.FileMode) error {
 		return err
 	}
 	_ = os.Chmod(path, mode)
-	if runtime.GOOS != "windows" {
-		directory, err := os.Open(parent)
-		if err != nil {
-			return err
-		}
-		syncErr := directory.Sync()
-		closeErr := directory.Close()
-		if syncErr != nil {
-			return syncErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
+	if syncDirectory == nil {
+		syncDirectory = defaultSyncDirectory
+	}
+	if err := syncDirectory(parent); err != nil {
+		return err
 	}
 	return nil
+}
+
+func verifyExistingDirectory(path string) error {
+	if path == "" {
+		return errors.New("existing directory is unavailable")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return errors.New("existing directory is unsafe")
+	}
+	return nil
+}
+
+func defaultSyncDirectory(path string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	if syncErr != nil {
+		return syncErr
+	}
+	return closeErr
+}
+
+func syncDirectory(path string) error {
+	return defaultSyncDirectory(path)
 }
 
 func readOptionalAuthority(path string, limit int) ([]byte, bool, error) {
@@ -1321,7 +1419,7 @@ func (s *Service) writeJournal(journal importJournal) error {
 		return errors.New("journal exceeds bounded size")
 	}
 	contents = append(contents, '\n')
-	return writeAtomic(s.journalPath(), contents, 0o600)
+	return writeAtomicWithSync(s.journalPath(), contents, 0o600, s.syncDirectory)
 }
 
 func (s *Service) readJournal() (importJournal, bool, error) {
@@ -1385,7 +1483,13 @@ func (s *Service) clearJournal() error {
 	if err := checkPrivateFile(s.journalPath()); err != nil {
 		return errors.New("journal path is unsafe")
 	}
-	return os.Remove(s.journalPath())
+	if err := os.Remove(s.journalPath()); err != nil {
+		return err
+	}
+	if err := s.syncDirectory(s.config.StateDir); err != nil {
+		return err
+	}
+	return nil
 }
 
 func verifyPreviousDirectory(path string, expected journalPair) error {
@@ -1478,6 +1582,72 @@ func (s *Service) beginCoordinator(ctx context.Context) (func(), error) {
 		return func() {}, nil
 	}
 	return release, nil
+}
+
+func (s *Service) beginRecoveryCoordinator(ctx context.Context) (func(), error) {
+	if coordinator, ok := s.config.Coordinator.(recoveryCoordinator); ok {
+		release, err := coordinator.BeginRecovery(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if release == nil {
+			return func() {}, nil
+		}
+		return release, nil
+	}
+	return s.beginCoordinator(ctx)
+}
+
+// enterMaintenance closes both mutation planes before a retained journal can
+// be observed by another authority/lifecycle caller. It is idempotent because
+// failure paths may discover the same unresolved journal more than once.
+func (s *Service) enterMaintenance() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.maintenance = true
+	s.ready = false
+	if s.readyErr == nil {
+		s.readyErr = ErrRecoveryFailed
+	}
+	s.mu.Unlock()
+	if s.config.AuthorityLease != nil {
+		s.config.AuthorityLease.Block()
+	}
+	if coordinator, ok := s.config.Coordinator.(maintenanceGate); ok {
+		coordinator.EnterMaintenance()
+	}
+}
+
+func (s *Service) releaseMaintenance() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	if !s.maintenance {
+		s.mu.Unlock()
+		return
+	}
+	s.maintenance = false
+	s.mu.Unlock()
+	if coordinator, ok := s.config.Coordinator.(maintenanceGate); ok {
+		coordinator.ExitMaintenance()
+	}
+	if s.config.AuthorityLease != nil {
+		s.config.AuthorityLease.Unblock()
+	}
+}
+
+func (s *Service) failClosed() {
+	s.enterMaintenance()
+}
+
+func (s *Service) isMaintenance() bool {
+	s.mu.Lock()
+	maintenance := s.maintenance
+	s.mu.Unlock()
+	return maintenance
 }
 
 func (s *Service) inject(stage Stage) error {

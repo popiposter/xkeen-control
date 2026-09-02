@@ -25,6 +25,25 @@ func TestCoordinatorStartsWithAvailableLifecycleToken(t *testing.T) {
 	}
 }
 
+func TestCoordinatorMaintenanceRejectsNormalMutationsButAdmitsRecovery(t *testing.T) {
+	coordinator := NewCoordinator(DefaultPolicy(), nil, nil, nil)
+	coordinator.EnterMaintenance()
+	if _, err := coordinator.BeginApply(context.Background()); !errors.Is(err, ErrLifecycleBusy) {
+		t.Fatalf("normal lifecycle mutation while in maintenance = %v", err)
+	}
+	release, err := coordinator.BeginRecovery(context.Background())
+	if err != nil {
+		t.Fatalf("recovery admission while in maintenance = %v", err)
+	}
+	release()
+	coordinator.ExitMaintenance()
+	release, err = coordinator.BeginApply(context.Background())
+	if err != nil {
+		t.Fatalf("lifecycle mutation after maintenance = %v", err)
+	}
+	release()
+}
+
 func TestCoordinatorApplyAdmissionWinsForcedInterleaving(t *testing.T) {
 	coordinator := NewCoordinator(DefaultPolicy(), nil, &BenchmarkRunner{}, nil)
 	hookEntered := make(chan struct{})

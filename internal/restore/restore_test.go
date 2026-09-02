@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -89,12 +90,31 @@ func (a *fakeActivator) VerifyOutboundTags(context.Context, []string) error {
 }
 
 type fakeCoordinator struct {
-	mu       sync.Mutex
-	begins   int
-	releases int
+	mu          sync.Mutex
+	begins      int
+	releases    int
+	maintenance bool
 }
 
 func (c *fakeCoordinator) BeginApply(context.Context) (func(), error) {
+	c.mu.Lock()
+	if c.maintenance {
+		c.mu.Unlock()
+		return nil, errors.New("synthetic lifecycle maintenance")
+	}
+	c.begins++
+	c.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			c.mu.Lock()
+			c.releases++
+			c.mu.Unlock()
+		})
+	}, nil
+}
+
+func (c *fakeCoordinator) BeginRecovery(context.Context) (func(), error) {
 	c.mu.Lock()
 	c.begins++
 	c.mu.Unlock()
@@ -106,6 +126,24 @@ func (c *fakeCoordinator) BeginApply(context.Context) (func(), error) {
 			c.mu.Unlock()
 		})
 	}, nil
+}
+
+func (c *fakeCoordinator) EnterMaintenance() {
+	c.mu.Lock()
+	c.maintenance = true
+	c.mu.Unlock()
+}
+
+func (c *fakeCoordinator) ExitMaintenance() {
+	c.mu.Lock()
+	c.maintenance = false
+	c.mu.Unlock()
+}
+
+func (c *fakeCoordinator) isMaintenance() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.maintenance
 }
 
 type restoreFixture struct {
@@ -178,6 +216,10 @@ func newRestoreFixture(t *testing.T) *restoreFixture {
 }
 
 func (f *restoreFixture) newService(inject FailureInjector) *Service {
+	return f.newServiceWithSync(inject, nil)
+}
+
+func (f *restoreFixture) newServiceWithSync(inject FailureInjector, syncDirectory func(string) error) *Service {
 	return NewService(Config{
 		AppliancePath:       f.appliancePath,
 		NodesPath:           f.nodesPath,
@@ -190,6 +232,7 @@ func (f *restoreFixture) newService(inject FailureInjector) *Service {
 		Coordinator:         f.coordinator,
 		AuthorityLease:      f.lease,
 		InjectFailure:       inject,
+		SyncDirectory:       syncDirectory,
 		Now:                 func() time.Time { return time.Unix(1_750_000_000, 0).UTC() },
 	})
 }
@@ -260,6 +303,17 @@ func bundleBytes(t *testing.T, value appliance.Appliance, registry *nodes.Regist
 type staticAppliance struct{ value appliance.Appliance }
 
 func (s staticAppliance) Snapshot() (appliance.Appliance, error) { return s.value, nil }
+
+type observingAppliance struct {
+	source *appliance.Service
+	called chan struct{}
+	once   sync.Once
+}
+
+func (s *observingAppliance) Snapshot() (appliance.Appliance, error) {
+	s.once.Do(func() { close(s.called) })
+	return s.source.Snapshot()
+}
 
 type staticRegistry struct{ value *nodes.Registry }
 
@@ -653,6 +707,266 @@ func TestEveryPostJournalFailureRestoresLogicalGenerationAndRuntime(t *testing.T
 	}
 }
 
+func TestGeneratedWritesPreserveLiveConfigDirectoryModeOnSuccessAndRollback(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory mode preservation is a POSIX regression")
+	}
+	for _, test := range []struct {
+		name  string
+		stage Stage
+		want  error
+	}{
+		{name: "success"},
+		{name: "rollback", stage: StageDNSCommitted, want: ErrApplyFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newRestoreFixture(t)
+			if err := os.Chmod(fixture.configDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.Stat(fixture.configDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			injectOnce := false
+			fixture.service = fixture.newService(func(stage Stage) error {
+				if test.stage != "" && stage == test.stage && !injectOnce {
+					injectOnce = true
+					return errors.New("synthetic generated failure")
+				}
+				return nil
+			})
+			preview, err := fixture.service.Preview(context.Background(), "directory-mode", SettingsOnly, bundleBytes(t, changedAppliance(fixture.appliance), nil, false), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, applyErr := fixture.service.Apply(context.Background(), "directory-mode", preview.Token)
+			if test.want == nil && applyErr != nil {
+				t.Fatalf("successful apply = %v", applyErr)
+			}
+			if test.want != nil && !errors.Is(applyErr, test.want) {
+				t.Fatalf("rollback apply = %v", applyErr)
+			}
+			after, err := os.Stat(fixture.configDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.Mode().Perm() != before.Mode().Perm() {
+				t.Fatalf("live Xray config directory mode changed: before=%o after=%o", before.Mode().Perm(), after.Mode().Perm())
+			}
+		})
+	}
+}
+
+func TestUnresolvedImportGloballyBlocksNodeAndLifecycleMutations(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*restoreFixture)
+	}{
+		{
+			name: "recovery-failure-retains-journal",
+			setup: func(fixture *restoreFixture) {
+				fixture.activator.restartErrs = []error{errors.New("synthetic recovery failure")}
+				failed := false
+				fixture.service = fixture.newService(func(stage Stage) error {
+					if stage == StageGeneratedCommitted && !failed {
+						failed = true
+						return errors.New("synthetic interruption")
+					}
+					return nil
+				})
+			},
+		},
+		{
+			name: "journal-clear-failure",
+			setup: func(fixture *restoreFixture) {
+				journalPath := filepath.Join(fixture.stateDir, "appliance-import-transaction.json")
+				fixture.service = fixture.newServiceWithSync(nil, func(path string) error {
+					if filepath.Clean(path) == filepath.Clean(fixture.stateDir) {
+						if _, err := os.Stat(journalPath); errors.Is(err, os.ErrNotExist) {
+							return errors.New("synthetic journal removal durability failure")
+						}
+					}
+					return nil
+				})
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newRestoreFixture(t)
+			test.setup(fixture)
+			preview, err := fixture.service.Preview(context.Background(), "maintenance", SettingsOnly, bundleBytes(t, changedAppliance(fixture.appliance), nil, false), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fixture.service.Apply(context.Background(), "maintenance", preview.Token); !errors.Is(err, ErrRecoveryFailed) {
+				t.Fatalf("unresolved import result = %v", err)
+			}
+			if !fixture.coordinator.isMaintenance() {
+				t.Fatal("lifecycle coordinator was not placed in maintenance")
+			}
+			if _, err := fixture.lease.Acquire(context.Background(), 0); !errors.Is(err, authority.ErrBlocked) {
+				t.Fatalf("shared authority lease after failure = %v", err)
+			}
+
+			manager := nodes.NewManager(nodes.Config{
+				Store: fixtureStore(fixture), AuthorityLease: fixture.lease, Coordinator: fixture.coordinator,
+			})
+			if _, err := manager.Apply(context.Background(), "maintenance", "synthetic-node-token", false); err == nil {
+				t.Fatal("node mutation was admitted after unresolved import")
+			}
+			if _, err := fixture.coordinator.BeginApply(context.Background()); err == nil {
+				t.Fatal("lifecycle mutation was admitted after unresolved import")
+			}
+			backupService := backup.NewService(backup.Config{
+				Appliance: staticAppliance{value: fixture.appliance}, AuthorityLease: fixture.lease,
+				Build: buildinfo.Info{Product: "xkeen-control", Version: "dev", SourceCommit: "dev", Channel: "development"},
+			})
+			if _, err := backupService.Export(context.Background()); !errors.Is(err, backup.ErrUnavailable) {
+				t.Fatalf("safe export after unresolved import = %v", err)
+			}
+		})
+	}
+}
+
+func TestPreviousPublicationAndJournalRemovalAreDirectoryDurable(t *testing.T) {
+	fixture := newRestoreFixture(t)
+	var events []string
+	previousParent := filepath.Clean(filepath.Dir(fixture.previousDir))
+	stateDir := filepath.Clean(fixture.stateDir)
+	journalPath := filepath.Join(fixture.stateDir, "appliance-import-transaction.json")
+	syncDirectory := func(path string) error {
+		clean := filepath.Clean(path)
+		if clean == previousParent {
+			if _, err := os.Stat(fixture.previousDir); err == nil {
+				if _, stagingErr := os.Stat(fixture.previousDir + ".staging"); errors.Is(stagingErr, os.ErrNotExist) {
+					events = append(events, "previous-published")
+				}
+			}
+		}
+		if clean == stateDir {
+			if _, err := os.Stat(journalPath); errors.Is(err, os.ErrNotExist) {
+				events = append(events, "journal-removed")
+			} else {
+				events = append(events, "journal-written")
+			}
+		}
+		return nil
+	}
+	fixture.service = fixture.newServiceWithSync(nil, syncDirectory)
+	snapshot, err := fixture.service.captureAuthorities(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.service.savePrevious(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	previousMeta := journalPair{Appliance: authorityMetaFor(snapshot.applianceExists, snapshot.applianceBytes), Nodes: authorityMetaFor(snapshot.nodesExists, snapshot.nodesBytes)}
+	if err := fixture.service.writeJournal(importJournal{
+		SchemaVersion: journalSchemaVersion, Mode: SettingsOnly, Phase: phasePrepared,
+		Previous: previousMeta, Candidate: previousMeta,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	publicationIndex, journalWriteIndex := -1, -1
+	for index, event := range events {
+		if event == "previous-published" && publicationIndex == -1 {
+			publicationIndex = index
+		}
+		if event == "journal-written" && journalWriteIndex == -1 {
+			journalWriteIndex = index
+		}
+	}
+	if publicationIndex == -1 || journalWriteIndex == -1 || publicationIndex >= journalWriteIndex {
+		t.Fatalf("persistence ordering events = %v", events)
+	}
+	if err := fixture.service.clearJournal(); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 || events[len(events)-1] != "journal-removed" {
+		t.Fatalf("journal removal was not synced after unlink: %v", events)
+	}
+}
+
+func TestSafeExportWaitsForRestoreRollbackAndReadsCommittedGeneration(t *testing.T) {
+	fixture := newRestoreFixture(t)
+	entered := make(chan struct{})
+	allow := make(chan struct{})
+	failed := false
+	fixture.service = fixture.newService(func(stage Stage) error {
+		switch stage {
+		case StageApplianceCommitted:
+			close(entered)
+			<-allow
+		case StageDNSCommitted:
+			if !failed {
+				failed = true
+				return errors.New("synthetic post-authority failure")
+			}
+		}
+		return nil
+	})
+	preview, err := fixture.service.Preview(context.Background(), "safe-export-race", SettingsOnly, bundleBytes(t, changedAppliance(fixture.appliance), nil, false), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyDone := make(chan error, 1)
+	go func() {
+		_, applyErr := fixture.service.Apply(context.Background(), "safe-export-race", preview.Token)
+		applyDone <- applyErr
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("restore did not reach the authority commit")
+	}
+	applianceSource := &observingAppliance{
+		source: appliance.NewService(appliance.Config{AppliancePath: fixture.appliancePath}),
+		called: make(chan struct{}),
+	}
+	backupService := backup.NewService(backup.Config{
+		Appliance:      applianceSource,
+		AuthorityLease: fixture.lease,
+		Build:          buildinfo.Info{Product: "xkeen-control", Version: "dev", SourceCommit: "dev", Channel: "development"},
+	})
+	exportDone := make(chan struct {
+		contents []byte
+		err      error
+	}, 1)
+	go func() {
+		contents, exportErr := backupService.Export(context.Background())
+		exportDone <- struct {
+			contents []byte
+			err      error
+		}{contents: contents, err: exportErr}
+	}()
+	select {
+	case <-applianceSource.called:
+		t.Fatal("safe export read the appliance before restore commit or rollback")
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(allow)
+	if applyErr := <-applyDone; !errors.Is(applyErr, ErrApplyFailed) {
+		t.Fatalf("restore rollback result = %v", applyErr)
+	}
+	select {
+	case result := <-exportDone:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		bundle, err := backup.ParseBundle(result.contents)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !sameAppliance(bundle.Appliance, fixture.appliance) {
+			t.Fatal("safe export did not read the committed rolled-back appliance generation")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("safe export did not resume after restore rollback")
+	}
+}
+
 func TestCombinedReplaceFailureAfterNodesCommitAndSecretSafePersistence(t *testing.T) {
 	fixture := newRestoreFixture(t)
 	originalAppliance, originalNodes, originalOutbounds := authorityBytes(t, fixture)
@@ -726,7 +1040,7 @@ func TestInterruptedJournalStartupRecoveryAndFailedRecoveryRetention(t *testing.
 		AppliancePath: fixture.appliancePath, NodesPath: fixture.nodesPath, ConfigDir: fixture.configDir,
 		XkeenConfigPath: fixture.xkeenPath, ActiveOutboundsPath: fixture.outboundsPath,
 		PreviousDir: fixture.previousDir, StateDir: fixture.stateDir, Activator: &fakeActivator{},
-		Coordinator: fixture.coordinator, AuthorityLease: authority.NewLease(),
+		Coordinator: fixture.coordinator, AuthorityLease: fixture.lease,
 	})
 	if err := recovered.RecoverStartup(context.Background()); err != nil {
 		t.Fatal(err)
@@ -738,6 +1052,16 @@ func TestInterruptedJournalStartupRecoveryAndFailedRecoveryRetention(t *testing.
 	if err := recovered.Ready(); err != nil {
 		t.Fatal(err)
 	}
+	releaseLease, err := fixture.lease.Acquire(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("shared authority lease remained blocked after recovery: %v", err)
+	}
+	releaseLease()
+	releaseLifecycle, err := fixture.coordinator.BeginApply(context.Background())
+	if err != nil {
+		t.Fatalf("lifecycle remained blocked after recovery: %v", err)
+	}
+	releaseLifecycle()
 }
 
 func TestSharedAuthorityLeaseSerializesBackupSnapshotAndRestorePreview(t *testing.T) {

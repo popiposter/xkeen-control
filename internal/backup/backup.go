@@ -41,6 +41,7 @@ const (
 	MinPassphraseBytes       = 12
 	MaxPassphraseBytes       = 256
 	MaxSecretRequestBody     = 16 << 10
+	AuthoritySnapshotTimeout = 15 * time.Second
 	SafeFilename             = "xkeen-control-backup.json"
 	SecretFilename           = "xkeen-control-backup-encrypted.json"
 	BackupMediaType          = "application/vnd.xkeen-control.backup+json"
@@ -216,16 +217,43 @@ type aadHeader struct {
 	Cipher          cipherParameters `json:"cipher"`
 }
 
-// Export returns the structurally secretless appliance bundle.
-func (s *Service) Export(context.Context) ([]byte, error) {
+// Export returns the structurally secretless appliance bundle. Its typed
+// authority read is serialized through the same short lease as restore and
+// node Apply; encoding happens only after the lease is released.
+func (s *Service) Export(ctx context.Context) ([]byte, error) {
 	if s == nil || s.appliance == nil {
 		return nil, ErrUnavailable
 	}
-	value, err := s.appliance.Snapshot()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	value, err := s.snapshotAppliance(ctx)
 	if err != nil {
 		return nil, ErrUnavailable
 	}
 	return s.encodeBundle(value, nil, false)
+}
+
+func (s *Service) snapshotAppliance(ctx context.Context) (appliance.Appliance, error) {
+	var release func()
+	if s.authority != nil {
+		var err error
+		release, err = s.authority.Acquire(ctx, AuthoritySnapshotTimeout)
+		if err != nil {
+			return appliance.Appliance{}, err
+		}
+	}
+	var value appliance.Appliance
+	var err error
+	if source, ok := s.appliance.(applianceUnderLeaseSource); ok && release != nil {
+		value, err = source.SnapshotUnderLease()
+	} else {
+		value, err = s.appliance.Snapshot()
+	}
+	if release != nil {
+		release()
+	}
+	return value, err
 }
 
 // ExportSecret returns a one-request re-authenticated encrypted backup. The
@@ -253,7 +281,7 @@ func (s *Service) ExportSecret(ctx context.Context, passphrase string) ([]byte, 
 	var releaseAuthority func()
 	if s.authority != nil {
 		var acquireErr error
-		releaseAuthority, acquireErr = s.authority.Acquire(ctx, 15*time.Second)
+		releaseAuthority, acquireErr = s.authority.Acquire(ctx, AuthoritySnapshotTimeout)
 		if acquireErr != nil {
 			return nil, ErrUnavailable
 		}
