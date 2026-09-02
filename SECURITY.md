@@ -84,7 +84,7 @@ Sessions, throttling and high-churn runtime state stay in RAM.
 
 Until Slice D.1 / Issue #3 is production-qualified and deployed, secret backup handling remains an explicit operator responsibility. Any backup containing `nodes.json` is secret material.
 
-The Phase B source implementation adds a portable safe export without VPN/subscription secrets by default and an explicitly re-authenticated encrypted secret-bearing export. It does not add import/apply or UI. Do not describe the source implementation as production-qualified or deployed before the remaining D.1 gates complete.
+The Phase B source implementation adds a portable safe export without VPN/subscription secrets by default and an explicitly re-authenticated encrypted secret-bearing export. Phase C1 adds only the internal bounded restore core, preview state, authority transaction and crash recovery; it adds no HTTP/UI surface. Do not describe any D.1 source implementation as production-qualified or deployed before the remaining D.1 gates complete.
 
 ## CI and diagnostics
 

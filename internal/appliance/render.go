@@ -345,6 +345,35 @@ func renderFiles(value Appliance, registry nodes.Registry) (map[string][]byte, e
 	return files, nil
 }
 
+// RenderPolicyFiles returns the deterministic managed policy artifacts for a
+// typed appliance value. The returned map contains only the supported 02/05/07
+// files; fixed compatibility templates and generated node outbounds are added
+// by RenderCandidateFiles.
+func RenderPolicyFiles(value Appliance) (map[string][]byte, error) {
+	return renderPolicyFiles(value)
+}
+
+// RenderCandidateFiles builds the complete bounded candidate consumed by the
+// existing Xray validator. It is the shared render boundary for appliance
+// adoption and restore; callers cannot supply arbitrary paths or raw JSON.
+func RenderCandidateFiles(value Appliance, registry nodes.Registry) (map[string][]byte, error) {
+	return renderFiles(value, registry)
+}
+
+// CompatibilityFiles returns copies of the fixed D.1 compatibility templates
+// keyed by their candidate-relative paths.
+func CompatibilityFiles() (map[string][]byte, error) {
+	result := make(map[string][]byte, len(fixedTemplatePaths))
+	for _, path := range fixedTemplatePaths {
+		contents, err := compatibilityTemplate(path)
+		if err != nil {
+			return nil, err
+		}
+		result[path] = contents
+	}
+	return result, nil
+}
+
 func compatibilityTemplate(path string) ([]byte, error) {
 	templatePath := strings.TrimPrefix(path, "xray/")
 	if strings.HasPrefix(path, "xkeen/") {
@@ -367,6 +396,13 @@ func semanticJSONEqual(left, right []byte) bool {
 	leftValue, leftErr := decodeJSONValue(left)
 	rightValue, rightErr := decodeJSONValue(right)
 	return leftErr == nil && rightErr == nil && reflect.DeepEqual(leftValue, rightValue)
+}
+
+// SemanticJSONEqual is used by restore's current-state proof for managed
+// policy files. It compares parsed JSON values and never exposes their raw
+// contents as an API projection.
+func SemanticJSONEqual(left, right []byte) bool {
+	return semanticJSONEqual(left, right)
 }
 
 func decodeJSONValue(data []byte) (interface{}, error) {

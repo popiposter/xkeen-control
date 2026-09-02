@@ -83,7 +83,10 @@ func TestApplyRejectsContendedGateWithinSeparateBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager.applyGate <- struct{}{}
+	releaseGate, err := manager.authority.Acquire(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	started := time.Now()
 	_, err = manager.Apply(context.Background(), "csrf", preview.Token, false)
 	if err == nil || !strings.Contains(err.Error(), "node activation gate busy") {
@@ -92,7 +95,7 @@ func TestApplyRejectsContendedGateWithinSeparateBound(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
 		t.Fatalf("gate contention was not bounded: %s", elapsed)
 	}
-	<-manager.applyGate
+	releaseGate()
 	if _, err := os.Stat(store.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("gate rejection wrote registry: %v", err)
 	}
@@ -134,7 +137,10 @@ func TestApplyGateWaitDoesNotConsumeRollbackBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager.applyGate <- struct{}{}
+	releaseGate, err := manager.authority.Acquire(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	result := make(chan error, 1)
 	go func() {
 		_, applyErr := manager.Apply(context.Background(), "csrf", preview.Token, false)
@@ -144,7 +150,7 @@ func TestApplyGateWaitDoesNotConsumeRollbackBudget(t *testing.T) {
 	// gate acquisition would leave less than the rollback floor below, while a
 	// correctly post-gate budget still has ample scheduler/filesystem margin.
 	time.Sleep(750 * time.Millisecond)
-	<-manager.applyGate
+	releaseGate()
 	if err := <-result; err == nil || !strings.Contains(err.Error(), "previous generation restored") {
 		t.Fatalf("activation rollback result = %v", err)
 	}

@@ -1,6 +1,6 @@
 # Operations
 
-This runbook describes the **currently production-qualified** control-plane generation. Slice D / Issue #2 is complete: signed public releases, bounded bootstrap and transactional panel update/rollback are current behavior for qualified `linux/arm64`. D.1 / Issue #3 is the next product slice; portable appliance backup/import/export is not available yet.
+This runbook describes the **currently production-qualified** control-plane generation. Slice D / Issue #2 is complete: signed public releases, bounded bootstrap and transactional panel update/rollback are current behavior for qualified `linux/arm64`. D.1 / Issue #3 remains source-only until its signed feature release and live qualification; the C1 restore core is not an operator-facing production capability.
 
 Production is a live router. Prefer typed/repository transactions over ad-hoc edits.
 
@@ -156,9 +156,9 @@ GitHub Releases from `popiposter/xkeen-control` are software distribution author
 
 The router requires no GitHub write token. Normal managed updates use the compiled source-pinned public key. First-install trust begins with GitHub HTTPS plus exact release-internal manifest/hash/size checks.
 
-## Planned D.1 backup / restore
+## D.1 backup / restore source boundary
 
-Portable typed export/import is the current product slice (#3), not current behavior yet. Safe export will exclude VPN/subscription secrets by default; secret-bearing backup will be explicit and encrypted. Until #3 is merged and qualified, `nodes.json` backups are secret operator material.
+Portable typed export/import is the current product slice (#3), not current production behavior. Phase C1 is internal restore core only; no import HTTP route or UI is available. Safe export excludes VPN/subscription secrets by default; secret-bearing backup is explicit and encrypted. Until #3 is fully released and qualified, `nodes.json` backups are secret operator material.
 
 ## Planned D.2 component lifecycle
 
