@@ -29,6 +29,15 @@ jobs:
           go test -race ./...
       - name: Focused shell and release fixtures
         run: |
+          fixture_workspace="$(readlink -f "$GITHUB_WORKSPACE")"
+          if [ -e /workspace ] || [ -L /workspace ]; then
+            test "$(readlink -f /workspace)" = "$fixture_workspace" || {
+              echo "fixture workspace path is not the checked-out repository" >&2
+              exit 1
+            }
+          else
+            sudo ln -s "$fixture_workspace" /workspace
+          fi
           bash -n scripts/*.sh
           bash scripts/test-benchmark-policy.sh
           bash scripts/test-c1.sh
