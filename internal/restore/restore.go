@@ -742,6 +742,20 @@ func (s *Service) Invalidate(binding string) {
 	s.mu.Unlock()
 }
 
+// InvalidateAll purges every RAM-only preview when the authentication
+// authority changes globally. It does not touch transaction or journal state.
+func (s *Service) InvalidateAll() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	for token, entry := range s.previews {
+		delete(s.previews, token)
+		zeroPreview(&entry)
+	}
+	s.mu.Unlock()
+}
+
 func normalizeMode(mode Mode) (Mode, error) {
 	switch mode {
 	case SettingsOnly, ReplaceRegistry, MergeRegistry:

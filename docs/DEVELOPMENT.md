@@ -141,6 +141,18 @@ bash scripts/test-restore.sh
 
 It covers strict safe/encrypted mode handling, stable-ID replace/merge semantics, bounded session-bound previews, exact authority stale checks, fixed-template/current-generation blockers, complete candidate validation before mutation, deterministic generated-file/runtime convergence, logical previous-generation rollback, secret-free journal metadata and interrupted-import startup recovery. It uses synthetic authorities and never mutates a production Keenetic.
 
+## Issue #3 Phase C2 focused fixtures
+
+The bounded import HTTP/UI adapter qualification is covered by the HTTP package tests together with the existing backup and restore fixtures:
+
+```sh
+go test -count=1 ./internal/httpapi
+bash scripts/test-backup.sh
+bash scripts/test-restore.sh
+```
+
+The HTTP regressions cover authenticated same-origin/CSRF routes, strict query/multipart/body limits, hostile filenames without temporary uploads, preview single-flight admission, logout/password/in-flight session invalidation, token-only Apply/Cancel, fixed safe error mappings and response secret scanning. The frontend check covers the first-class Backup & Restore flows and tracked embedded assets. These tests use synthetic data and do not mutate a production Keenetic.
+
 ## Fresh-checkout expectation
 
 A fresh clone/checkout of PR HEAD must be sufficient for documented qualification. Do not depend on untracked generated files, local secrets, an already-built binary, host npm/go packages or production registry/config files.

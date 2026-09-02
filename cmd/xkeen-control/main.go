@@ -171,6 +171,7 @@ func main() {
 		Assets:    webassets.Handler(),
 		StartedAt: startedAt,
 		Updates:   updateManager,
+		Restore:   restoreService,
 		Backup: backup.NewService(backup.Config{
 			Appliance:      applianceService,
 			Nodes:          nodeManager,

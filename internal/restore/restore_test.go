@@ -566,6 +566,16 @@ func TestPreviewBindingTTLBoundEvictionAndInvalidation(t *testing.T) {
 	if _, err := fixture.service.Apply(context.Background(), "bound", third.Token); !errors.Is(err, ErrPreviewExpired) {
 		t.Fatalf("invalidated preview = %v", err)
 	}
+	fourth, err := fixture.service.Preview(context.Background(), "other", SettingsOnly, bundle, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.service.InvalidateAll()
+	for binding, token := range map[string]string{"bound": third.Token, "other": fourth.Token} {
+		if _, err := fixture.service.Apply(context.Background(), binding, token); !errors.Is(err, ErrPreviewExpired) {
+			t.Fatalf("global invalidation for %s = %v", binding, err)
+		}
+	}
 }
 
 func TestBlockedApplyConsumesOneShotPreview(t *testing.T) {

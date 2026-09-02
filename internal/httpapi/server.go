@@ -15,6 +15,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/backup"
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/nodes"
+	"github.com/popiposter/xkeen-control/internal/restore"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
 	panelupdate "github.com/popiposter/xkeen-control/internal/update"
 )
@@ -31,6 +32,14 @@ type BackupService interface {
 	ExportSecret(context.Context, string) ([]byte, error)
 }
 
+type RestoreService interface {
+	PreviewBundle(context.Context, string, []byte, string, restore.Mode) (restore.Preview, error)
+	Apply(context.Context, string, string) (restore.ApplyResult, error)
+	Cancel(string, string)
+	Invalidate(string)
+	InvalidateAll()
+}
+
 type Server struct {
 	collector *controlruntime.Collector
 	auth      *auth.Manager
@@ -43,8 +52,10 @@ type Server struct {
 	selection interface {
 		SetManualOverride(context.Context, string) error
 	}
-	updates panelupdate.Service
-	backup  BackupService
+	updates            panelupdate.Service
+	backup             BackupService
+	restore            RestoreService
+	restorePreviewGate chan struct{}
 }
 
 type Config struct {
@@ -61,13 +72,14 @@ type Config struct {
 	}
 	Updates panelupdate.Service
 	Backup  BackupService
+	Restore RestoreService
 }
 
 func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, selection: config.Selection, updates: config.Updates, backup: config.Backup}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, selection: config.Selection, updates: config.Updates, backup: config.Backup, restore: config.Restore, restorePreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -89,6 +101,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/session/password",
 		"/api/v1/benchmark/run",
 		"/api/v1/backup/export", "/api/v1/backup/export-secret",
+		"/api/v1/backup/import/preview", "/api/v1/backup/import/apply", "/api/v1/backup/import/cancel",
 		"/api/v1/nodes/import/preview", "/api/v1/nodes/replace/preview",
 		"/api/v1/subscriptions/refresh/preview", "/api/v1/subscriptions/state/preview", "/api/v1/subscriptions/remove/preview",
 		"/api/v1/selection/override",
@@ -188,6 +201,24 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.exportSecretBackup(w, r)
+	case "/api/v1/backup/import/preview":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.previewRestore(w, r)
+	case "/api/v1/backup/import/apply":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.applyRestore(w, r)
+	case "/api/v1/backup/import/cancel":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.cancelRestore(w, r)
 	case "/api/v1/nodes/import/preview":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -428,6 +459,9 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if s.nodes != nil {
 		s.nodes.Invalidate(session.CSRFToken)
 	}
+	if s.restore != nil {
+		s.restore.Invalidate(session.CSRFToken)
+	}
 	s.auth.Logout(r)
 	s.auth.ClearSessionCookie(w)
 	writeJSON(w, http.StatusOK, struct {
@@ -457,6 +491,9 @@ func (s *Server) replacePassword(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusInternalServerError, "password replacement failed")
 		return
+	}
+	if s.restore != nil {
+		s.restore.InvalidateAll()
 	}
 	s.auth.ClearSessionCookie(w)
 	writeJSON(w, http.StatusOK, struct {
