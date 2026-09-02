@@ -20,6 +20,14 @@ import (
 	"github.com/popiposter/xkeen-control/internal/restore"
 )
 
+const (
+	httpRestoreUUIDMarker              = "11111111-1111-4111-8111-111111111111"
+	httpRestoreRealityPublicKeyMarker  = "AAAAAAAAAAAAAAAA"
+	httpRestoreRealityShortIDMarker    = "0123456789abcdef"
+	httpRestoreSubscriptionTokenMarker = "synthetic-token"
+	httpRestoreSubscriptionURLMarker   = "https://subscription.example/" + httpRestoreSubscriptionTokenMarker
+)
+
 func newHTTPRealRestoreServer(t *testing.T, root string) (*httptest.Server, *http.Client, string) {
 	t.Helper()
 	appliancePath := filepath.Join(root, "control", "config", "appliance.json")
@@ -82,11 +90,44 @@ func writeHTTPRestorePrivateFile(t *testing.T, path string, contents []byte) {
 
 func realHTTPEncryptedBundle(t *testing.T) []byte {
 	t.Helper()
-	contents, err := httpBackupService(t, nil).ExportSecret(context.Background(), "correct synthetic passphrase")
+	contents, err := httpBackupServiceWithRegistry(t, nil, httpRestoreSecretRegistry(t)).ExportSecret(context.Background(), "correct synthetic passphrase")
 	if err != nil {
 		t.Fatal(err)
 	}
 	return contents
+}
+
+func httpRestoreSecretRegistry(t *testing.T) nodes.Registry {
+	t.Helper()
+	profile := nodes.VLESS{
+		UUID: httpRestoreUUIDMarker, Host: "node.example.com", Port: 443,
+		Encryption: "none", Security: "reality", ServerName: "node.example.com", Fingerprint: "chrome",
+		PublicKey: httpRestoreRealityPublicKeyMarker, ShortID: httpRestoreRealityShortIDMarker, Network: "tcp",
+	}
+	const subscriptionID = "sub-httpmarker"
+	node, err := nodes.NewNodeWithID(profile, "Synthetic encrypted HTTP node", nodes.Source{Type: "subscription", SubscriptionID: subscriptionID}, "node-httpmarker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := nodes.NewRegistry()
+	registry.Subscriptions = []nodes.Subscription{{
+		ID: subscriptionID, Name: "Synthetic encrypted HTTP provider", URL: httpRestoreSubscriptionURLMarker, Enabled: true,
+	}}
+	registry.Nodes = []nodes.Node{node}
+	if err := registry.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	return registry
+}
+
+func httpRestoreSecretMarkers() []string {
+	return []string{
+		httpRestoreUUIDMarker,
+		httpRestoreRealityPublicKeyMarker,
+		httpRestoreRealityShortIDMarker,
+		httpRestoreSubscriptionURLMarker,
+		httpRestoreSubscriptionTokenMarker,
+	}
 }
 
 func tamperHTTPEncryptedBundle(t *testing.T, source []byte) []byte {
@@ -157,7 +198,7 @@ func TestRestoreHTTPUsesRealBundleParserAndLeavesNoUploadFiles(t *testing.T) {
 	if safePreview.Token == "" || safePreview.ContainsSecrets || safePreview.Mode != restore.SettingsOnly {
 		t.Fatalf("real safe preview = %+v", safePreview)
 	}
-	assertHTTPRestoreResponseHasNoSecretMarkers(t, body)
+	assertHTTPRestoreResponseHasNoSecretMarkers(t, body, httpRestoreSecretMarkers()...)
 
 	request = newRestoreMultipartRequest(t, restorePreviewURL(server), encrypted, "correct synthetic passphrase", "../../hostile-upload-name.json", csrf)
 	response, err = client.Do(request)
@@ -175,7 +216,7 @@ func TestRestoreHTTPUsesRealBundleParserAndLeavesNoUploadFiles(t *testing.T) {
 	if encryptedPreview.Token == "" || !encryptedPreview.ContainsSecrets || encryptedPreview.Mode != restore.SettingsOnly {
 		t.Fatalf("real encrypted preview = %+v", encryptedPreview)
 	}
-	assertHTTPRestoreResponseHasNoSecretMarkers(t, body)
+	assertHTTPRestoreResponseHasNoSecretMarkers(t, body, httpRestoreSecretMarkers()...)
 
 	for _, test := range []struct {
 		name       string
@@ -196,7 +237,7 @@ func TestRestoreHTTPUsesRealBundleParserAndLeavesNoUploadFiles(t *testing.T) {
 			if response.StatusCode != http.StatusBadRequest || strings.TrimSpace(body) != `{"error":"restore request rejected"}` {
 				t.Fatalf("real %s rejection = %d %s", test.name, response.StatusCode, body)
 			}
-			assertHTTPRestoreResponseHasNoSecretMarkers(t, body)
+			assertHTTPRestoreResponseHasNoSecretMarkers(t, body, httpRestoreSecretMarkers()...)
 		})
 	}
 
@@ -213,14 +254,9 @@ func TestRestoreHTTPUsesRealBundleParserAndLeavesNoUploadFiles(t *testing.T) {
 	}
 }
 
-func assertHTTPRestoreResponseHasNoSecretMarkers(t *testing.T, body string) {
+func assertHTTPRestoreResponseHasNoSecretMarkers(t *testing.T, body string, markers ...string) {
 	t.Helper()
-	for _, marker := range []string{
-		"11111111-1111-4111-8111-111111111111",
-		"subscription.example",
-		"synthetic-token",
-		"vless://",
-	} {
+	for _, marker := range markers {
 		if strings.Contains(body, marker) {
 			t.Fatalf("restore HTTP response exposed secret marker %q: %s", marker, body)
 		}

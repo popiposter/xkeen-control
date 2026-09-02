@@ -62,10 +62,14 @@ func httpBackupAppliance(t *testing.T) appliance.Appliance {
 }
 
 func httpBackupService(t *testing.T, derive backup.KeyDeriver) *backup.Service {
+	return httpBackupServiceWithRegistry(t, derive, nodes.NewRegistry())
+}
+
+func httpBackupServiceWithRegistry(t *testing.T, derive backup.KeyDeriver, registry nodes.Registry) *backup.Service {
 	t.Helper()
 	return backup.NewService(backup.Config{
 		Appliance: httpBackupApplianceSource{value: httpBackupAppliance(t)},
-		Nodes:     httpBackupRegistrySource{value: nodes.NewRegistry()},
+		Nodes:     httpBackupRegistrySource{value: registry},
 		Build:     buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("b", 40), Channel: "stable"},
 		Now:       func() time.Time { return time.Unix(1_750_000_000, 0).UTC() },
 		Random:    &httpBackupReader{}, DeriveKey: derive, GOOS: "linux", GOARCH: "arm64",
