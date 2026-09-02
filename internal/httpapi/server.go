@@ -456,13 +456,17 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	}
-	if s.nodes != nil {
-		s.nodes.Invalidate(session.CSRFToken)
-	}
+	// Remove the auth session before purging restore state. Preview performs a
+	// final same-session check after C1 returns; this ordering makes a preview
+	// admitted before logout fail that check even if it completes while the
+	// synchronous restore purge is still running.
+	s.auth.Logout(r)
 	if s.restore != nil {
 		s.restore.Invalidate(session.CSRFToken)
 	}
-	s.auth.Logout(r)
+	if s.nodes != nil {
+		s.nodes.Invalidate(session.CSRFToken)
+	}
 	s.auth.ClearSessionCookie(w)
 	writeJSON(w, http.StatusOK, struct {
 		Authenticated bool `json:"authenticated"`

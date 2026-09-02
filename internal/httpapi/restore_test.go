@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -39,6 +40,9 @@ type httpRestoreServiceStub struct {
 	releasePreview     chan struct{}
 	previewCalls       atomic.Int32
 	invalidateAllCalls atomic.Int32
+	invalidateStarted  chan struct{}
+	releaseInvalidate  chan struct{}
+	invalidateOnce     sync.Once
 }
 
 func (stub *httpRestoreServiceStub) PreviewBundle(_ context.Context, binding string, contents []byte, passphrase string, mode restore.Mode) (restore.Preview, error) {
@@ -85,7 +89,15 @@ func (stub *httpRestoreServiceStub) Cancel(binding, token string) {
 func (stub *httpRestoreServiceStub) Invalidate(binding string) {
 	stub.mu.Lock()
 	stub.cancelBinding = binding
+	started := stub.invalidateStarted
+	release := stub.releaseInvalidate
 	stub.mu.Unlock()
+	if started != nil {
+		stub.invalidateOnce.Do(func() { close(started) })
+	}
+	if release != nil {
+		<-release
+	}
 }
 
 func (stub *httpRestoreServiceStub) InvalidateAll() {
@@ -493,6 +505,102 @@ func TestRestorePreviewSessionInvalidationRaceCancelsToken(t *testing.T) {
 	if canceledBinding != csrf || canceledToken != "synthetic-preview-token" {
 		t.Fatalf("orphaned preview cancellation binding=%q token=%q", canceledBinding, canceledToken)
 	}
+}
+
+func TestRestorePreviewLogoutOrderingCancelsInFlightToken(t *testing.T) {
+	stub := &httpRestoreServiceStub{
+		preview:           restore.Preview{Token: "synthetic-preview-token"},
+		previewStarted:    make(chan struct{}),
+		releasePreview:    make(chan struct{}),
+		invalidateStarted: make(chan struct{}),
+		releaseInvalidate: make(chan struct{}),
+	}
+	server, client, manager, csrf := newHTTPRestoreServer(t, stub)
+	defer server.Close()
+	bundle := restoreFixtureBundle(t)
+	var releasePreviewOnce sync.Once
+	releasePreview := func() { releasePreviewOnce.Do(func() { close(stub.releasePreview) }) }
+	defer releasePreview()
+	var releaseLogoutOnce sync.Once
+	releaseLogout := func() { releaseLogoutOnce.Do(func() { close(stub.releaseInvalidate) }) }
+	defer releaseLogout()
+
+	previewDone := make(chan *http.Response, 1)
+	go func() {
+		response, err := client.Do(newRestoreMultipartRequest(t, restorePreviewURL(server), bundle, "", "bundle.json", csrf))
+		if err != nil {
+			previewDone <- nil
+			return
+		}
+		previewDone <- response
+	}()
+	select {
+	case <-stub.previewStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("preview did not enter service")
+	}
+
+	logoutRequest, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/session/logout", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logoutRequest.Header.Set("Content-Type", "application/json")
+	logoutRequest.Header.Set(auth.CSRFHeader, csrf)
+	logoutDone := make(chan *http.Response, 1)
+	go func() {
+		response, requestErr := client.Do(logoutRequest)
+		if requestErr != nil {
+			logoutDone <- nil
+			return
+		}
+		logoutDone <- response
+	}()
+	select {
+	case <-stub.invalidateStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("logout did not enter synchronous restore invalidation")
+	}
+
+	checkRequest, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/session", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookieURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cookie := range client.Jar.Cookies(cookieURL) {
+		checkRequest.AddCookie(cookie)
+	}
+	if _, active := manager.SessionFromRequest(checkRequest); active {
+		t.Fatal("logout entered restore invalidation before removing the auth session")
+	}
+
+	releasePreview()
+	previewResponse := <-previewDone
+	if previewResponse == nil {
+		t.Fatal("in-flight preview request failed")
+	}
+	if previewResponse.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("in-flight preview after logout = %d %s", previewResponse.StatusCode, readBody(previewResponse))
+	}
+	previewResponse.Body.Close()
+	stub.mu.Lock()
+	canceledBinding, canceledToken := stub.cancelBinding, stub.cancelToken
+	stub.mu.Unlock()
+	if canceledBinding != csrf || canceledToken != "synthetic-preview-token" {
+		t.Fatalf("logout race cancellation binding=%q token=%q", canceledBinding, canceledToken)
+	}
+
+	releaseLogout()
+	logoutResponse := <-logoutDone
+	if logoutResponse == nil {
+		t.Fatal("logout request failed")
+	}
+	if logoutResponse.StatusCode != http.StatusOK {
+		t.Fatalf("logout after preview race = %d %s", logoutResponse.StatusCode, readBody(logoutResponse))
+	}
+	logoutResponse.Body.Close()
 }
 
 func TestRestoreApplyCancelBodiesAndSafeErrorMappings(t *testing.T) {

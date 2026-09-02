@@ -149,6 +149,7 @@ The bounded import HTTP/UI adapter qualification is covered by the HTTP package 
 go test -count=1 ./internal/httpapi
 bash scripts/test-backup.sh
 bash scripts/test-restore.sh
+bash scripts/test-restore-ui.sh
 ```
 
 The HTTP regressions cover authenticated same-origin/CSRF routes, strict query/multipart/body limits, hostile filenames without temporary uploads, preview single-flight admission, logout/password/in-flight session invalidation, token-only Apply/Cancel, fixed safe error mappings and response secret scanning. The frontend check covers the first-class Backup & Restore flows and tracked embedded assets. These tests use synthetic data and do not mutate a production Keenetic.

@@ -49,6 +49,7 @@ const api = async (path, options = {}) => {
   if (!response.ok) {
     const error = new Error(body.error || `Request failed (${response.status})`)
     error.status = response.status
+    error.code = body.error
     throw error
   }
   return body
@@ -64,6 +65,7 @@ const download = async (path, options = {}, filename) => {
     const body = await response.json().catch(() => ({}))
     const error = new Error(body.error || `Download failed (${response.status})`)
     error.status = response.status
+    error.code = body.error
     throw error
   }
   const blob = await response.blob()
@@ -599,10 +601,20 @@ function BackupRestoreSection({ csrf, restoreState, setRestoreState, onRefresh, 
   const [destructiveConfirmed, setDestructiveConfirmed] = useState(false)
   const fileInput = useRef(null)
   const preview = restoreState?.preview
-  const destructive = mode !== 'settings-only'
+  const effectiveMode = preview?.mode || mode
+  const destructive = effectiveMode !== 'settings-only'
   const blockers = preview?.compatibility?.blockers || []
+  const previewToken = preview?.previewToken
+  const canApply = Boolean(previewToken) && blockers.length === 0 && (!destructive || destructiveConfirmed)
+
+  const clearSecretForm = () => setSecretForm({ currentPassword: '', passphrase: '', confirmation: '' })
 
   const handleError = (cause) => {
+    if (cause.status === 401 && cause.code === 'reauthentication failed') {
+      clearSecretForm()
+      setNotice({ tone: 'error', message: 'Current panel password was not accepted.' })
+      return
+    }
     if (cause.status === 401) {
       onUnauthorized()
       return
@@ -626,9 +638,9 @@ function BackupRestoreSection({ csrf, restoreState, setRestoreState, onRefresh, 
   const exportSecret = async (event) => {
     event.preventDefault()
     const { currentPassword, passphrase: secretPassphrase, confirmation } = secretForm
-    const clearSecretForm = () => setSecretForm({ currentPassword: '', passphrase: '', confirmation: '' })
     setNotice(null)
-    if (!currentPassword || secretPassphrase.length < MIN_BACKUP_PASSPHRASE_BYTES || secretPassphrase.length > MAX_BACKUP_PASSPHRASE_BYTES || secretPassphrase !== confirmation) {
+    const passphraseBytes = new TextEncoder().encode(secretPassphrase).length
+    if (!currentPassword || passphraseBytes < MIN_BACKUP_PASSPHRASE_BYTES || passphraseBytes > MAX_BACKUP_PASSPHRASE_BYTES || secretPassphrase !== confirmation) {
       clearSecretForm()
       setNotice({ tone: 'error', message: 'Enter a matching passphrase between 12 and 256 bytes.' })
       return
@@ -691,8 +703,8 @@ function BackupRestoreSection({ csrf, restoreState, setRestoreState, onRefresh, 
   }
 
   const applyRestore = async () => {
-    const token = preview?.previewToken
-    if (!token || blockers.length) return
+    const token = previewToken
+    if (!canApply) return
     setRestoreBusy(true)
     setNotice(null)
     try {
@@ -746,18 +758,18 @@ function BackupRestoreSection({ csrf, restoreState, setRestoreState, onRefresh, 
     <section className="panel backup-card">
       <div><span className="panel-label">Restore</span><h2>Import a local backup</h2><p className="muted">Choose one JSON bundle. The server enforces the 10 MiB request and 9 MiB bundle limits.</p></div>
       <div className="restore-form">
-        <label>Restore mode<select value={mode} onChange={(event) => { setMode(event.target.value); setRestoreState({ preview: null }); setDestructiveConfirmed(false) }} disabled={restoreBusy || Boolean(preview)}><option value="settings-only">Settings only</option><option value="replace-registry">Replace registry (destructive)</option><option value="merge-registry">Merge registry (destructive)</option></select></label>
+        <label>Restore mode<select value={effectiveMode} onChange={(event) => { setMode(event.target.value); setRestoreState({ preview: null }); setDestructiveConfirmed(false) }} disabled={restoreBusy || Boolean(preview)}><option value="settings-only">Settings only</option><option value="replace-registry">Replace registry (destructive)</option><option value="merge-registry">Merge registry (destructive)</option></select></label>
         <label>Backup bundle<input ref={fileInput} type="file" accept="application/json,.json" onChange={chooseFile} disabled={restoreBusy || Boolean(preview)} /></label>
         <label>Passphrase (encrypted backup only)<input type="password" autoComplete="off" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} disabled={restoreBusy || Boolean(preview)} /></label>
       </div>
-      {destructive && <label className="restore-confirm"><input type="checkbox" checked={destructiveConfirmed} onChange={(event) => setDestructiveConfirmed(event.target.checked)} disabled={restoreBusy || Boolean(preview)} /> I understand this restore can replace or merge secret-bearing node registry state.</label>}
+      {destructive && <label className="restore-confirm"><input type="checkbox" checked={destructiveConfirmed} onChange={(event) => setDestructiveConfirmed(event.target.checked)} disabled={restoreBusy} /> I understand this restore can replace or merge secret-bearing node registry state.</label>}
       {!preview && <div className="preview-actions"><button type="button" onClick={previewRestore} disabled={restoreBusy || !file || (destructive && !destructiveConfirmed)}>{restoreBusy ? 'Previewing…' : 'Preview restore'}</button></div>}
-      {preview && <RestorePreviewSummary preview={preview} blockers={blockers} busy={restoreBusy} onCancel={cancelRestore} onApply={applyRestore} />}
+      {preview && <RestorePreviewSummary preview={preview} blockers={blockers} busy={restoreBusy} canApply={canApply} onCancel={cancelRestore} onApply={applyRestore} />}
     </section>
   </div>
 }
 
-function RestorePreviewSummary({ preview, blockers, busy, onCancel, onApply }) {
+function RestorePreviewSummary({ preview, blockers, busy, canApply, onCancel, onApply }) {
   const changes = preview.changes || {}
   return <div className="restore-preview" aria-live="polite">
     <div className="dialog-heading"><div><span className="panel-label">Restore preview</span><h3>{preview.noop ? 'No persistent change' : 'Ready for confirmation'}</h3></div><span className="chip neutral">Expires {formatTime(preview.expiresAt)}</span></div>
@@ -770,7 +782,7 @@ function RestorePreviewSummary({ preview, blockers, busy, onCancel, onApply }) {
       <div><span>Result</span><strong>{preview.noop ? 'No-op' : 'Changes detected'}</strong></div>
     </div>
     {blockers.length > 0 && <div className="restore-blockers"><strong>Compatibility blockers</strong>{blockers.map((code, index) => <p className="warning" key={`${code}-${index}`}>{restoreBlockerMessage(code)}</p>)}</div>}
-    <div className="preview-actions"><button className="ghost" type="button" onClick={onCancel} disabled={busy}>Cancel</button><button type="button" onClick={onApply} disabled={busy || blockers.length > 0}>{busy ? 'Applying…' : 'Apply restore'}</button></div>
+    <div className="preview-actions"><button className="ghost" type="button" onClick={onCancel} disabled={busy}>Cancel</button><button type="button" onClick={onApply} disabled={busy || !canApply}>{busy ? 'Applying…' : 'Apply restore'}</button></div>
   </div>
 }
 
