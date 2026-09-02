@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/popiposter/xkeen-control/internal/appliance"
+	"github.com/popiposter/xkeen-control/internal/authority"
 	"github.com/popiposter/xkeen-control/internal/buildinfo"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	"golang.org/x/crypto/argon2"
@@ -70,6 +71,18 @@ type RegistrySource interface {
 	Snapshot(context.Context) (nodes.Registry, error)
 }
 
+// registryUnderLeaseSource is implemented by nodes.Manager. It lets a
+// secret export hold one shared authority lease across both the appliance and
+// registry reads rather than taking two adjacent, independently-raceable
+// snapshots.
+type registryUnderLeaseSource interface {
+	SnapshotUnderLease(context.Context) (nodes.Registry, error)
+}
+
+type applianceUnderLeaseSource interface {
+	SnapshotUnderLease() (appliance.Appliance, error)
+}
+
 // KeyDeriver is injectable for bounded tests. Production always uses the
 // fixed Argon2id tuple passed to the function.
 type KeyDeriver func(password, salt []byte, memoryKiB, iterations uint32, parallelism uint8, keyBytes uint32) []byte
@@ -77,12 +90,17 @@ type KeyDeriver func(password, salt []byte, memoryKiB, iterations uint32, parall
 type Config struct {
 	Appliance ApplianceSource
 	Nodes     RegistrySource
-	Build     buildinfo.Info
-	Now       func() time.Time
-	Random    io.Reader
-	DeriveKey KeyDeriver
-	GOOS      string
-	GOARCH    string
+	// AuthorityLease is shared with node Apply, restore Preview and restore
+	// Apply. Authority is a readable compatibility alias for callers using the
+	// shorter name.
+	AuthorityLease *authority.Lease
+	Authority      *authority.Lease
+	Build          buildinfo.Info
+	Now            func() time.Time
+	Random         io.Reader
+	DeriveKey      KeyDeriver
+	GOOS           string
+	GOARCH         string
 }
 
 type Service struct {
@@ -94,6 +112,7 @@ type Service struct {
 	deriveKey KeyDeriver
 	goos      string
 	goarch    string
+	authority *authority.Lease
 }
 
 // applianceSource is kept separate from the exported interface so a nil
@@ -121,6 +140,10 @@ func NewService(config Config) *Service {
 	if config.GOARCH == "" {
 		config.GOARCH = runtime.GOARCH
 	}
+	lease := config.AuthorityLease
+	if lease == nil {
+		lease = config.Authority
+	}
 	return &Service{
 		appliance: config.Appliance,
 		nodes:     config.Nodes,
@@ -130,6 +153,7 @@ func NewService(config Config) *Service {
 		deriveKey: config.DeriveKey,
 		goos:      config.GOOS,
 		goarch:    config.GOARCH,
+		authority: lease,
 	}
 }
 
@@ -223,13 +247,50 @@ func (s *Service) ExportSecret(ctx context.Context, passphrase string) ([]byte, 
 	}
 	defer release()
 
-	applianceValue, err := s.appliance.Snapshot()
+	// Keep the cross-authority read short. The expensive KDF and envelope
+	// encoding happen after the lease is released, while restore Apply holds
+	// this same lease across its complete authority/runtime commit.
+	var releaseAuthority func()
+	if s.authority != nil {
+		var acquireErr error
+		releaseAuthority, acquireErr = s.authority.Acquire(ctx, 15*time.Second)
+		if acquireErr != nil {
+			return nil, ErrUnavailable
+		}
+	}
+	if releaseAuthority != nil {
+		defer func() {
+			if releaseAuthority != nil {
+				releaseAuthority()
+			}
+		}()
+	}
+	var err error
+	var applianceValue appliance.Appliance
+	if source, ok := s.appliance.(applianceUnderLeaseSource); ok && releaseAuthority != nil {
+		applianceValue, err = source.SnapshotUnderLease()
+	} else if releaseAuthority != nil {
+		return nil, ErrUnavailable
+	} else {
+		applianceValue, err = s.appliance.Snapshot()
+	}
 	if err != nil {
 		return nil, ErrUnavailable
 	}
-	registry, err := s.nodes.Snapshot(ctx)
+	var registry nodes.Registry
+	if source, ok := s.nodes.(registryUnderLeaseSource); ok && releaseAuthority != nil {
+		registry, err = source.SnapshotUnderLease(ctx)
+	} else if releaseAuthority != nil {
+		return nil, ErrUnavailable
+	} else {
+		registry, err = s.nodes.Snapshot(ctx)
+	}
 	if err != nil {
 		return nil, ErrUnavailable
+	}
+	if releaseAuthority != nil {
+		releaseAuthority()
+		releaseAuthority = nil
 	}
 	plaintext, err := s.encodeBundle(applianceValue, &registry, true)
 	if err != nil {

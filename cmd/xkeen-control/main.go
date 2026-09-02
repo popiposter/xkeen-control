@@ -18,12 +18,14 @@ import (
 
 	"github.com/popiposter/xkeen-control/internal/appliance"
 	"github.com/popiposter/xkeen-control/internal/auth"
+	"github.com/popiposter/xkeen-control/internal/authority"
 	"github.com/popiposter/xkeen-control/internal/backup"
 	"github.com/popiposter/xkeen-control/internal/buildinfo"
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/configview"
 	"github.com/popiposter/xkeen-control/internal/httpapi"
 	"github.com/popiposter/xkeen-control/internal/nodes"
+	"github.com/popiposter/xkeen-control/internal/restore"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
 	panelupdate "github.com/popiposter/xkeen-control/internal/update"
 	"github.com/popiposter/xkeen-control/internal/webassets"
@@ -140,8 +142,14 @@ func main() {
 	})
 	runner := c1.NewBenchmarkRunner(policy, probeRouter, c1.BenchmarkStore{Path: getenv("XKEEN_CONTROL_BENCHMARK_PATH", c1.DefaultBenchmarkPath)})
 	coordinator := c1.NewCoordinator(policy, supervisor, runner, nodeReader)
-	nodeManager = newNodeManager(coordinator)
-	applianceService := newApplianceService()
+	authorityLease := authority.NewLease()
+	nodeManager = newNodeManager(coordinator, authorityLease)
+	applianceService := newApplianceService(authorityLease)
+	restoreService := newRestoreService(coordinator, authorityLease)
+	if err := restoreService.RecoverStartup(context.Background()); err != nil {
+		log.Print("restore startup recovery failed")
+		os.Exit(1)
+	}
 	collector := controlruntime.NewCollector(buildinfo.Current().Version, startedAt, controlruntime.Dependencies{
 		Xray:             xrayReader,
 		Xkeen:            xkeenReader,
@@ -164,9 +172,10 @@ func main() {
 		StartedAt: startedAt,
 		Updates:   updateManager,
 		Backup: backup.NewService(backup.Config{
-			Appliance: applianceService,
-			Nodes:     nodeManager,
-			Build:     buildinfo.Current(),
+			Appliance:      applianceService,
+			Nodes:          nodeManager,
+			AuthorityLease: authorityLease,
+			Build:          buildinfo.Current(),
 		}),
 	})
 
@@ -209,7 +218,7 @@ const (
 	defaultAppliancePath   = "/opt/etc/xkeen-control/config/appliance.json"
 )
 
-func newApplianceService() *appliance.Service {
+func newApplianceService(lease *authority.Lease) *appliance.Service {
 	configDir := getenv("XKEEN_XRAY_CONFIG_DIR", "/opt/etc/xray/configs")
 	return appliance.NewService(appliance.Config{
 		AppliancePath:       getenv("XKEEN_APPLIANCE_PATH", defaultAppliancePath),
@@ -221,12 +230,38 @@ func newApplianceService() *appliance.Service {
 			XrayBinary:   getenv("XKEEN_XRAY_BINARY", "xray"),
 			XrayAssetDir: getenv("XKEEN_XRAY_ASSET_DIR", "/opt/etc/xray/dat"),
 		},
+		AuthorityLease: lease,
+	})
+}
+
+func newRestoreService(coordinator interface {
+	BeginApply(context.Context) (func(), error)
+}, lease *authority.Lease) *restore.Service {
+	configDir := getenv("XKEEN_XRAY_CONFIG_DIR", "/opt/etc/xray/configs")
+	return restore.NewService(restore.Config{
+		AppliancePath:       getenv("XKEEN_APPLIANCE_PATH", defaultAppliancePath),
+		NodesPath:           getenv("XKEEN_NODES_PATH", defaultNodesPath),
+		ConfigDir:           configDir,
+		XkeenConfigPath:     getenv("XKEEN_CONFIG_PATH", "/opt/etc/xkeen/xkeen.json"),
+		ActiveOutboundsPath: getenv("XKEEN_ACTIVE_OUTBOUNDS", filepath.Join(configDir, "04_outbounds.json")),
+		PreviousDir:         getenv("XKEEN_APPLIANCE_IMPORT_PREVIOUS_DIR", "/opt/etc/xkeen-control/previous/appliance-import"),
+		StateDir:            getenv("XKEEN_APPLIANCE_IMPORT_STATE_DIR", "/opt/etc/xkeen-control/state"),
+		Activator: nodes.CommandActivator{
+			XrayBinary:          getenv("XKEEN_XRAY_BINARY", "xray"),
+			XrayAssetDir:        getenv("XKEEN_XRAY_ASSET_DIR", "/opt/etc/xray/dat"),
+			XkeenBinary:         getenv("XKEEN_XKEEN_BINARY", "xkeen"),
+			APIAddress:          getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress),
+			ActiveOutboundsPath: getenv("XKEEN_ACTIVE_OUTBOUNDS", filepath.Join(configDir, "04_outbounds.json")),
+			RoutingPath:         filepath.Join(configDir, "05_routing.json"),
+		},
+		Coordinator:    coordinator,
+		AuthorityLease: lease,
 	})
 }
 
 func newNodeManager(coordinator interface {
 	BeginApply(context.Context) (func(), error)
-}) *nodes.Manager {
+}, lease *authority.Lease) *nodes.Manager {
 	registryPath := getenv("XKEEN_NODES_PATH", defaultNodesPath)
 	return nodes.NewManager(nodes.Config{
 		Store:      nodes.Store{Path: registryPath},
@@ -245,12 +280,13 @@ func newNodeManager(coordinator interface {
 				RoutingPath:         filepath.Join(getenv("XKEEN_XRAY_CONFIG_DIR", "/opt/etc/xray/configs"), "05_routing.json"),
 			},
 		},
-		Coordinator: coordinator,
+		AuthorityLease: lease,
+		Coordinator:    coordinator,
 	})
 }
 
 func runNodesCommand(args []string) error {
-	manager := newNodeManager(nil)
+	manager := newNodeManager(nil, authority.NewLease())
 	if len(args) == 0 {
 		return errors.New("usage: xkeen-control nodes {validate|render --output PATH|reconcile-runtime|migrate-legacy}")
 	}
@@ -300,7 +336,7 @@ func runApplianceCommand(args []string) error {
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
-	service := newApplianceService()
+	service := newApplianceService(authority.NewLease())
 	switch args[0] {
 	case "validate":
 		if len(args) != 1 {

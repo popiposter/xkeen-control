@@ -131,6 +131,16 @@ bash scripts/test-backup.sh
 
 It covers deterministic secretless export, typed section metadata, encrypted round trips, strict envelope tamper rejection, coherent node snapshots, single-flight crypto, HTTP session/origin/CSRF/re-authentication and session invalidation. It uses synthetic credentials and never reads router state.
 
+## Issue #3 Phase C1 focused fixtures
+
+The internal restore/transaction/recovery qualification fixture is:
+
+```sh
+bash scripts/test-restore.sh
+```
+
+It covers strict safe/encrypted mode handling, stable-ID replace/merge semantics, bounded session-bound previews, exact authority stale checks, fixed-template/current-generation blockers, complete candidate validation before mutation, deterministic generated-file/runtime convergence, logical previous-generation rollback, secret-free journal metadata and interrupted-import startup recovery. It uses synthetic authorities and never mutates a production Keenetic.
+
 ## Fresh-checkout expectation
 
 A fresh clone/checkout of PR HEAD must be sufficient for documented qualification. Do not depend on untracked generated files, local secrets, an already-built binary, host npm/go packages or production registry/config files.

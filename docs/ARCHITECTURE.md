@@ -39,7 +39,7 @@ RAM + /tmp/xkeen-control                    preview/runtime/update/high-churn st
 
 `nodes.json` is schema-versioned and root-only. Generated outbounds are never restored independently over a different registry.
 
-The planned D.1/D.3 local `appliance.json` model does **not** exist yet; until that migration is implemented, routing/DNS/Observatory policy remains repository-derived.
+The D.1 local `appliance.json` model exists in source but is not yet deployed or production-qualified; current production routing/DNS/Observatory policy remains repository-derived until the D.1 release and qualification gate.
 
 ## Data plane
 

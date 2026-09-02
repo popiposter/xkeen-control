@@ -13,6 +13,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/popiposter/xkeen-control/internal/authority"
 )
 
 var (
@@ -36,7 +38,12 @@ type Config struct {
 	Store       Store
 	LegacyPath  string
 	Transaction Transaction
-	Coordinator interface {
+	// AuthorityLease is shared with backup export and appliance restore. The
+	// Authority alias is retained as a readable compatibility option for
+	// callers that use the shorter name.
+	AuthorityLease *authority.Lease
+	Authority      *authority.Lease
+	Coordinator    interface {
 		BeginApply(context.Context) (func(), error)
 	}
 	Fetcher     SubscriptionFetcher
@@ -61,7 +68,7 @@ type Manager struct {
 	}
 
 	mu        sync.Mutex
-	applyGate chan struct{}
+	authority *authority.Lease
 	previews  map[string]previewEntry
 }
 
@@ -118,12 +125,18 @@ func NewManager(config Config) *Manager {
 	if config.Transaction.Store.Path == "" {
 		config.Transaction.Store = config.Store
 	}
+	lease := config.AuthorityLease
+	if lease == nil {
+		lease = config.Authority
+	}
+	if lease == nil {
+		lease = authority.NewLease()
+	}
 	return &Manager{
 		store: config.Store, legacyPath: config.LegacyPath, tx: config.Transaction,
 		fetcher: config.Fetcher, ttl: config.PreviewTTL, maxPreviews: config.MaxPreviews, now: config.Now,
 		gateTimeout: DefaultApplyGateWaitTimeout,
-		coordinator: config.Coordinator,
-		applyGate:   make(chan struct{}, 1), previews: make(map[string]previewEntry),
+		coordinator: config.Coordinator, authority: lease, previews: make(map[string]previewEntry),
 	}
 }
 
@@ -160,17 +173,34 @@ func (m *Manager) Snapshot(ctx context.Context) (Registry, error) {
 	if gateTimeout <= 0 {
 		gateTimeout = DefaultApplyGateWaitTimeout
 	}
-	gateContext, cancelGate := context.WithTimeout(ctx, gateTimeout)
-	defer cancelGate()
-	select {
-	case m.applyGate <- struct{}{}:
-		defer func() { <-m.applyGate }()
-	case <-ctx.Done():
-		return Registry{}, ctx.Err()
-	case <-gateContext.Done():
+	release, err := m.authority.Acquire(ctx, gateTimeout)
+	if err != nil {
+		if ctx.Err() != nil {
+			return Registry{}, ctx.Err()
+		}
 		return Registry{}, ErrSnapshotUnavailable
 	}
+	defer release()
 
+	registry, err := m.store.Load()
+	if err != nil {
+		return Registry{}, ErrSnapshotUnavailable
+	}
+	copy, err := cloneRegistry(registry)
+	if err != nil || copy.Validate() != nil {
+		return Registry{}, ErrSnapshotUnavailable
+	}
+	return copy, nil
+}
+
+// SnapshotUnderLease returns the same validated committed snapshot as
+// Snapshot, but assumes the caller already owns the configured shared lease.
+// It is used by backup export to snapshot appliance and nodes as one logical
+// generation without attempting a nested acquisition.
+func (m *Manager) SnapshotUnderLease(context.Context) (Registry, error) {
+	if m == nil {
+		return Registry{}, ErrSnapshotUnavailable
+	}
 	registry, err := m.store.Load()
 	if err != nil {
 		return Registry{}, ErrSnapshotUnavailable
@@ -462,6 +492,9 @@ func (m *Manager) PreviewRefresh(ctx context.Context, binding, subscriptionID, n
 }
 
 func (m *Manager) Apply(ctx context.Context, binding, token string, acceptMissing bool) (ApplyResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	releaseCoordinator := func() {}
 	if m.coordinator != nil {
 		var err error
@@ -475,15 +508,14 @@ func (m *Manager) Apply(ctx context.Context, binding, token string, acceptMissin
 	if gateTimeout <= 0 {
 		gateTimeout = DefaultApplyGateWaitTimeout
 	}
-	gateContext, cancelGate := context.WithTimeout(ctx, gateTimeout)
-	select {
-	case m.applyGate <- struct{}{}:
-		defer func() { <-m.applyGate }()
-		cancelGate()
-	case <-gateContext.Done():
-		cancelGate()
+	releaseAuthority, err := m.authority.Acquire(ctx, gateTimeout)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ApplyResult{}, ctx.Err()
+		}
 		return ApplyResult{}, errors.New("node activation gate busy")
 	}
+	defer releaseAuthority()
 	// The transaction budget starts only after the serialized apply slot is
 	// acquired, preserving the full recovery reserve for persistent mutations.
 	applyContext, cancelApply := context.WithTimeout(ctx, m.tx.totalTimeout())

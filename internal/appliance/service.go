@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/popiposter/xkeen-control/internal/authority"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 )
 
@@ -33,6 +34,8 @@ type Config struct {
 	ActiveOutboundsPath string
 	Validator           CandidateValidator
 	CandidateValidation time.Duration
+	AuthorityLease      *authority.Lease
+	Authority           *authority.Lease
 }
 
 type Service struct {
@@ -72,6 +75,12 @@ func (s *Service) Snapshot() (Appliance, error) {
 	return s.loadAppliance()
 }
 
+// SnapshotUnderLease is the same typed read for callers that already hold the
+// shared authority lease across a cross-authority snapshot.
+func (s *Service) SnapshotUnderLease() (Appliance, error) {
+	return s.Snapshot()
+}
+
 // Adopt proves that the active policy is representable by appliance v1 and
 // that the node registry/generated outbounds are coherent. Only after the
 // complete temporary candidate validates and all proof inputs remain unchanged
@@ -80,6 +89,17 @@ func (s *Service) Snapshot() (Appliance, error) {
 func (s *Service) Adopt(ctx context.Context) error {
 	if s == nil {
 		return errors.New("appliance service unavailable")
+	}
+	lease := s.config.AuthorityLease
+	if lease == nil {
+		lease = s.config.Authority
+	}
+	if lease != nil {
+		release, err := lease.Acquire(ctx, 15*time.Second)
+		if err != nil {
+			return errors.New("appliance authority busy")
+		}
+		defer release()
 	}
 	if err := requireAbsent(s.config.AppliancePath); err != nil {
 		return err
@@ -109,6 +129,16 @@ func (s *Service) Adopt(ctx context.Context) error {
 		return errors.New("unable to commit appliance authority")
 	}
 	return nil
+}
+
+// ValidateCandidate validates a typed appliance/registry pair using the same
+// complete embedded-template render path as adoption. It performs no
+// persistent or runtime lifecycle operation.
+func (s *Service) ValidateCandidate(ctx context.Context, value Appliance, registry nodes.Registry) error {
+	if s == nil {
+		return errors.New("appliance service unavailable")
+	}
+	return s.validateRenderedCandidate(ctx, value, registry)
 }
 
 // Verify re-renders the stored authority, checks every active managed/fixed

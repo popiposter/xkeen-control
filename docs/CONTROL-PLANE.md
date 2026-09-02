@@ -173,7 +173,7 @@ active supported Xray policy files                  deterministic generated arti
 
 The first D.1 phase is intentionally zero-runtime-mutation adoption: strict-parse current supported DNS/routing/Observatory policy, prove fixed companion files and generated outbounds are compatible, validate a complete rendered candidate, then atomically write only `appliance.json` after equivalence is proven.
 
-Phase B adds a safe export with no VPN/subscription secrets by default and an explicitly re-authenticated encrypted secret-bearing export. Phase C will add bounded session-bound preview/apply restore. Secret-bearing backups must never be uploaded to public GitHub evidence.
+Phase B adds a safe export with no VPN/subscription secrets by default and an explicitly re-authenticated encrypted secret-bearing export. Phase C1 adds the internal bounded session-bound preview/apply restore core, shared authority transaction and interrupted-import recovery; it adds no HTTP routes or UI. Phase C2 will add only the bounded HTTP/UI adapter after C1 review. Secret-bearing backups must never be uploaded to public GitHub evidence.
 
 The Phase B source implementation (not yet deployed or production-qualified) adds these routes:
 
@@ -182,7 +182,7 @@ GET  /api/v1/backup/export
 POST /api/v1/backup/export-secret
 ```
 
-The safe export requires an authenticated same-origin session and contains only typed `appliance` state. The secret export additionally requires the session CSRF token and one request body containing the current password and a 12–256-byte passphrase; it returns a bounded Argon2id/XChaCha20-Poly1305 envelope. Neither route writes backup material to persistent storage. Phase B has no import/apply or UI surface.
+The safe export requires an authenticated same-origin session and contains only typed `appliance` state. The secret export additionally requires the session CSRF token and one request body containing the current password and a 12–256-byte passphrase; it returns a bounded Argon2id/XChaCha20-Poly1305 envelope. Neither route writes backup material to persistent storage. Phase B has no import/apply or UI surface; C1 restore is internal-only and not wired to HTTP/UI.
 
 D.1 does not expose raw JSON/Xray/XKeen editing, does not clone panel auth/listener/update state and does not install/repair XKeen/Xray. Component lifecycle remains #4; broad visual typed configuration remains #5.
 
