@@ -33,6 +33,10 @@ jobs:
           bash scripts/test-benchmark-policy.sh
           bash scripts/test-c1.sh
           bash scripts/test-xkeen-foreground.sh
+          bash scripts/test-appliance.sh
+          bash scripts/test-backup.sh
+          bash scripts/test-restore.sh
+          bash scripts/test-restore-ui.sh
           bash scripts/test-release.sh
           bash scripts/test-public-hygiene.sh
       - name: Frontend checks and audit
