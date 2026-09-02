@@ -159,10 +159,35 @@ td { color: #c8d3df; }
 .good-text { color: #7ee7ad !important; }
 .empty, .loading { padding: 24px 12px; color: #91a0b2; text-align: center; }
 
+.backup-restore-section { max-width: 1180px; }
+.backup-card { display: grid; gap: 12px; }
+.backup-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.backup-card h2 { margin-top: 3px; }
+.backup-card h3 { margin-top: 3px; }
+.backup-card p { margin: 4px 0 0; font-size: 11px; line-height: 1.4; }
+.secret-export, .restore-form { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid #223144; }
+.secret-export { grid-template-columns: 1.35fr repeat(3, minmax(145px, 1fr)) auto; align-items: end; }
+.secret-export > div { align-self: start; }
+.secret-export label, .restore-form label { display: grid; gap: 4px; }
+.secret-export input, .restore-form input, .restore-form select { width: 100%; }
+.restore-form { grid-template-columns: repeat(3, 1fr); }
+.restore-confirm { display: flex; align-items: flex-start; gap: 7px; color: #ffd890; font-size: 11px; line-height: 1.35; }
+.restore-confirm input { width: 15px; min-height: 15px; flex: 0 0 auto; margin-top: 1px; }
+.restore-preview { display: grid; gap: 9px; padding-top: 10px; border-top: 1px solid #36516e; }
+.restore-summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.restore-summary-grid > div { display: grid; gap: 3px; padding: 8px; background: #0c141f; border: 1px solid #26384d; border-radius: 5px; }
+.restore-summary-grid span { color: #7f9ab5; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+.restore-summary-grid strong { color: #e6edf5; font-size: 11px; }
+.restore-blockers { padding: 8px; background: rgba(142, 104, 38, .12); border: 1px solid #846b35; border-radius: 5px; }
+.restore-blockers strong { color: #ffd890; font-size: 11px; }
+.restore-blockers p { margin-top: 5px; }
+
 @media (max-width: 1050px) {
   .hero-grid, .selection-grid { grid-template-columns: repeat(2, 1fr); }
   .composer, .composer.compact, .inline-editor { grid-template-columns: 1fr; align-items: stretch; }
   .composer.compact label { display: block; }
+  .secret-export, .restore-form { grid-template-columns: 1fr 1fr; }
+  .secret-export > div { grid-column: 1 / -1; }
 }
 
 @media (max-width: 650px) {
@@ -170,6 +195,8 @@ td { color: #c8d3df; }
   .section-nav { width: 100%; }
   .section-nav button { flex: 1; }
   .hero-grid, .selection-grid, .lower-grid { grid-template-columns: 1fr; }
+  .backup-card-heading { align-items: stretch; flex-direction: column; }
+  .secret-export, .restore-form, .restore-summary-grid { grid-template-columns: 1fr; }
   .toolbar-main { align-items: stretch; flex-direction: column; }
   .search-box { width: 100%; }
   .filter-row { align-items: stretch; flex-direction: column; }

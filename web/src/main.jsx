@@ -1,4 +1,4 @@
-import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react'
+import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles.css'
 
@@ -28,6 +28,9 @@ import flagUS from 'flag-icons/flags/4x3/us.svg'
 import flagUZ from 'flag-icons/flags/4x3/uz.svg'
 
 const PAGE_SIZE = 25
+const MAX_RESTORE_BUNDLE_BYTES = 9 * 1024 * 1024
+const MIN_BACKUP_PASSPHRASE_BYTES = 12
+const MAX_BACKUP_PASSPHRASE_BYTES = 256
 const FLAG_PREFIX = /^[\u{1F1E6}-\u{1F1FF}]{2}\s*/u
 const COUNTRY_FLAGS = {
   AE: flagAE, AM: flagAM, AT: flagAT, BG: flagBG, CA: flagCA, CZ: flagCZ,
@@ -46,9 +49,32 @@ const api = async (path, options = {}) => {
   if (!response.ok) {
     const error = new Error(body.error || `Request failed (${response.status})`)
     error.status = response.status
+    error.code = body.error
     throw error
   }
   return body
+}
+
+const download = async (path, options = {}, filename) => {
+  const response = await fetch(path, {
+    credentials: 'same-origin',
+    headers: { Accept: '*/*', ...(options.headers || {}) },
+    ...options,
+  })
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}))
+    const error = new Error(body.error || `Download failed (${response.status})`)
+    error.status = response.status
+    error.code = body.error
+    throw error
+  }
+  const blob = await response.blob()
+  const objectURL = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = objectURL
+  anchor.download = filename
+  anchor.click()
+  window.setTimeout(() => URL.revokeObjectURL(objectURL), 0)
 }
 
 const formatTime = (value) => value ? new Date(value).toLocaleString() : '—'
@@ -126,7 +152,10 @@ function App() {
       setDashboard({ status, nodes, performance, config, update })
       setError('')
     } catch (cause) {
-      if (cause.status === 401) setSession(null)
+      if (cause.status === 401) {
+        setDashboard(null)
+        setSession(null)
+      }
       setError(cause.message)
     } finally {
       setLoading(false)
@@ -193,6 +222,11 @@ function App() {
     setSession(null)
   }
 
+  const invalidateSession = useCallback(() => {
+    setDashboard(null)
+    setSession(null)
+  }, [])
+
   const checkUpdate = async () => {
     try {
       await api('/api/v1/update/check', {
@@ -210,7 +244,7 @@ function App() {
   if (loading && !dashboard) return <Shell><div className="loading">Reading current router state…</div></Shell>
   if (!dashboard) return <Shell><Notice message={error || 'Runtime state is unavailable.'} /></Shell>
 
-  return <Dashboard dashboard={dashboard} session={session} error={error} onRefresh={loadDashboard} onLogout={logout} onRunBenchmark={runBenchmark} onCheckUpdate={checkUpdate} />
+  return <Dashboard dashboard={dashboard} session={session} error={error} onRefresh={loadDashboard} onLogout={logout} onRunBenchmark={runBenchmark} onCheckUpdate={checkUpdate} onUnauthorized={invalidateSession} />
 }
 
 function Login({ error, password, setPassword, onSubmit }) {
@@ -227,10 +261,11 @@ function Login({ error, password, setPassword, onSubmit }) {
   </main>
 }
 
-function Dashboard({ dashboard, session, error, onRefresh, onLogout, onRunBenchmark, onCheckUpdate }) {
+function Dashboard({ dashboard, session, error, onRefresh, onLogout, onRunBenchmark, onCheckUpdate, onUnauthorized }) {
   const { status, nodes, config, update } = dashboard
   const [section, setSection] = useState('overview')
   const [nodeView, setNodeView] = useState(createNodeViewState)
+  const [restoreState, setRestoreState] = useState({ preview: null })
   const registryNodes = nodes.nodes || []
   const nodesByTag = useMemo(() => new Map(registryNodes.map((node) => [node.outboundTag || node.tag, node])), [registryNodes])
 
@@ -246,11 +281,13 @@ function Dashboard({ dashboard, session, error, onRefresh, onLogout, onRunBenchm
       <button type="button" className={section === 'overview' ? 'active' : ''} onClick={() => setSection('overview')}>Overview</button>
       <button type="button" className={section === 'nodes' ? 'active' : ''} onClick={() => setSection('nodes')}>Nodes <span>{nodes.total || 0}</span></button>
       <button type="button" className={section === 'system' ? 'active' : ''} onClick={() => setSection('system')}>System</button>
+      <button type="button" className={section === 'backup' ? 'active' : ''} onClick={() => setSection('backup')}>Backup &amp; Restore</button>
     </nav>
     {error && <Notice message={error} />}
     {section === 'overview' && <Overview status={status} nodeTotal={nodes.total || 0} nodesByTag={nodesByTag} onRunBenchmark={onRunBenchmark} />}
     {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} manualOverride={status.selection?.manualOverride || ''} csrf={session.csrfToken} onRefresh={onRefresh} viewState={nodeView} onViewStateChange={setNodeView} />}
     {section === 'system' && <SystemSection status={status} config={config} nodesByTag={nodesByTag} update={update} onCheckUpdate={onCheckUpdate} />}
+    {section === 'backup' && <BackupRestoreSection csrf={session.csrfToken} restoreState={restoreState} setRestoreState={setRestoreState} onRefresh={onRefresh} onUnauthorized={onUnauthorized} />}
   </Shell>
 }
 
@@ -537,6 +574,216 @@ function Pagination({ page, totalPages, onPage }) {
     <div>{Array.from({ length: totalPages }, (_, index) => index + 1).map((value) => <button type="button" key={value} className={value === page ? 'active' : ''} aria-current={value === page ? 'page' : undefined} onClick={() => onPage(value)}>{value}</button>)}</div>
     <IconButton icon="right" label="Next page" disabled={page >= totalPages} onClick={() => onPage(page + 1)} />
   </nav>
+}
+
+const restoreBlockerMessages = {
+  'appliance-authority-not-adopted': 'The local appliance authority is not ready for restore.',
+  'appliance-authority-unavailable': 'The local appliance authority is unavailable.',
+  'appliance-authority-invalid': 'The current appliance authority is invalid.',
+  'nodes-authority-unavailable': 'The current node registry is unavailable.',
+  'nodes-authority-invalid': 'The current node registry is invalid.',
+  'nodes-authority-unsupported': 'The current node registry cannot accept this restore mode.',
+  'runtime-verifier-unavailable': 'The runtime verifier is unavailable.',
+  'candidate-validator-unavailable': 'The restore candidate cannot be validated.',
+}
+
+const restoreBlockerMessage = (code) => restoreBlockerMessages[code] || 'Restore is blocked by a compatibility check.'
+
+function BackupRestoreSection({ csrf, restoreState, setRestoreState, onRefresh, onUnauthorized }) {
+  const [safeBusy, setSafeBusy] = useState(false)
+  const [secretBusy, setSecretBusy] = useState(false)
+  const [restoreBusy, setRestoreBusy] = useState(false)
+  const [notice, setNotice] = useState(null)
+  const [secretForm, setSecretForm] = useState({ currentPassword: '', passphrase: '', confirmation: '' })
+  const [mode, setMode] = useState('settings-only')
+  const [file, setFile] = useState(null)
+  const [passphrase, setPassphrase] = useState('')
+  const [destructiveConfirmed, setDestructiveConfirmed] = useState(false)
+  const fileInput = useRef(null)
+  const preview = restoreState?.preview
+  const effectiveMode = preview?.mode || mode
+  const destructive = effectiveMode !== 'settings-only'
+  const blockers = preview?.compatibility?.blockers || []
+  const previewToken = preview?.previewToken
+  const canApply = Boolean(previewToken) && blockers.length === 0 && (!destructive || destructiveConfirmed)
+
+  const clearSecretForm = () => setSecretForm({ currentPassword: '', passphrase: '', confirmation: '' })
+
+  const handleError = (cause) => {
+    if (cause.status === 401 && cause.code === 'reauthentication failed') {
+      clearSecretForm()
+      setNotice({ tone: 'error', message: 'Current panel password was not accepted.' })
+      return
+    }
+    if (cause.status === 401) {
+      onUnauthorized()
+      return
+    }
+    setNotice({ tone: 'error', message: cause.message || 'Backup or restore request failed.' })
+  }
+
+  const exportSafe = async () => {
+    setSafeBusy(true)
+    setNotice(null)
+    try {
+      await download('/api/v1/backup/export', {}, 'xkeen-control-backup.json')
+      setNotice({ tone: 'success', message: 'Safe settings backup downloaded.' })
+    } catch (cause) {
+      handleError(cause)
+    } finally {
+      setSafeBusy(false)
+    }
+  }
+
+  const exportSecret = async (event) => {
+    event.preventDefault()
+    const { currentPassword, passphrase: secretPassphrase, confirmation } = secretForm
+    setNotice(null)
+    const passphraseBytes = new TextEncoder().encode(secretPassphrase).length
+    if (!currentPassword || passphraseBytes < MIN_BACKUP_PASSPHRASE_BYTES || passphraseBytes > MAX_BACKUP_PASSPHRASE_BYTES || secretPassphrase !== confirmation) {
+      clearSecretForm()
+      setNotice({ tone: 'error', message: 'Enter a matching passphrase between 12 and 256 bytes.' })
+      return
+    }
+    setSecretBusy(true)
+    try {
+      await download('/api/v1/backup/export-secret', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+        body: JSON.stringify({ currentPassword, passphrase: secretPassphrase }),
+      }, 'xkeen-control-backup-encrypted.json')
+      setNotice({ tone: 'success', message: 'Encrypted secret-bearing backup downloaded. Keep its passphrase separate.' })
+    } catch (cause) {
+      handleError(cause)
+    } finally {
+      clearSecretForm()
+      setSecretBusy(false)
+    }
+  }
+
+  const chooseFile = (event) => {
+    const selected = event.target.files?.[0] || null
+    setFile(selected)
+    setRestoreState({ preview: null })
+    setDestructiveConfirmed(false)
+    setNotice(null)
+  }
+
+  const previewRestore = async () => {
+    if (!file) return
+    if (file.size > MAX_RESTORE_BUNDLE_BYTES) {
+      setNotice({ tone: 'error', message: 'The selected backup exceeds the 9 MiB bundle limit.' })
+      return
+    }
+    if (destructive && !destructiveConfirmed) {
+      setNotice({ tone: 'error', message: 'Confirm the destructive registry restore before previewing it.' })
+      return
+    }
+    setRestoreBusy(true)
+    setNotice(null)
+    try {
+      const form = new FormData()
+      form.append('bundle', file)
+      if (passphrase) form.append('passphrase', passphrase)
+      const value = await api(`/api/v1/backup/import/preview?mode=${encodeURIComponent(mode)}`, {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': csrf },
+        body: form,
+      })
+      setRestoreState({ preview: value })
+      setFile(null)
+      setPassphrase('')
+      if (fileInput.current) fileInput.current.value = ''
+      setNotice({ tone: 'success', message: 'Preview ready. The upload and passphrase were cleared; Apply uses only the short-lived preview token.' })
+    } catch (cause) {
+      handleError(cause)
+    } finally {
+      setRestoreBusy(false)
+    }
+  }
+
+  const applyRestore = async () => {
+    const token = previewToken
+    if (!canApply) return
+    setRestoreBusy(true)
+    setNotice(null)
+    try {
+      await api('/api/v1/backup/import/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+        body: JSON.stringify({ previewToken: token }),
+      })
+      setRestoreState({ preview: null })
+      await onRefresh()
+      setNotice({ tone: 'success', message: 'Restore applied and the dashboard was refreshed.' })
+    } catch (cause) {
+      handleError(cause)
+    } finally {
+      setRestoreBusy(false)
+    }
+  }
+
+  const cancelRestore = async () => {
+    const token = preview?.previewToken
+    setRestoreState({ preview: null })
+    if (!token) return
+    setRestoreBusy(true)
+    try {
+      await api('/api/v1/backup/import/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+        body: JSON.stringify({ previewToken: token }),
+      })
+      setNotice({ tone: 'success', message: 'Restore preview canceled.' })
+    } catch (cause) {
+      handleError(cause)
+    } finally {
+      setRestoreBusy(false)
+    }
+  }
+
+  return <div className="section-stack backup-restore-section">
+    {notice && <Notice message={notice.message} tone={notice.tone} />}
+    <section className="panel backup-card">
+      <div className="backup-card-heading"><div><span className="panel-label">Backup</span><h2>Download current settings</h2><p className="muted">Safe export contains appliance policy and no node secrets.</p></div><button type="button" onClick={exportSafe} disabled={safeBusy}>{safeBusy ? 'Preparing…' : 'Download safe backup'}</button></div>
+      <form className="secret-export" onSubmit={exportSecret}>
+        <div><span className="panel-label">Encrypted export</span><h3>Include the node registry</h3><p className="muted">This download contains secret-bearing node material. It is never stored in browser storage.</p></div>
+        <label>Current panel password<input type="password" autoComplete="current-password" value={secretForm.currentPassword} onChange={(event) => setSecretForm((current) => ({ ...current, currentPassword: event.target.value }))} /></label>
+        <label>Encryption passphrase<input type="password" autoComplete="new-password" value={secretForm.passphrase} onChange={(event) => setSecretForm((current) => ({ ...current, passphrase: event.target.value }))} /></label>
+        <label>Confirm passphrase<input type="password" autoComplete="new-password" value={secretForm.confirmation} onChange={(event) => setSecretForm((current) => ({ ...current, confirmation: event.target.value }))} /></label>
+        <button type="submit" disabled={secretBusy}>{secretBusy ? 'Preparing…' : 'Download encrypted backup'}</button>
+      </form>
+    </section>
+
+    <section className="panel backup-card">
+      <div><span className="panel-label">Restore</span><h2>Import a local backup</h2><p className="muted">Choose one JSON bundle. The server enforces the 10 MiB request and 9 MiB bundle limits.</p></div>
+      <div className="restore-form">
+        <label>Restore mode<select value={effectiveMode} onChange={(event) => { setMode(event.target.value); setRestoreState({ preview: null }); setDestructiveConfirmed(false) }} disabled={restoreBusy || Boolean(preview)}><option value="settings-only">Settings only</option><option value="replace-registry">Replace registry (destructive)</option><option value="merge-registry">Merge registry (destructive)</option></select></label>
+        <label>Backup bundle<input ref={fileInput} type="file" accept="application/json,.json" onChange={chooseFile} disabled={restoreBusy || Boolean(preview)} /></label>
+        <label>Passphrase (encrypted backup only)<input type="password" autoComplete="off" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} disabled={restoreBusy || Boolean(preview)} /></label>
+      </div>
+      {destructive && <label className="restore-confirm"><input type="checkbox" checked={destructiveConfirmed} onChange={(event) => setDestructiveConfirmed(event.target.checked)} disabled={restoreBusy} /> I understand this restore can replace or merge secret-bearing node registry state.</label>}
+      {!preview && <div className="preview-actions"><button type="button" onClick={previewRestore} disabled={restoreBusy || !file || (destructive && !destructiveConfirmed)}>{restoreBusy ? 'Previewing…' : 'Preview restore'}</button></div>}
+      {preview && <RestorePreviewSummary preview={preview} blockers={blockers} busy={restoreBusy} canApply={canApply} onCancel={cancelRestore} onApply={applyRestore} />}
+    </section>
+  </div>
+}
+
+function RestorePreviewSummary({ preview, blockers, busy, canApply, onCancel, onApply }) {
+  const changes = preview.changes || {}
+  return <div className="restore-preview" aria-live="polite">
+    <div className="dialog-heading"><div><span className="panel-label">Restore preview</span><h3>{preview.noop ? 'No persistent change' : 'Ready for confirmation'}</h3></div><span className="chip neutral">Expires {formatTime(preview.expiresAt)}</span></div>
+    <div className="restore-summary-grid">
+      <div><span>Mode</span><strong>{preview.mode || '—'}</strong></div>
+      <div><span>Contains secrets</span><strong>{preview.containsSecrets ? 'Yes' : 'No'}</strong></div>
+      <div><span>Appliance changed</span><strong>{changes.applianceChanged ? 'Yes' : 'No'}</strong></div>
+      <div><span>Subscriptions</span><strong>+{changes.subscriptionsAdded || 0} / −{changes.subscriptionsRemoved || 0} / ~{changes.subscriptionsChanged || 0}</strong></div>
+      <div><span>Nodes</span><strong>+{changes.nodesAdded || 0} / −{changes.nodesRemoved || 0} / ~{changes.nodesChanged || 0}</strong></div>
+      <div><span>Result</span><strong>{preview.noop ? 'No-op' : 'Changes detected'}</strong></div>
+    </div>
+    {blockers.length > 0 && <div className="restore-blockers"><strong>Compatibility blockers</strong>{blockers.map((code, index) => <p className="warning" key={`${code}-${index}`}>{restoreBlockerMessage(code)}</p>)}</div>}
+    <div className="preview-actions"><button className="ghost" type="button" onClick={onCancel} disabled={busy}>Cancel</button><button type="button" onClick={onApply} disabled={busy || !canApply}>{busy ? 'Applying…' : 'Apply restore'}</button></div>
+  </div>
 }
 
 function SystemSection({ status, config, nodesByTag, update, onCheckUpdate }) {
