@@ -1,6 +1,7 @@
 package nodes
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -8,7 +9,9 @@ import (
 	"path/filepath"
 )
 
-const maxRegistryDocument = 4 << 20
+// MaxRegistryDocument is the largest canonical authoritative registry that
+// the control plane will read or write. Backup export uses the same bound.
+const MaxRegistryDocument = 4 << 20
 
 type Store struct {
 	Path string
@@ -23,8 +26,8 @@ func (s Store) Load() (Registry, error) {
 		return Registry{}, err
 	}
 	defer file.Close()
-	contents, err := io.ReadAll(io.LimitReader(file, maxRegistryDocument+1))
-	if err != nil || len(contents) > maxRegistryDocument {
+	contents, err := io.ReadAll(io.LimitReader(file, MaxRegistryDocument+1))
+	if err != nil || len(contents) > MaxRegistryDocument {
 		return Registry{}, errors.New("registry exceeds bounded size")
 	}
 	var registry Registry
@@ -38,21 +41,88 @@ func (s Store) Load() (Registry, error) {
 }
 
 func (s Store) Save(registry Registry) error {
-	if err := registry.Validate(); err != nil {
-		return err
-	}
-	contents, err := json.MarshalIndent(registry, "", "  ")
+	contents, err := MarshalCanonical(registry)
 	if err != nil {
-		return errors.New("unable to encode registry")
-	}
-	contents = append(contents, '\n')
-	if len(contents) > maxRegistryDocument {
-		return errors.New("registry exceeds bounded size")
+		return err
 	}
 	if err := ensurePrivateDir(filepath.Dir(s.Path)); err != nil {
 		return err
 	}
 	return atomicWrite(s.Path, contents, 0o600)
+}
+
+// MarshalCanonical returns the deterministic, newline-terminated registry
+// serialization used by the store and by the secret backup section.
+func MarshalCanonical(registry Registry) ([]byte, error) {
+	if err := registry.Validate(); err != nil {
+		return nil, err
+	}
+	contents, err := json.MarshalIndent(registry, "", "  ")
+	if err != nil {
+		return nil, errors.New("unable to encode registry")
+	}
+	contents = append(contents, '\n')
+	if len(contents) > MaxRegistryDocument {
+		return nil, errors.New("registry exceeds bounded size")
+	}
+	return contents, nil
+}
+
+// ParseCanonical strictly decodes a bounded authoritative registry.
+func ParseCanonical(contents []byte) (Registry, error) {
+	if len(contents) == 0 || len(contents) > MaxRegistryDocument {
+		return Registry{}, errors.New("registry exceeds bounded size")
+	}
+	var wire strictRegistry
+	if err := decodeStrictJSON(contents, &wire); err != nil {
+		return Registry{}, errors.New("invalid registry JSON")
+	}
+	registry := Registry{SchemaVersion: wire.SchemaVersion, Nodes: wire.Nodes}
+	if wire.Subscriptions != nil {
+		registry.Subscriptions = make([]Subscription, len(wire.Subscriptions))
+		for index, subscription := range wire.Subscriptions {
+			registry.Subscriptions[index] = Subscription{
+				ID: subscription.ID, Name: subscription.Name, URL: subscription.URL,
+				Enabled: subscription.Enabled == nil || *subscription.Enabled,
+			}
+		}
+	}
+	if err := registry.Validate(); err != nil {
+		return Registry{}, errors.New("invalid registry")
+	}
+	return registry, nil
+}
+
+// strictRegistry is only the backup/import wire shape. Production Store.Load
+// intentionally retains its compatibility decoder, including the historical
+// missing-subscription-enabled default and ignored additive fields.
+type strictRegistry struct {
+	SchemaVersion int                  `json:"schemaVersion"`
+	Nodes         []Node               `json:"nodes"`
+	Subscriptions []strictSubscription `json:"subscriptions,omitempty"`
+}
+
+type strictSubscription struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	URL     string `json:"url"`
+	Enabled *bool  `json:"enabled"`
+}
+
+func decodeStrictJSON(contents []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
 
 func ReadBoundedFile(path string, max int) ([]byte, error) {

@@ -29,10 +29,11 @@ const (
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrLocked             = errors.New("temporarily locked")
-	ErrNotConfigured      = errors.New("authentication is not configured")
-	ErrInvalidPassword    = errors.New("password must be 12 to 72 bytes")
+	ErrInvalidCredentials     = errors.New("invalid credentials")
+	ErrReauthenticationFailed = errors.New("reauthentication failed")
+	ErrLocked                 = errors.New("temporarily locked")
+	ErrNotConfigured          = errors.New("authentication is not configured")
+	ErrInvalidPassword        = errors.New("password must be 12 to 72 bytes")
 )
 
 type Config struct {
@@ -127,6 +128,40 @@ func (m *Manager) Login(remoteIP, password string) (Session, string, error) {
 	m.sessions[token] = s
 	m.mu.Unlock()
 	return Session{CSRFToken: csrf, ExpiresAt: s.expiresAt}, token, nil
+}
+
+// Reauthenticate verifies the current bcrypt credential for one sensitive
+// operation without creating a session. It shares the same in-memory
+// remote-IP failure and lockout accounting as Login.
+func (m *Manager) Reauthenticate(remoteIP, password string) error {
+	if m == nil {
+		return ErrNotConfigured
+	}
+	now := m.config.Now()
+	remoteIP = boundedRemoteIP(remoteIP)
+	m.mu.Lock()
+	current := m.attempts[remoteIP]
+	if now.Before(current.lockedUntil) {
+		m.mu.Unlock()
+		return ErrLocked
+	}
+	m.mu.Unlock()
+
+	hash, err := os.ReadFile(m.config.HashPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrNotConfigured
+		}
+		return ErrNotConfigured
+	}
+	if bcrypt.CompareHashAndPassword(bytesTrimSpace(hash), []byte(password)) != nil {
+		m.recordFailure(remoteIP, now)
+		return ErrReauthenticationFailed
+	}
+	m.mu.Lock()
+	delete(m.attempts, remoteIP)
+	m.mu.Unlock()
+	return nil
 }
 
 // The random session identifier is passed only to the HttpOnly cookie setter;

@@ -62,6 +62,16 @@ func (s *Service) ValidateStored() error {
 	return err
 }
 
+// Snapshot returns the validated typed appliance authority without consulting
+// repository policy or any runtime file. It is the narrow read-only source for
+// portable backup export.
+func (s *Service) Snapshot() (Appliance, error) {
+	if s == nil {
+		return Appliance{}, errors.New("appliance service unavailable")
+	}
+	return s.loadAppliance()
+}
+
 // Adopt proves that the active policy is representable by appliance v1 and
 // that the node registry/generated outbounds are coherent. Only after the
 // complete temporary candidate validates and all proof inputs remain unchanged

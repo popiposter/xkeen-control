@@ -18,6 +18,7 @@ import (
 
 	"github.com/popiposter/xkeen-control/internal/appliance"
 	"github.com/popiposter/xkeen-control/internal/auth"
+	"github.com/popiposter/xkeen-control/internal/backup"
 	"github.com/popiposter/xkeen-control/internal/buildinfo"
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/configview"
@@ -140,6 +141,7 @@ func main() {
 	runner := c1.NewBenchmarkRunner(policy, probeRouter, c1.BenchmarkStore{Path: getenv("XKEEN_CONTROL_BENCHMARK_PATH", c1.DefaultBenchmarkPath)})
 	coordinator := c1.NewCoordinator(policy, supervisor, runner, nodeReader)
 	nodeManager = newNodeManager(coordinator)
+	applianceService := newApplianceService()
 	collector := controlruntime.NewCollector(buildinfo.Current().Version, startedAt, controlruntime.Dependencies{
 		Xray:             xrayReader,
 		Xkeen:            xkeenReader,
@@ -161,6 +163,11 @@ func main() {
 		Assets:    webassets.Handler(),
 		StartedAt: startedAt,
 		Updates:   updateManager,
+		Backup: backup.NewService(backup.Config{
+			Appliance: applianceService,
+			Nodes:     nodeManager,
+			Build:     buildinfo.Current(),
+		}),
 	})
 
 	server := &http.Server{
