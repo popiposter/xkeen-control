@@ -60,6 +60,15 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - name: Full release qualification
         run: |
+          fixture_workspace="$(readlink -f "$GITHUB_WORKSPACE")"
+          if [ -e /workspace ] || [ -L /workspace ]; then
+            test "$(readlink -f /workspace)" = "$fixture_workspace" || {
+              echo "fixture workspace path is not the checked-out repository" >&2
+              exit 1
+            }
+          else
+            sudo ln -s "$fixture_workspace" /workspace
+          fi
           go test -count=1 ./...
           go vet ./...
           go test -race ./...
@@ -67,6 +76,10 @@ jobs:
           bash scripts/test-benchmark-policy.sh
           bash scripts/test-c1.sh
           bash scripts/test-xkeen-foreground.sh
+          bash scripts/test-appliance.sh
+          bash scripts/test-backup.sh
+          bash scripts/test-restore.sh
+          bash scripts/test-restore-ui.sh
           bash scripts/test-release.sh
           bash scripts/test-public-hygiene.sh
           npm --prefix web ci --ignore-scripts
