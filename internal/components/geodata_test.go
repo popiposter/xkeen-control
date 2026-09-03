@@ -19,14 +19,15 @@ import (
 )
 
 type geodataFixture struct {
-	root         string
-	activeBinary string
-	configDir    string
-	assetDir     string
-	previousDir  string
-	journalPath  string
-	stagingDir   string
-	restorePath  string
+	root             string
+	activeBinary     string
+	configDir        string
+	assetDir         string
+	prefixedSentinel string
+	previousDir      string
+	journalPath      string
+	stagingDir       string
+	restorePath      string
 
 	oldFiles map[string][]byte
 	newFiles map[string][]byte
@@ -60,6 +61,7 @@ func newGeodataFixture(t *testing.T) *geodataFixture {
 		lease:        authority.NewLease(),
 		coordinator:  &fakeXrayCoordinator{},
 	}
+	f.prefixedSentinel = filepath.Join(f.assetDir, ".xkeen-geodata-operator-note")
 	for _, directory := range []string{filepath.Dir(f.activeBinary), f.configDir, f.assetDir} {
 		if err := os.MkdirAll(directory, 0o700); err != nil {
 			t.Fatal(err)
@@ -78,6 +80,9 @@ func newGeodataFixture(t *testing.T) *geodataFixture {
 		}
 	}
 	if err := os.WriteFile(filepath.Join(f.assetDir, "manual-preserved.dat"), []byte("manual-bytes"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.prefixedSentinel, []byte("prefix-sentinel"), 0o640); err != nil {
 		t.Fatal(err)
 	}
 	items := make([]GeodataReleaseIdentity, len(productGeodataCatalog))
@@ -151,6 +156,7 @@ func TestGeodataApplyCommitsOneCompleteGenerationAndPreservesManualFiles(t *test
 	if actual := readFixtureFile(t, filepath.Join(f.assetDir, "manual-preserved.dat")); !bytes.Equal(actual, manualBefore) {
 		t.Fatal("unrelated manual geodata file changed")
 	}
+	assertGeodataPrefixedSentinel(t, f)
 	previous, err := f.service.loadPreviousGeneration()
 	if err != nil {
 		t.Fatalf("load previous: %v", err)
@@ -272,6 +278,7 @@ func TestGeodataFailuresAfterEachFileRenameRestoreTheWholeSet(t *testing.T) {
 			if present, _ := componentTransactionPresent(f.journalPath); present {
 				t.Fatal("journal remains after bounded recovery")
 			}
+			assertGeodataPrefixedSentinel(t, f)
 			if err := f.service.Ready(); err != nil {
 				t.Fatalf("service not ready after recovery: %v", err)
 			}
@@ -308,6 +315,31 @@ func TestGeodataRollbackUsesPreviousWithoutResolverAndPreservesOneStepTarget(t *
 	}
 	if f.resolver.calls != resolverCalls || f.downloader.totalCalls() != downloadCalls {
 		t.Fatalf("rollback contacted upstream: resolve=%d download=%d", f.resolver.calls, f.downloader.totalCalls())
+	}
+	assertGeodataPrefixedSentinel(t, f)
+}
+
+func TestGeodataRuntimeMutationAfterRestartFailsClosedAndRestores(t *testing.T) {
+	f := newGeodataFixture(t)
+	f.runtime.restartMutation = func() {
+		if err := os.WriteFile(filepath.Join(f.assetDir, productGeodataCatalog[0].Name), []byte("runtime-geodata-drift"), 0o600); err != nil {
+			t.Fatalf("write synthetic runtime drift: %v", err)
+		}
+	}
+	if err := f.service.Apply(context.Background(), f.set); !errors.Is(err, ErrGeodataApplyFailed) {
+		t.Fatalf("runtime mutation result = %v", err)
+	}
+	for name, expected := range f.oldFiles {
+		if actual := readFixtureFile(t, filepath.Join(f.assetDir, name)); !bytes.Equal(actual, expected) {
+			t.Fatalf("active %s was not restored after runtime mutation", name)
+		}
+	}
+	if present, _ := componentTransactionPresent(f.journalPath); present {
+		t.Fatal("journal remains after runtime mutation was recovered")
+	}
+	assertGeodataPrefixedSentinel(t, f)
+	if err := f.service.Ready(); err != nil {
+		t.Fatalf("service not ready after runtime mutation recovery: %v", err)
 	}
 }
 
@@ -362,6 +394,7 @@ func TestGeodataStartupRecoveryPreservesRollbackTargetAfterOldSettled(t *testing
 	if err != nil || !sameGeodataSetMetadata(previous.meta, oldActive) {
 		t.Fatalf("previous generation after recovery = %+v err=%v, want %+v", previous.meta, err, oldActive)
 	}
+	assertGeodataPrefixedSentinel(t, f)
 	if f.resolver.calls != resolverCalls || f.downloader.totalCalls() != downloadCalls {
 		t.Fatal("startup rollback recovery contacted upstream")
 	}
@@ -403,6 +436,7 @@ func TestGeodataJournalClearFailureFailsClosedAndStartupRecoveryIsLocal(t *testi
 	if err := f.service.Ready(); err != nil {
 		t.Fatalf("service not ready after startup recovery: %v", err)
 	}
+	assertGeodataPrefixedSentinel(t, f)
 }
 
 func TestComponentRecoveryArbitratesOwnerAndConflicts(t *testing.T) {
@@ -433,6 +467,13 @@ func TestComponentRecoveryArbitratesOwnerAndConflicts(t *testing.T) {
 	}
 	if _, err := InspectComponentRecovery(config); !errors.Is(err, ErrComponentRecoveryConflict) {
 		t.Fatalf("expected cross-component staging conflict, got %v", err)
+	}
+}
+
+func assertGeodataPrefixedSentinel(t *testing.T, f *geodataFixture) {
+	t.Helper()
+	if actual := readFixtureFile(t, f.prefixedSentinel); !bytes.Equal(actual, []byte("prefix-sentinel")) {
+		t.Fatalf("unrelated activation-prefix sentinel changed: %q", actual)
 	}
 }
 

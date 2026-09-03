@@ -39,6 +39,7 @@ const (
 	GeodataFreeSpaceReserve  = 8 << 20
 
 	geodataMetadataName         = "metadata.json"
+	geodataActivationTempDir    = ".xkeen-geodata-transaction"
 	geodataPreviousStaging      = ".staging"
 	geodataPreviousOld          = ".old"
 	geodataOperationUpdate      = "update"
@@ -934,6 +935,14 @@ func (s *GeodataService) verifyRuntime(ctx context.Context, expected geodataSetM
 	if err != nil || !validAuthoritySnapshot(currentAuthority) || currentAuthority.Generation != authoritySnapshot.Generation {
 		return errGeodataGenerationChanged
 	}
+	finalActive, err := s.readActiveSet()
+	if err != nil || !sameGeodataSetMetadata(finalActive, expected) {
+		return errGeodataSetInvalid
+	}
+	finalXray, err := binaryMetadata(s.config.ActiveBinaryPath, expectedXray.Version, s.config.CandidateProbe, ctx)
+	if err != nil || !sameBinaryMetadata(finalXray, expectedXray) {
+		return errXrayBinaryInvalid
+	}
 	return nil
 }
 
@@ -1295,6 +1304,10 @@ func (s *GeodataService) componentStagingRootPresent() bool {
 
 func (s *GeodataService) stagingPresent() bool {
 	return s.previousStagingPresent() || s.componentStagingRootPresent()
+}
+
+func (s *GeodataService) activationTempDir() string {
+	return filepath.Join(s.config.AssetDir, geodataActivationTempDir)
 }
 
 func (s *GeodataService) stagingPath() string {
@@ -1773,12 +1786,17 @@ func (s *GeodataService) activateGeodataSetInternal(ctx context.Context, source 
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return errGeodataSetInvalid
 	}
+	activationDir := s.activationTempDir()
+	if err := ensurePrivateDirectory(activationDir); err != nil {
+		return errGeodataSetInvalid
+	}
 	type replacement struct{ temporary, target string }
 	replacements := make([]replacement, 0, len(expected.Items))
 	cleanup := func() {
 		for _, item := range replacements {
 			_ = os.Remove(item.temporary)
 		}
+		_ = s.config.SyncDirectory(activationDir)
 	}
 	defer cleanup()
 	for _, item := range expected.Items {
@@ -1793,7 +1811,7 @@ func (s *GeodataService) activateGeodataSetInternal(ctx context.Context, source 
 		} else if !errors.Is(statErr, os.ErrNotExist) {
 			return errGeodataSetInvalid
 		}
-		temporary, err := os.CreateTemp(parent, ".xkeen-geodata-")
+		temporary, err := os.CreateTemp(activationDir, ".owned-")
 		if err != nil {
 			return errGeodataSetInvalid
 		}
@@ -1819,6 +1837,9 @@ func (s *GeodataService) activateGeodataSetInternal(ctx context.Context, source 
 			return errGeodataSetInvalid
 		}
 		replacements = append(replacements, replacement{temporary: temporaryPath, target: target})
+	}
+	if err := s.config.SyncDirectory(activationDir); err != nil {
+		return errGeodataSetInvalid
 	}
 	for _, item := range replacements {
 		if err := renameComponentFile(item.temporary, item.target); err != nil {
@@ -2040,22 +2061,15 @@ func (s *GeodataService) cleanupNonPreviousResidue() error {
 }
 
 func (s *GeodataService) removeActivationTemps() error {
-	entries, err := os.ReadDir(s.config.AssetDir)
+	info, err := os.Lstat(s.config.AssetDir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	if err != nil {
-		return err
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return errGeodataSetInvalid
 	}
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".xkeen-geodata-") {
-			if entry.IsDir() {
-				return errGeodataSetInvalid
-			}
-			if err := os.Remove(filepath.Join(s.config.AssetDir, entry.Name())); err != nil {
-				return err
-			}
-		}
+	if err := s.removeOwned(s.activationTempDir()); err != nil {
+		return err
 	}
 	return s.config.SyncDirectory(s.config.AssetDir)
 }
