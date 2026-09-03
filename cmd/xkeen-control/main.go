@@ -144,20 +144,28 @@ func main() {
 	runner := c1.NewBenchmarkRunner(policy, probeRouter, c1.BenchmarkStore{Path: getenv("XKEEN_CONTROL_BENCHMARK_PATH", c1.DefaultBenchmarkPath)})
 	coordinator := c1.NewCoordinator(policy, supervisor, runner, nodeReader)
 	authorityLease := authority.NewLease()
+	componentGate := components.NewComponentMutationGate()
+	componentMaintenance := components.NewComponentMaintenance(coordinator, authorityLease)
 	nodeManager = newNodeManager(coordinator, authorityLease)
 	applianceService := newApplianceService(authorityLease)
 	restoreService := newRestoreService(coordinator, authorityLease)
-	componentXrayService := newXrayService(coordinator, authorityLease, applianceService, nodeManager, xrayReader)
+	componentXrayService := newXrayService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
+	componentGeodataService := newGeodataService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
 	stateDir := getenv("XKEEN_APPLIANCE_IMPORT_STATE_DIR", "/opt/etc/xkeen-control/state")
 	restoreJournalPath := filepath.Join(stateDir, "appliance-import-transaction.json")
 	restorePending, restoreJournalErr := transactionJournalPresent(restoreJournalPath)
-	componentPending, componentJournalErr := componentXrayService.HasPendingRecovery()
+	componentJournalPath := getenv("XKEEN_COMPONENT_TRANSACTION_PATH", components.DefaultComponentTransactionJournal)
+	componentRecoveryConfig := components.ComponentRecoveryConfig{
+		JournalPath:                componentJournalPath,
+		RestoreJournalPath:         restoreJournalPath,
+		XrayPreviousStagingPath:    getenv("XKEEN_XRAY_PREVIOUS_DIR", components.DefaultXrayPreviousDir) + ".staging",
+		XrayStagingDir:             getenv("XKEEN_COMPONENT_STAGING_DIR", components.DefaultXrayComponentStagingDir),
+		GeodataPreviousStagingPath: getenv("XKEEN_GEODATA_PREVIOUS_DIR", components.DefaultGeodataPreviousDir) + ".staging",
+		GeodataStagingDir:          getenv("XKEEN_GEODATA_COMPONENT_STAGING_DIR", components.DefaultGeodataComponentStagingDir),
+	}
+	recoveryState, componentJournalErr := components.InspectComponentRecovery(componentRecoveryConfig)
 	if restoreJournalErr != nil || componentJournalErr != nil {
 		log.Print("startup transaction journal state is unavailable")
-		os.Exit(1)
-	}
-	if restorePending && componentPending {
-		log.Print("startup transaction journals conflict")
 		os.Exit(1)
 	}
 	if restorePending {
@@ -166,9 +174,23 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	if componentPending {
-		if err := componentXrayService.RecoverStartup(context.Background()); err != nil {
+	if recoveryState.Pending() {
+		var recoveryErr error
+		switch recoveryState.Kind {
+		case components.KindXray:
+			recoveryErr = componentXrayService.RecoverStartup(context.Background())
+		case components.KindGeodata:
+			recoveryErr = componentGeodataService.RecoverStartup(context.Background())
+		default:
+			recoveryErr = errors.New("component recovery owner is unavailable")
+		}
+		if recoveryErr != nil {
 			log.Print("component startup recovery failed")
+			os.Exit(1)
+		}
+		remaining, remainingErr := components.InspectComponentRecovery(componentRecoveryConfig)
+		if remainingErr != nil || remaining.Pending() {
+			log.Print("component startup recovery is not settled")
 			os.Exit(1)
 		}
 	}
@@ -177,6 +199,10 @@ func main() {
 		os.Exit(1)
 	}
 	if err := componentXrayService.Ready(); err != nil {
+		log.Print("component startup recovery is not proven")
+		os.Exit(1)
+	}
+	if err := componentGeodataService.Ready(); err != nil {
 		log.Print("component startup recovery is not proven")
 		os.Exit(1)
 	}
@@ -265,7 +291,7 @@ func main() {
 	}
 }
 
-func newXrayService(coordinator *c1.Coordinator, lease *authority.Lease, applianceService *appliance.Service, nodeManager *nodes.Manager, xrayReader *xrayapi.Client) *components.XrayService {
+func newXrayService(coordinator *c1.Coordinator, lease *authority.Lease, applianceService *appliance.Service, nodeManager *nodes.Manager, xrayReader *xrayapi.Client, mutationGate *components.ComponentMutationGate, maintenance *components.ComponentMaintenance) *components.XrayService {
 	xrayBinary := getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary)
 	xrayAssetDir := getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)
 	configDir := getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir)
@@ -311,6 +337,59 @@ func newXrayService(coordinator *c1.Coordinator, lease *authority.Lease, applian
 		JournalPath:        getenv("XKEEN_COMPONENT_TRANSACTION_PATH", components.DefaultComponentTransactionJournal),
 		StagingDir:         getenv("XKEEN_COMPONENT_STAGING_DIR", components.DefaultXrayComponentStagingDir),
 		RestoreJournalPath: filepath.Join(stateDir, "appliance-import-transaction.json"),
+		MutationGate:       mutationGate,
+		Maintenance:        maintenance,
+	})
+}
+
+func newGeodataService(coordinator *c1.Coordinator, lease *authority.Lease, applianceService *appliance.Service, nodeManager *nodes.Manager, xrayReader *xrayapi.Client, mutationGate *components.ComponentMutationGate, maintenance *components.ComponentMaintenance) *components.GeodataService {
+	xrayBinary := getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary)
+	xrayAssetDir := getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)
+	configDir := getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir)
+	activeOutboundsPath := getenv("XKEEN_ACTIVE_OUTBOUNDS", filepath.Join(configDir, "04_outbounds.json"))
+	xkeenConfigPath := getenv("XKEEN_CONFIG_PATH", "/opt/etc/xkeen/xkeen.json")
+	nodesPath := getenv("XKEEN_NODES_PATH", defaultNodesPath)
+	appliancePath := getenv("XKEEN_APPLIANCE_PATH", defaultAppliancePath)
+	stateDir := getenv("XKEEN_APPLIANCE_IMPORT_STATE_DIR", "/opt/etc/xkeen-control/state")
+	return components.NewGeodataService(components.GeodataConfig{
+		Resolver:   components.NewGeodataResolver(nil, nil),
+		Downloader: components.NewGeodataArtifactDownloader(nil, nil),
+		Authority: components.NewFileAuthorityProvider(components.FileAuthorityConfig{
+			Appliance:           applianceService,
+			Nodes:               nodeManager,
+			AppliancePath:       appliancePath,
+			NodesPath:           nodesPath,
+			ConfigDir:           configDir,
+			XkeenConfigPath:     xkeenConfigPath,
+			ActiveOutboundsPath: activeOutboundsPath,
+		}),
+		Runtime: components.CommandXrayRuntime{
+			Activator: nodes.CommandActivator{
+				XrayBinary:          xrayBinary,
+				XrayAssetDir:        xrayAssetDir,
+				XkeenBinary:         getenv("XKEEN_XKEEN_BINARY", components.DefaultXkeenBinary),
+				APIAddress:          getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress),
+				ActiveOutboundsPath: activeOutboundsPath,
+				RoutingPath:         filepath.Join(configDir, "05_routing.json"),
+			},
+			ActiveBinary:   xrayBinary,
+			ConfigDir:      configDir,
+			AssetDir:       xrayAssetDir,
+			ProbeReachable: xrayReader.ProbeReachable,
+		},
+		CandidateProbe:     components.CommandXrayCandidateProbe{Binary: xrayBinary},
+		CandidateValidator: components.CommandXrayCandidateValidator{Binary: xrayBinary},
+		AuthorityLease:     lease,
+		Coordinator:        coordinator,
+		ActiveBinaryPath:   xrayBinary,
+		ConfigDir:          configDir,
+		AssetDir:           xrayAssetDir,
+		PreviousDir:        getenv("XKEEN_GEODATA_PREVIOUS_DIR", components.DefaultGeodataPreviousDir),
+		JournalPath:        getenv("XKEEN_COMPONENT_TRANSACTION_PATH", components.DefaultComponentTransactionJournal),
+		StagingDir:         getenv("XKEEN_GEODATA_COMPONENT_STAGING_DIR", components.DefaultGeodataComponentStagingDir),
+		RestoreJournalPath: filepath.Join(stateDir, "appliance-import-transaction.json"),
+		MutationGate:       mutationGate,
+		Maintenance:        maintenance,
 	})
 }
 

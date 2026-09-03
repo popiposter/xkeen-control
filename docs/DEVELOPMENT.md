@@ -143,7 +143,12 @@ non-regular rejection, complete candidate rendering and validation, shared
 Coordinator-to-authority lock order, stale authority rejection, one previous
 generation, journal fault injection, verified rollback, local-only startup
 recovery and restore-journal conflict. The Phase C primitive has no HTTP/UI
-mutation route and all source qualification remains synthetic/offline.
+mutation route and all source qualification remains synthetic/offline. Phase D
+fixtures additionally cover the complete six-file geodata transaction, fresh
+exact-set resolution, fixed-host artifact transport, staged Xray config
+validation, shared Xray/geodata recovery arbitration, whole-set rollback,
+unrelated-file preservation and fail-closed journal/maintenance behavior. No
+Phase D production mutation or temporary operator mutation surface exists.
 
 ## Issue #3 Phase B focused fixtures
 

@@ -792,11 +792,13 @@ func (p *fakeTransactionalProbe) ProbeXrayCandidate(_ context.Context, binary st
 type fakeXrayCandidateValidator struct {
 	calls     int
 	seenFiles map[string]struct{}
+	assetDirs []string
 	err       error
 }
 
-func (v *fakeXrayCandidateValidator) ValidateXrayCandidate(_ context.Context, _ string, configDir, _ string) error {
+func (v *fakeXrayCandidateValidator) ValidateXrayCandidate(_ context.Context, _ string, configDir, assetDir string) error {
 	v.calls++
+	v.assetDirs = append(v.assetDirs, assetDir)
 	if v.err != nil {
 		return v.err
 	}
