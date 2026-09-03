@@ -14,6 +14,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/auth"
 	"github.com/popiposter/xkeen-control/internal/backup"
 	"github.com/popiposter/xkeen-control/internal/c1"
+	"github.com/popiposter/xkeen-control/internal/components"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	"github.com/popiposter/xkeen-control/internal/restore"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
@@ -52,6 +53,7 @@ type Server struct {
 	selection interface {
 		SetManualOverride(context.Context, string) error
 	}
+	components         components.ReadOnlyService
 	updates            panelupdate.Service
 	backup             BackupService
 	restore            RestoreService
@@ -70,16 +72,17 @@ type Config struct {
 	Selection interface {
 		SetManualOverride(context.Context, string) error
 	}
-	Updates panelupdate.Service
-	Backup  BackupService
-	Restore RestoreService
+	Components components.ReadOnlyService
+	Updates    panelupdate.Service
+	Backup     BackupService
+	Restore    RestoreService
 }
 
 func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, selection: config.Selection, updates: config.Updates, backup: config.Backup, restore: config.Restore, restorePreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, selection: config.Selection, components: config.Components, updates: config.Updates, backup: config.Backup, restore: config.Restore, restorePreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +99,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "ok\n")
 		return
 	case "/api/v1/session/login", "/api/v1/session/logout", "/api/v1/session",
-		"/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary",
+		"/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary", "/api/v1/components",
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
 		"/api/v1/session/password",
 		"/api/v1/benchmark/run",
@@ -183,6 +186,12 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.readOnly(w, r, func(view controlruntime.View) any { return view.ConfigSummary })
+	case "/api/v1/components":
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w, http.MethodGet)
+			return
+		}
+		s.readComponents(w, r)
 	case "/api/v1/benchmark/run":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -1041,6 +1050,17 @@ func (s *Server) readOnly(w http.ResponseWriter, r *http.Request, selectView fun
 		return
 	}
 	writeJSON(w, http.StatusOK, selectView(s.collector.Snapshot(r.Context())))
+}
+
+func (s *Server) readComponents(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	if s.components == nil {
+		writeError(w, http.StatusServiceUnavailable, "component inventory unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.components.Snapshot(r.Context()))
 }
 
 func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (auth.Session, bool) {

@@ -22,6 +22,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/backup"
 	"github.com/popiposter/xkeen-control/internal/buildinfo"
 	"github.com/popiposter/xkeen-control/internal/c1"
+	"github.com/popiposter/xkeen-control/internal/components"
 	"github.com/popiposter/xkeen-control/internal/configview"
 	"github.com/popiposter/xkeen-control/internal/httpapi"
 	"github.com/popiposter/xkeen-control/internal/nodes"
@@ -162,16 +163,36 @@ func main() {
 	})
 	collector.SetBuildInfo(buildinfo.Current())
 	updateManager := panelupdate.NewManager(panelupdate.Config{Current: buildinfo.Current(), Lifecycle: coordinator})
+	componentService := components.NewService(components.Config{
+		Panel:                 buildinfo.Current(),
+		XrayBinary:            getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary),
+		XkeenBinary:           components.DefaultXkeenBinary,
+		XkeenModuleDir:        components.DefaultXkeenModuleDir,
+		XkeenModuleImport:     components.DefaultXkeenModuleImport,
+		XkeenRuntimeInit:      components.DefaultXkeenRuntimeInit,
+		XkeenConfig:           components.DefaultXkeenConfig,
+		XkeenPackageMetadata:  components.DefaultXkeenPackageMetadata,
+		GeodataDir:            components.DefaultGeodataDir,
+		AppliancePath:         components.DefaultAppliancePath,
+		RoutingPath:           components.DefaultRoutingPath,
+		DNSPath:               components.DefaultDNSPath,
+		KeeneticOSVersionPath: components.DefaultKeeneticOSVersionPath,
+		EntwareReleasePath:    components.DefaultEntwareReleasePath,
+		EntwareBinary:         components.DefaultEntwareBinary,
+		InventoryTimeout:      components.DefaultInventoryTimeout,
+		XrayProbeTimeout:      components.DefaultXrayProbeTimeout,
+	})
 	handler := httpapi.New(httpapi.Config{
-		Collector: collector,
-		Auth:      authManager,
-		Nodes:     nodeManager,
-		Benchmark: coordinator,
-		Selection: coordinator,
-		Assets:    webassets.Handler(),
-		StartedAt: startedAt,
-		Updates:   updateManager,
-		Restore:   restoreService,
+		Collector:  collector,
+		Auth:       authManager,
+		Nodes:      nodeManager,
+		Benchmark:  coordinator,
+		Selection:  coordinator,
+		Assets:     webassets.Handler(),
+		StartedAt:  startedAt,
+		Components: componentService,
+		Updates:    updateManager,
+		Restore:    restoreService,
 		Backup: backup.NewService(backup.Config{
 			Appliance:      applianceService,
 			Nodes:          nodeManager,
