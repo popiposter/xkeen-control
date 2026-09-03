@@ -56,6 +56,7 @@ var (
 	errFileTooLarge           = errors.New("component inventory file exceeds the limit")
 
 	xrayVersionPattern     = regexp.MustCompile(`(?m)^\s*Xray\s+v?([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)\s+\(`)
+	xrayInlineBuildPattern = regexp.MustCompile(`(?m)^\s*Xray\s+v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\s+\([^()\r\n]{1,128}\)\s+[A-Za-z0-9._+-]{1,128}\s+\(go[0-9]+(?:\.[0-9]+){1,3}\s+linux/([A-Za-z0-9_]+)\)\s*$`)
 	xrayBuildPattern       = regexp.MustCompile(`(?m)^\s*go[0-9]+(?:\.[0-9]+){1,3}\s+linux/([A-Za-z0-9_]+)\s*$`)
 	packageVersionPattern  = regexp.MustCompile(`(?m)^Version:[ \t]+(v?[0-9]+(?:\.[0-9]+){2,3}(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)[ \t]*$`)
 	platformVersionPattern = regexp.MustCompile(`^v?([0-9]+(?:\.[0-9]+){1,3}(?:[-+][0-9A-Za-z.-]+)?)$`)
@@ -366,8 +367,9 @@ func (s *Service) inventoryXray(ctx context.Context) Component {
 	return component
 }
 
-// ParseXrayVersionOutput accepts only the tested Xray version output shape.
-// It intentionally does not search arbitrary text for a version substring.
+// ParseXrayVersionOutput accepts only tested Xray version statement shapes.
+// Current official releases carry Go/OS/arch on the first line; the bounded
+// standalone build line remains accepted for older supported layouts.
 func ParseXrayVersionOutput(stdout, stderr []byte) (XrayVersionSignal, error) {
 	if len(stdout)+len(stderr) > MaxXrayProbeOutput {
 		return XrayVersionSignal{}, errXrayOutputTooLarge
@@ -377,8 +379,14 @@ func ParseXrayVersionOutput(stdout, stderr []byte) (XrayVersionSignal, error) {
 	output = append(output, '\n')
 	output = append(output, stderr...)
 	versions := xrayVersionPattern.FindAllSubmatch(output, -1)
-	architectures := xrayBuildPattern.FindAllSubmatch(output, -1)
-	if len(versions) != 1 || len(architectures) != 1 {
+	if len(versions) != 1 {
+		return XrayVersionSignal{}, errXrayVersionUnparseable
+	}
+	architectures := xrayInlineBuildPattern.FindAllSubmatch(output, -1)
+	if len(architectures) == 0 {
+		architectures = xrayBuildPattern.FindAllSubmatch(output, -1)
+	}
+	if len(architectures) != 1 {
 		return XrayVersionSignal{}, errXrayVersionUnparseable
 	}
 	return XrayVersionSignal{
@@ -475,6 +483,11 @@ type policyExpression struct {
 	value string
 }
 
+type policyExpressionResult struct {
+	expressions []policyExpression
+	reason      string
+}
+
 type geodataRequirement struct {
 	catalogEntry
 	source      string
@@ -483,7 +496,7 @@ type geodataRequirement struct {
 
 func (s *Service) inventoryGeodata(ctx context.Context, budget *readBudget) GeodataComponent {
 	items := make([]GeodataItem, 0, len(productGeodataCatalog))
-	requirements := s.requiredGeodata(ctx, budget)
+	requirements, policyReason := s.requiredGeodata(ctx, budget)
 	directory := inspectPath(s.config.GeodataDir, pathDirectory)
 	knownCount := 0
 	presentCount := 0
@@ -584,10 +597,15 @@ func (s *Service) inventoryGeodata(ctx context.Context, budget *readBudget) Geod
 	if component.ReasonCode == "" && unknownCount > 0 {
 		component.ReasonCode = "inventory-incomplete"
 	}
+	if policyReason != "" {
+		component.State = StateUnknown
+		component.Capability = CapabilityUnsupported
+		component.ReasonCode = policyReason
+	}
 	return component
 }
 
-func (s *Service) requiredGeodata(ctx context.Context, budget *readBudget) []geodataRequirement {
+func (s *Service) requiredGeodata(ctx context.Context, budget *readBudget) ([]geodataRequirement, string) {
 	byName := make(map[string]catalogEntry, len(productGeodataCatalog))
 	for _, entry := range productGeodataCatalog {
 		byName[entry.Name] = entry
@@ -597,7 +615,8 @@ func (s *Service) requiredGeodata(ctx context.Context, budget *readBudget) []geo
 		requirements[entry.ID] = geodataRequirement{catalogEntry: entry, source: "product-catalog"}
 	}
 	unknown := make(map[string]geodataRequirement)
-	for _, expression := range s.policyExpressions(ctx, budget) {
+	policy := s.policyExpressions(ctx, budget)
+	for _, expression := range policy.expressions {
 		if !strings.HasPrefix(expression.value, "ext:") {
 			continue
 		}
@@ -629,7 +648,7 @@ func (s *Service) requiredGeodata(ctx context.Context, budget *readBudget) []geo
 	for _, id := range ids {
 		result = append(result, requirements[id])
 	}
-	return result
+	return result, policy.reason
 }
 
 func logicalExtExpression(value string) bool {
@@ -662,20 +681,47 @@ func manualRequirement(kind, name string) geodataRequirement {
 	}
 }
 
-func (s *Service) policyExpressions(ctx context.Context, budget *readBudget) []policyExpression {
-	if raw, check := readRegularBytes(ctx, budget, s.config.AppliancePath, MaxPolicyBytes); check.state == StatePresent && check.valid {
-		if value, err := appliance.Parse(raw); err == nil {
-			return applianceExpressions(value)
+func (s *Service) policyExpressions(ctx context.Context, budget *readBudget) policyExpressionResult {
+	raw, check := readRegularBytes(ctx, budget, s.config.AppliancePath, MaxPolicyBytes)
+	switch {
+	case check.state == StatePresent && check.valid:
+		value, err := appliance.Parse(raw)
+		if err != nil {
+			return policyExpressionResult{reason: "appliance-authority-invalid"}
 		}
+		return policyExpressionResult{expressions: applianceExpressions(value)}
+	case check.state == StatePresent:
+		return policyExpressionResult{reason: "appliance-authority-invalid"}
+	case check.state != StateMissing:
+		return policyExpressionResult{reason: "appliance-authority-unavailable"}
 	}
+
 	result := make([]policyExpression, 0, 32)
-	if raw, check := readRegularBytes(ctx, budget, s.config.DNSPath, MaxPolicyBytes); check.state == StatePresent && check.valid {
-		result = append(result, dnsExpressions(raw)...)
+	if raw, check := readRegularBytes(ctx, budget, s.config.DNSPath, MaxPolicyBytes); check.state == StatePresent {
+		if !check.valid {
+			return policyExpressionResult{reason: "legacy-policy-unavailable"}
+		}
+		expressions, err := dnsExpressions(raw)
+		if err != nil {
+			return policyExpressionResult{reason: "legacy-policy-invalid"}
+		}
+		result = append(result, expressions...)
+	} else if check.state != StateMissing {
+		return policyExpressionResult{reason: "legacy-policy-unavailable"}
 	}
-	if raw, check := readRegularBytes(ctx, budget, s.config.RoutingPath, MaxPolicyBytes); check.state == StatePresent && check.valid {
-		result = append(result, routingExpressions(raw)...)
+	if raw, check := readRegularBytes(ctx, budget, s.config.RoutingPath, MaxPolicyBytes); check.state == StatePresent {
+		if !check.valid {
+			return policyExpressionResult{reason: "legacy-policy-unavailable"}
+		}
+		expressions, err := routingExpressions(raw)
+		if err != nil {
+			return policyExpressionResult{reason: "legacy-policy-invalid"}
+		}
+		result = append(result, expressions...)
+	} else if check.state != StateMissing {
+		return policyExpressionResult{reason: "legacy-policy-unavailable"}
 	}
-	return result
+	return policyExpressionResult{expressions: result}
 }
 
 func applianceExpressions(value appliance.Appliance) []policyExpression {
@@ -696,31 +742,31 @@ func applianceExpressions(value appliance.Appliance) []policyExpression {
 	return result
 }
 
-func dnsExpressions(raw []byte) []policyExpression {
+func dnsExpressions(raw []byte) ([]policyExpression, error) {
 	var document struct {
 		DNS struct {
 			Servers []json.RawMessage `json:"servers"`
 		} `json:"dns"`
 	}
-	if json.Unmarshal(raw, &document) != nil {
-		return nil
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return nil, err
 	}
 	result := make([]policyExpression, 0, 16)
 	for _, rawServer := range document.DNS.Servers {
 		var server struct {
 			Domains []string `json:"domains"`
 		}
-		if json.Unmarshal(rawServer, &server) != nil {
-			continue
+		if err := json.Unmarshal(rawServer, &server); err != nil {
+			return nil, err
 		}
 		for _, domain := range server.Domains {
 			result = append(result, policyExpression{kind: "geosite", value: domain})
 		}
 	}
-	return result
+	return result, nil
 }
 
-func routingExpressions(raw []byte) []policyExpression {
+func routingExpressions(raw []byte) ([]policyExpression, error) {
 	var document struct {
 		Routing struct {
 			Rules []struct {
@@ -729,8 +775,8 @@ func routingExpressions(raw []byte) []policyExpression {
 			} `json:"rules"`
 		} `json:"routing"`
 	}
-	if json.Unmarshal(raw, &document) != nil {
-		return nil
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return nil, err
 	}
 	result := make([]policyExpression, 0, 32)
 	for _, rule := range document.Routing.Rules {
@@ -741,7 +787,7 @@ func routingExpressions(raw []byte) []policyExpression {
 			result = append(result, policyExpression{kind: "geoip", value: ip})
 		}
 	}
-	return result
+	return result, nil
 }
 
 func (s *Service) inventoryKeeneticOS(ctx context.Context, budget *readBudget) Component {
