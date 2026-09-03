@@ -177,9 +177,17 @@ GET  /api/v1/backup/export
 POST /api/v1/backup/export-secret
 ```
 
+The production import routes are:
+
+```text
+POST /api/v1/backup/import/preview?mode=settings-only|replace-registry|merge-registry
+POST /api/v1/backup/import/apply
+POST /api/v1/backup/import/cancel
+```
+
 The safe export requires an authenticated same-origin session and contains only typed `appliance` state. The secret export additionally requires the session CSRF token and one request body containing the current password and a 12–256-byte passphrase; it returns a bounded Argon2id/XChaCha20-Poly1305 envelope. Neither route writes backup material to persistent storage.
 
-The import adapter uses strict bounded multipart/JSON parsing, a non-blocking single-flight preview gate, session-bound tokens and fixed safe error projections. Restore Apply is preview-first, typed, authority-coordinated and journaled for interrupted-import recovery. An equivalent settings-only restore is a no-op: it preserves node/generated/runtime state and does not restart Xray/XKeen. Secret-bearing backups must never be uploaded to public GitHub evidence.
+Import preview uses strict bounded multipart parsing with one in-flight preview admission and returns only a session-bound, expiring server token plus safe change metadata. Apply and cancel accept that token rather than a replacement mode or candidate payload; the mode and candidate are fixed by preview. Restore Apply is preview-first, typed, authority-coordinated and journaled for interrupted-import recovery. An equivalent settings-only restore is a no-op: it preserves node/generated/runtime state and does not restart Xray/XKeen. Secret-bearing backups must never be uploaded to public GitHub evidence.
 
 D.1 does not expose raw JSON/Xray/XKeen editing, does not clone panel auth/listener/update state and does not install/repair XKeen/Xray. Before successful adoption, the explicit repository-derived/legacy compatibility boundary remains in force; unknown/manual drift fails closed. Component lifecycle remains the planned current/next slice #4, and broad visual typed configuration remains planned #5.
 
@@ -197,7 +205,8 @@ Supported routing, DNS, XKeen/Xray, performance and panel settings will be edite
 
 - Current system architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - Sequencing: [`ROADMAP.md`](ROADMAP.md)
-- Active D.1 contract: [Issue #3](https://github.com/popiposter/xkeen-control/issues/3)
+- Completed D.1 implementation/qualification contract: [Issue #3](https://github.com/popiposter/xkeen-control/issues/3)
+- Current product slice: [Issue #4](https://github.com/popiposter/xkeen-control/issues/4)
 - Build/test: [`DEVELOPMENT.md`](DEVELOPMENT.md)
 - Production operations: [`OPERATIONS.md`](OPERATIONS.md)
 - Security: [`../SECURITY.md`](../SECURITY.md)
