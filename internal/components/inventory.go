@@ -54,6 +54,7 @@ var (
 	errXrayOutputTooLarge     = errors.New("xray version output exceeds the limit")
 	errInventoryBudget        = errors.New("component inventory budget exceeded")
 	errFileTooLarge           = errors.New("component inventory file exceeds the limit")
+	errPolicyShape            = errors.New("component policy shape is invalid")
 
 	xrayVersionPattern     = regexp.MustCompile(`(?m)^\s*Xray\s+v?([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)\s+\(`)
 	xrayInlineBuildPattern = regexp.MustCompile(`(?m)^\s*Xray\s+v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\s+\([^()\r\n]{1,128}\)\s+[A-Za-z0-9._+-]{1,128}\s+\(go[0-9]+(?:\.[0-9]+){1,3}\s+linux/([A-Za-z0-9_]+)\)\s*$`)
@@ -744,23 +745,41 @@ func applianceExpressions(value appliance.Appliance) []policyExpression {
 
 func dnsExpressions(raw []byte) ([]policyExpression, error) {
 	var document struct {
-		DNS struct {
+		DNS *struct {
 			Servers []json.RawMessage `json:"servers"`
 		} `json:"dns"`
 	}
 	if err := json.Unmarshal(raw, &document); err != nil {
 		return nil, err
 	}
+	if document.DNS == nil || document.DNS.Servers == nil {
+		return nil, errPolicyShape
+	}
 	result := make([]policyExpression, 0, 16)
 	for _, rawServer := range document.DNS.Servers {
-		var server struct {
-			Domains []string `json:"domains"`
+		trimmed := bytes.TrimSpace(rawServer)
+		if len(trimmed) == 0 {
+			return nil, errPolicyShape
 		}
-		if err := json.Unmarshal(rawServer, &server); err != nil {
-			return nil, err
-		}
-		for _, domain := range server.Domains {
-			result = append(result, policyExpression{kind: "geosite", value: domain})
+		switch trimmed[0] {
+		case '"':
+			var address string
+			if err := json.Unmarshal(trimmed, &address); err != nil || strings.TrimSpace(address) == "" {
+				return nil, errPolicyShape
+			}
+			continue
+		case '{':
+			var server struct {
+				Domains []string `json:"domains"`
+			}
+			if err := json.Unmarshal(trimmed, &server); err != nil {
+				return nil, err
+			}
+			for _, domain := range server.Domains {
+				result = append(result, policyExpression{kind: "geosite", value: domain})
+			}
+		default:
+			return nil, errPolicyShape
 		}
 	}
 	return result, nil
@@ -768,7 +787,7 @@ func dnsExpressions(raw []byte) ([]policyExpression, error) {
 
 func routingExpressions(raw []byte) ([]policyExpression, error) {
 	var document struct {
-		Routing struct {
+		Routing *struct {
 			Rules []struct {
 				Domain []string `json:"domain"`
 				IP     []string `json:"ip"`
@@ -777,6 +796,9 @@ func routingExpressions(raw []byte) ([]policyExpression, error) {
 	}
 	if err := json.Unmarshal(raw, &document); err != nil {
 		return nil, err
+	}
+	if document.Routing == nil || document.Routing.Rules == nil {
+		return nil, errPolicyShape
 	}
 	result := make([]policyExpression, 0, 32)
 	for _, rule := range document.Routing.Rules {
