@@ -76,6 +76,7 @@ jobs:
           bash scripts/test-benchmark-policy.sh
           bash scripts/test-c1.sh
           bash scripts/test-xkeen-foreground.sh
+          bash scripts/test-components.sh
           bash scripts/test-appliance.sh
           bash scripts/test-backup.sh
           bash scripts/test-restore.sh
