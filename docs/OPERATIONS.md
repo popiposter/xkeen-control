@@ -1,6 +1,6 @@
 # Operations
 
-This runbook describes the **currently production-qualified** control-plane generation. Slice D / Issue #2 is complete: signed public releases, bounded bootstrap and transactional panel update/rollback are current behavior for qualified `linux/arm64`. D.1 / Issue #3 remains source-only until its signed feature release and live qualification; the C1 restore core and C2 HTTP/UI adapter are not production capabilities.
+This runbook describes the **currently production-qualified** control-plane generation. Slice D / Issue #2 remains complete, and D.1 / Issue #3 is production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86` for `linux/arm64`. #4 is the current/next product slice and #5 remains planned; neither component lifecycle nor visual configuration behavior is deployed.
 
 Production is a live router. Prefer typed/repository transactions over ad-hoc edits.
 
@@ -26,14 +26,14 @@ The panel is loopback or one exact trusted-LAN address only.
 For an Entware/Open Package-ready `linux/arm64` Keenetic, the currently qualified release-specific installer is:
 
 ```sh
-sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.1.1/install.sh)"
+sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.2.0/install.sh)"
 ```
 
 The installer requires root, `/opt`, `opkg`, supported architecture and bounded free space. It may install explicitly missing prerequisites but never performs blanket `opkg upgrade`. It does not install/repair XKeen or Xray and does not rewrite node/Xray/XKeen/routing/DNS/Observatory policy.
 
 A fresh panel can generate a one-time setup credential. Existing auth/listener/state is preserved on rerun. Missing XKeen/Xray/configuration is a supported Setup Mode state.
 
-Existing managed installs use the installed binary's pinned-signature update path. The known historical C.1 manual panel has a release-owned fingerprint-gated adoption bridge; unknown/partial legacy layouts fail closed.
+Existing managed installs use the installed binary's pinned-signature update path. The known historical C.1 manual panel has a release-owned fingerprint-gated adoption bridge; unknown/partial legacy layouts fail closed. After successful typed D.1 `appliance adopt`, local `appliance.json` is the authority for supported non-secret policy. Before adoption, an existing router retains its explicit repository-derived/legacy policy boundary; adoption is not implicit and unknown/manual drift fails closed.
 
 ## Panel self-update / rollback
 
@@ -156,13 +156,27 @@ GitHub Releases from `popiposter/xkeen-control` are software distribution author
 
 The router requires no GitHub write token. Normal managed updates use the compiled source-pinned public key. First-install trust begins with GitHub HTTPS plus exact release-internal manifest/hash/size checks.
 
-## D.1 backup / restore source boundary
+## D.1 appliance state and backup / restore
 
-Portable typed export/import is the current product slice (#3), not current production behavior. Phase C1 owns the restore core and Phase C2 source adds only its bounded authenticated import HTTP routes and first-class Backup & Restore UI; neither is available in the qualified production release. Safe export excludes VPN/subscription secrets by default; secret-bearing backup is explicit and encrypted. Until #3 is fully released and qualified, `nodes.json` backups are secret operator material.
+D.1 is production-qualified in signed stable `v0.2.0`. Successful typed `appliance adopt` establishes local schema-versioned `appliance.json` as the authority for supported non-secret policy. Managed DNS/routing/Observatory policy derives deterministically from it; active `04_outbounds.json` remains generated from the authoritative `nodes.json`. Adoption proves compatibility with fixed companion policy and fails closed on unknown/manual drift.
 
-## Planned D.2 component lifecycle
+For an existing router that has not yet adopted the appliance authority, use the typed sequence deliberately:
 
-XKeen/Xray/geodata inventory/update/rollback will be managed through typed capability-aware operations in #4. Until then, do not add generic shell/package-manager endpoints and do not treat component lifecycle controls as available.
+```sh
+/opt/sbin/xkeen-control appliance adopt
+/opt/sbin/xkeen-control appliance validate
+/opt/sbin/xkeen-control appliance verify
+```
+
+`adopt` must complete first and is the only step that creates `appliance.json`; it is designed to prove compatibility before that authority write and must not mutate active runtime policy. `validate` checks the stored typed authority, and `verify` proves the current generated/fixed/runtime generation still corresponds to the adopted authority. If adoption or verification reports incompatibility or unknown/manual drift, stop and investigate through typed/repository paths; do not normalize raw config ad hoc or treat the one-time production qualification normalization as a generic repair procedure.
+
+Safe export is authenticated and excludes VPN/subscription secrets by default. Secret-bearing export requires explicit re-authentication and a passphrase, uses a bounded Argon2id/XChaCha20-Poly1305 envelope and is not persisted by the panel. Any backup containing `nodes.json` remains secret operator material.
+
+Restore is authenticated, same-origin/CSRF protected, session-bound, bounded and preview-first. Apply uses typed validation, authority coordination, a transaction journal and interrupted-import recovery. An equivalent settings-only restore is a no-op that preserves `nodes.json`, generated policy and runtime state without an Xray/XKeen restart. The adapter does not expose raw JSON, filesystem, archive or command surfaces.
+
+## Current/next D.2 component lifecycle (#4) — planned, not deployed
+
+XKeen/Xray/geodata inventory/update/rollback will be managed through typed capability-aware operations in #4. Until that slice is implemented and qualified, do not add generic shell/package-manager endpoints and do not treat component lifecycle controls as available. #5 visual typed configuration remains planned as well.
 
 ## Geodata
 
@@ -186,7 +200,7 @@ Never paste unbounded logs or raw upstream errors into public GitHub; they can c
 
 Repository deploy backups under `/opt/backups/...` can contain secret-bearing generated runtime state and must be treated as secrets.
 
-Future D.1 portable backups have a separate typed/encrypted contract; do not confuse them with raw deploy snapshots.
+D.1 portable backups have a separate typed/encrypted contract; do not confuse them with raw deploy snapshots. Safe export is the default for portable transfer, while secret-bearing export remains explicit operator material.
 
 ## Prohibited routine actions
 

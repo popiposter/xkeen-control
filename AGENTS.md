@@ -34,7 +34,7 @@ If code, issue and an authority document conflict, stop broad implementation, de
 
 - Git, public issues/PRs, CI and release artifacts are secretless. Never commit or print production VLESS URLs, UUIDs, REALITY keys, short IDs, subscription URLs/tokens, passwords, SSH credentials or secret-bearing backups.
 - `/opt/etc/xkeen-control/secrets/nodes.json` is the authoritative production node/subscription registry. Active `04_outbounds.json` is generated runtime output, not a second authority.
-- Current production routing/DNS/Observatory policy is repository-derived until the local appliance-state migration is implemented. Node-only mutations must not silently regenerate unrelated policy.
+- After a successful typed D.1 `appliance adopt`, `/opt/etc/xkeen-control/config/appliance.json` is the local authority for supported non-secret appliance policy; deterministic managed `02_dns.json`, `05_routing.json` and `07_observatory.json` derive from it, while `04_outbounds.json` derives from `/opt/etc/xkeen-control/secrets/nodes.json`. Before adoption, an existing router retains the explicit repository-derived/legacy policy boundary; adoption must prove compatibility and fail closed on unknown/manual drift. Node-only mutations must not silently regenerate unrelated appliance policy.
 - High-churn/transient state belongs in RAM or `/tmp`; persistent router writes must be explicit and bounded.
 - No generic shell, PTY, command runner, file manager or arbitrary raw-config API.
 - The panel is loopback / exact trusted-LAN / management-VPN only. Never open a wildcard/public listener or WAN firewall rule for convenience.
@@ -104,4 +104,4 @@ Confirm the issue is closed/completed, update `docs/ROADMAP.md` and master issue
 
 ## 8. Current direction
 
-Do not memorize sequencing from this file; `docs/ROADMAP.md` is authoritative. The product direction after C.1 is an installable XKeen/Xray appliance manager: signed releases/bootstrap/self-update, portable local appliance state, managed component lifecycle, then typed visual configuration.
+Do not memorize sequencing from this file; `docs/ROADMAP.md` is authoritative. The product direction after D.1 is an installable XKeen/Xray appliance manager: signed releases/bootstrap/self-update, portable local appliance state and backup/restore, then managed component lifecycle (#4) and typed visual configuration (#5). D.1 is production-qualified; #4 is the current product slice and #5 remains planned.

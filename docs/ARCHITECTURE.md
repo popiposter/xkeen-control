@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the **currently production-qualified architecture**. Slices A/B/C/C.1 and D are qualified; D.1 and later product evolution are called out separately and must not be treated as deployed behavior. Detailed design for active work lives in the active GitHub issue.
+This document describes the **currently production-qualified architecture**. Slices A/B/C/C.1/D/D.1 are qualified; #4 and #5 are planned product evolution and must not be treated as deployed behavior. Detailed design for active work lives in the active GitHub issue.
 
 ## System goal
 
@@ -29,17 +29,20 @@ xkeen-control
 ## Current authority split
 
 ```text
-GitHub Releases                             software distribution authority
-/opt/etc/xkeen-control/secrets/nodes.json   authoritative VPN/subscription secrets
-/opt/etc/xray/configs/04_outbounds.json     generated runtime artifact
-config/xray/*.json                          current non-secret Xray policy source
-config/xkeen/xkeen.json                     current non-secret XKeen policy source
-RAM + /tmp/xkeen-control                    preview/runtime/update/high-churn state
+GitHub Releases                                      software distribution authority
+/opt/etc/xkeen-control/config/appliance.json         local typed non-secret authority after adoption
+/opt/etc/xkeen-control/secrets/nodes.json             authoritative VPN/subscription secrets
+/opt/etc/xray/configs/02_dns.json                     generated managed policy
+/opt/etc/xray/configs/05_routing.json                 generated managed policy
+/opt/etc/xray/configs/07_observatory.json             generated managed policy
+/opt/etc/xray/configs/04_outbounds.json               generated from nodes.json
+config/xray 01/03/06/08 + config/xkeen/xkeen.json      fixed D.1 compatibility templates
+RAM + /tmp/xkeen-control                              preview/runtime/update/high-churn state
 ```
 
 `nodes.json` is schema-versioned and root-only. Generated outbounds are never restored independently over a different registry.
 
-The D.1 local `appliance.json` model exists in source but is not yet deployed or production-qualified; current production routing/DNS/Observatory policy remains repository-derived until the D.1 release and qualification gate.
+After successful typed D.1 `appliance adopt`, `appliance.json` is the local authority for supported non-secret policy and the managed `02_dns.json`, `05_routing.json` and `07_observatory.json` files are deterministic generated artifacts. Before successful adoption, an existing router retains the explicit repository-derived/legacy policy boundary. Adoption is not implicit: fixed companion and generated-policy compatibility must be proven, and unknown/manual drift fails closed.
 
 ## Data plane
 
@@ -92,6 +95,14 @@ explicit restore + restart + readiness/inventory verification
 
 Node operations do not rewrite routing, DNS or Observatory policy. Unknown transports/fields fail closed. Subscription networking uses a public-routable address policy to reject special-use/private destinations and unsafe redirects.
 
+## Local appliance state and backup/restore
+
+D.1 uses a schema-versioned local `appliance.json` for supported non-secret appliance policy and keeps `nodes.json` as the separate VPN/subscription secret authority. Successful typed adoption is intentionally zero-runtime-mutation authority creation: the service strictly parses the supported policy, proves fixed companion files and generated outbounds are compatible, validates a complete rendered candidate, and writes only `appliance.json` after equivalence is established.
+
+After adoption, supported DNS/routing/Observatory files are generated deterministically from the appliance authority; active outbounds remain generated from `nodes.json`. Node-only mutations do not rewrite unrelated appliance policy.
+
+Safe export contains typed appliance state without node/subscription secrets by default. Explicit secret-bearing export requires re-authentication and a passphrase, uses a bounded authenticated envelope and is not persisted by the panel. Restore is authenticated, same-origin/CSRF protected, session-bound, bounded and preview-first; Apply uses typed validation, an authority lease, a transaction journal and interrupted-import recovery. An equivalent settings-only restore is a no-op that preserves node/generated/runtime state without restarting Xray/XKeen. No raw JSON, filesystem, archive or command surface is exposed.
+
 ## Routing and DNS
 
 Xray is first-match. Explicit proxy exceptions must beat broad DIRECT classification. Current policy keeps private networks/domains and ordinary traffic DIRECT, while explicit blocked/geo-sensitive domains/IPs and selected realtime traffic use `bal-proxy`.
@@ -131,7 +142,7 @@ Benchmark work never owns the fast health plane. Explicit lifecycle mutations pr
 
 ## Signed releases, bootstrap and panel lifecycle
 
-`popiposter/xkeen-control` GitHub Releases are the software distribution authority. The first production-qualified stable release after Slice D completion is `v0.1.1`, built from exact source `8f15246099538426ef08163b832c3aa6f73e8265`.
+`popiposter/xkeen-control` GitHub Releases are the software distribution authority. The first production-qualified stable release after Slice D completion was historical `v0.1.1`, built from exact source `8f15246099538426ef08163b832c3aa6f73e8265`. Current D.1 production qualification is provided by signed stable `v0.2.0`, built from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`.
 
 The protected release flow:
 
@@ -183,27 +194,29 @@ Authentication uses a local bcrypt password hash, RAM sessions, same-origin/CSRF
 
 RAM or `/tmp` holds sessions/rate limits, status caches, RTT/liveness windows, preview candidates, per-node benchmark work/results, release/update downloads and temporary render/validation trees.
 
-Persistent writes are tied to real explicit state changes and bounded generations: auth/listener settings, `nodes.json`, generated active outbounds, stable-selection changes, one compact benchmark snapshot, one previous panel generation and compact panel release/update policy markers. No growing metrics or update-history database belongs on the router.
+Persistent writes are tied to real explicit state changes and bounded generations: auth/listener settings, typed `appliance.json` adoption/restore changes, `nodes.json`, generated active outbounds, stable-selection changes, one compact benchmark snapshot, one previous panel generation and compact panel release/update policy markers. No growing metrics or update-history database belongs on the router.
 
 ## Planned product evolution — not current runtime
 
-Current sequence after completed Slice D is:
+Current sequence after completed D.1 is:
 
 ```text
-#3 local appliance state + portable backup/import/export
+#3 local appliance state + portable backup/import/export (done / v0.2.0)
  ↓
-#4 managed XKeen/Xray/geodata lifecycle
+#4 managed XKeen/Xray/geodata lifecycle (current/next; planned)
  ↓
-#5 typed visual routing/DNS/XKeen/Xray/panel configuration
+#5 typed visual routing/DNS/XKeen/Xray/panel configuration (planned)
 ```
 
-After #3/#5, per-router supported non-secret configuration will move from repository-derived policy into local typed appliance state and runtime files will become deterministic generated artifacts. Until those slices merge and are qualified, the current authority model above remains in force.
+#4 component lifecycle and #5 visual configuration remain planned rather than deployed. The current authority model above is in force for adopted routers; the explicit repository-derived/legacy compatibility boundary remains in force before successful adoption.
 
 ## Architecture invariants
 
 - public source/releases/issues/CI are secretless;
 - GitHub Releases are software authority, never router configuration authority;
 - local `nodes.json` remains the node/subscription secret authority until an explicit migration;
+- after successful typed appliance adoption, local `appliance.json` is the authority for supported non-secret policy; pre-adoption routers retain the explicit repository-derived/legacy compatibility boundary;
+- managed `02_dns.json`, `05_routing.json` and `07_observatory.json` are generated from appliance authority, while `04_outbounds.json` is generated from `nodes.json`;
 - generated outbounds are never an independent authority;
 - management access remains private;
 - mutations are typed, bounded and rollback-aware;

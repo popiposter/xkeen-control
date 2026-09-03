@@ -2,7 +2,7 @@
 
 `xkeen-control` is the lightweight management process around XKeen + Xray. Xray remains the traffic data plane; the panel owns typed local operations, safe projections, stable selection, signed panel lifecycle and bounded coordination.
 
-This document describes the **current production-qualified runtime** after Slice D / Issue #2. D.1 / Issue #3 is the current product slice; its C1 core and C2 source adapter are not deployed or production-qualified.
+This document describes the **current production-qualified runtime** after D.1 / Issue #3. Signed stable `v0.2.0` is the qualified `linux/arm64` release; #4 is the current/next product slice and #5 remains planned. Neither #4 nor #5 behavior is deployed.
 
 ## Current runtime shape
 
@@ -19,6 +19,7 @@ Current local state includes:
 ```text
 /opt/etc/xkeen-control/auth/password.bcrypt
 /opt/etc/xkeen-control/listen-address                  optional exact private LAN bind
+/opt/etc/xkeen-control/config/appliance.json            local typed non-secret authority after adoption
 /opt/etc/xkeen-control/secrets/nodes.json              authoritative VPN/subscription registry
 /opt/etc/xkeen-control/state/installed-release.json    bounded installed-release marker
 /opt/etc/xkeen-control/state/update-policy.json        bounded panel update policy
@@ -50,13 +51,17 @@ Public/API projections are allowlisted. They may show safe operator fields such 
 
 ```text
 GitHub Releases                                      software distribution authority
-/opt/etc/xkeen-control/secrets/nodes.json           node/subscription secret authority
-/opt/etc/xray/configs/04_outbounds.json             generated from nodes.json
-config/xray/*.json + config/xkeen/xkeen.json        current non-secret policy source
-RAM + /tmp/xkeen-control                            high-churn preview/update/runtime state
+/opt/etc/xkeen-control/config/appliance.json         local typed non-secret authority after adoption
+/opt/etc/xkeen-control/secrets/nodes.json             node/subscription secret authority
+/opt/etc/xray/configs/02_dns.json                     generated from appliance authority
+/opt/etc/xray/configs/05_routing.json                 generated from appliance authority
+/opt/etc/xray/configs/07_observatory.json             generated from appliance authority
+/opt/etc/xray/configs/04_outbounds.json               generated from nodes.json
+config/xray 01/03/06/08 + config/xkeen/xkeen.json      fixed D.1 compatibility templates
+RAM + /tmp/xkeen-control                              high-churn preview/update/runtime state
 ```
 
-Until D.1 adoption succeeds, routing/DNS/Observatory policy remains repository-derived. The planned local `/opt/etc/xkeen-control/config/appliance.json` authority does not exist yet in current production behavior.
+Before successful typed D.1 `appliance adopt`, an existing router retains the explicit repository-derived/legacy policy boundary. Adoption is not implicit; fixed companion and generated-policy compatibility must be proven, and unknown/manual drift fails closed.
 
 ## Data sources
 
@@ -65,7 +70,7 @@ The current service reads bounded structured state from:
 1. Xray `RoutingService.GetBalancerInfo("bal-proxy")`;
 2. Xray `ObservatoryService.GetOutboundStatus()`;
 3. `nodes.json` through typed registry code and safe projections;
-4. current non-secret Xray/XKeen policy summaries;
+4. local typed appliance policy after adoption, with the fixed compatibility path before adoption;
 5. C.1 selection/benchmark state;
 6. current panel release/update state.
 
@@ -137,11 +142,11 @@ Benchmark working state stays in RAM/`/tmp`; one compact completed-run snapshot 
 
 Explicit lifecycle operations must not race selection/probe/benchmark work. Node Apply, manual selection mutation and panel update/rollback share the coordinator lifecycle barrier. The barrier gives explicit operator mutations priority, drains/cancels managed work, holds the mutation critical section through activation/rollback and triggers immediate reconciliation after release.
 
-D.1 import Apply and later component lifecycle must reuse this same maintenance ownership model rather than start independent mutation goroutines.
+D.1 import Apply reuses this same maintenance ownership model. Component lifecycle in #4 must also reuse it rather than start independent mutation goroutines; #4 remains planned.
 
 ## Signed panel release / update boundary
 
-Slice D / Issue #2 is production-qualified. `v0.1.1` completed protected publication and bounded live historical C.1 adoption → exact legacy rollback → re-adoption qualification.
+Slice D / Issue #2 remains production-qualified. Historical `v0.1.1` completed protected publication and bounded live C.1 adoption → exact legacy rollback → re-adoption qualification. D.1 / Issue #3 is production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`.
 
 Normal managed update uses the installed binary's source-pinned Ed25519 trust anchor, fixed GitHub release discovery, bounded HTTPS/redirect/body policy and manifest-bound artifact hashes/sizes. Candidate assets stay under `/tmp/xkeen-control/panel-update`.
 
@@ -155,36 +160,36 @@ Panel install/update does not install or repair XKeen/Xray and does not rewrite 
 
 Normal polling, update checks and runtime telemetry cause no persistent writes unless the operator deliberately changes policy or applies a release/state mutation.
 
-Persistent writes are purpose-specific and bounded, including auth/listener changes, explicit `nodes.json` mutations plus generated active outbounds, real stable-selection changes, one compact completed benchmark snapshot, compact panel release/update markers and bounded rollback generations.
+Persistent writes are purpose-specific and bounded, including auth/listener changes, explicit typed `appliance.json` adoption/restore changes, explicit `nodes.json` mutations plus generated active outbounds, real stable-selection changes, one compact completed benchmark snapshot, compact panel release/update markers and bounded rollback generations.
 
 No SQLite/Redis/Prometheus/Grafana/growing revision history belongs on the router.
 
-## D.1 / Issue #3 — current product slice, not yet deployed
+## D.1 / Issue #3 — production-qualified current runtime
 
-D.1 introduces a schema-versioned local non-secret appliance authority and portable backup/import/restore. The detailed contract lives in Issue #3.
+D.1 is production-qualified in signed stable `v0.2.0` on `linux/arm64`. It provides a schema-versioned local non-secret appliance authority and portable typed backup/import/restore while keeping `nodes.json` as the separate VPN/subscription secret authority.
 
-Planned authority after successful D.1 adoption:
+Successful typed `appliance adopt` is intentionally zero-runtime-mutation authority creation: the service strictly parses supported DNS/routing/Observatory policy, proves fixed companion files and generated outbounds are compatible, validates a complete rendered candidate and atomically writes only `appliance.json` after equivalence is proven. After adoption, managed `02_dns.json`, `05_routing.json` and `07_observatory.json` derive deterministically from the appliance authority; `04_outbounds.json` remains generated from `nodes.json`.
 
-```text
-/opt/etc/xkeen-control/config/appliance.json        portable supported non-secret policy
-/opt/etc/xkeen-control/secrets/nodes.json           separate VPN/subscription secret authority
-active supported Xray policy files                  deterministic generated artifacts
-```
-
-The first D.1 phase is intentionally zero-runtime-mutation adoption: strict-parse current supported DNS/routing/Observatory policy, prove fixed companion files and generated outbounds are compatible, validate a complete rendered candidate, then atomically write only `appliance.json` after equivalence is proven.
-
-Phase B adds a safe export with no VPN/subscription secrets by default and an explicitly re-authenticated encrypted secret-bearing export. Phase C1 adds the internal bounded session-bound preview/apply restore core, shared authority transaction and interrupted-import recovery. Phase C2 source now adds only the bounded authenticated HTTP/UI adapter over that core: `POST /api/v1/backup/import/preview?mode=...`, `POST /api/v1/backup/import/apply` and `POST /api/v1/backup/import/cancel`, plus the first-class Backup & Restore panel section. Secret-bearing backups must never be uploaded to public GitHub evidence.
-
-The Phase B source implementation (not yet deployed or production-qualified) adds these routes:
+The authenticated D.1 backup routes are:
 
 ```text
 GET  /api/v1/backup/export
 POST /api/v1/backup/export-secret
 ```
 
-The safe export requires an authenticated same-origin session and contains only typed `appliance` state. The secret export additionally requires the session CSRF token and one request body containing the current password and a 12–256-byte passphrase; it returns a bounded Argon2id/XChaCha20-Poly1305 envelope. Neither route writes backup material to persistent storage. The C2 import adapter uses strict bounded multipart/JSON parsing, a non-blocking single-flight preview gate, session-bound C1 tokens and fixed safe error projections; it does not expose raw config/filesystem/archive surfaces. This source adapter and UI are not available in the qualified production release until the remaining D.1 gates complete.
+The production import routes are:
 
-D.1 does not expose raw JSON/Xray/XKeen editing, does not clone panel auth/listener/update state and does not install/repair XKeen/Xray. Component lifecycle remains #4; broad visual typed configuration remains #5.
+```text
+POST /api/v1/backup/import/preview?mode=settings-only|replace-registry|merge-registry
+POST /api/v1/backup/import/apply
+POST /api/v1/backup/import/cancel
+```
+
+The safe export requires an authenticated same-origin session and contains only typed `appliance` state. The secret export additionally requires the session CSRF token and one request body containing the current password and a 12–256-byte passphrase; it returns a bounded Argon2id/XChaCha20-Poly1305 envelope. Neither route writes backup material to persistent storage.
+
+Import preview uses strict bounded multipart parsing with one in-flight preview admission and returns only a session-bound, expiring server token plus safe change metadata. Apply and cancel accept that token rather than a replacement mode or candidate payload; the mode and candidate are fixed by preview. Restore Apply is preview-first, typed, authority-coordinated and journaled for interrupted-import recovery. An equivalent settings-only restore is a no-op: it preserves node/generated/runtime state and does not restart Xray/XKeen. Secret-bearing backups must never be uploaded to public GitHub evidence.
+
+D.1 does not expose raw JSON/Xray/XKeen editing, does not clone panel auth/listener/update state and does not install/repair XKeen/Xray. Before successful adoption, the explicit repository-derived/legacy compatibility boundary remains in force; unknown/manual drift fails closed. Component lifecycle remains the planned current/next slice #4, and broad visual typed configuration remains planned #5.
 
 ## Planned later capabilities
 
@@ -200,7 +205,8 @@ Supported routing, DNS, XKeen/Xray, performance and panel settings will be edite
 
 - Current system architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - Sequencing: [`ROADMAP.md`](ROADMAP.md)
-- Active D.1 contract: [Issue #3](https://github.com/popiposter/xkeen-control/issues/3)
+- Completed D.1 implementation/qualification contract: [Issue #3](https://github.com/popiposter/xkeen-control/issues/3)
+- Current product slice: [Issue #4](https://github.com/popiposter/xkeen-control/issues/4)
 - Build/test: [`DEVELOPMENT.md`](DEVELOPMENT.md)
 - Production operations: [`OPERATIONS.md`](OPERATIONS.md)
 - Security: [`../SECURITY.md`](../SECURITY.md)

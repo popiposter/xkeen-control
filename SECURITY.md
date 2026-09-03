@@ -53,7 +53,7 @@ Before accepting migration or release changes, verify that current public histor
 
 ## Releases and update supply chain
 
-Slice D / Issue #2 is production-qualified. Signed public releases, bounded bootstrap and transactional panel self-update/rollback are current behavior for the qualified `linux/arm64` target. Stable release `v0.1.1` was built from exact reviewed source `8f15246099538426ef08163b832c3aa6f73e8265`, passed the protected release workflow, and completed bounded live legacy adoption → rollback → re-adoption qualification.
+Slice D / Issue #2 remains production-qualified. Signed public releases, bounded bootstrap and transactional panel self-update/rollback are current behavior for the qualified `linux/arm64` target. Historical stable release `v0.1.1` was built from exact reviewed source `8f15246099538426ef08163b832c3aa6f73e8265`, passed the protected release workflow, and completed bounded live legacy adoption → rollback → re-adoption qualification. D.1 / Issue #3 is now production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`.
 
 The release/update design requires:
 
@@ -82,9 +82,11 @@ Sessions, throttling and high-churn runtime state stay in RAM.
 
 ## Backup / restore
 
-Until Slice D.1 / Issue #3 is production-qualified and deployed, secret backup handling remains an explicit operator responsibility. Any backup containing `nodes.json` is secret material.
+D.1 / Issue #3 is production-qualified in signed stable `v0.2.0`. Safe export excludes VPN/subscription secrets by default. Secret-bearing export requires explicit re-authentication and a passphrase, uses a bounded Argon2id/XChaCha20-Poly1305 envelope, and is not persisted by the panel. Any backup containing `nodes.json` remains secret material.
 
-The Phase B source implementation adds a portable safe export without VPN/subscription secrets by default and an explicitly re-authenticated encrypted secret-bearing export. Phase C1 adds the bounded restore core, preview state, authority transaction and crash recovery. Phase C2 adds only the authenticated bounded import HTTP adapter and first-class Backup & Restore UI over that reviewed core. The C2 source remains source-only: do not describe any D.1 implementation as production-qualified or deployed before the remaining D.1 gates complete.
+Restore is authenticated same-origin/CSRF, preview-first, session-bound, bounded and typed. Apply uses the authority lease, transaction journal and recovery path, validates a complete candidate, and does not expose raw config/filesystem/archive/command surfaces. An equivalent settings-only restore is a no-op: it preserves `nodes.json`, generated runtime policy and the running Xray/XKeen state without an unnecessary restart.
+
+Successful typed `appliance adopt` establishes the local non-secret appliance authority and deterministic managed policy. Before adoption, routers retain the explicit repository-derived/legacy compatibility boundary; there is no implicit adoption, and unknown/manual drift fails closed. Component lifecycle in #4 and visual configuration in #5 remain planned rather than deployed.
 
 ## CI and diagnostics
 
