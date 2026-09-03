@@ -121,7 +121,7 @@ It covers manifest/signature tamper rejection, candidate hash/size validation, p
 
 These fixtures remain regression coverage after #2 completion; later slices must not weaken them.
 
-## Issue #4 Phase A focused fixture
+## Issue #4 component-check focused fixture
 
 The read-only component inventory qualification fixture is:
 
@@ -129,7 +129,7 @@ The read-only component inventory qualification fixture is:
 bash scripts/test-components.sh
 ```
 
-It uses temporary synthetic component paths and covers the fixed panel, XKeen, Xray, geodata, KeeneticOS and Entware projection, bounded version probing, strict parsing, unknown/manual geodata expressions, filesystem safety, no script/opkg execution, no writes, and the authenticated read-only HTTP route. It never reads or mutates a production Keenetic.
+It uses temporary synthetic component paths and covers the fixed panel, XKeen, Xray, geodata, KeeneticOS and Entware projection, bounded version probing, strict parsing, unknown/manual geodata expressions, filesystem safety, no script/opkg execution, no writes, the authenticated read-only HTTP route and the Phase B trusted metadata-check contract. Phase B fixtures use offline synthetic upstream responses, verify fixed sources/digests/cache/security bounds, and never download artifact bodies or read/mutate a production Keenetic.
 
 ## Issue #3 Phase B focused fixtures
 

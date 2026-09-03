@@ -194,6 +194,8 @@ D.1 does not expose raw JSON/Xray/XKeen editing, does not clone panel auth/liste
 
 Phase A of #4 adds the separate read-only component inventory foundation: an authenticated `GET /api/v1/components` returns a bounded typed projection for panel, XKeen, Xray, geodata, KeeneticOS and Entware. It performs no network discovery, persistence, coordinator/lease work, lifecycle mutation or panel-update-policy changes; the remaining component lifecycle stays planned.
 
+The Phase B source-main boundary adds an authenticated, same-origin/CSRF-bound `POST /api/v1/components/check` for explicit trusted metadata checks of only Xray, XKeen and the fixed product geodata catalog. Results are bounded and RAM-only; no artifact bytes are downloaded, no component or router state is changed, and no production-release or live-qualification claim follows from the source implementation.
+
 ## Planned later capabilities
 
 ### #4 — component lifecycle

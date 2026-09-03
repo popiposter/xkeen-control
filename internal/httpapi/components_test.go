@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/popiposter/xkeen-control/internal/auth"
 	"github.com/popiposter/xkeen-control/internal/components"
@@ -22,6 +23,17 @@ type componentsHTTPStub struct {
 func (stub *componentsHTTPStub) Snapshot(context.Context) components.Inventory {
 	stub.calls.Add(1)
 	return stub.value
+}
+
+type componentCheckHTTPStub struct {
+	calls  atomic.Int32
+	result components.CheckResult
+	err    error
+}
+
+func (stub *componentCheckHTTPStub) Check(context.Context, components.CheckRequest) (components.CheckResult, error) {
+	stub.calls.Add(1)
+	return stub.result, stub.err
 }
 
 func TestComponentsRouteUsesReadOnlyAuthOriginAndSafeProjection(t *testing.T) {
@@ -159,4 +171,141 @@ func TestComponentsRouteFailsClosedWhenServiceUnavailable(t *testing.T) {
 	response.Body.Close()
 }
 
+func TestComponentsCheckRouteIsClosedCSRFBoundAndSafe(t *testing.T) {
+	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
+	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
+		t.Fatal(err)
+	}
+	checker := &componentCheckHTTPStub{result: components.CheckResult{
+		SchemaVersion:     components.CheckSchemaVersion,
+		Component:         components.KindXray,
+		Channel:           "stable",
+		SourceID:          "github/XTLS/Xray-core",
+		CheckedAt:         time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC),
+		Candidate:         &components.CheckCandidate{Version: "26.3.27", AssetName: "Xray-linux-arm64-v8a.zip", SizeBytes: 1234, SHA256: strings.Repeat("a", 64)},
+		InstalledState:    "update-available",
+		Eligible:          true,
+		MutationAvailable: false,
+		ReasonCode:        "supported-for-preview",
+	}}
+	server := httptest.NewServer(New(Config{
+		Auth:            auth.NewManager(auth.Config{HashPath: passwordPath}),
+		ComponentChecks: checker,
+	}))
+	defer server.Close()
+	client := &http.Client{Jar: mustCookieJar(t)}
+
+	requestBody := map[string]string{"component": "xray", "channel": "stable"}
+	response := postJSON(t, client, server.URL+"/api/v1/components/check", requestBody, "")
+	if response.StatusCode != http.StatusUnauthorized || checker.calls.Load() != 0 {
+		t.Fatalf("unauthenticated check = %d calls=%d", response.StatusCode, checker.calls.Load())
+	}
+	response.Body.Close()
+
+	loginResponse := postJSON(t, client, server.URL+"/api/v1/session/login", map[string]string{"password": "synthetic-control-password"}, "")
+	var login struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	decodeResponse(t, loginResponse, &login)
+	if login.CSRFToken == "" {
+		t.Fatal("login did not return csrf token")
+	}
+
+	response = postJSON(t, client, server.URL+"/api/v1/components/check", requestBody, "")
+	if response.StatusCode != http.StatusForbidden || checker.calls.Load() != 0 {
+		t.Fatalf("check without csrf = %d calls=%d", response.StatusCode, checker.calls.Load())
+	}
+	response.Body.Close()
+
+	response = postJSON(t, client, server.URL+"/api/v1/components/check", map[string]string{"component": "panel", "channel": "stable"}, login.CSRFToken)
+	if response.StatusCode != http.StatusBadRequest || checker.calls.Load() != 0 {
+		t.Fatalf("invalid component check = %d calls=%d", response.StatusCode, checker.calls.Load())
+	}
+	response.Body.Close()
+
+	response = postJSON(t, client, server.URL+"/api/v1/components/check", map[string]string{"component": "xray", "channel": "stable", "force": "true"}, login.CSRFToken)
+	if response.StatusCode != http.StatusBadRequest || checker.calls.Load() != 0 {
+		t.Fatalf("unknown check field = %d calls=%d", response.StatusCode, checker.calls.Load())
+	}
+	response.Body.Close()
+
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/components/check", strings.NewReader(`{"component":"xray","channel":"stable"}{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(auth.CSRFHeader, login.CSRFToken)
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusBadRequest || checker.calls.Load() != 0 {
+		t.Fatalf("trailing check JSON = %d calls=%d", response.StatusCode, checker.calls.Load())
+	}
+	response.Body.Close()
+
+	request, err = http.NewRequest(http.MethodPost, server.URL+"/api/v1/components/check", strings.NewReader(`{"component":"xray","channel":"stable"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "text/plain")
+	request.Header.Set(auth.CSRFHeader, login.CSRFToken)
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusUnsupportedMediaType || checker.calls.Load() != 0 {
+		t.Fatalf("wrong check content type = %d calls=%d", response.StatusCode, checker.calls.Load())
+	}
+	response.Body.Close()
+
+	request, err = http.NewRequest(http.MethodGet, server.URL+"/api/v1/components/check", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusMethodNotAllowed || response.Header.Get("Allow") != http.MethodPost {
+		t.Fatalf("GET check = %d allow=%q", response.StatusCode, response.Header.Get("Allow"))
+	}
+	response.Body.Close()
+
+	request, err = http.NewRequest(http.MethodPost, server.URL+"/api/v1/components/check", strings.NewReader(`{"component":"xray","channel":"stable"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(auth.CSRFHeader, login.CSRFToken)
+	request.Header.Set("Origin", "http://evil.example")
+	response, err = client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusForbidden || checker.calls.Load() != 0 {
+		t.Fatalf("cross-origin check = %d calls=%d", response.StatusCode, checker.calls.Load())
+	}
+	response.Body.Close()
+
+	response = postJSON(t, client, server.URL+"/api/v1/components/check", requestBody, login.CSRFToken)
+	contents := readBody(response)
+	if response.StatusCode != http.StatusOK || checker.calls.Load() != 1 {
+		t.Fatalf("valid component check = %d calls=%d body=%s", response.StatusCode, checker.calls.Load(), contents)
+	}
+	var result components.CheckResult
+	if err := json.Unmarshal([]byte(contents), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Eligible || result.MutationAvailable || result.Candidate == nil || result.Candidate.AssetName != "Xray-linux-arm64-v8a.zip" {
+		t.Fatalf("check result = %+v", result)
+	}
+	for _, forbidden := range []string{"browser_download_url", "release body", "command", "stderr", "/opt/", "password.bcrypt"} {
+		if strings.Contains(contents, forbidden) {
+			t.Fatalf("check response contains %q: %s", forbidden, contents)
+		}
+	}
+}
+
 var _ components.ReadOnlyService = (*componentsHTTPStub)(nil)
+var _ components.CheckService = (*componentCheckHTTPStub)(nil)

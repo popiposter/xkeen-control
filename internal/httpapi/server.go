@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -22,10 +23,11 @@ import (
 )
 
 const (
-	maxLoginBody     = 16 << 10
-	maxMutationBody  = 384 << 10
-	maxJSONResponse  = 512 << 10
-	csrfRequiredPath = "/api/v1/session/logout"
+	maxLoginBody          = 16 << 10
+	maxMutationBody       = 384 << 10
+	maxComponentCheckBody = 4 << 10
+	maxJSONResponse       = 512 << 10
+	csrfRequiredPath      = "/api/v1/session/logout"
 )
 
 type BackupService interface {
@@ -54,6 +56,7 @@ type Server struct {
 		SetManualOverride(context.Context, string) error
 	}
 	components         components.ReadOnlyService
+	componentChecks    components.CheckService
 	updates            panelupdate.Service
 	backup             BackupService
 	restore            RestoreService
@@ -72,17 +75,18 @@ type Config struct {
 	Selection interface {
 		SetManualOverride(context.Context, string) error
 	}
-	Components components.ReadOnlyService
-	Updates    panelupdate.Service
-	Backup     BackupService
-	Restore    RestoreService
+	Components      components.ReadOnlyService
+	ComponentChecks components.CheckService
+	Updates         panelupdate.Service
+	Backup          BackupService
+	Restore         RestoreService
 }
 
 func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, selection: config.Selection, components: config.Components, updates: config.Updates, backup: config.Backup, restore: config.Restore, restorePreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, updates: config.Updates, backup: config.Backup, restore: config.Restore, restorePreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +103,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "ok\n")
 		return
 	case "/api/v1/session/login", "/api/v1/session/logout", "/api/v1/session",
-		"/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary", "/api/v1/components",
+		"/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary", "/api/v1/components", "/api/v1/components/check",
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
 		"/api/v1/session/password",
 		"/api/v1/benchmark/run",
@@ -192,6 +196,12 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.readComponents(w, r)
+	case "/api/v1/components/check":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.checkComponents(w, r)
 	case "/api/v1/benchmark/run":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -954,6 +964,32 @@ func (s *Server) decodeMutation(w http.ResponseWriter, r *http.Request, value an
 	return true
 }
 
+func (s *Server) decodeComponentCheckRequest(w http.ResponseWriter, r *http.Request, value any) bool {
+	if r.ContentLength > maxComponentCheckBody {
+		writeError(w, http.StatusRequestEntityTooLarge, "request too large")
+		return false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxComponentCheckBody)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request too large")
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid request")
+		}
+		return false
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return false
+	}
+	return true
+}
+
 func (s *Server) decodeSecretBackupRequest(w http.ResponseWriter, r *http.Request, value any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, backup.MaxSecretRequestBody)
 	defer r.Body.Close()
@@ -1061,6 +1097,55 @@ func (s *Server) readComponents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.components.Snapshot(r.Context()))
+}
+
+func (s *Server) checkComponents(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.componentChecks == nil {
+		writeError(w, http.StatusServiceUnavailable, "component check unavailable")
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(r.Header.Get("Content-Type")))
+	if err != nil || mediaType != "application/json" {
+		writeError(w, http.StatusUnsupportedMediaType, "unsupported media type")
+		return
+	}
+	var request components.CheckRequest
+	if !s.decodeComponentCheckRequest(w, r, &request) {
+		return
+	}
+	if err := components.ValidateCheckRequest(request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid component check request")
+		return
+	}
+	result, err := s.componentChecks.Check(r.Context(), request)
+	if err != nil {
+		s.writeComponentCheckError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) writeComponentCheckError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, components.ErrInvalidCheckRequest):
+		writeError(w, http.StatusBadRequest, "invalid component check request")
+	case errors.Is(err, components.ErrCheckBusy):
+		writeError(w, http.StatusConflict, "component check busy")
+	case errors.Is(err, components.ErrCheckTimeout):
+		writeError(w, http.StatusGatewayTimeout, "component check timed out")
+	case errors.Is(err, components.ErrUpstreamRejected):
+		writeError(w, http.StatusBadGateway, "component metadata rejected")
+	default:
+		writeError(w, http.StatusServiceUnavailable, "component check unavailable")
+	}
 }
 
 func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (auth.Session, bool) {
