@@ -160,6 +160,16 @@ The router requires no GitHub write token. Normal managed updates use the compil
 
 D.1 is production-qualified in signed stable `v0.2.0`. Successful typed `appliance adopt` establishes local schema-versioned `appliance.json` as the authority for supported non-secret policy. Managed DNS/routing/Observatory policy derives deterministically from it; active `04_outbounds.json` remains generated from the authoritative `nodes.json`. Adoption proves compatibility with fixed companion policy and fails closed on unknown/manual drift.
 
+For an existing router that has not yet adopted the appliance authority, use the typed sequence deliberately:
+
+```sh
+/opt/sbin/xkeen-control appliance adopt
+/opt/sbin/xkeen-control appliance validate
+/opt/sbin/xkeen-control appliance verify
+```
+
+`adopt` must complete first and is the only step that creates `appliance.json`; it is designed to prove compatibility before that authority write and must not mutate active runtime policy. `validate` checks the stored typed authority, and `verify` proves the current generated/fixed/runtime generation still corresponds to the adopted authority. If adoption or verification reports incompatibility or unknown/manual drift, stop and investigate through typed/repository paths; do not normalize raw config ad hoc or treat the one-time production qualification normalization as a generic repair procedure.
+
 Safe export is authenticated and excludes VPN/subscription secrets by default. Secret-bearing export requires explicit re-authentication and a passphrase, uses a bounded Argon2id/XChaCha20-Poly1305 envelope and is not persisted by the panel. Any backup containing `nodes.json` remains secret operator material.
 
 Restore is authenticated, same-origin/CSRF protected, session-bound, bounded and preview-first. Apply uses typed validation, authority coordination, a transaction journal and interrupted-import recovery. An equivalent settings-only restore is a no-op that preserves `nodes.json`, generated policy and runtime state without an Xray/XKeen restart. The adapter does not expose raw JSON, filesystem, archive or command surfaces.
