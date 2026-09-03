@@ -157,6 +157,49 @@ func TestXrayApplyStagesCompleteCandidateAndCommitsOnePreviousGeneration(t *test
 	}
 }
 
+func TestXrayPreJournalStagingCrashRecoversWithoutMutation(t *testing.T) {
+	fixture := newXrayFixture(t)
+	fixture.service.config.InjectFailure = func(stage XrayStage) error {
+		if stage == XrayStagePreviousStaging {
+			return errors.New("synthetic pre-journal process loss")
+		}
+		return nil
+	}
+	if err := fixture.service.Apply(context.Background(), fixture.identity); !errors.Is(err, ErrXrayApplyFailed) {
+		t.Fatalf("pre-journal fault result = %v", err)
+	}
+	if _, err := os.Lstat(fixture.journalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("pre-journal fault created a journal: %v", err)
+	}
+	if _, err := os.Lstat(fixture.previousDir + xrayPreviousStagingSuffix); err != nil {
+		t.Fatalf("pre-journal staging was not retained for recovery: %v", err)
+	}
+	resolveCalls, downloadCalls := fixture.resolver.calls, fixture.downloader.calls
+
+	restarted := NewXrayService(fixture.config())
+	if restarted.Ready() == nil {
+		t.Fatal("staging-only restart was incorrectly reported ready")
+	}
+	if pending, err := restarted.HasPendingRecovery(); err != nil || !pending {
+		t.Fatalf("staging-only recovery pending=%v err=%v", pending, err)
+	}
+	if err := restarted.RecoverStartup(context.Background()); err != nil {
+		t.Fatalf("pre-journal startup recovery: %v", err)
+	}
+	if err := restarted.Ready(); err != nil {
+		t.Fatalf("pre-journal recovery did not restore readiness: %v", err)
+	}
+	if _, err := os.Lstat(fixture.previousDir + xrayPreviousStagingSuffix); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("pre-journal staging remains after recovery: %v", err)
+	}
+	if got := string(readFixtureFile(t, fixture.activePath)); got != "old-xray-binary" {
+		t.Fatalf("pre-journal recovery changed active binary: %q", got)
+	}
+	if fixture.resolver.calls != resolveCalls || fixture.downloader.calls != downloadCalls {
+		t.Fatalf("pre-journal recovery contacted upstream: resolve=%d/%d download=%d/%d", fixture.resolver.calls, resolveCalls, fixture.downloader.calls, downloadCalls)
+	}
+}
+
 func TestXrayApplyFaultsRecoverBeforeJournalClear(t *testing.T) {
 	for _, stage := range []XrayStage{
 		XrayStagePreviousSaved,
@@ -185,6 +228,30 @@ func TestXrayApplyFaultsRecoverBeforeJournalClear(t *testing.T) {
 				t.Fatalf("recoverable fault left service unavailable: %v", err)
 			}
 		})
+	}
+}
+
+func TestXrayPostSwapCancellationUsesIndependentRollbackContext(t *testing.T) {
+	fixture := newXrayFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fixture.runtime.cancelOnRestart = cancel
+	fixture.runtime.firstRestartErr = errors.New("synthetic post-swap cancellation")
+
+	if err := fixture.service.Apply(ctx, fixture.identity); !errors.Is(err, ErrXrayApplyFailed) {
+		t.Fatalf("cancelled transaction result = %v", err)
+	}
+	if got := string(readFixtureFile(t, fixture.activePath)); got != "old-xray-binary" {
+		t.Fatalf("cancelled transaction did not restore active binary: %q", got)
+	}
+	if _, err := os.Lstat(fixture.journalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled transaction left journal: %v", err)
+	}
+	if err := fixture.service.Ready(); err != nil {
+		t.Fatalf("cancelled transaction left service unavailable: %v", err)
+	}
+	if fixture.runtime.restartCalls != 2 || fixture.runtime.verifyCalls != 1 {
+		t.Fatalf("rollback runtime verification calls = restart=%d verify=%d", fixture.runtime.restartCalls, fixture.runtime.verifyCalls)
 	}
 }
 
@@ -248,7 +315,45 @@ func TestXrayRollbackUsesPreviousWithoutUpstream(t *testing.T) {
 	}
 }
 
-func TestXrayRecoveryRejectsRestoreConflictAndStaleStaging(t *testing.T) {
+func TestXrayRollbackFailureAfterPromotionPreservesRollbackTarget(t *testing.T) {
+	fixture := newXrayFixture(t)
+	if err := fixture.service.Apply(context.Background(), fixture.identity); err != nil {
+		t.Fatalf("apply before rollback fault: %v", err)
+	}
+	original, err := fixture.service.loadPreviousGeneration()
+	if err != nil {
+		t.Fatalf("load original rollback target: %v", err)
+	}
+	originalBytes := append([]byte(nil), readFixtureFile(t, original.path)...)
+	fixture.service.config.InjectFailure = func(stage XrayStage) error {
+		if stage == XrayStagePreviousSettled {
+			return errors.New("synthetic rollback promotion fault")
+		}
+		return nil
+	}
+
+	if err := fixture.service.Rollback(context.Background()); !errors.Is(err, ErrXrayRollbackFailed) {
+		t.Fatalf("failed rollback result = %v", err)
+	}
+	if got := string(readFixtureFile(t, fixture.activePath)); got != "new-xray-binary" {
+		t.Fatalf("failed rollback did not restore active binary: %q", got)
+	}
+	preserved, err := fixture.service.loadPreviousGeneration()
+	if err != nil {
+		t.Fatalf("load preserved rollback target: %v", err)
+	}
+	if !sameBinaryMetadata(preserved.meta, original.meta) || !bytes.Equal(readFixtureFile(t, preserved.path), originalBytes) {
+		t.Fatalf("failed rollback consumed rollback target: got=%+v want=%+v", preserved.meta, original.meta)
+	}
+	if _, err := os.Lstat(fixture.journalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed rollback left journal: %v", err)
+	}
+	if err := fixture.service.Ready(); err != nil {
+		t.Fatalf("failed rollback left service unavailable: %v", err)
+	}
+}
+
+func TestXrayRecoveryRejectsRestoreConflictAndInvalidStaging(t *testing.T) {
 	fixture := newXrayFixture(t)
 	if err := fixture.service.Apply(context.Background(), fixture.identity); err != nil {
 		t.Fatalf("apply before conflict: %v", err)
@@ -283,6 +388,8 @@ func TestXrayRecoveryRejectsRestoreConflictAndStaleStaging(t *testing.T) {
 	if err := os.Remove(fixture.journalPath); err != nil {
 		t.Fatal(err)
 	}
+	// An incomplete/invalid staging directory remains fail-closed; the valid
+	// pre-journal crash path is covered by TestXrayPreJournalStagingCrashRecoversWithoutMutation.
 	if err := os.MkdirAll(fixture.previousDir+xrayPreviousStagingSuffix, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -719,12 +826,15 @@ func (v *fakeXrayCandidateValidator) ValidateXrayCandidate(_ context.Context, _ 
 }
 
 type fakeXrayRuntime struct {
-	validateCalls int
-	restartCalls  int
-	readyCalls    int
-	verifyCalls   int
-	lastTags      []string
-	err           error
+	validateCalls   int
+	restartCalls    int
+	readyCalls      int
+	verifyCalls     int
+	lastTags        []string
+	err             error
+	cancelOnRestart context.CancelFunc
+	cancelOnce      sync.Once
+	firstRestartErr error
 }
 
 func (r *fakeXrayRuntime) ValidateActiveConfig(context.Context) error {
@@ -733,6 +843,12 @@ func (r *fakeXrayRuntime) ValidateActiveConfig(context.Context) error {
 }
 func (r *fakeXrayRuntime) Restart(context.Context) error {
 	r.restartCalls++
+	if r.cancelOnRestart != nil {
+		r.cancelOnce.Do(r.cancelOnRestart)
+	}
+	if r.restartCalls == 1 && r.firstRestartErr != nil {
+		return r.firstRestartErr
+	}
 	return r.err
 }
 func (r *fakeXrayRuntime) WaitReady(context.Context) error {

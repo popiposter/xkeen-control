@@ -159,6 +159,7 @@ type XrayMaintenanceGate interface {
 type XrayStage string
 
 const (
+	XrayStagePreviousStaging XrayStage = "previous-staging"
 	XrayStagePreviousSaved   XrayStage = "previous-saved"
 	XrayStageJournalPrepared XrayStage = "journal-prepared"
 	XrayStageBinaryCommitted XrayStage = "binary-committed"
@@ -438,7 +439,21 @@ func (s *XrayService) RecoverStartup(ctx context.Context) error {
 	}
 	if !exists {
 		if s.stagingPresent() {
-			return s.recoveryFailure()
+			transactionContext, cancel := context.WithTimeout(ctx, s.config.TransactionTimeout)
+			defer cancel()
+			releaseCoordinator, releaseAuthority, err := s.acquireRecovery(transactionContext)
+			if err != nil {
+				return s.recoveryFailure()
+			}
+			defer releaseCoordinator()
+			defer releaseAuthority()
+			if err := s.reconcilePreJournalStaging(transactionContext); err != nil {
+				return s.recoveryFailure()
+			}
+			if err := s.removeOwnedAndSync(s.stagingPath()); err != nil {
+				return s.recoveryFailure()
+			}
+			s.releaseMaintenance()
 		}
 		if s.isMaintenance() {
 			return s.recoveryFailure()
@@ -459,6 +474,16 @@ func (s *XrayService) RecoverStartup(ctx context.Context) error {
 	previous, err := s.loadJournalPrevious(journal.Previous)
 	if err != nil {
 		return s.recoveryFailure()
+	}
+	oldPresent, err := s.pathPresent(s.oldPreviousPath())
+	if err != nil {
+		return s.recoveryFailure()
+	}
+	if oldPresent && journal.Operation == xrayOperationRollback {
+		old, oldErr := s.loadGeneration(s.oldPreviousPath())
+		if oldErr != nil || !sameBinaryMetadata(old.meta, journal.Candidate) {
+			return s.recoveryFailure()
+		}
 	}
 	authoritySnapshot, err := s.captureAuthorityHeld(transactionContext)
 	if err != nil {
@@ -497,6 +522,11 @@ func (s *XrayService) RecoverStartup(ctx context.Context) error {
 	if err := s.restoreRuntime(transactionContext, previous.path, journal.Previous, authoritySnapshot); err != nil {
 		return s.recoveryFailure()
 	}
+	if oldPresent && displacedPath == "" {
+		if err := s.restorePreviousAfterPromotionFailure(journal); err != nil {
+			return s.recoveryFailure()
+		}
+	}
 	if displacedPath != "" {
 		if err := s.savePreviousFromSource(displacedPath, current); err != nil {
 			return s.recoveryFailure()
@@ -518,6 +548,24 @@ func (s *XrayService) RecoverStartup(ctx context.Context) error {
 	}
 	s.releaseMaintenance()
 	s.markReady()
+	return nil
+}
+
+func (s *XrayService) reconcilePreJournalStaging(ctx context.Context) error {
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	staged, err := s.loadGeneration(s.stagingPath())
+	if err != nil {
+		return errXrayPreviousInvalid
+	}
+	active, err := binaryMetadataWithoutProbe(s.config.ActiveBinaryPath, staged.meta.Version)
+	if err != nil || !sameBinaryMetadata(active, staged.meta) {
+		return errXrayGenerationChanged
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	return nil
 }
 
@@ -762,6 +810,14 @@ func (s *XrayService) runCommitted(ctx context.Context, operation string, base x
 	if err != nil {
 		return ErrXrayApplyFailed
 	}
+	// A process loss in this window leaves only the product-owned staging
+	// generation and no durable intent. Startup recovery proves that the
+	// active bytes still equal the staged pre-operation generation, then
+	// discards the abandoned staging directory.
+	if err := s.inject(XrayStagePreviousStaging); err != nil {
+		s.markNotReady(ErrXrayRecoveryRequired)
+		return ErrXrayApplyFailed
+	}
 	journal := xrayTransactionJournal{
 		SchemaVersion: XrayTransactionSchemaVersion,
 		Component:     string(KindXray),
@@ -808,7 +864,10 @@ func (s *XrayService) runCommitted(ctx context.Context, operation string, base x
 	}
 	journal.Phase = xrayPhaseRuntimeVerified
 	if err := s.writeJournal(journal); err != nil {
-		return s.failClosedResult()
+		return s.failAndRecover(ctx, journal, base, stagePath, candidatePath, err)
+	}
+	if err := s.settlePreviousGeneration(); err != nil {
+		return s.failAndRecover(ctx, journal, base, stagePath, candidatePath, err)
 	}
 	if err := s.inject(XrayStageRuntimeVerified); err != nil {
 		return s.failClosedResult()
@@ -823,15 +882,63 @@ func (s *XrayService) runCommitted(ctx context.Context, operation string, base x
 }
 
 func (s *XrayService) failAndRecover(ctx context.Context, journal xrayTransactionJournal, base xrayBaseSnapshot, stagePath, candidatePath string, _ error) error {
+	promotedPrevious, err := s.previousPromotionPresent(journal)
+	if err != nil {
+		return s.recoveryFailure()
+	}
+	rollbackContext, cancel := context.WithTimeout(context.Background(), s.config.RollbackTimeout)
+	defer cancel()
+	var displacedRollbackPath string
+	if promotedPrevious && journal.Operation == xrayOperationRollback {
+		current, currentErr := binaryMetadataWithoutProbe(s.config.ActiveBinaryPath, journal.Candidate.Version)
+		if currentErr != nil || !sameBinaryMetadata(current, journal.Candidate) {
+			return s.recoveryFailure()
+		}
+		displacedRollbackPath, err = s.stageDisplacedCurrent(current, rollbackContext)
+		if err != nil {
+			return s.recoveryFailure()
+		}
+	}
 	previousPath := stagePath
 	if !ownedRegularPath(previousPath) {
 		previousPath = filepath.Join(s.config.PreviousDir, xrayPreviousBinaryName)
 	}
-	rollbackContext, cancel := context.WithTimeout(ctx, s.config.RollbackTimeout)
-	err := s.restoreRuntime(rollbackContext, previousPath, journal.Previous, base.authority)
-	cancel()
+	err = s.restoreRuntime(rollbackContext, previousPath, journal.Previous, base.authority)
 	if err != nil {
 		return s.recoveryFailure()
+	}
+	if promotedPrevious {
+		oldPresent, presentErr := s.pathPresent(s.oldPreviousPath())
+		if presentErr != nil {
+			return s.recoveryFailure()
+		}
+		if oldPresent {
+			if err := s.restorePreviousAfterPromotionFailure(journal); err != nil {
+				return s.recoveryFailure()
+			}
+		} else {
+			// If .old was already settled before its durability step failed,
+			// the active candidate backup is the only remaining rollback
+			// target. Preserve it and leave the pre-operation generation in
+			// staging so a journal-clear failure remains recoverable.
+			if journal.Operation != xrayOperationRollback || displacedRollbackPath == "" {
+				return s.recoveryFailure()
+			}
+			if err := s.savePreviousFromSource(displacedRollbackPath, journal.Candidate); err != nil {
+				return s.recoveryFailure()
+			}
+			if _, err := s.savePreviousGeneration(base.active); err != nil {
+				return s.recoveryFailure()
+			}
+			if err := s.settlePreviousGeneration(); err != nil {
+				return s.recoveryFailure()
+			}
+		}
+		if displacedRollbackPath != "" {
+			if err := s.removeOwned(filepath.Dir(displacedRollbackPath)); err != nil {
+				return s.recoveryFailure()
+			}
+		}
 	}
 	if err := s.clearJournal(); err != nil {
 		return s.recoveryFailure()
@@ -839,7 +946,7 @@ func (s *XrayService) failAndRecover(ctx context.Context, journal xrayTransactio
 	// Keep the old settled generation when activation did not reach the
 	// promotion point. A terminal cleanup never removes the fixed product
 	// parent, only the transaction-local staging material.
-	if !ownedRegularPath(filepath.Join(s.config.PreviousDir, xrayPreviousBinaryName)) && ownedRegularPath(candidatePath) {
+	if !promotedPrevious && !ownedRegularPath(filepath.Join(s.config.PreviousDir, xrayPreviousBinaryName)) && ownedRegularPath(candidatePath) {
 		if err := s.saveDisplacedGeneration(candidatePath, journal.Candidate.Version); err != nil {
 			return s.recoveryFailure()
 		}
@@ -1344,10 +1451,87 @@ func (s *XrayService) promotePreviousGeneration() error {
 	if err := s.config.SyncDirectory(parent); err != nil {
 		return err
 	}
-	if err := s.removeOwned(old); err != nil {
+	// Keep the displaced previous generation until the runtime-verified
+	// journal state is durable. A failed rollback must be able to restore the
+	// exact one-step rollback target after this promotion.
+	return nil
+}
+
+func (s *XrayService) previousPromotionPresent(journal xrayTransactionJournal) (bool, error) {
+	if present, err := s.pathPresent(s.oldPreviousPath()); err != nil {
+		return false, err
+	} else if present {
+		return true, nil
+	}
+	if present, err := s.pathPresent(s.stagingPath()); err != nil {
+		return false, err
+	} else if present {
+		return false, nil
+	}
+	previous, err := s.loadGeneration(s.config.PreviousDir)
+	if err != nil {
+		return false, nil
+	}
+	// An update with no settled previous generation legitimately has only the
+	// newly promoted PreviousDir after promotion. The old-less fallback is
+	// needed only for rollback, where the target must still be preserved if
+	// settlement already removed .old.
+	return journal.Operation == xrayOperationRollback && sameBinaryMetadata(previous.meta, journal.Previous), nil
+}
+
+func (s *XrayService) restorePreviousAfterPromotionFailure(journal xrayTransactionJournal) error {
+	oldPath := s.oldPreviousPath()
+	old, err := s.loadGeneration(oldPath)
+	if err != nil {
+		return errXrayPreviousInvalid
+	}
+	if journal.Operation == xrayOperationRollback && !sameBinaryMetadata(old.meta, journal.Candidate) {
+		return errXrayPreviousInvalid
+	}
+
+	parent := filepath.Dir(s.config.PreviousDir)
+	previousInfo, err := os.Lstat(s.config.PreviousDir)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.Rename(oldPath, s.config.PreviousDir); err != nil {
+			return err
+		}
+		return s.config.SyncDirectory(parent)
+	}
+	if err != nil || previousInfo.Mode()&os.ModeSymlink != 0 || !previousInfo.IsDir() {
+		return errXrayPreviousInvalid
+	}
+	if err := verifyPreviousXrayDirectory(s.config.PreviousDir, xrayBinaryMetadata{}); err != nil {
 		return err
 	}
-	return s.config.SyncDirectory(parent)
+	if present, err := s.pathPresent(s.stagingPath()); err != nil {
+		return err
+	} else if present {
+		return errXrayPreviousInvalid
+	}
+	if err := os.Rename(s.config.PreviousDir, s.stagingPath()); err != nil {
+		return err
+	}
+	if err := s.config.SyncDirectory(parent); err != nil {
+		_ = os.Rename(s.stagingPath(), s.config.PreviousDir)
+		_ = s.config.SyncDirectory(parent)
+		return err
+	}
+	if err := os.Rename(oldPath, s.config.PreviousDir); err != nil {
+		_ = os.Rename(s.stagingPath(), s.config.PreviousDir)
+		_ = s.config.SyncDirectory(parent)
+		return err
+	}
+	if err := s.config.SyncDirectory(parent); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *XrayService) settlePreviousGeneration() error {
+	if err := s.removeOwned(s.oldPreviousPath()); err != nil {
+		return err
+	}
+	return s.config.SyncDirectory(filepath.Dir(s.config.PreviousDir))
 }
 
 func (s *XrayService) loadPreviousGeneration() (loadedXrayGeneration, error) {
@@ -1847,9 +2031,27 @@ func (s *XrayService) removeOwned(path string) error {
 	return os.RemoveAll(path)
 }
 
+func (s *XrayService) removeOwnedAndSync(path string) error {
+	if err := s.removeOwned(path); err != nil {
+		return err
+	}
+	return s.config.SyncDirectory(filepath.Dir(path))
+}
+
+func (s *XrayService) pathPresent(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *XrayService) stagingPresent() bool {
 	info, err := os.Lstat(s.stagingPath())
-	return err == nil && info.Mode()&os.ModeSymlink == 0
+	return err == nil && info != nil
 }
 
 func (s *XrayService) saveDisplacedGeneration(source, expectedVersion string) error {
