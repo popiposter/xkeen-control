@@ -412,10 +412,10 @@ func (s *Service) inventoryXKeen(ctx context.Context, budget *readBudget) Compon
 	}
 	component.Present = anyPresent
 	switch {
-	case anyPresent:
-		component.State = StatePresent
 	case anyUnknown:
 		component.State = StateUnknown
+	case anyPresent:
+		component.State = StatePresent
 	default:
 		component.State = StateMissing
 	}
@@ -793,6 +793,11 @@ func (s *Service) inventoryEntware(ctx context.Context, budget *readBudget) Comp
 		return component
 	}
 	component.State = StatePresent
+	if binary.state == StateUnknown || releaseCheck.state == StateUnknown {
+		component.State = StateUnknown
+		component.ReasonCode = "signal-unavailable"
+		return component
+	}
 	if releaseCheck.state != StatePresent || !releaseCheck.valid {
 		component.ReasonCode = "version-unavailable"
 		return component
