@@ -4,7 +4,7 @@
 
 Manage VPN nodes and subscriptions, understand what Xray is doing, keep the active proxy stable, run bounded performance checks, and apply changes transactionally — from one small Go binary with an embedded web UI.
 
-> **Status:** Slice D is production-qualified on Keenetic `linux/arm64`. Signed stable release `v0.1.1` provides the public installer, Setup Mode, transactional panel update and rollback. The next product slice is D.1 / Issue #3: local appliance state and portable backup/import/export.
+> **Status:** D.1 / Issue #3 is production-qualified on Keenetic `linux/arm64` in signed stable release `v0.2.0`, built from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. Historical `v0.1.1` remains the first Slice D release; #4 is the next/current product slice, while its component lifecycle and all #5 visual configuration remain planned rather than deployed.
 
 ## Why this project
 
@@ -26,11 +26,17 @@ XKeen and Xray are powerful, but operating a real router usually means editing f
 ## Current authority split
 
 ```text
-/opt/etc/xkeen-control/secrets/nodes.json   authoritative VPN/subscription secrets
-/opt/etc/xray/configs/04_outbounds.json     generated runtime artifact
-repository config/xray + config/xkeen       current non-secret policy source
-RAM + /tmp                                  high-churn runtime/preview/benchmark/update state
+/opt/etc/xkeen-control/config/appliance.json local typed non-secret authority after successful adoption
+/opt/etc/xkeen-control/secrets/nodes.json     authoritative VPN/subscription secrets
+/opt/etc/xray/configs/02_dns.json             generated managed policy
+/opt/etc/xray/configs/05_routing.json         generated managed policy
+/opt/etc/xray/configs/07_observatory.json     generated managed policy
+/opt/etc/xray/configs/04_outbounds.json       generated from nodes.json
+config/xray 01/03/06/08 + config/xkeen        fixed D.1 compatibility templates
+RAM + /tmp                                    high-churn runtime/preview/benchmark/update state
 ```
+
+Pre-adoption compatibility boundary: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit; unknown or manually drifted layouts fail closed.
 
 See [Architecture](docs/ARCHITECTURE.md) for the exact routing, DNS, selection and transaction semantics.
 
@@ -44,17 +50,19 @@ Node changes build a complete candidate, validate Xray, snapshot the previous lo
 
 Signed releases are built from an exact reviewed `main` SHA, use a source-pinned Ed25519 trust anchor and are re-downloaded/reverified before publication. Panel update candidates stay under `/tmp`; one previous panel generation supports bounded rollback.
 
+D.1 adds typed local appliance authority, safe export, explicit re-authenticated encrypted secret export and bounded authenticated preview-first restore. Safe export excludes node/subscription secrets; encrypted export remains protected operator material.
+
 ## Installation
 
 For an Entware/Open Package-ready `linux/arm64` Keenetic, the currently production-qualified release-specific installer is:
 
 ```sh
-sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.1.1/install.sh)"
+sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.2.0/install.sh)"
 ```
 
 The installer is bounded: it never performs blanket `opkg upgrade`, never installs/repairs XKeen or Xray, and preserves existing auth/listener/node/Xray/XKeen/routing/DNS/Observatory state. Missing XKeen/Xray/configuration is reported as Setup Mode rather than triggering an opaque upstream installer.
 
-Existing managed installs use the installed binary's pinned-signature self-update path. The qualified legacy C.1 install has a narrow fingerprint-gated adoption path; `v0.1.1` was production-qualified through legacy → adoption → exact rollback → re-adoption.
+Existing managed installs use the installed binary's pinned-signature self-update path. The qualified legacy C.1 install has a narrow fingerprint-gated adoption path; historical `v0.1.1` was production-qualified through legacy → adoption → exact rollback → re-adoption. Current signed `v0.2.0` adds the qualified D.1 typed appliance adoption and backup/restore boundary.
 
 See [Releases](docs/RELEASES.md), [Operations](docs/OPERATIONS.md) and [Fresh Keenetic](docs/FRESH-KEENETIC.md).
 
@@ -65,9 +73,9 @@ The historical repository `popiposter/xkeen-keenetic` is private quarantine/hist
 | Slice | Goal |
 | --- | --- |
 | **D / #2 — done** | Public signed releases, one-command bootstrap, setup mode, transactional panel self-update/rollback |
-| **D.1 / #3 — current** | Local typed appliance state, portable backup/import/export, optional encrypted VPN-secret backup |
-| **D.2 / #4** | XKeen/Xray/geodata versions, compatibility-aware update policies, schedules and rollback |
-| **D.3 / #5** | Visual typed configuration for routing, DNS, XKeen/Xray, performance and panel settings |
+| **D.1 / #3 — done** | Production-qualified local typed appliance state, portable backup/import/export, optional encrypted VPN-secret backup |
+| **D.2 / #4 — current/next** | Planned XKeen/Xray/geodata versions, compatibility-aware update policies, schedules and rollback; not deployed |
+| **D.3 / #5 — planned** | Planned visual typed configuration for routing, DNS, XKeen/Xray, performance and panel settings; not deployed |
 | **E** | Notifications, management-VPN guidance and final attack-surface hardening |
 
 The authoritative sequence is always [ROADMAP.md](docs/ROADMAP.md).

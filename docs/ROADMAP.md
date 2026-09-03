@@ -4,7 +4,7 @@ This is the sequencing/status authority. The active GitHub issue is the detailed
 
 ## Current production baseline
 
-Slices A/B/C/C.1 and D are production-qualified. The validated fresh-source migration baseline merged as #7, the canonical Go module/import identity cleanup merged as #9 / Issue #8, and Slice D completed through Issue #2 with signed stable release `v0.1.1` from source `8f15246099538426ef08163b832c3aa6f73e8265` plus bounded live Keenetic adoption → rollback → re-adoption qualification.
+Slices A/B/C/C.1 and D are production-qualified. The validated fresh-source migration baseline merged as #7, the canonical Go module/import identity cleanup merged as #9 / Issue #8, and Slice D completed through Issue #2 with historical signed stable release `v0.1.1` from source `8f15246099538426ef08163b832c3aa6f73e8265` plus bounded live Keenetic adoption → rollback → re-adoption qualification. D.1 / Issue #3 is also production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`.
 
 Current runtime facts:
 
@@ -19,7 +19,9 @@ Current runtime facts:
 - node Apply, supervisor/selection and benchmark work share one runtime coordinator;
 - signed GitHub Releases are the software distribution authority for the qualified `linux/arm64` panel;
 - the public installer and panel rollback path are production-qualified without changing node/Xray/XKeen/routing/DNS/Observatory state;
-- current routing/DNS/Observatory policy is still repository-derived until D.1/D.3 migrate it into local appliance state.
+- after successful typed `appliance adopt`, `/opt/etc/xkeen-control/config/appliance.json` is the local authority for supported non-secret appliance policy;
+- managed `02_dns.json`, `05_routing.json` and `07_observatory.json` derive deterministically from that authority, while `04_outbounds.json` remains generated from `nodes.json`;
+- before adoption, an existing router retains the explicit repository-derived/legacy policy boundary; adoption is compatibility-gated, not implicit, and unknown/manual drift fails closed.
 
 ## Repository authority
 
@@ -31,18 +33,18 @@ Router-specific settings and secrets never enter this repository or release asse
 
 The active Go module/import identity is canonical: `github.com/popiposter/xkeen-control`. Historical `popiposter/xkeen-keenetic` references that remain in documentation describe quarantine/history only.
 
-## Product direction after C.1
+## Product direction after D.1
 
 Per-router settings are not synchronized from Git.
 
 ```text
 public source + signed GitHub Releases (#2, done)
         ↓
-local typed appliance state + portable backup (#3)
+local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
-managed XKeen / Xray / geodata lifecycle (#4)
+managed XKeen / Xray / geodata lifecycle (#4, current/next; planned)
         ↓
-visual typed configuration + transactional render/apply (#5)
+visual typed configuration + transactional render/apply (#5, planned)
 ```
 
 ## Delivery sequence
@@ -55,9 +57,9 @@ visual typed configuration + transactional render/apply (#5)
 | C.1 — stable selection + sustained benchmark | Done | validated source snapshot `a1b8c3c…` | Sticky stable override, independent liveness, bounded benchmark, shared coordinator |
 | Pre-D — canonical Go module/import identity | Done | Issue #8 / PR #9 | Canonical `github.com/popiposter/xkeen-control` provenance; no runtime behavior change |
 | D — releases/bootstrap/panel self-update | Done | Issue #2 / `v0.1.1` | Public signed Releases, CI/release pipeline, one-command bootstrap, setup mode, transactional panel update/rollback |
-| D.1 — appliance state + backup/import/export | **Current product slice** | Issue #3 | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
-| D.2 — component lifecycle | Planned | Issue #4 | XKeen/Xray/geodata inventory, compatibility-aware updates, schedules, rollback |
-| D.3 — visual configuration | Planned | Issue #5 | Typed routing/DNS/XKeen/Xray/panel/performance UI and deterministic render/apply |
+| D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
+| D.2 — component lifecycle | **Current / next product slice** | Issue #4 | Planned XKeen/Xray/geodata inventory, compatibility-aware updates, schedules and rollback; not deployed |
+| D.3 — visual configuration | Planned | Issue #5 | Planned typed routing/DNS/XKeen/Xray/panel/performance UI and deterministic render/apply; not deployed |
 | E — notifications/security hardening | Planned after D.3 | master issue #1 | Outbound alerts, management-VPN guidance, final attack-surface hardening |
 
 ## Pre-D / Issue #8 — complete
@@ -81,17 +83,19 @@ The repository identity cleanup merged as PR #9. `go.mod`, active in-module impo
 
 Production qualification completed on `v0.1.1`: legacy adoption, exact legacy rollback including helper absence, and re-adoption all passed while bounded non-secret fingerprints for auth/listener/node/Xray/XKeen/selection/benchmark state remained unchanged.
 
-## D.1 / Issue #3 — current product slice
+## D.1 / Issue #3 — complete
 
-Move router-specific supported settings into local schema-versioned `appliance.json`, while keeping `nodes.json` as the separate secret authority. Safe export excludes secrets by default; secret-bearing export is explicit and encrypted. Import is bounded, preview-first and transactional, and hardware-local settings cannot strand a restored router.
+`v0.2.0` is the signed stable D.1 release, production-qualified on `linux/arm64` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. Successful typed `appliance adopt` establishes local schema-versioned `appliance.json` as the authority for supported non-secret policy, while `nodes.json` remains the separate VPN/subscription secret authority. Managed DNS/routing/Observatory policy is generated deterministically from the appliance authority; active outbounds remain generated from `nodes.json`.
 
-Before implementation, refresh Issue #3 against current `main` and the now-qualified release/bootstrap baseline. D.1 must not regress the #2 release/update trust and rollback boundary.
+Safe export excludes secrets by default; secret-bearing export is explicit and encrypted. Import is authenticated, bounded, preview-first and transactional, with typed validation, authority coordination and interrupted-import recovery. Equivalent settings-only restore is a no-op and does not rewrite node/generated/runtime state or restart Xray/XKeen. D.1 preserves the #2 release/update trust and rollback boundary.
 
-## D.2 / Issue #4
+Pre-adoption compatibility is explicit: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit and unknown/manual drift fails closed.
+
+## D.2 / Issue #4 — current product slice (planned, not deployed)
 
 Add one typed maintenance plane for XKeen, Xray and geodata. Do not expose upstream CLI as shell passthrough. Updates are capability/version/platform gated, use bounded snapshots and post-update verification, and default to notify/manual until real hardware rollback is qualified.
 
-## D.3 / Issue #5
+## D.3 / Issue #5 — planned, not deployed
 
 Make `appliance.json + nodes.json` the supported local configuration authority. UI edits typed domains (routing, DNS, supported XKeen/Xray options, performance, panel settings), renders a complete candidate, validates it, previews semantic impact and applies transactionally. No raw JSON/YAML editor, shell, PTY or arbitrary file manager.
 
