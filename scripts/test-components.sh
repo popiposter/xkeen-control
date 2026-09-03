@@ -8,4 +8,4 @@ cd "$ROOT"
 # entrypoint deliberately never reads router paths or invokes a component.
 go test -count=1 ./internal/components ./internal/httpapi
 
-echo "component inventory fixtures passed"
+echo "component fixtures passed"

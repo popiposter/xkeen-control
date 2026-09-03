@@ -182,17 +182,21 @@ func main() {
 		InventoryTimeout:      components.DefaultInventoryTimeout,
 		XrayProbeTimeout:      components.DefaultXrayProbeTimeout,
 	})
+	componentChecker := components.NewChecker(components.CheckerConfig{
+		InstalledSnapshot: componentService.Latest,
+	})
 	handler := httpapi.New(httpapi.Config{
-		Collector:  collector,
-		Auth:       authManager,
-		Nodes:      nodeManager,
-		Benchmark:  coordinator,
-		Selection:  coordinator,
-		Assets:     webassets.Handler(),
-		StartedAt:  startedAt,
-		Components: componentService,
-		Updates:    updateManager,
-		Restore:    restoreService,
+		Collector:       collector,
+		Auth:            authManager,
+		Nodes:           nodeManager,
+		Benchmark:       coordinator,
+		Selection:       coordinator,
+		Assets:          webassets.Handler(),
+		StartedAt:       startedAt,
+		Components:      componentService,
+		ComponentChecks: componentChecker,
+		Updates:         updateManager,
+		Restore:         restoreService,
 		Backup: backup.NewService(backup.Config{
 			Appliance:      applianceService,
 			Nodes:          nodeManager,

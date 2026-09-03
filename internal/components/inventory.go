@@ -189,6 +189,9 @@ type Config struct {
 type Service struct {
 	config           Config
 	xrayVersionProbe XrayVersionProbe
+	latestMu         sync.RWMutex
+	latest           Inventory
+	hasLatest        bool
 }
 
 // NewService constructs a side-effect-free inventory service. It does not
@@ -266,7 +269,7 @@ func (s *Service) Snapshot(parent context.Context) Inventory {
 	ctx, cancel := context.WithTimeout(parent, s.config.InventoryTimeout)
 	defer cancel()
 	budget := &readBudget{remaining: MaxInventoryReadBytes}
-	return Inventory{
+	result := Inventory{
 		SchemaVersion: SchemaVersion,
 		Panel:         inventoryPanel(s.config.Panel),
 		XKeen:         s.inventoryXKeen(ctx, budget),
@@ -275,6 +278,26 @@ func (s *Service) Snapshot(parent context.Context) Inventory {
 		KeeneticOS:    s.inventoryKeeneticOS(ctx, budget),
 		Entware:       s.inventoryEntware(ctx, budget),
 	}
+	s.latestMu.Lock()
+	s.latest = cloneInventory(result)
+	s.hasLatest = true
+	s.latestMu.Unlock()
+	return result
+}
+
+// Latest returns the most recently collected inventory without collecting any
+// new signals. Component Check uses this RAM-only snapshot so a network check
+// never invokes Xray, XKeen or opkg through the inventory path.
+func (s *Service) Latest() (Inventory, bool) {
+	if s == nil {
+		return Inventory{}, false
+	}
+	s.latestMu.RLock()
+	defer s.latestMu.RUnlock()
+	if !s.hasLatest {
+		return Inventory{}, false
+	}
+	return cloneInventory(s.latest), true
 }
 
 // Inventory is an explicit spelling for callers that prefer domain language
@@ -294,6 +317,14 @@ func unavailableInventory() Inventory {
 		KeeneticOS:    unknown(KindKeeneticOS),
 		Entware:       unknown(KindEntware),
 	}
+}
+
+func cloneInventory(value Inventory) Inventory {
+	clone := value
+	if value.Geodata.Items != nil {
+		clone.Geodata.Items = append([]GeodataItem(nil), value.Geodata.Items...)
+	}
+	return clone
 }
 
 func inventoryPanel(info buildinfo.Info) Component {
@@ -465,18 +496,20 @@ func parsePackageVersion(raw []byte) string {
 }
 
 type catalogEntry struct {
-	ID   string
-	Kind string
-	Name string
+	ID         string
+	Kind       string
+	Name       string
+	Repository string
+	Asset      string
 }
 
 var productGeodataCatalog = []catalogEntry{
-	{ID: "geosite-refilter", Kind: "geosite", Name: "geosite_refilter.dat"},
-	{ID: "geosite-v2fly", Kind: "geosite", Name: "geosite_v2fly.dat"},
-	{ID: "geosite-zkeen", Kind: "geosite", Name: "geosite_zkeen.dat"},
-	{ID: "geoip-refilter", Kind: "geoip", Name: "geoip_refilter.dat"},
-	{ID: "geoip-v2fly", Kind: "geoip", Name: "geoip_v2fly.dat"},
-	{ID: "geoip-zkeenip", Kind: "geoip", Name: "geoip_zkeenip.dat"},
+	{ID: "geosite-refilter", Kind: "geosite", Name: "geosite_refilter.dat", Repository: "1andrevich/Re-filter-lists", Asset: "geosite.dat"},
+	{ID: "geosite-v2fly", Kind: "geosite", Name: "geosite_v2fly.dat", Repository: "v2fly/domain-list-community", Asset: "dlc.dat"},
+	{ID: "geosite-zkeen", Kind: "geosite", Name: "geosite_zkeen.dat", Repository: "jameszeroX/zkeen-domains", Asset: "zkeen.dat"},
+	{ID: "geoip-refilter", Kind: "geoip", Name: "geoip_refilter.dat", Repository: "1andrevich/Re-filter-lists", Asset: "geoip.dat"},
+	{ID: "geoip-v2fly", Kind: "geoip", Name: "geoip_v2fly.dat", Repository: "Loyalsoldier/v2ray-rules-dat", Asset: "geoip.dat"},
+	{ID: "geoip-zkeenip", Kind: "geoip", Name: "geoip_zkeenip.dat", Repository: "jameszeroX/zkeen-ip", Asset: "zkeenip.dat"},
 }
 
 type policyExpression struct {

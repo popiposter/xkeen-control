@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/popiposter/xkeen-control/internal/netguard"
 )
 
 const (
@@ -18,15 +20,8 @@ const (
 	MaxSubscriptionBody = 1 << 20
 )
 
-type IPResolver interface {
-	LookupIPAddr(context.Context, string) ([]net.IPAddr, error)
-}
-
-type defaultIPResolver struct{}
-
-func (defaultIPResolver) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error) {
-	return net.DefaultResolver.LookupIPAddr(ctx, host)
-}
+type IPResolver = netguard.IPResolver
+type defaultIPResolver = netguard.DefaultResolver
 
 type SubscriptionFetcher interface {
 	Fetch(context.Context, string) ([]byte, error)
@@ -51,7 +46,7 @@ func (f HTTPSubscriptionFetcher) Fetch(ctx context.Context, rawURL string) ([]by
 	}
 	transport := &http.Transport{
 		Proxy:                 nil,
-		DialContext:           safeDialer{Resolver: resolver}.DialContext,
+		DialContext:           netguard.Dialer{Resolver: resolver}.DialContext,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: 8 * time.Second,
@@ -113,96 +108,16 @@ type safeDialer struct {
 }
 
 func (d safeDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(address)
-	if err != nil || host == "" {
-		return nil, errors.New("invalid subscription destination")
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		if blockedDestination(ip) {
-			return nil, errors.New("subscription destination is not public")
-		}
-		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
-	}
-	if d.Resolver == nil {
-		return nil, errors.New("subscription resolver unavailable")
-	}
-	addresses, err := d.Resolver.LookupIPAddr(ctx, host)
-	if err != nil || len(addresses) == 0 || len(addresses) > 32 {
-		return nil, errors.New("subscription destination lookup failed")
-	}
-	for _, address := range addresses {
-		if blockedDestination(address.IP) {
-			return nil, errors.New("subscription destination is not public")
-		}
-	}
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	for _, address := range addresses {
-		connection, err := dialer.DialContext(ctx, network, net.JoinHostPort(address.IP.String(), port))
-		if err == nil {
-			return connection, nil
-		}
-	}
-	return nil, errors.New("subscription destination connection failed")
-}
-
-var publicIPv6 = netip.MustParsePrefix("2000::/3")
-
-// IANA IPv4/IPv6 special-purpose registries, intentionally treated as a
-// denylist even where a special anycast entry is globally reachable. A
-// subscription endpoint must be an ordinary public-routable destination.
-var specialUsePrefixes = []netip.Prefix{
-	netip.MustParsePrefix("0.0.0.0/8"),
-	netip.MustParsePrefix("10.0.0.0/8"),
-	netip.MustParsePrefix("100.64.0.0/10"),
-	netip.MustParsePrefix("127.0.0.0/8"),
-	netip.MustParsePrefix("169.254.0.0/16"),
-	netip.MustParsePrefix("172.16.0.0/12"),
-	netip.MustParsePrefix("192.0.0.0/24"),
-	netip.MustParsePrefix("192.0.2.0/24"),
-	netip.MustParsePrefix("192.31.196.0/24"),
-	netip.MustParsePrefix("192.52.193.0/24"),
-	netip.MustParsePrefix("192.88.99.0/24"),
-	netip.MustParsePrefix("192.168.0.0/16"),
-	netip.MustParsePrefix("192.175.48.0/24"),
-	netip.MustParsePrefix("198.18.0.0/15"),
-	netip.MustParsePrefix("198.51.100.0/24"),
-	netip.MustParsePrefix("203.0.113.0/24"),
-	netip.MustParsePrefix("240.0.0.0/4"),
-	netip.MustParsePrefix("::/128"),
-	netip.MustParsePrefix("::1/128"),
-	netip.MustParsePrefix("64:ff9b::/96"),
-	netip.MustParsePrefix("64:ff9b:1::/48"),
-	netip.MustParsePrefix("100::/64"),
-	netip.MustParsePrefix("100:0:0:1::/64"),
-	netip.MustParsePrefix("2001::/23"),
-	netip.MustParsePrefix("2001:db8::/32"),
-	netip.MustParsePrefix("2002::/16"),
-	netip.MustParsePrefix("3fff::/20"),
-	netip.MustParsePrefix("5f00::/16"),
-	netip.MustParsePrefix("fc00::/7"),
-	netip.MustParsePrefix("fe80::/10"),
+	return netguard.Dialer{Resolver: d.Resolver}.DialContext(ctx, network, address)
 }
 
 func blockedDestination(ip net.IP) bool {
-	address, ok := netip.AddrFromSlice(ip)
-	return !ok || !publicRoutable(address)
+	return netguard.BlockedDestination(ip)
 }
 
+// publicRoutable remains a package-local compatibility helper for the
+// existing subscription tests; the implementation is shared with all other
+// product-owned network clients through netguard.
 func publicRoutable(address netip.Addr) bool {
-	if !address.IsValid() {
-		return false
-	}
-	address = address.Unmap()
-	if !address.IsGlobalUnicast() {
-		return false
-	}
-	if address.Is6() && !publicIPv6.Contains(address) {
-		return false
-	}
-	for _, prefix := range specialUsePrefixes {
-		if prefix.Contains(address) {
-			return false
-		}
-	}
-	return true
+	return netguard.PublicRoutable(address)
 }
