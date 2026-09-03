@@ -3,8 +3,13 @@ package components
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 )
+
+func testJSON(value string) []byte {
+	return []byte(strings.ReplaceAll(value, "'", "\""))
+}
 
 func TestParseXrayVersionOutputAcceptsCurrentOfficialVersionStatement(t *testing.T) {
 	output := []byte("Xray 26.7.28 (Xray, Penetrates Everything.) cd4ce97 (go1.25.0 linux/arm64)\nA unified platform for anti-censorship.\n")
@@ -20,9 +25,9 @@ func TestParseXrayVersionOutputAcceptsCurrentOfficialVersionStatement(t *testing
 func TestGeodataFailsClosedForInvalidPresentApplianceAuthority(t *testing.T) {
 	fixture := newInventoryFixture(t)
 	fixture.createGeodata(t)
-	writeFixtureFile(t, fixture.config.AppliancePath, []byte(`{"schemaVersion":1,"dns":`), 0o644)
-	writeFixtureFile(t, fixture.config.DNSPath, []byte(`{"dns":{"servers":[]}}`), 0o644)
-	writeFixtureFile(t, fixture.config.RoutingPath, []byte(`{"routing":{"rules":[]}}`), 0o644)
+	writeFixtureFile(t, fixture.config.AppliancePath, testJSON("{'schemaVersion':1,'dns':"), 0o644)
+	writeFixtureFile(t, fixture.config.DNSPath, testJSON("{'dns':{'servers':[]}}"), 0o644)
+	writeFixtureFile(t, fixture.config.RoutingPath, testJSON("{'routing':{'rules':[]}}"), 0o644)
 
 	geodata := fixture.service().Snapshot(context.Background()).Geodata
 	if geodata.State != StateUnknown || geodata.Capability != CapabilityUnsupported || geodata.ReasonCode != "appliance-authority-invalid" {
@@ -46,8 +51,8 @@ func TestGeodataFailsClosedForNonRegularPresentApplianceAuthority(t *testing.T) 
 func TestGeodataFailsClosedForInvalidLegacyFallbackPolicy(t *testing.T) {
 	fixture := newInventoryFixture(t)
 	fixture.createGeodata(t)
-	writeFixtureFile(t, fixture.config.DNSPath, []byte(`{"dns":{"servers":[`), 0o644)
-	writeFixtureFile(t, fixture.config.RoutingPath, []byte(`{"routing":{"rules":[]}}`), 0o644)
+	writeFixtureFile(t, fixture.config.DNSPath, testJSON("{'dns':{'servers':["), 0o644)
+	writeFixtureFile(t, fixture.config.RoutingPath, testJSON("{'routing':{'rules':[]}}"), 0o644)
 
 	geodata := fixture.service().Snapshot(context.Background()).Geodata
 	if geodata.State != StateUnknown || geodata.Capability != CapabilityUnsupported || geodata.ReasonCode != "legacy-policy-invalid" {
@@ -58,8 +63,8 @@ func TestGeodataFailsClosedForInvalidLegacyFallbackPolicy(t *testing.T) {
 func TestGeodataFailsClosedForWrongShapeLegacyFallbackPolicy(t *testing.T) {
 	fixture := newInventoryFixture(t)
 	fixture.createGeodata(t)
-	writeFixtureFile(t, fixture.config.DNSPath, []byte(`{"dns":{}}`), 0o644)
-	writeFixtureFile(t, fixture.config.RoutingPath, []byte(`{"routing":{"rules":[]}}`), 0o644)
+	writeFixtureFile(t, fixture.config.DNSPath, testJSON("{'dns':{}}"), 0o644)
+	writeFixtureFile(t, fixture.config.RoutingPath, testJSON("{'routing':{'rules':[]}}"), 0o644)
 
 	geodata := fixture.service().Snapshot(context.Background()).Geodata
 	if geodata.State != StateUnknown || geodata.Capability != CapabilityUnsupported || geodata.ReasonCode != "legacy-policy-invalid" {
@@ -70,8 +75,8 @@ func TestGeodataFailsClosedForWrongShapeLegacyFallbackPolicy(t *testing.T) {
 func TestGeodataAcceptsCurrentLegacyDNSStringServerShape(t *testing.T) {
 	fixture := newInventoryFixture(t)
 	fixture.createGeodata(t)
-	writeFixtureFile(t, fixture.config.DNSPath, []byte(`{"dns":{"servers":[{"address":"https://1.1.1.1/dns-query","domains":["ext:geosite_v2fly.dat:openai"]},"localhost"]}}`), 0o644)
-	writeFixtureFile(t, fixture.config.RoutingPath, []byte(`{"routing":{"rules":[]}}`), 0o644)
+	writeFixtureFile(t, fixture.config.DNSPath, testJSON("{'dns':{'servers':[{'address':'https://1.1.1.1/dns-query','domains':['ext:geosite_v2fly.dat:openai']},'localhost']}}"), 0o644)
+	writeFixtureFile(t, fixture.config.RoutingPath, testJSON("{'routing':{'rules':[]}}"), 0o644)
 
 	geodata := fixture.service().Snapshot(context.Background()).Geodata
 	if geodata.State != StatePresent || geodata.Capability != CapabilitySupported || geodata.ReasonCode != "" {
