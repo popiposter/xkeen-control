@@ -54,3 +54,27 @@ func TestGeodataFailsClosedForInvalidLegacyFallbackPolicy(t *testing.T) {
 		t.Fatalf("invalid legacy fallback = %+v", geodata.Component)
 	}
 }
+
+func TestGeodataFailsClosedForWrongShapeLegacyFallbackPolicy(t *testing.T) {
+	fixture := newInventoryFixture(t)
+	fixture.createGeodata(t)
+	writeFixtureFile(t, fixture.config.DNSPath, []byte(`{"dns":{}}`), 0o644)
+	writeFixtureFile(t, fixture.config.RoutingPath, []byte(`{"routing":{"rules":[]}}`), 0o644)
+
+	geodata := fixture.service().Snapshot(context.Background()).Geodata
+	if geodata.State != StateUnknown || geodata.Capability != CapabilityUnsupported || geodata.ReasonCode != "legacy-policy-invalid" {
+		t.Fatalf("wrong-shape legacy fallback = %+v", geodata.Component)
+	}
+}
+
+func TestGeodataAcceptsCurrentLegacyDNSStringServerShape(t *testing.T) {
+	fixture := newInventoryFixture(t)
+	fixture.createGeodata(t)
+	writeFixtureFile(t, fixture.config.DNSPath, []byte(`{"dns":{"servers":[{"address":"https://1.1.1.1/dns-query","domains":["ext:geosite_v2fly.dat:openai"]},"localhost"]}}`), 0o644)
+	writeFixtureFile(t, fixture.config.RoutingPath, []byte(`{"routing":{"rules":[]}}`), 0o644)
+
+	geodata := fixture.service().Snapshot(context.Background()).Geodata
+	if geodata.State != StatePresent || geodata.Capability != CapabilitySupported || geodata.ReasonCode != "" {
+		t.Fatalf("current legacy DNS shape = %+v", geodata.Component)
+	}
+}
