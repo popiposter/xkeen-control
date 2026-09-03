@@ -42,7 +42,7 @@ public source + signed GitHub Releases (#2, done)
         ↓
 local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
-managed XKeen / Xray / geodata lifecycle (#4, active; Phase A source merged, Phase B next)
+managed XKeen / Xray / geodata lifecycle (#4, active; Phases A+B source merged, Phase C next)
         ↓
 visual typed configuration + transactional render/apply (#5, planned)
 ```
@@ -58,7 +58,7 @@ visual typed configuration + transactional render/apply (#5, planned)
 | Pre-D — canonical Go module/import identity | Done | Issue #8 / PR #9 | Canonical `github.com/popiposter/xkeen-control` provenance; no runtime behavior change |
 | D — releases/bootstrap/panel self-update | Done | Issue #2 / `v0.1.1` | Public signed Releases, CI/release pipeline, one-command bootstrap, setup mode, transactional panel update/rollback |
 | D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
-| D.2 — component lifecycle | **Active — Phase A source merged; Phase B next** | Issue #4 / `main` `bda9dd0…` | Read-only inventory merged; trusted candidate metadata checks next; component mutation remains later and is not deployed |
+| D.2 — component lifecycle | **Active — Phases A+B source merged; Phase C next** | Issue #4 / `main` `d6a6c81…` | Read-only inventory and trusted fixed-source metadata checks merged; transactional Xray update/rollback is next; component mutation remains not deployed |
 | D.3 — visual configuration | Planned | Issue #5 | Planned typed routing/DNS/XKeen/Xray/panel/performance UI and deterministic render/apply; not deployed |
 | E — notifications/security hardening | Planned after D.3 | master issue #1 | Outbound alerts, management-VPN guidance, final attack-surface hardening |
 
@@ -91,13 +91,15 @@ Safe export excludes secrets by default; secret-bearing export is explicit and e
 
 Pre-adoption compatibility is explicit: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit and unknown/manual drift fails closed.
 
-## D.2 / Issue #4 — active; Phase A source merged, Phase B next
+## D.2 / Issue #4 — active; Phases A+B source merged, Phase C next
 
-Phase A merged via PR #23 to `main` `bda9dd0cc7bb142a4cb1468811fff9b5146b1e8e`; post-merge CI #64 / run `33742065396` passed on that exact revision. Source main now includes the bounded read-only component inventory and authenticated `GET /api/v1/components` for panel, XKeen, Xray, geodata, KeeneticOS and Entware.
+Phase A merged via PR #23 to `main` `bda9dd0cc7bb142a4cb1468811fff9b5146b1e8e`; source main gained the bounded read-only component inventory and authenticated `GET /api/v1/components` for panel, XKeen, Xray, geodata, KeeneticOS and Entware.
 
-That source-main capability is not a new stable release or production-qualification claim. No component candidate check, artifact download, update, rollback or scheduler is deployed.
+Phase B merged via PR #25 to `main` `d6a6c81f47c9b50dcead8cf95c70906660af87b2`; source main now also has authenticated same-origin/CSRF-bound `POST /api/v1/components/check` for bounded trusted metadata checks of Xray, XKeen and the fixed product geodata catalog. Check state is RAM-only; artifact bytes are not downloaded and component/router state is not mutated.
 
-The next review boundary is Phase B: trusted fixed-source candidate metadata Check for Xray/XKeen/geodata, with bounded RAM-only state and no artifact download or component mutation. Later #4 phases own transactional Xray/geodata/XKeen mutation, rollback, policy/scheduler and Setup Mode reuse after those primitives are separately reviewed and qualified. Detailed constraints and acceptance remain in Issue #4.
+Those source-main capabilities are not a new stable release or production-qualification claim. Current production still has no #4 component update/install/rollback controls.
+
+The next review boundary is Phase C: the internal transactional Xray update/rollback primitive with trusted candidate re-resolution/download, candidate-binary validation against the complete adopted D.1 configuration, shared Coordinator → authority-lease ownership, one bounded previous Xray generation, durable component journal, verified rollback and startup recovery. Phase C does not add browser/API mutation controls; those remain Phase F. Later #4 phases own transactional geodata/XKeen mutation, HTTP/UI policy/scheduler and Setup Mode reuse after the primitives are separately reviewed and qualified. Detailed constraints and acceptance remain in Issue #4.
 
 ## D.3 / Issue #5 — planned, not deployed
 
