@@ -93,6 +93,75 @@ type CheckCandidate struct {
 	SHA256     string `json:"sha256,omitempty"`
 }
 
+// XrayReleaseIdentity is the server-owned identity of one exact Xray
+// release asset. It is intentionally not a URL or a caller-provided download
+// descriptor. Phase C re-resolves this identity immediately before staging so
+// a cached Phase B result can never authorize activation.
+type XrayReleaseIdentity struct {
+	Tag       string
+	Version   string
+	AssetName string
+	SizeBytes int64
+	SHA256    string
+}
+
+// XrayCandidateResolver is purpose-specific. It resolves only the fixed
+// official Xray release source and cannot be used as a generic URL fetcher.
+type XrayCandidateResolver interface {
+	ResolveXray(context.Context) (XrayReleaseIdentity, error)
+}
+
+// XrayResolver performs an uncached, server-owned Xray release resolution.
+// The Phase B Checker deliberately does not share its RAM cache with this
+// primitive.
+type XrayResolver struct {
+	client *metadataClient
+}
+
+// NewXrayResolver constructs the fixed official Xray resolver. A supplied
+// client is a test seam only; production callers pass nil and receive the
+// netguard-protected transport.
+func NewXrayResolver(resolver netguard.IPResolver, supplied *http.Client) *XrayResolver {
+	return &XrayResolver{client: newMetadataClient(resolver, supplied)}
+}
+
+// ResolveXray always performs a fresh metadata request. It returns the exact
+// upstream tag as well as the normalized typed version and asset digest.
+func (r *XrayResolver) ResolveXray(ctx context.Context) (XrayReleaseIdentity, error) {
+	if r == nil || r.client == nil {
+		return XrayReleaseIdentity{}, ErrXrayResolutionUnavailable
+	}
+	body, err := r.client.fetch(ctx, xrayMetadataPath, newNetworkBudget())
+	if err != nil {
+		if ctx != nil && ctx.Err() != nil {
+			return XrayReleaseIdentity{}, ctx.Err()
+		}
+		return XrayReleaseIdentity{}, ErrXrayResolutionUnavailable
+	}
+	release, failure := decodeReleaseMetadata(body)
+	if failure != nil {
+		return XrayReleaseIdentity{}, ErrXrayCandidateRejected
+	}
+	if failure = validateReleaseMetadata(release); failure != nil {
+		return XrayReleaseIdentity{}, ErrXrayCandidateRejected
+	}
+	version, ok := parseStrictVersion(release.TagName)
+	if !ok {
+		return XrayReleaseIdentity{}, ErrXrayCandidateRejected
+	}
+	asset, failure := selectMetadataAsset(release.Assets, xrayCandidateAsset, true)
+	if failure != nil {
+		return XrayReleaseIdentity{}, ErrXrayCandidateRejected
+	}
+	return XrayReleaseIdentity{
+		Tag:       release.TagName,
+		Version:   version.String(),
+		AssetName: xrayCandidateAsset,
+		SizeBytes: asset.Size,
+		SHA256:    asset.SHA256,
+	}, nil
+}
+
 type CheckItem struct {
 	ID             string `json:"id"`
 	SourceID       string `json:"sourceId"`

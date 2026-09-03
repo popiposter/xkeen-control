@@ -121,15 +121,29 @@ It covers manifest/signature tamper rejection, candidate hash/size validation, p
 
 These fixtures remain regression coverage after #2 completion; later slices must not weaken them.
 
-## Issue #4 component-check focused fixture
+## Issue #4 component lifecycle focused fixture
 
-The read-only component inventory qualification fixture is:
+The component inventory, trusted metadata-check and internal transactional
+Xray qualification fixture is:
 
 ```sh
 bash scripts/test-components.sh
 ```
 
-It uses temporary synthetic component paths and covers the fixed panel, XKeen, Xray, geodata, KeeneticOS and Entware projection, bounded version probing, strict parsing, unknown/manual geodata expressions, filesystem safety, no script/opkg execution, no writes, the authenticated read-only HTTP route and the Phase B trusted metadata-check contract. Phase B fixtures use offline synthetic upstream responses, verify fixed sources/digests/cache/security bounds, and never download artifact bodies or read/mutate a production Keenetic.
+It uses temporary synthetic component paths and covers the fixed panel, XKeen,
+Xray, geodata, KeeneticOS and Entware projection, bounded version probing,
+strict parsing, unknown/manual geodata expressions, filesystem safety, no
+script/opkg execution, no writes, the authenticated read-only HTTP route and
+the Phase B trusted metadata-check contract. Phase B fixtures use offline
+synthetic upstream responses, verify fixed sources/digests/cache/security
+bounds, and never download artifact bodies or read/mutate a production
+Keenetic. Phase C fixtures additionally cover fresh exact-identity
+re-resolution, fixed HTTPS artifact transport, ZIP traversal/duplicate/
+non-regular rejection, complete candidate rendering and validation, shared
+Coordinator-to-authority lock order, stale authority rejection, one previous
+generation, journal fault injection, verified rollback, local-only startup
+recovery and restore-journal conflict. The Phase C primitive has no HTTP/UI
+mutation route and all source qualification remains synthetic/offline.
 
 ## Issue #3 Phase B focused fixtures
 
