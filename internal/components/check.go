@@ -426,8 +426,8 @@ func (c *Checker) checkXKeen(ctx context.Context, channel string, installed Inve
 		result.ReasonCode = failure.reason
 		return result, nil
 	}
+	entry, qualified := reviewedXKeenDevBuild(identity)
 	result.Candidate = &CheckCandidate{
-		Generation:      identity.BuildCommitSHA,
 		AssetName:       xkeenDevArtifactPath,
 		SizeBytes:       identity.SizeBytes,
 		BuildCommitSHA:  identity.BuildCommitSHA,
@@ -437,11 +437,31 @@ func (c *Checker) checkXKeen(ctx context.Context, channel string, installed Inve
 	if haveInstalled {
 		result.InstalledState = compareInstalledXKeenDev(installed.XKeen, identity.BuildCommitSHA)
 	}
-	// E0 resolves an informational build identity only. It is intentionally not
-	// install-eligible until E1 binds the exact archive bytes, member layout and
-	// compatibility class in a reviewed product catalog.
-	result.ReasonCode = "dev-identity-resolved"
+	if !qualified {
+		// Keep the moving build identity visible, but never inherit trust from a
+		// catalog entry whose commit, source parent, blob or size differs.
+		result.ReasonCode = "compatibility-catalog-required"
+		return result, nil
+	}
+	result.Candidate.Version = entry.Version
+	result.Candidate.Generation = entry.GenerationSHA256
+	result.Candidate.SHA256 = entry.SHA256
+	result.Eligible = true
+	result.ReasonCode = "catalog-qualified"
 	return result, nil
+}
+
+func reviewedXKeenDevBuild(identity xkeenDevBuildIdentity) (xkeenCompatibilityEntry, bool) {
+	entry, ok := reviewedXKeenEntry(identity.BuildCommitSHA, xkeenDevArtifactPath)
+	if !ok || validateXKeenCompatibilityEntry(entry) != nil || !entry.Installable {
+		return xkeenCompatibilityEntry{}, false
+	}
+	if entry.Repository != xkeenDevRepository || entry.Channel != xkeenDevChannel ||
+		entry.SourceParentSHA != identity.SourceCommitSHA || entry.BlobSHA != identity.BlobSHA ||
+		entry.SizeBytes != identity.SizeBytes {
+		return xkeenCompatibilityEntry{}, false
+	}
+	return entry, true
 }
 
 type xkeenDevBuildIdentity struct {
