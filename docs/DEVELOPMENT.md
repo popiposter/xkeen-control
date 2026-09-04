@@ -137,7 +137,13 @@ script/opkg execution, no writes, the authenticated read-only HTTP route and
 the Phase B trusted metadata-check contract. Phase B fixtures use offline
 synthetic upstream responses, verify fixed sources/digests/cache/security
 bounds, and never download artifact bodies or read/mutate a production
-Keenetic. Phase C fixtures additionally cover fresh exact-identity
+Keenetic. Phase E0 fixtures additionally verify the component-specific
+`dev`/`stable` channel matrix, the fixed `jameszeroX/XKeen` source, signed
+automated build-commit plus exact tree/blob identity projection, rejection of
+the legacy `Skrill0/XKeen` release path, and `S05xkeen` versus explicit legacy
+`S24xray` inventory behavior. E0 remains metadata-only: it does not download
+the dev archive or add component mutation. Phase C fixtures additionally cover
+fresh exact-identity
 re-resolution, fixed HTTPS artifact transport, ZIP traversal/duplicate/
 non-regular rejection, complete candidate rendering and validation, shared
 Coordinator-to-authority lock order, stale authority rejection, one previous
