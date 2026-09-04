@@ -149,7 +149,8 @@ func TestXKeenApplySwapsOnlyTheManagedPairAndUsesFixedRuntime(t *testing.T) {
 	if err := os.WriteFile(initPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(xrayBinary, []byte("old-xray"), 0o700); err != nil {
+	largeXray := bytes.Repeat([]byte("x"), MaxXKeenGenerationFileBytes+1)
+	if err := os.WriteFile(xrayBinary, largeXray, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(xkeenConfig, []byte("{}\n"), 0o600); err != nil {
@@ -162,13 +163,21 @@ func TestXKeenApplySwapsOnlyTheManagedPairAndUsesFixedRuntime(t *testing.T) {
 			}
 		}
 	}
+	if err := os.WriteFile(filepath.Join(configDir, "05_routing.json"), []byte(`{"routing":{"rules":[{"domain":["ext:synthetic"]}]}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	largeGeodata := bytes.Repeat([]byte("g"), MaxXKeenGenerationFileBytes+1)
+	assetFixture := filepath.Join(assetDir, "synthetic.dat")
+	if err := os.WriteFile(assetFixture, largeGeodata, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	oldGeneration, err := readXKeenGeneration(activeBinary, moduleDir)
 	if err != nil {
 		t.Fatalf("old generation: %v", err)
 	}
 	archivePath := writeTestGzipTar(t, []testTarEntry{
 		{name: "_xkeen/", kind: tar.TypeDir, mode: 0o755},
-		{name: "_xkeen/runtime.sh", kind: tar.TypeReg, mode: 0o755, contents: []byte("candidate shell text")},
+		{name: "_xkeen/runtime.sh", kind: tar.TypeReg, mode: 0o644, contents: []byte("candidate shell text")},
 		{name: "xkeen", kind: tar.TypeReg, mode: 0o755, contents: []byte("candidate binary text")},
 	})
 	archive, err := os.ReadFile(archivePath)
@@ -178,7 +187,7 @@ func TestXKeenApplySwapsOnlyTheManagedPairAndUsesFixedRuntime(t *testing.T) {
 	entry, identity := installableCatalogFixture(t, archive)
 	entry.ArchiveMembers = []XKeenArchiveMember{
 		{Name: "_xkeen/", Type: xkeenArchiveDirectory, Mode: 0o755},
-		{Name: "_xkeen/runtime.sh", Type: xkeenArchiveRegular, Mode: 0o755, Size: int64(len("candidate shell text"))},
+		{Name: "_xkeen/runtime.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: int64(len("candidate shell text"))},
 		{Name: "xkeen", Type: xkeenArchiveRegular, Mode: 0o755, Size: int64(len("candidate binary text"))},
 	}
 	probePath := filepath.Join(t.TempDir(), "candidate")
@@ -192,13 +201,16 @@ func TestXKeenApplySwapsOnlyTheManagedPairAndUsesFixedRuntime(t *testing.T) {
 	reviewedXKeenCompatibility[xkeenCompatibilityKey(xkeenCatalogBuildCommit, xkeenCatalogAsset)] = entry
 	resolver := &fakeXKeenResolver{identity: identity}
 	downloader := &fakeXKeenDownloader{archive: archive}
+	validator := &xkeenAssetAwareValidator{expectedAssetDir: assetDir, requiredAsset: assetFixture, requiredExpression: "ext:synthetic"}
+	authoritySnapshot := xrayTestAppliance()
+	authoritySnapshot.Routing.Rules[0].Domain = []string{"ext:synthetic"}
 	authorityProvider := &fakeXrayAuthority{snapshot: XrayAuthoritySnapshot{
-		Appliance: xrayTestAppliance(), Registry: xrayTestRegistry(t), Generation: sha256.Sum256([]byte("authority")),
+		Appliance: authoritySnapshot, Registry: xrayTestRegistry(t), Generation: sha256.Sum256([]byte("authority")),
 	}}
 	runtimeService := &fakeXrayRuntime{}
 	service := NewXKeenService(XKeenConfig{
 		Resolver: resolver, Downloader: downloader, Authority: authorityProvider, Runtime: runtimeService,
-		CandidateProbe: &fakeTransactionalProbe{}, CandidateValidator: &fakeXrayCandidateValidator{},
+		CandidateProbe: &fakeTransactionalProbe{}, CandidateValidator: validator,
 		AuthorityLease: authority.NewLease(), Coordinator: &fakeXrayCoordinator{},
 		ActiveBinaryPath: activeBinary, ModuleDir: moduleDir, LifecycleInitPath: initPath,
 		LegacyInitPath:    filepath.Join(root, "opt", "etc", "init.d", "S24xray"),
@@ -221,6 +233,15 @@ func TestXKeenApplySwapsOnlyTheManagedPairAndUsesFixedRuntime(t *testing.T) {
 	if actual, err := os.ReadFile(initPath); err != nil || string(actual) != "#!/bin/sh\nexit 0\n" {
 		t.Fatalf("fixed init changed = %q, %v", actual, err)
 	}
+	if actual, err := os.ReadFile(xrayBinary); err != nil || !bytes.Equal(actual, largeXray) {
+		t.Fatalf("preserved Xray changed: size=%d err=%v", len(actual), err)
+	}
+	if actual, err := os.ReadFile(assetFixture); err != nil || !bytes.Equal(actual, largeGeodata) {
+		t.Fatalf("preserved geodata changed: size=%d err=%v", len(actual), err)
+	}
+	if len(validator.assetDirs) != 1 || validator.assetDirs[0] != assetDir {
+		t.Fatalf("candidate validator asset dirs = %v, want %q", validator.assetDirs, assetDir)
+	}
 	if _, err := os.Stat(filepath.Join(root, "candidate-executed")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("candidate execution marker = %v", err)
 	}
@@ -237,6 +258,122 @@ func TestXKeenApplySwapsOnlyTheManagedPairAndUsesFixedRuntime(t *testing.T) {
 	if _, _, _, err := readXKeenMarker(markerPath); err != nil {
 		t.Fatalf("managed marker: %v", err)
 	}
+	if _, err := os.Lstat(stagingDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("staging root remains: %v", err)
+	}
+	state, err := InspectComponentRecovery(ComponentRecoveryConfig{
+		JournalPath: journalPath, RestoreJournalPath: filepath.Join(root, "opt", "etc", "xkeen-control", "state", "restore.json"),
+		XrayPreviousStagingPath: filepath.Join(root, "tmp", "xray.previous.staging"), XrayStagingDir: filepath.Join(root, "tmp", "xray"),
+		GeodataPreviousStagingPath: filepath.Join(root, "tmp", "geodata.previous.staging"), GeodataStagingDir: filepath.Join(root, "tmp", "geodata"),
+		XKeenPreviousStagingPath: previousDir + xkeenPreviousStagingSuffix, XKeenStagingDir: stagingDir,
+		XKeenActivationPath: activationPath, XKeenMarkerStagingPath: markerPath + xkeenMarkerStageSuffix,
+	})
+	if err != nil || state.Pending() {
+		t.Fatalf("shared recovery state after Apply = %+v, err=%v", state, err)
+	}
+}
+
+func TestXKeenPreservedFingerprintUsesDomainBoundsAndFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	xrayBinary := filepath.Join(root, "xray")
+	assetDir := filepath.Join(root, "dat")
+	if err := os.MkdirAll(assetDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	largeXray := bytes.Repeat([]byte("x"), MaxXKeenGenerationFileBytes+1)
+	largeGeodata := bytes.Repeat([]byte("g"), MaxXKeenGenerationFileBytes+1)
+	if err := os.WriteFile(xrayBinary, largeXray, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	assetFixture := filepath.Join(assetDir, "synthetic.dat")
+	if err := os.WriteFile(assetFixture, largeGeodata, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewXKeenService(XKeenConfig{
+		XrayBinaryPath: xrayBinary, XrayAssetDir: assetDir, PreservedPaths: []string{xrayBinary, assetDir},
+		LifecycleInitPath: filepath.Join(root, "init", "S05xkeen"), LegacyInitPath: filepath.Join(root, "init", "S24xray"),
+		SiblingModulePath: filepath.Join(root, "sbin", "_xkeen"), InstallHelperPath: filepath.Join(root, "root", "install.sh"),
+		JournalPath: filepath.Join(root, "state", "component-transaction.json"), RestoreJournalPath: filepath.Join(root, "state", "restore.json"),
+		StagingDir: filepath.Join(root, "staging"), PreviousDir: filepath.Join(root, "previous"), MarkerPath: filepath.Join(root, "state", "marker.json"),
+		ActivationPath: filepath.Join(root, "activation"),
+	})
+	first, err := service.preservedFingerprint()
+	if err != nil || first == "" {
+		t.Fatalf("large preserved state rejected: %v", err)
+	}
+	mutated := append([]byte(nil), largeGeodata...)
+	mutated[0] = 'm'
+	if err := os.WriteFile(assetFixture, mutated, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.preservedFingerprint()
+	if err != nil || second == first {
+		t.Fatalf("preserved drift was not detected: first=%q second=%q err=%v", first, second, err)
+	}
+	overflow := filepath.Join(assetDir, "overflow.dat")
+	file, err := os.OpenFile(overflow, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(MaxGeodataFileBytes + 1); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.preservedFingerprint(); !errors.Is(err, errXKeenPreservedChanged) {
+		t.Fatalf("preserved resource overflow error = %v", err)
+	}
+}
+
+func TestXKeenStartupSettlesOwnerOnlyStagingRoot(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("lifecycle permission fixture is qualified in the Linux container")
+	}
+	root := t.TempDir()
+	initPath := filepath.Join(root, "init", "S05xkeen")
+	stagingDir := filepath.Join(root, "staging")
+	if err := os.MkdirAll(filepath.Dir(initPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(initPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureXKeenOwnedDirectory(stagingDir, xkeenOwnerValue); err != nil {
+		t.Fatal(err)
+	}
+	journalPath := filepath.Join(root, "state", "component-transaction.json")
+	restorePath := filepath.Join(root, "state", "restore.json")
+	markerPath := filepath.Join(root, "state", "marker.json")
+	service := NewXKeenService(XKeenConfig{
+		LifecycleInitPath: initPath, LegacyInitPath: filepath.Join(root, "init", "S24xray"),
+		SiblingModulePath: filepath.Join(root, "sbin", "_xkeen"), InstallHelperPath: filepath.Join(root, "root", "install.sh"),
+		JournalPath: journalPath, RestoreJournalPath: restorePath, StagingDir: stagingDir,
+		PreviousDir: filepath.Join(root, "previous"), MarkerPath: markerPath, ActivationPath: filepath.Join(root, "activation"),
+	})
+	if err := service.Ready(); err == nil {
+		t.Fatal("owner-only staging was incorrectly ready before recovery")
+	}
+	if err := service.RecoverStartup(context.Background()); err != nil {
+		t.Fatalf("owner-only startup recovery: %v", err)
+	}
+	if _, err := os.Lstat(stagingDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("owner-only staging root remains: %v", err)
+	}
+	state, err := InspectComponentRecovery(ComponentRecoveryConfig{
+		JournalPath: journalPath, RestoreJournalPath: restorePath,
+		XrayPreviousStagingPath: filepath.Join(root, "xray.previous.staging"), XrayStagingDir: filepath.Join(root, "xray"),
+		GeodataPreviousStagingPath: filepath.Join(root, "geodata.previous.staging"), GeodataStagingDir: filepath.Join(root, "geodata"),
+		XKeenPreviousStagingPath: filepath.Join(root, "previous.staging"), XKeenStagingDir: stagingDir,
+		XKeenActivationPath: filepath.Join(root, "activation"), XKeenMarkerStagingPath: markerPath + ".staging",
+	})
+	if err != nil || state.Pending() {
+		t.Fatalf("shared recovery state after startup cleanup = %+v, err=%v", state, err)
+	}
+	if err := service.Ready(); err != nil {
+		t.Fatalf("service not ready after owner-only cleanup: %v", err)
+	}
 }
 
 func installableCatalogFixture(t *testing.T, contents []byte) (xkeenCompatibilityEntry, XKeenReleaseIdentity) {
@@ -252,7 +389,7 @@ func installableCatalogFixture(t *testing.T, contents []byte) (xkeenCompatibilit
 	entry.SHA256 = hex.EncodeToString(archiveDigest[:])
 	entry.GenerationSHA256 = strings.Repeat("a", 64)
 	entry.Installable = true
-	entry.ArchiveMembers = []XKeenArchiveMember{{Name: "_xkeen/", Type: xkeenArchiveDirectory, Mode: 0o755}, {Name: "_xkeen/empty", Type: xkeenArchiveRegular, Mode: 0o755, Size: 0}, {Name: "xkeen", Type: xkeenArchiveRegular, Mode: 0o755, Size: int64(len(contents))}}
+	entry.ArchiveMembers = []XKeenArchiveMember{{Name: "_xkeen/", Type: xkeenArchiveDirectory, Mode: 0o755}, {Name: "_xkeen/empty", Type: xkeenArchiveRegular, Mode: 0o644, Size: 0}, {Name: "xkeen", Type: xkeenArchiveRegular, Mode: 0o755, Size: int64(len(contents))}}
 	reviewedXKeenCompatibility[xkeenCompatibilityKey(xkeenCatalogBuildCommit, xkeenCatalogAsset)] = entry
 	t.Cleanup(func() {
 		reviewedXKeenCompatibility[xkeenCompatibilityKey(xkeenCatalogBuildCommit, xkeenCatalogAsset)] = original
@@ -288,6 +425,40 @@ func (d *fakeXKeenDownloader) DownloadXKeen(_ context.Context, _ XKeenReleaseIde
 	}
 	_, err := destination.Write(d.archive)
 	return err
+}
+
+type xkeenAssetAwareValidator struct {
+	expectedAssetDir   string
+	requiredAsset      string
+	requiredExpression string
+	assetDirs          []string
+}
+
+func (v *xkeenAssetAwareValidator) ValidateXrayCandidate(_ context.Context, _ string, configDir, assetDir string) error {
+	v.assetDirs = append(v.assetDirs, assetDir)
+	if assetDir != v.expectedAssetDir {
+		return fmt.Errorf("asset directory = %q, want %q", assetDir, v.expectedAssetDir)
+	}
+	routing, err := os.ReadFile(filepath.Join(configDir, "05_routing.json"))
+	if err != nil || !bytes.Contains(routing, []byte(v.requiredExpression)) {
+		return errors.New("candidate config has no required ext expression")
+	}
+	info, err := os.Lstat(v.requiredAsset)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return errors.New("required ext asset is unavailable")
+	}
+	return nil
+}
+
+func TestXKeenCatalogRejectsUnreviewedMemberModes(t *testing.T) {
+	entry, _ := installableCatalogFixture(t, []byte("catalog mode fixture"))
+	if err := validateXKeenCompatibilityEntry(entry); err != nil {
+		t.Fatalf("observed 0644 module mode rejected: %v", err)
+	}
+	entry.ArchiveMembers[1].Mode = 0o600
+	if err := validateXKeenCompatibilityEntry(entry); err == nil {
+		t.Fatal("unreviewed 0600 module mode accepted")
+	}
 }
 
 func TestXKeenBlobDecoderRequiresGitIdentityAndArchiveDigest(t *testing.T) {
@@ -353,12 +524,12 @@ func TestXKeenCanonicalGenerationIncludesEmptyRegularFiles(t *testing.T) {
 func TestXKeenStrictGzipTarReaderPinsMembersAndRejectsUnsafeTypes(t *testing.T) {
 	members := []XKeenArchiveMember{
 		{Name: "_xkeen/", Type: xkeenArchiveDirectory, Mode: 0o755},
-		{Name: "_xkeen/empty", Type: xkeenArchiveRegular, Mode: 0o755, Size: 0},
+		{Name: "_xkeen/empty", Type: xkeenArchiveRegular, Mode: 0o644, Size: 0},
 		{Name: "xkeen", Type: xkeenArchiveRegular, Mode: 0o755, Size: 6},
 	}
 	validEntries := []testTarEntry{
 		{name: "_xkeen/", kind: tar.TypeDir, mode: 0o755},
-		{name: "_xkeen/empty", kind: tar.TypeReg, mode: 0o755},
+		{name: "_xkeen/empty", kind: tar.TypeReg, mode: 0o644},
 		{name: "xkeen", kind: tar.TypeReg, mode: 0o755, contents: []byte("binary")},
 	}
 	t.Run("valid zero length regular", func(t *testing.T) {
@@ -370,7 +541,7 @@ func TestXKeenStrictGzipTarReaderPinsMembersAndRejectsUnsafeTypes(t *testing.T) 
 	t.Run("unknown member", func(t *testing.T) {
 		archive := writeTestGzipTar(t, []testTarEntry{
 			validEntries[0], validEntries[1],
-			{name: "_xkeen/extra", kind: tar.TypeReg, mode: 0o755, contents: []byte("x")},
+			{name: "_xkeen/extra", kind: tar.TypeReg, mode: 0o644, contents: []byte("x")},
 			validEntries[2],
 		})
 		if _, err := extractXKeenArchiveMembers(context.Background(), archive, filepath.Join(t.TempDir(), "candidate"), members); !errors.Is(err, errXKeenArchiveLayoutInvalid) {
@@ -380,7 +551,7 @@ func TestXKeenStrictGzipTarReaderPinsMembersAndRejectsUnsafeTypes(t *testing.T) 
 	t.Run("symlink", func(t *testing.T) {
 		archive := writeTestGzipTar(t, []testTarEntry{
 			validEntries[0],
-			{name: "_xkeen/empty", kind: tar.TypeSymlink, mode: 0o755, linkname: "xkeen"},
+			{name: "_xkeen/empty", kind: tar.TypeSymlink, mode: 0o644, linkname: "xkeen"},
 			validEntries[2],
 		})
 		if _, err := extractXKeenArchiveMembers(context.Background(), archive, filepath.Join(t.TempDir(), "candidate"), members); err == nil {

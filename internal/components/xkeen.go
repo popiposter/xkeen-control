@@ -509,7 +509,10 @@ func (s *XKeenService) Apply(ctx context.Context, intended XKeenReleaseIdentity)
 	if err != nil {
 		return err
 	}
-	defer s.removeOwned(prepared.stageDir)
+	defer func() {
+		_ = s.removeOwned(prepared.stageDir)
+		_ = s.removeEmptyStagingRoot()
+	}()
 	return s.applyPrepared(transactionContext, prepared)
 }
 
@@ -549,7 +552,10 @@ func (s *XKeenService) Rollback(ctx context.Context) error {
 	if err != nil {
 		return ErrXKeenCandidateRejected
 	}
-	defer s.removeOwned(candidatePath)
+	defer func() {
+		_ = s.removeOwned(candidatePath)
+		_ = s.removeEmptyStagingRoot()
+	}()
 	if err := s.validateLocalCandidate(transactionContext, candidatePath, base.authority); err != nil {
 		return ErrXKeenCandidateRejected
 	}
@@ -665,7 +671,7 @@ func readXKeenGeneration(binaryPath, modulePath string) (xkeenGenerationMetadata
 		if !info.Mode().IsRegular() || info.Size() > MaxXKeenGenerationFileBytes || total > MaxXKeenGenerationBytes-info.Size() {
 			return errXKeenGenerationInvalid
 		}
-		digest, count, err := hashXKeenFile(absolute, info.Size())
+		digest, count, err := hashXKeenFile(absolute, info.Size(), MaxXKeenGenerationFileBytes)
 		if err != nil {
 			return errXKeenGenerationInvalid
 		}
@@ -719,7 +725,7 @@ func walkXKeenDirectory(directory, relative string, entries *[]xkeenGenerationEn
 		if !childInfo.Mode().IsRegular() || childInfo.Size() > MaxXKeenGenerationFileBytes || *total > MaxXKeenGenerationBytes-childInfo.Size() {
 			return errXKeenGenerationInvalid
 		}
-		digest, count, err := hashXKeenFile(childPath, childInfo.Size())
+		digest, count, err := hashXKeenFile(childPath, childInfo.Size(), MaxXKeenGenerationFileBytes)
 		if err != nil {
 			return errXKeenGenerationInvalid
 		}
@@ -732,7 +738,10 @@ func walkXKeenDirectory(directory, relative string, entries *[]xkeenGenerationEn
 	return nil
 }
 
-func hashXKeenFile(filePath string, expected int64) (string, int64, error) {
+func hashXKeenFile(filePath string, expected, limit int64) (string, int64, error) {
+	if expected < 0 || limit <= 0 || expected > limit {
+		return "", 0, errXKeenGenerationInvalid
+	}
 	before, err := os.Lstat(filePath)
 	if err != nil || before.Mode()&os.ModeSymlink != 0 || !before.Mode().IsRegular() || before.Size() != expected {
 		return "", 0, errXKeenGenerationInvalid
@@ -747,7 +756,7 @@ func hashXKeenFile(filePath string, expected int64) (string, int64, error) {
 		return "", 0, errXKeenGenerationInvalid
 	}
 	digest := sha256.New()
-	count, copyErr := copyXKeenBytes(context.Background(), digest, file, MaxXKeenGenerationFileBytes)
+	count, copyErr := copyXKeenBytes(context.Background(), digest, file, limit)
 	closeErr := file.Close()
 	after, afterErr := os.Lstat(filePath)
 	if copyErr != nil || closeErr != nil || afterErr != nil || after.Mode()&os.ModeSymlink != 0 || !os.SameFile(before, after) || count != expected {
@@ -828,7 +837,7 @@ func extractXKeenArchiveMembers(ctx context.Context, archivePath, destination st
 	reader := tar.NewReader(gzipReader)
 	expected := make(map[string]XKeenArchiveMember, len(members))
 	for _, member := range members {
-		if member.Name == "" || member.Type != xkeenArchiveDirectory && member.Type != xkeenArchiveRegular || member.Size < 0 || member.Size > MaxXKeenArchiveMemberBytes || member.Type == xkeenArchiveDirectory && member.Size != 0 || member.Mode != 0o755 || validateXKeenArchiveName(member.Name, member.Type) != nil {
+		if member.Name == "" || member.Type != xkeenArchiveDirectory && member.Type != xkeenArchiveRegular || member.Size < 0 || member.Size > MaxXKeenArchiveMemberBytes || member.Type == xkeenArchiveDirectory && member.Size != 0 || !validXKeenArchiveMemberMode(member) || validateXKeenArchiveName(member.Name, member.Type) != nil {
 			return xkeenGenerationMetadata{}, errXKeenArchiveRejected
 		}
 		if _, duplicate := expected[member.Name]; duplicate {
@@ -1240,7 +1249,7 @@ func (s *XKeenService) validateLocalCandidate(ctx context.Context, candidatePath
 	if s.config.CandidateValidator == nil {
 		return ErrXKeenTransactionUnavailable
 	}
-	return s.config.CandidateValidator.ValidateXrayCandidate(ctx, s.config.XrayBinaryPath, s.config.XrayConfigDir, candidatePath)
+	return s.config.CandidateValidator.ValidateXrayCandidate(ctx, s.config.XrayBinaryPath, s.config.XrayConfigDir, s.config.XrayAssetDir)
 }
 
 func (s *XKeenService) downloadCandidate(ctx context.Context, identity XKeenReleaseIdentity, destinationPath string) error {
@@ -1297,10 +1306,12 @@ func (s *XKeenService) newStagingDir() (string, error) {
 	}
 	directory, err := os.MkdirTemp(s.config.StagingDir, ".xkeen-transaction-")
 	if err != nil {
+		_ = s.removeEmptyStagingRoot()
 		return "", err
 	}
 	if err := writeXKeenOwner(directory, xkeenOwnerValue); err != nil {
 		_ = os.RemoveAll(directory)
+		_ = s.removeEmptyStagingRoot()
 		return "", err
 	}
 	return directory, nil
@@ -1319,23 +1330,16 @@ func (s *XKeenService) stagingPresent() bool {
 func (s *XKeenService) previousStagingPresent() bool { return s.pathExists(s.stagingPath()) }
 
 func (s *XKeenService) componentStagingRootPresent() bool {
-	info, err := os.Lstat(s.config.StagingDir)
-	if errors.Is(err, os.ErrNotExist) {
-		return false
-	}
-	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return true
-	}
-	entries, err := os.ReadDir(s.config.StagingDir)
+	pending, _, err := componentXKeenStagingState(s.config.StagingDir)
+	return err != nil || pending
+}
+
+func (s *XKeenService) ownerOnlyStagingRoot() (bool, error) {
+	_, ownerOnly, err := componentXKeenStagingState(s.config.StagingDir)
 	if err != nil {
-		return true
+		return false, errXKeenActivationInvalid
 	}
-	for _, entry := range entries {
-		if entry.Name() != xkeenOwnerName {
-			return true
-		}
-	}
-	return false
+	return ownerOnly, nil
 }
 
 func (s *XKeenService) pathExists(filePath string) bool {
@@ -1648,8 +1652,13 @@ func copyBytesToOwnedFile(destination string, contents []byte, mode os.FileMode)
 }
 
 const (
-	maxXKeenPreservedEntries = 8192
-	maxXKeenPreservedBytes   = 64 << 20
+	maxXKeenPreservedEntries   = 8192
+	maxXKeenPreservedFileBytes = MaxGeodataFileBytes
+	maxXKeenPreservedRootBytes = MaxGeodataCandidateBytes
+	// Bound the complete preserved snapshot to one geodata-sized root, one
+	// Xray-sized binary and one additional bounded control tree. Individual
+	// roots still use their owning component limits below.
+	maxXKeenPreservedBytes = maxXKeenPreservedRootBytes + MaxXrayCandidateBinaryBytes + maxXKeenPreservedRootBytes
 )
 
 func (s *XKeenService) preservedFingerprint() (string, error) {
@@ -1672,6 +1681,10 @@ func (s *XKeenService) preservedFingerprint() (string, error) {
 	destination := sha256.New()
 	state := xkeenPreservedHashState{}
 	for _, configured := range paths {
+		limits := s.preservedLimits(configured)
+		state.rootBytes = 0
+		state.maxFileBytes = limits.maxFileBytes
+		state.maxRootBytes = limits.maxRootBytes
 		if err := hashXKeenPreservedPath(destination, configured, configured, &state); err != nil {
 			return "", err
 		}
@@ -1680,13 +1693,38 @@ func (s *XKeenService) preservedFingerprint() (string, error) {
 }
 
 type xkeenPreservedHashState struct {
-	entries int
-	bytes   int64
+	entries      int
+	bytes        int64
+	rootBytes    int64
+	maxFileBytes int64
+	maxRootBytes int64
+}
+
+type xkeenPreservedLimits struct {
+	maxFileBytes int64
+	maxRootBytes int64
+}
+
+func (s *XKeenService) preservedLimits(path string) xkeenPreservedLimits {
+	path = filepath.Clean(path)
+	if path == filepath.Clean(s.config.XrayBinaryPath) {
+		return xkeenPreservedLimits{maxFileBytes: MaxXrayCandidateBinaryBytes, maxRootBytes: MaxXrayCandidateBinaryBytes}
+	}
+	if path == filepath.Clean(s.config.XrayAssetDir) {
+		return xkeenPreservedLimits{maxFileBytes: MaxGeodataFileBytes, maxRootBytes: MaxGeodataCandidateBytes}
+	}
+	return xkeenPreservedLimits{maxFileBytes: maxXKeenPreservedFileBytes, maxRootBytes: maxXKeenPreservedRootBytes}
 }
 
 func hashXKeenPreservedPath(destination io.Writer, absolute, logical string, state *xkeenPreservedHashState) error {
 	if state == nil || state.entries >= maxXKeenPreservedEntries {
 		return errXKeenPreservedChanged
+	}
+	if state.maxFileBytes <= 0 {
+		state.maxFileBytes = maxXKeenPreservedFileBytes
+	}
+	if state.maxRootBytes <= 0 {
+		state.maxRootBytes = maxXKeenPreservedRootBytes
 	}
 	state.entries++
 	info, err := os.Lstat(absolute)
@@ -1721,14 +1759,16 @@ func hashXKeenPreservedPath(destination io.Writer, absolute, logical string, sta
 		}
 		return nil
 	}
-	if !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > MaxXKeenGenerationFileBytes || state.bytes > maxXKeenPreservedBytes-info.Size() {
+	if !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > state.maxFileBytes ||
+		state.rootBytes > state.maxRootBytes-info.Size() || state.bytes > maxXKeenPreservedBytes-info.Size() {
 		return errXKeenPreservedChanged
 	}
-	digest, count, err := hashXKeenFile(absolute, info.Size())
+	digest, count, err := hashXKeenFile(absolute, info.Size(), state.maxFileBytes)
 	if err != nil {
 		return errXKeenPreservedChanged
 	}
 	state.bytes += count
+	state.rootBytes += count
 	for _, value := range []string{logical, "file", fmt.Sprintf("%o", info.Mode().Perm()), fmt.Sprintf("%d", count), digest} {
 		if err := writeXKeenHashPart(destination, value); err != nil {
 			return err
@@ -2752,29 +2792,41 @@ func (s *XKeenService) RecoverStartup(ctx context.Context) error {
 	}
 	if !exists {
 		if s.stagingPresent() {
-			if !s.previousStagingPresent() || s.componentStagingRootPresent() || s.pathExists(s.config.ActivationPath) || s.pathExists(s.markerStagingPath()) {
+			ownerOnly, ownerErr := s.ownerOnlyStagingRoot()
+			if ownerErr != nil {
 				return s.recoveryFailure()
 			}
-			transactionContext, cancel := context.WithTimeout(ctx, s.config.TransactionTimeout)
-			defer cancel()
-			coordinator, authorityRelease, err := s.acquireRecovery(transactionContext)
-			if err != nil {
-				return s.recoveryFailure()
+			activationResidue := s.pathExists(s.config.ActivationPath) || s.pathExists(s.markerStagingPath())
+			if ownerOnly && !s.previousStagingPresent() && !activationResidue {
+				if err := s.removeEmptyStagingRoot(); err != nil {
+					return s.recoveryFailure()
+				}
+				s.releaseMaintenance()
+			} else {
+				if !s.previousStagingPresent() || s.componentStagingRootPresent() || activationResidue {
+					return s.recoveryFailure()
+				}
+				transactionContext, cancel := context.WithTimeout(ctx, s.config.TransactionTimeout)
+				defer cancel()
+				coordinator, authorityRelease, err := s.acquireRecovery(transactionContext)
+				if err != nil {
+					return s.recoveryFailure()
+				}
+				defer coordinator()
+				defer authorityRelease()
+				staged, err := s.loadGeneration(s.stagingPath())
+				if err != nil {
+					return s.recoveryFailure()
+				}
+				active, marker, _, err := s.readActiveGeneration()
+				if err != nil || !sameXKeenGeneration(active, staged.meta) || !bytes.Equal(marker, staged.marker) {
+					return s.recoveryFailure()
+				}
+				if err := s.removeOwnedAndSync(s.stagingPath()); err != nil {
+					return s.recoveryFailure()
+				}
+				s.releaseMaintenance()
 			}
-			defer coordinator()
-			defer authorityRelease()
-			staged, err := s.loadGeneration(s.stagingPath())
-			if err != nil {
-				return s.recoveryFailure()
-			}
-			active, marker, _, err := s.readActiveGeneration()
-			if err != nil || !sameXKeenGeneration(active, staged.meta) || !bytes.Equal(marker, staged.marker) {
-				return s.recoveryFailure()
-			}
-			if err := s.removeOwnedAndSync(s.stagingPath()); err != nil {
-				return s.recoveryFailure()
-			}
-			s.releaseMaintenance()
 		}
 		if s.isMaintenance() {
 			return s.recoveryFailure()

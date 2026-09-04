@@ -186,10 +186,15 @@ func InspectComponentRecovery(config ComponentRecoveryConfig) (ComponentRecovery
 		if config.XKeenPreviousStagingPath == "" || config.XKeenStagingDir == "" || config.XKeenActivationPath == "" || config.XKeenMarkerStagingPath == "" {
 			return ComponentRecoveryState{}, errComponentRecoveryInvalid
 		}
-		xkeenStaging, err = componentStagingPresent(config.XKeenPreviousStagingPath, config.XKeenStagingDir)
-		if err != nil {
-			return ComponentRecoveryState{}, err
+		previous, previousErr := componentPathPresent(config.XKeenPreviousStagingPath)
+		if previousErr != nil {
+			return ComponentRecoveryState{}, previousErr
 		}
+		root, _, rootErr := componentXKeenStagingState(config.XKeenStagingDir)
+		if rootErr != nil {
+			return ComponentRecoveryState{}, rootErr
+		}
+		xkeenStaging = previous || root
 		for _, path := range []string{config.XKeenActivationPath, config.XKeenMarkerStagingPath} {
 			present, pathErr := componentPathPresent(path)
 			if pathErr != nil {
@@ -338,6 +343,35 @@ func componentStagingRootPresent(path string) (bool, error) {
 		return false, errComponentRecoveryInvalid
 	}
 	return len(entries) > 0, nil
+}
+
+// componentXKeenStagingState is the ownership-aware shared view of the
+// XKeen component staging root. A root containing only the exact product
+// owner marker is still pending: startup recovery must remove it after
+// proving ownership. Invalid owner-only content is not guessed around.
+func componentXKeenStagingState(path string) (pending, ownerOnly bool, err error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, false, nil
+	}
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return false, false, errComponentRecoveryInvalid
+	}
+	if err := checkPrivateComponentDirectory(path); err != nil {
+		return false, false, errComponentRecoveryInvalid
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return false, false, errComponentRecoveryInvalid
+	}
+	if len(entries) == 1 && entries[0].Name() == xkeenOwnerName {
+		contents, readErr := readPrivateComponentFile(filepath.Join(path, xkeenOwnerName), MaxXKeenMarkerBytes)
+		if readErr != nil || !bytes.Equal(contents, []byte(xkeenOwnerValue)) {
+			return false, false, errComponentRecoveryInvalid
+		}
+		return true, true, nil
+	}
+	return len(entries) > 0, false, nil
 }
 
 // componentTransactionPresent remains a small local existence helper used by

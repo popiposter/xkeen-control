@@ -113,7 +113,7 @@ func validateXKeenCompatibilityEntry(entry xkeenCompatibilityEntry) error {
 		hasModuleRoot := false
 		for _, member := range entry.ArchiveMembers {
 			if member.Name == "" || member.Size < 0 || member.Size > MaxXKeenArchiveMemberBytes ||
-				member.Mode != 0o755 || (member.Type != xkeenArchiveDirectory && member.Type != xkeenArchiveRegular) {
+				!validXKeenArchiveMemberMode(member) || (member.Type != xkeenArchiveDirectory && member.Type != xkeenArchiveRegular) {
 				return errors.New("invalid XKeen compatibility catalog member")
 			}
 			if member.Type == xkeenArchiveDirectory && member.Size != 0 {
@@ -138,6 +138,21 @@ func validateXKeenCompatibilityEntry(entry xkeenCompatibilityEntry) error {
 		}
 	}
 	return nil
+}
+
+// The reviewed upstream packaging preserves ordinary module files as 0644,
+// makes the top-level executable 0755, and creates directories as 0755. The
+// catalog still pins one exact mode on every member; this helper only rejects
+// modes outside that reviewed packaging vocabulary.
+func validXKeenArchiveMemberMode(member XKeenArchiveMember) bool {
+	switch member.Type {
+	case xkeenArchiveDirectory:
+		return member.Mode == 0o755
+	case xkeenArchiveRegular:
+		return member.Mode == 0o644 || member.Mode == 0o755
+	default:
+		return false
+	}
 }
 
 func installableXKeenEntry(identity XKeenReleaseIdentity) (xkeenCompatibilityEntry, error) {
