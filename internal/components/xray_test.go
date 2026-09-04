@@ -792,11 +792,13 @@ func (p *fakeTransactionalProbe) ProbeXrayCandidate(_ context.Context, binary st
 type fakeXrayCandidateValidator struct {
 	calls     int
 	seenFiles map[string]struct{}
+	assetDirs []string
 	err       error
 }
 
-func (v *fakeXrayCandidateValidator) ValidateXrayCandidate(_ context.Context, _ string, configDir, _ string) error {
+func (v *fakeXrayCandidateValidator) ValidateXrayCandidate(_ context.Context, _ string, configDir, assetDir string) error {
 	v.calls++
+	v.assetDirs = append(v.assetDirs, assetDir)
 	if v.err != nil {
 		return v.err
 	}
@@ -835,6 +837,7 @@ type fakeXrayRuntime struct {
 	cancelOnRestart context.CancelFunc
 	cancelOnce      sync.Once
 	firstRestartErr error
+	restartMutation func()
 }
 
 func (r *fakeXrayRuntime) ValidateActiveConfig(context.Context) error {
@@ -845,6 +848,11 @@ func (r *fakeXrayRuntime) Restart(context.Context) error {
 	r.restartCalls++
 	if r.cancelOnRestart != nil {
 		r.cancelOnce.Do(r.cancelOnRestart)
+	}
+	if r.restartMutation != nil {
+		mutation := r.restartMutation
+		r.restartMutation = nil
+		mutation()
 	}
 	if r.restartCalls == 1 && r.firstRestartErr != nil {
 		return r.firstRestartErr

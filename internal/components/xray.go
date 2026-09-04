@@ -187,6 +187,8 @@ type XrayConfig struct {
 	JournalPath        string
 	StagingDir         string
 	RestoreJournalPath string
+	MutationGate       *ComponentMutationGate
+	Maintenance        *ComponentMaintenance
 
 	AuthorityWaitTimeout time.Duration
 	PrepareTimeout       time.Duration
@@ -202,7 +204,7 @@ type XrayConfig struct {
 type XrayService struct {
 	config XrayConfig
 
-	mutationGate chan struct{}
+	mutationGate *ComponentMutationGate
 	startupMu    sync.Mutex
 	mu           sync.Mutex
 	ready        bool
@@ -280,16 +282,19 @@ func NewXrayService(config XrayConfig) *XrayService {
 	if config.SyncDirectory == nil {
 		config.SyncDirectory = syncDirectory
 	}
-	service := &XrayService{config: config, mutationGate: make(chan struct{}, 1), ready: true}
-	componentPresent, componentErr := componentTransactionPresent(config.JournalPath)
+	if config.MutationGate == nil {
+		config.MutationGate = NewComponentMutationGate()
+	}
+	service := &XrayService{config: config, mutationGate: config.MutationGate, ready: true}
+	componentKind, componentPresent, componentErr := componentJournalKind(config.JournalPath)
 	restorePresent, restoreErr := componentTransactionPresent(config.RestoreJournalPath)
-	if componentErr != nil || restoreErr != nil {
+	if componentErr != nil || restoreErr != nil || (componentPresent && componentKind != KindXray) && service.stagingPresent() {
 		service.ready = false
 		service.readyErr = ErrXrayRecoveryFailed
 		service.enterMaintenance()
 		return service
 	}
-	if componentPresent || service.stagingPresent() {
+	if (componentPresent && componentKind == KindXray) || service.stagingPresent() {
 		service.ready = false
 		if restorePresent {
 			service.readyErr = ErrXrayRecoveryConflict
@@ -330,9 +335,12 @@ func (s *XrayService) HasPendingRecovery() (bool, error) {
 	if s == nil {
 		return false, ErrXrayTransactionUnavailable
 	}
-	present, err := componentTransactionPresent(s.config.JournalPath)
-	if err != nil || present {
-		return present, err
+	kind, present, err := componentJournalKind(s.config.JournalPath)
+	if err != nil {
+		return false, err
+	}
+	if present && kind == KindXray {
+		return true, nil
 	}
 	return s.stagingPresent(), nil
 }
@@ -429,6 +437,13 @@ func (s *XrayService) RecoverStartup(ctx context.Context) error {
 	}
 	defer releaseMutation()
 
+	componentKind, componentPresent, componentErr := componentJournalKind(s.config.JournalPath)
+	if componentErr != nil {
+		return s.recoveryFailure()
+	}
+	if componentPresent && componentKind != KindXray && s.stagingPresent() {
+		return s.recoveryFailureWith(ErrXrayRecoveryConflict)
+	}
 	journal, exists, err := s.readJournal()
 	if err != nil {
 		return s.recoveryFailure()
@@ -439,6 +454,9 @@ func (s *XrayService) RecoverStartup(ctx context.Context) error {
 	}
 	if !exists {
 		if s.stagingPresent() {
+			if !s.previousStagingPresent() || s.componentStagingRootPresent() {
+				return s.recoveryFailure()
+			}
 			transactionContext, cancel := context.WithTimeout(ctx, s.config.TransactionTimeout)
 			defer cancel()
 			releaseCoordinator, releaseAuthority, err := s.acquireRecovery(transactionContext)
@@ -544,6 +562,9 @@ func (s *XrayService) RecoverStartup(ctx context.Context) error {
 		}
 	}
 	if err := s.removeOwned(s.stagingPath()); err != nil {
+		return s.recoveryFailure()
+	}
+	if err := s.removeOwned(s.config.StagingDir); err != nil {
 		return s.recoveryFailure()
 	}
 	s.releaseMaintenance()
@@ -815,6 +836,7 @@ func (s *XrayService) runCommitted(ctx context.Context, operation string, base x
 	// active bytes still equal the staged pre-operation generation, then
 	// discards the abandoned staging directory.
 	if err := s.inject(XrayStagePreviousStaging); err != nil {
+		s.failClosed()
 		s.markNotReady(ErrXrayRecoveryRequired)
 		return ErrXrayApplyFailed
 	}
@@ -827,6 +849,15 @@ func (s *XrayService) runCommitted(ctx context.Context, operation string, base x
 		Candidate:     candidate,
 	}
 	if err := s.writeJournal(journal); err != nil {
+		present, presentErr := componentTransactionPresent(s.config.JournalPath)
+		if presentErr != nil {
+			return s.recoveryFailure()
+		}
+		if present {
+			if clearErr := s.clearJournal(); clearErr != nil {
+				return s.recoveryFailure()
+			}
+		}
 		if cleanupErr := s.removeOwned(s.stagingPath()); cleanupErr != nil {
 			return s.recoveryFailure()
 		}
@@ -979,13 +1010,11 @@ func (s *XrayService) acquireMutation(ctx context.Context) (func(), error) {
 	if s == nil {
 		return nil, ErrXrayTransactionUnavailable
 	}
-	select {
-	case s.mutationGate <- struct{}{}:
-		var once sync.Once
-		return func() { once.Do(func() { <-s.mutationGate }) }, nil
-	case <-ctx.Done():
+	release, err := s.mutationGate.Acquire(ctx)
+	if err != nil {
 		return nil, ErrXrayBusy
 	}
+	return release, nil
 }
 
 func (s *XrayService) acquireApply(ctx context.Context) (func(), func(), error) {
@@ -1075,12 +1104,21 @@ func (s *XrayService) inject(stage XrayStage) error {
 
 func (s *XrayService) enterMaintenance() {
 	s.mu.Lock()
+	if s.maintenance {
+		s.ready = false
+		s.mu.Unlock()
+		return
+	}
 	s.maintenance = true
 	s.ready = false
 	if s.readyErr == nil {
 		s.readyErr = ErrXrayRecoveryFailed
 	}
 	s.mu.Unlock()
+	if s.config.Maintenance != nil {
+		s.config.Maintenance.Enter(KindXray)
+		return
+	}
 	if s.config.AuthorityLease != nil {
 		s.config.AuthorityLease.Block()
 	}
@@ -1097,6 +1135,10 @@ func (s *XrayService) releaseMaintenance() {
 	}
 	s.maintenance = false
 	s.mu.Unlock()
+	if s.config.Maintenance != nil {
+		s.config.Maintenance.Exit(KindXray)
+		return
+	}
 	if gate, ok := s.config.Coordinator.(XrayMaintenanceGate); ok {
 		gate.ExitMaintenance()
 	}
@@ -1131,8 +1173,8 @@ func (s *XrayService) markNotReady(err error) {
 }
 
 func (s *XrayService) recoveryJournalExists() bool {
-	present, _ := componentTransactionPresent(s.config.JournalPath)
-	return present
+	kind, present, _ := componentJournalKind(s.config.JournalPath)
+	return present && kind == KindXray
 }
 
 type xrayBinaryMetadata struct {
@@ -1934,6 +1976,18 @@ func (s *XrayService) writeJournal(journal xrayTransactionJournal) error {
 }
 
 func (s *XrayService) readJournal() (xrayTransactionJournal, bool, error) {
+	kind, present, err := componentJournalKind(s.config.JournalPath)
+	if err != nil {
+		return xrayTransactionJournal{}, false, errXrayJournalInvalid
+	}
+	if !present {
+		return xrayTransactionJournal{}, false, nil
+	}
+	if kind != KindXray {
+		// The shared startup arbiter dispatches a geodata journal to geodata.
+		// Xray deliberately treats it as not-owned and never clears or blocks it.
+		return xrayTransactionJournal{}, false, nil
+	}
 	contents, err := readPrivateComponentFile(s.config.JournalPath, MaxComponentJournalBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return xrayTransactionJournal{}, false, nil
@@ -1986,24 +2040,20 @@ func (s *XrayService) clearJournal() error {
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		return errXrayJournalInvalid
 	}
+	contents, readErr := readPrivateComponentFile(s.config.JournalPath, MaxComponentJournalBytes)
+	if readErr != nil {
+		return errXrayJournalInvalid
+	}
 	if err := os.Remove(s.config.JournalPath); err != nil {
 		return err
 	}
-	return s.config.SyncDirectory(filepath.Dir(s.config.JournalPath))
-}
-
-func componentTransactionPresent(path string) (bool, error) {
-	if path == "" {
-		return false, errXrayJournalInvalid
+	if err := s.config.SyncDirectory(filepath.Dir(s.config.JournalPath)); err != nil {
+		if restoreErr := writeAtomicComponentFile(s.config.JournalPath, contents, 0o600, s.config.SyncDirectory); restoreErr != nil {
+			return restoreErr
+		}
+		return err
 	}
-	_, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
+	return nil
 }
 
 func ownedRegularPath(path string) bool {
@@ -2050,8 +2100,24 @@ func (s *XrayService) pathPresent(path string) (bool, error) {
 }
 
 func (s *XrayService) stagingPresent() bool {
+	return s.previousStagingPresent() || s.componentStagingRootPresent()
+}
+
+func (s *XrayService) previousStagingPresent() bool {
 	info, err := os.Lstat(s.stagingPath())
-	return err == nil && info != nil
+	return err == nil && info != nil && info.Mode()&os.ModeSymlink == 0
+}
+
+func (s *XrayService) componentStagingRootPresent() bool {
+	info, err := os.Lstat(s.config.StagingDir)
+	if err != nil {
+		return false
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return true
+	}
+	entries, err := os.ReadDir(s.config.StagingDir)
+	return err != nil || len(entries) > 0
 }
 
 func (s *XrayService) saveDisplacedGeneration(source, expectedVersion string) error {
