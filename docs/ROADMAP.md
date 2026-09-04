@@ -42,7 +42,7 @@ public source + signed GitHub Releases (#2, done)
         ↓
 local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
-managed XKeen / Xray / geodata lifecycle (#4, active; Phases A+B+C+D+E0 source merged, Phase E1 next)
+managed XKeen / Xray / geodata lifecycle (#4, active; Phases A+B+C+D+E0+E1 source merged, Phase E2 next)
         ↓
 visual typed configuration + transactional render/apply (#5, planned)
 ```
@@ -58,7 +58,7 @@ visual typed configuration + transactional render/apply (#5, planned)
 | Pre-D — canonical Go module/import identity | Done | Issue #8 / PR #9 | Canonical `github.com/popiposter/xkeen-control` provenance; no runtime behavior change |
 | D — releases/bootstrap/panel self-update | Done | Issue #2 / `v0.1.1` | Public signed Releases, CI/release pipeline, one-command bootstrap, setup mode, transactional panel update/rollback |
 | D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
-| D.2 — component lifecycle | **Active — Phases A+B+C+D+E0 source merged; Phase E1 next** | Issue #4 / `main` `c320df4…` | Read-only inventory + trusted checks, transactional Xray and complete geodata cores, and corrected jameszeroX dev XKeen authority are merged; transactional XKeen core is next; component mutation remains not deployed |
+| D.2 — component lifecycle | **Active — Phases A+B+C+D+E0+E1 source merged; Phase E2 next** | Issue #4 / `main` `527b8b7…` | Read-only inventory + trusted checks, transactional Xray/geodata/XKeen cores and corrected jameszeroX dev authority are merged; exact dev artifact catalog qualification is next; component mutation remains not deployed |
 | D.3 — visual configuration | Planned | Issue #5 | Planned typed routing/DNS/XKeen/Xray/panel/performance UI and deterministic render/apply; not deployed |
 | E — notifications/security hardening | Planned after D.3 | master issue #1 | Outbound alerts, management-VPN guidance, final attack-surface hardening |
 
@@ -91,7 +91,7 @@ Safe export excludes secrets by default; secret-bearing export is explicit and e
 
 Pre-adoption compatibility is explicit: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit and unknown/manual drift fails closed.
 
-## D.2 / Issue #4 — active; Phases A+B+C+D+E0 source merged, Phase E1 next
+## D.2 / Issue #4 — active; Phases A+B+C+D+E0+E1 source merged, Phase E2 next
 
 Phase A merged via PR #23 to `main` `bda9dd0cc7bb142a4cb1468811fff9b5146b1e8e`; source main gained the bounded read-only component inventory and authenticated `GET /api/v1/components` for panel, XKeen, Xray, geodata, KeeneticOS and Entware.
 
@@ -103,11 +103,13 @@ Phase D merged via PR #29 to `main` `6091b3f28e9f5e2285732e6bdc5118fca3e896b9`. 
 
 Phase E0 merged via PR #31 to `main` `c320df478e33482a61b78e44abcee83a1093180e`. Source main now describes the actual supported XKeen development authority: fixed `jameszeroX/XKeen` / `dev`, current `S05xkeen` lifecycle layout with `S24xray` treated only as legacy/mixed state, and a GitHub-verified exact build/source/blob metadata projection for fixed `test/xkeen.tar.gz`. E0 remains read-only/informational: it downloads no archive bytes and exposes no install/update/rollback authorization.
 
+Phase E1 merged via PR #33 to `main` `527b8b75b6a1f9126b636583be202be23ef58ae8`. Source main now also contains the internal transactional XKeen update/rollback core: fixed exact jameszeroX dev build/tree/blob resolution and transport, strict GNU-tar/file-only qualification, canonical managed `xkeen + .xkeen` generation/marker, preserved `S05xkeen` runtime convergence, shared `xray|geodata|xkeen` component journal/recovery arbitration, one previous XKeen generation and rollback/startup recovery. Candidate `xkeen` is not executed for convergence, and D.1/Xray/geodata/config/opkg/cron/panel/unrelated Entware state remains outside XKeen ownership. The initial real `2.0.1/Beta` catalog entry intentionally remains `Installable=false` until its exact archive SHA-256, real member manifest and canonical generation digest are independently pinned.
+
 These source-main capabilities are not a new stable release or production-qualification claim. Current production still has no #4 component update/install/rollback controls; signed stable production remains D.1 `v0.2.0`.
 
-The next review boundary is Phase E1: an internal transactional **XKeen** update/rollback primitive for product-reviewed exact `jameszeroX/XKeen` dev build entries. It extends the existing component mutation gate, Coordinator → authority-lease order, single component journal/recovery arbiter and one-previous-generation model. E1 owns only the managed `xkeen + .xkeen` generation plus its product marker; `S05xkeen`, user XKeen config, Xray/geodata, D.1 authorities, opkg state and cron remain preserved. E1 adds no HTTP/UI/scheduler/Setup Mode mutation and makes no production-qualified claim.
+The next review boundary is Phase E2: independently qualify the immutable `jameszeroX/XKeen` dev artifact already pinned by E0/E1 and activate exactly one product catalog entry. E2 must reproduce the exact Git blob bytes, archive SHA-256, complete GNU-tar file-only `(name,type,mode,size)` manifest and canonical installed-generation digest; only then may that one entry become `Installable=true`. The existing read-only Check may mark only the exact catalog-matching moving dev build eligible, while `MutationAvailable` stays false because operator mutation remains Phase F. No HTTP/UI/scheduler/Setup Mode or production router mutation belongs in E2.
 
-Detailed Phase E1 architecture, trust, transaction/recovery and acceptance are in Issue #4 comment `5540141932`; factual jameszeroX dev source/layout correction is comment `5538828870`. Older Phase E comment `5538006418` is subordinate only where its transaction/recovery requirements do not conflict with these newer authorities.
+Detailed Phase E2 qualification/catalog authority is Issue #4 comment `5544682382`. Phase E1 transaction/recovery authority remains comments `5540141932` and `5540184800`; factual jameszeroX dev source/layout correction remains comment `5538828870`.
 
 ## D.3 / Issue #5 — planned, not deployed
 
