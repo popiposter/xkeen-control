@@ -110,14 +110,11 @@ func validateXKeenCompatibilityEntry(entry xkeenCompatibilityEntry) error {
 	if entry.Installable {
 		seen := make(map[string]struct{}, len(entry.ArchiveMembers))
 		hasBinary := false
-		hasModuleRoot := false
+		hasModuleMember := false
 		for _, member := range entry.ArchiveMembers {
-			if member.Name == "" || member.Size < 0 || member.Size > MaxXKeenArchiveMemberBytes ||
-				!validXKeenArchiveMemberMode(member) || (member.Type != xkeenArchiveDirectory && member.Type != xkeenArchiveRegular) {
+			if member.Name == "" || member.Type != xkeenArchiveRegular || member.Size < 0 || member.Size > MaxXKeenArchiveMemberBytes ||
+				!validXKeenArchiveMemberMode(member) {
 				return errors.New("invalid XKeen compatibility catalog member")
-			}
-			if member.Type == xkeenArchiveDirectory && member.Size != 0 {
-				return errors.New("XKeen directory catalog member has a non-zero size")
 			}
 			if _, ok := seen[member.Name]; ok {
 				return errors.New("duplicate XKeen compatibility catalog member")
@@ -129,30 +126,23 @@ func validateXKeenCompatibilityEntry(entry xkeenCompatibilityEntry) error {
 			if member.Name == "xkeen" && member.Type == xkeenArchiveRegular {
 				hasBinary = true
 			}
-			if member.Name == "_xkeen/" && member.Type == xkeenArchiveDirectory {
-				hasModuleRoot = true
+			if strings.HasPrefix(member.Name, "_xkeen/") && member.Type == xkeenArchiveRegular {
+				hasModuleMember = true
 			}
 		}
-		if !hasBinary || !hasModuleRoot {
+		if !hasBinary || !hasModuleMember {
 			return errors.New("installable XKeen entry lacks required pair roots")
 		}
 	}
 	return nil
 }
 
-// The reviewed upstream packaging preserves ordinary module files as 0644,
-// makes the top-level executable 0755, and creates directories as 0755. The
-// catalog still pins one exact mode on every member; this helper only rejects
-// modes outside that reviewed packaging vocabulary.
+// The pinned upstream workflow emits a GNU-tar file-only archive. It preserves
+// ordinary module files as 0644 and makes only the top-level executable 0755.
+// The catalog still pins one exact mode on every member; this helper only
+// rejects modes outside that reviewed packaging vocabulary.
 func validXKeenArchiveMemberMode(member XKeenArchiveMember) bool {
-	switch member.Type {
-	case xkeenArchiveDirectory:
-		return member.Mode == 0o755
-	case xkeenArchiveRegular:
-		return member.Mode == 0o644 || member.Mode == 0o755
-	default:
-		return false
-	}
+	return member.Type == xkeenArchiveRegular && (member.Mode == 0o644 || member.Mode == 0o755)
 }
 
 func installableXKeenEntry(identity XKeenReleaseIdentity) (xkeenCompatibilityEntry, error) {

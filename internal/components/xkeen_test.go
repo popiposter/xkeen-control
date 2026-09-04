@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -140,6 +141,15 @@ func TestXKeenApplySwapsOnlyTheManagedPairAndUsesFixedRuntime(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	activeParent := filepath.Dir(activeBinary)
+	if err := os.Chmod(activeParent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	parentInfo, err := os.Lstat(activeParent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentMode := parentInfo.Mode()
 	if err := os.WriteFile(activeBinary, []byte("old-xkeen"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -176,9 +186,8 @@ func TestXKeenApplySwapsOnlyTheManagedPairAndUsesFixedRuntime(t *testing.T) {
 		t.Fatalf("old generation: %v", err)
 	}
 	archivePath := writeTestGzipTar(t, []testTarEntry{
-		{name: "_xkeen/", kind: tar.TypeDir, mode: 0o755},
-		{name: "_xkeen/runtime.sh", kind: tar.TypeReg, mode: 0o644, contents: []byte("candidate shell text")},
-		{name: "xkeen", kind: tar.TypeReg, mode: 0o755, contents: []byte("candidate binary text")},
+		{name: "_xkeen/runtime.sh", kind: tar.TypeReg, mode: 0o644, format: tar.FormatGNU, contents: []byte("candidate shell text")},
+		{name: "xkeen", kind: tar.TypeReg, mode: 0o755, format: tar.FormatGNU, contents: []byte("candidate binary text")},
 	})
 	archive, err := os.ReadFile(archivePath)
 	if err != nil {
@@ -186,7 +195,6 @@ func TestXKeenApplySwapsOnlyTheManagedPairAndUsesFixedRuntime(t *testing.T) {
 	}
 	entry, identity := installableCatalogFixture(t, archive)
 	entry.ArchiveMembers = []XKeenArchiveMember{
-		{Name: "_xkeen/", Type: xkeenArchiveDirectory, Mode: 0o755},
 		{Name: "_xkeen/runtime.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: int64(len("candidate shell text"))},
 		{Name: "xkeen", Type: xkeenArchiveRegular, Mode: 0o755, Size: int64(len("candidate binary text"))},
 	}
@@ -224,6 +232,7 @@ func TestXKeenApplySwapsOnlyTheManagedPairAndUsesFixedRuntime(t *testing.T) {
 	if err := service.Apply(context.Background(), identity); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
+	assertXKeenPathMode(t, activeParent, parentMode)
 	if actual, err := os.ReadFile(activeBinary); err != nil || string(actual) != "candidate binary text" {
 		t.Fatalf("active xkeen = %q, %v", actual, err)
 	}
@@ -270,6 +279,59 @@ func TestXKeenApplySwapsOnlyTheManagedPairAndUsesFixedRuntime(t *testing.T) {
 	})
 	if err != nil || state.Pending() {
 		t.Fatalf("shared recovery state after Apply = %+v, err=%v", state, err)
+	}
+	if err := service.Rollback(context.Background()); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	assertXKeenPathMode(t, activeParent, parentMode)
+	if actual, err := os.ReadFile(activeBinary); err != nil || string(actual) != "old-xkeen" {
+		t.Fatalf("rolled-back xkeen = %q, %v", actual, err)
+	}
+	if actual, err := os.ReadFile(filepath.Join(moduleDir, "old.sh")); err != nil || string(actual) != "old-module" {
+		t.Fatalf("rolled-back module = %q, %v", actual, err)
+	}
+
+	service.config.InjectFailure = func(stage XKeenStage) error {
+		if stage == XKeenStageFilesCommitted {
+			return errors.New("ordinary activation failure")
+		}
+		return nil
+	}
+	if err := service.Apply(context.Background(), identity); !errors.Is(err, ErrXKeenApplyFailed) {
+		t.Fatalf("ordinary failure error = %v", err)
+	}
+	service.config.InjectFailure = nil
+	assertXKeenPathMode(t, activeParent, parentMode)
+	if actual, err := os.ReadFile(activeBinary); err != nil || string(actual) != "old-xkeen" {
+		t.Fatalf("failed apply changed xkeen = %q, %v", actual, err)
+	}
+
+	base, err := service.captureBase(context.Background())
+	if err != nil {
+		t.Fatalf("capture recovery base: %v", err)
+	}
+	current, currentMarker, _, err := service.readActiveGeneration()
+	if err != nil {
+		t.Fatalf("read recovery current: %v", err)
+	}
+	previous, err = service.loadPreviousGeneration()
+	if err != nil {
+		t.Fatalf("read recovery previous: %v", err)
+	}
+	if err := service.writeJournal(xkeenTransactionJournal{
+		SchemaVersion: XKeenTransactionSchemaVersion, Component: string(KindXKeen), Operation: xkeenOperationUpdate, Phase: xkeenPhasePrepared,
+		Previous: makeXKeenGenerationSummary(previous.meta, previous.marker), Candidate: makeXKeenGenerationSummary(current, currentMarker),
+		AuthorityGeneration: hex.EncodeToString(base.authority.Generation[:]), PreservedFingerprint: base.preservedFingerprint, Xray: base.xray,
+	}); err != nil {
+		t.Fatalf("write recovery journal: %v", err)
+	}
+	restarted := NewXKeenService(service.config)
+	if err := restarted.RecoverStartup(context.Background()); err != nil {
+		t.Fatalf("startup recovery: %v", err)
+	}
+	assertXKeenPathMode(t, activeParent, parentMode)
+	if err := restarted.Ready(); err != nil {
+		t.Fatalf("restarted service not ready: %v", err)
 	}
 }
 
@@ -324,6 +386,101 @@ func TestXKeenPreservedFingerprintUsesDomainBoundsAndFailsClosed(t *testing.T) {
 	}
 	if _, err := service.preservedFingerprint(); !errors.Is(err, errXKeenPreservedChanged) {
 		t.Fatalf("preserved resource overflow error = %v", err)
+	}
+}
+
+func TestXKeenFreeSpaceUsesUncompressedGenerationBeforeJournal(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("free-space filesystem grouping is qualified in the Linux container")
+	}
+	root := t.TempDir()
+	activeBinary := filepath.Join(root, "opt", "sbin", "xkeen")
+	moduleDir := filepath.Join(root, "opt", "sbin", ".xkeen")
+	initPath := filepath.Join(root, "opt", "etc", "init.d", "S05xkeen")
+	xrayBinary := filepath.Join(root, "opt", "sbin", "xray")
+	previousDir := filepath.Join(root, "opt", "etc", "xkeen-control", "previous", "components", "xkeen")
+	journalPath := filepath.Join(root, "opt", "etc", "xkeen-control", "state", "component-transaction.json")
+	stagingDir := filepath.Join(root, "tmp", "xkeen-control", "components", "xkeen")
+	markerPath := filepath.Join(root, "opt", "etc", "xkeen-control", "state", "xkeen-generation.json")
+	for _, directory := range []string{filepath.Dir(activeBinary), moduleDir, filepath.Dir(initPath), filepath.Dir(xrayBinary), filepath.Dir(previousDir), filepath.Dir(journalPath)} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(activeBinary, []byte("old-xkeen"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleDir, "old.sh"), []byte("old-module"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(initPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(xrayBinary, []byte("old-xray"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	archiveEntries := make([]testTarEntry, 0, 5)
+	archiveMembers := make([]XKeenArchiveMember, 0, 5)
+	payload := bytes.Repeat([]byte("compressible-generation\n"), 36*1024)
+	archiveEntries = append(archiveEntries, testTarEntry{name: "xkeen", kind: tar.TypeReg, mode: 0o755, format: tar.FormatGNU, contents: payload})
+	archiveMembers = append(archiveMembers, XKeenArchiveMember{Name: "xkeen", Type: xkeenArchiveRegular, Mode: 0o755, Size: int64(len(payload))})
+	for index := 0; index < 4; index++ {
+		name := fmt.Sprintf("_xkeen/module-%d", index)
+		archiveEntries = append(archiveEntries, testTarEntry{name: name, kind: tar.TypeReg, mode: 0o644, format: tar.FormatGNU, contents: payload})
+		archiveMembers = append(archiveMembers, XKeenArchiveMember{Name: name, Type: xkeenArchiveRegular, Mode: 0o644, Size: int64(len(payload))})
+	}
+	archivePath := writeTestGzipTar(t, archiveEntries)
+	archive, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, identity := installableCatalogFixture(t, archive)
+	entry.ArchiveMembers = archiveMembers
+	probePath := filepath.Join(t.TempDir(), "candidate")
+	candidate, err := extractXKeenArchiveMembers(context.Background(), archivePath, probePath, archiveMembers)
+	if err != nil {
+		t.Fatalf("candidate qualification: %v", err)
+	}
+	entry.GenerationSHA256 = candidate.Generation
+	identity.GenerationSHA256 = candidate.Generation
+	identity.Generation = candidate.Generation
+	reviewedXKeenCompatibility[xkeenCompatibilityKey(xkeenCatalogBuildCommit, xkeenCatalogAsset)] = entry
+	if candidate.Bytes <= int64(len(archive))*2 {
+		t.Fatalf("synthetic archive is not sufficiently compressible: archive=%d generation=%d", len(archive), candidate.Bytes)
+	}
+	oldGeneration, err := readXKeenGeneration(activeBinary, moduleDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldBudget := uint64(identity.SizeBytes)*2 + uint64(oldGeneration.Bytes) + uint64(8<<20)
+	resolver := &fakeXKeenResolver{identity: identity}
+	downloader := &fakeXKeenDownloader{archive: archive}
+	service := NewXKeenService(XKeenConfig{
+		Resolver: resolver, Downloader: downloader, Authority: &fakeXrayAuthority{snapshot: XrayAuthoritySnapshot{
+			Appliance: xrayTestAppliance(), Registry: xrayTestRegistry(t), Generation: sha256.Sum256([]byte("authority")),
+		}}, Runtime: &fakeXrayRuntime{}, CandidateProbe: &fakeTransactionalProbe{}, CandidateValidator: &fakeXrayCandidateValidator{},
+		AuthorityLease: authority.NewLease(), Coordinator: &fakeXrayCoordinator{}, ActiveBinaryPath: activeBinary, ModuleDir: moduleDir,
+		LifecycleInitPath: initPath, LegacyInitPath: filepath.Join(root, "opt", "etc", "init.d", "S24xray"),
+		SiblingModulePath: filepath.Join(root, "opt", "sbin", "_xkeen"), InstallHelperPath: filepath.Join(root, "opt", "root", "install.sh"),
+		MarkerPath: markerPath, XrayBinaryPath: xrayBinary, XrayConfigDir: filepath.Join(root, "opt", "etc", "xray", "configs"),
+		XrayAssetDir: filepath.Join(root, "opt", "etc", "xray", "dat"), PreviousDir: previousDir, JournalPath: journalPath,
+		StagingDir: stagingDir, ActivationPath: filepath.Join(root, "opt", "sbin", ".xkeen-control-activation"),
+		AvailableSpace: func(string) (uint64, error) { return oldBudget + 1, nil }, SyncDirectory: func(string) error { return nil },
+	})
+	if err := service.Apply(context.Background(), identity); !errors.Is(err, errXKeenFreeSpaceInsufficient) {
+		t.Fatalf("free-space admission error = %v", err)
+	}
+	if resolver.calls != 1 || downloader.calls != 0 {
+		t.Fatalf("pre-journal calls = resolve:%d download:%d", resolver.calls, downloader.calls)
+	}
+	if actual, err := os.ReadFile(activeBinary); err != nil || string(actual) != "old-xkeen" {
+		t.Fatalf("active xkeen changed before journal: %q, %v", actual, err)
+	}
+	if _, err := os.Lstat(journalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("journal created on free-space rejection: %v", err)
+	}
+	if _, err := os.Lstat(stagingDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("staging ownership created on free-space rejection: %v", err)
 	}
 }
 
@@ -389,7 +546,7 @@ func installableCatalogFixture(t *testing.T, contents []byte) (xkeenCompatibilit
 	entry.SHA256 = hex.EncodeToString(archiveDigest[:])
 	entry.GenerationSHA256 = strings.Repeat("a", 64)
 	entry.Installable = true
-	entry.ArchiveMembers = []XKeenArchiveMember{{Name: "_xkeen/", Type: xkeenArchiveDirectory, Mode: 0o755}, {Name: "_xkeen/empty", Type: xkeenArchiveRegular, Mode: 0o644, Size: 0}, {Name: "xkeen", Type: xkeenArchiveRegular, Mode: 0o755, Size: int64(len(contents))}}
+	entry.ArchiveMembers = []XKeenArchiveMember{{Name: "_xkeen/empty", Type: xkeenArchiveRegular, Mode: 0o644, Size: 0}, {Name: "xkeen", Type: xkeenArchiveRegular, Mode: 0o755, Size: int64(len(contents))}}
 	reviewedXKeenCompatibility[xkeenCompatibilityKey(xkeenCatalogBuildCommit, xkeenCatalogAsset)] = entry
 	t.Cleanup(func() {
 		reviewedXKeenCompatibility[xkeenCompatibilityKey(xkeenCatalogBuildCommit, xkeenCatalogAsset)] = original
@@ -461,6 +618,17 @@ func TestXKeenCatalogRejectsUnreviewedMemberModes(t *testing.T) {
 	}
 }
 
+func assertXKeenPathMode(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if info.Mode() != want {
+		t.Fatalf("mode %s = %s, want %s", path, info.Mode(), want)
+	}
+}
+
 func TestXKeenBlobDecoderRequiresGitIdentityAndArchiveDigest(t *testing.T) {
 	contents := []byte("fixed blob bytes")
 	gitDigest := sha1.New()
@@ -522,17 +690,24 @@ func TestXKeenCanonicalGenerationIncludesEmptyRegularFiles(t *testing.T) {
 }
 
 func TestXKeenStrictGzipTarReaderPinsMembersAndRejectsUnsafeTypes(t *testing.T) {
+	t.Run("pinned upstream GNU-tar fixture", func(t *testing.T) {
+		if runtime.GOOS != "linux" {
+			t.Skip("upstream GNU-tar fixture is qualified in the Linux container")
+		}
+		archive, members := writePinnedUpstreamGnuTar(t)
+		if _, err := extractXKeenArchiveMembers(context.Background(), archive, filepath.Join(t.TempDir(), "candidate"), members); err != nil {
+			t.Fatalf("upstream GNU-tar archive rejected: %v", err)
+		}
+	})
 	members := []XKeenArchiveMember{
-		{Name: "_xkeen/", Type: xkeenArchiveDirectory, Mode: 0o755},
 		{Name: "_xkeen/empty", Type: xkeenArchiveRegular, Mode: 0o644, Size: 0},
 		{Name: "xkeen", Type: xkeenArchiveRegular, Mode: 0o755, Size: 6},
 	}
 	validEntries := []testTarEntry{
-		{name: "_xkeen/", kind: tar.TypeDir, mode: 0o755},
-		{name: "_xkeen/empty", kind: tar.TypeReg, mode: 0o644},
-		{name: "xkeen", kind: tar.TypeReg, mode: 0o755, contents: []byte("binary")},
+		{name: "_xkeen/empty", kind: tar.TypeReg, mode: 0o644, format: tar.FormatGNU},
+		{name: "xkeen", kind: tar.TypeReg, mode: 0o755, format: tar.FormatGNU, contents: []byte("binary")},
 	}
-	t.Run("valid zero length regular", func(t *testing.T) {
+	t.Run("pinned GNU file-only shape", func(t *testing.T) {
 		archive := writeTestGzipTar(t, validEntries)
 		if _, err := extractXKeenArchiveMembers(context.Background(), archive, filepath.Join(t.TempDir(), "candidate"), members); err != nil {
 			t.Fatalf("valid archive rejected: %v", err)
@@ -541,8 +716,7 @@ func TestXKeenStrictGzipTarReaderPinsMembersAndRejectsUnsafeTypes(t *testing.T) 
 	t.Run("unknown member", func(t *testing.T) {
 		archive := writeTestGzipTar(t, []testTarEntry{
 			validEntries[0], validEntries[1],
-			{name: "_xkeen/extra", kind: tar.TypeReg, mode: 0o644, contents: []byte("x")},
-			validEntries[2],
+			{name: "_xkeen/extra", kind: tar.TypeReg, mode: 0o644, format: tar.FormatGNU, contents: []byte("x")},
 		})
 		if _, err := extractXKeenArchiveMembers(context.Background(), archive, filepath.Join(t.TempDir(), "candidate"), members); !errors.Is(err, errXKeenArchiveLayoutInvalid) {
 			t.Fatalf("unknown member error = %v", err)
@@ -550,12 +724,30 @@ func TestXKeenStrictGzipTarReaderPinsMembersAndRejectsUnsafeTypes(t *testing.T) 
 	})
 	t.Run("symlink", func(t *testing.T) {
 		archive := writeTestGzipTar(t, []testTarEntry{
-			validEntries[0],
-			{name: "_xkeen/empty", kind: tar.TypeSymlink, mode: 0o644, linkname: "xkeen"},
-			validEntries[2],
+			{name: "_xkeen/empty", kind: tar.TypeSymlink, mode: 0o644, format: tar.FormatGNU, linkname: "xkeen"},
+			validEntries[1],
 		})
 		if _, err := extractXKeenArchiveMembers(context.Background(), archive, filepath.Join(t.TempDir(), "candidate"), members); err == nil {
 			t.Fatal("symlink archive was accepted")
+		}
+	})
+	t.Run("alternate USTAR format", func(t *testing.T) {
+		entries := append([]testTarEntry(nil), validEntries...)
+		for index := range entries {
+			entries[index].format = tar.FormatUSTAR
+		}
+		archive := writeTestGzipTar(t, entries)
+		if _, err := extractXKeenArchiveMembers(context.Background(), archive, filepath.Join(t.TempDir(), "candidate"), members); err == nil {
+			t.Fatal("USTAR archive was accepted")
+		}
+	})
+	t.Run("directory entry", func(t *testing.T) {
+		archive := writeTestGzipTar(t, []testTarEntry{
+			{name: "_xkeen/", kind: tar.TypeDir, mode: 0o755, format: tar.FormatGNU},
+			validEntries[0], validEntries[1],
+		})
+		if _, err := extractXKeenArchiveMembers(context.Background(), archive, filepath.Join(t.TempDir(), "candidate"), members); err == nil {
+			t.Fatal("directory archive was accepted")
 		}
 	})
 	t.Run("trailing compressed data", func(t *testing.T) {
@@ -575,6 +767,61 @@ func TestXKeenStrictGzipTarReaderPinsMembersAndRejectsUnsafeTypes(t *testing.T) 
 			t.Fatal("trailing compressed data was accepted")
 		}
 	})
+}
+
+func writePinnedUpstreamGnuTar(t *testing.T) (string, []XKeenArchiveMember) {
+	t.Helper()
+	source := filepath.Join(t.TempDir(), "scripts_for_build")
+	if err := os.MkdirAll(filepath.Join(source, "_xkeen"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]struct {
+		mode uint32
+		data []byte
+	}{
+		"_xkeen/empty":      {mode: 0o644},
+		"_xkeen/runtime.sh": {mode: 0o644, data: []byte("runtime\n")},
+		"xkeen":             {mode: 0o755, data: []byte("binary\n")},
+	}
+	members := make([]XKeenArchiveMember, 0, len(files))
+	for name, file := range files {
+		path := filepath.Join(source, filepath.FromSlash(name))
+		if err := os.WriteFile(path, file.data, os.FileMode(file.mode)); err != nil {
+			t.Fatal(err)
+		}
+		members = append(members, XKeenArchiveMember{Name: name, Type: xkeenArchiveRegular, Mode: file.mode, Size: int64(len(file.data))})
+	}
+
+	find := exec.Command("find", ".", "-type", "f", "-o", "-type", "l")
+	find.Dir = source
+	listing, err := find.Output()
+	if err != nil {
+		t.Fatalf("upstream find fixture: %v", err)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(listing), "\n"), "\n")
+	if len(lines) != len(files) {
+		t.Fatalf("upstream find member count = %d, want %d", len(lines), len(files))
+	}
+	for index, line := range lines {
+		if !strings.HasPrefix(line, "./") || line == "./" {
+			t.Fatalf("upstream find member %q is not relative", line)
+		}
+		lines[index] = strings.TrimPrefix(line, "./")
+	}
+
+	archive := filepath.Join(t.TempDir(), "xkeen.tar.gz")
+	version := exec.Command("tar", "--version")
+	versionOutput, err := version.Output()
+	if err != nil || !strings.Contains(string(versionOutput), "GNU tar") {
+		t.Skip("GNU tar is unavailable")
+	}
+	tarCommand := exec.Command("tar", "-czf", archive, "-T", "-")
+	tarCommand.Dir = source
+	tarCommand.Stdin = strings.NewReader(strings.Join(lines, "\n") + "\n")
+	if output, err := tarCommand.CombinedOutput(); err != nil {
+		t.Fatalf("upstream GNU-tar fixture: %v (%s)", err, output)
+	}
+	return archive, members
 }
 
 func TestXKeenLifecycleRejectsLegacyArtifactsWithoutMutation(t *testing.T) {
@@ -640,6 +887,7 @@ type testTarEntry struct {
 	name     string
 	kind     byte
 	mode     int64
+	format   tar.Format
 	contents []byte
 	linkname string
 }
@@ -655,6 +903,9 @@ func writeTestGzipTar(t *testing.T, entries []testTarEntry) string {
 	tarWriter := tar.NewWriter(gzipWriter)
 	for _, entry := range entries {
 		header := &tar.Header{Name: entry.name, Typeflag: entry.kind, Mode: entry.mode, Size: int64(len(entry.contents)), Linkname: entry.linkname}
+		if entry.format != 0 {
+			header.Format = entry.format
+		}
 		if entry.kind == tar.TypeDir {
 			header.Size = 0
 		}

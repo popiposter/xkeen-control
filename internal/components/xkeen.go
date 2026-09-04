@@ -42,10 +42,12 @@ const (
 	DefaultXKeenRollbackTimeout      = 2 * time.Minute
 	DefaultXKeenTransactionTimeout   = 6 * time.Minute
 
-	MaxXKeenArchiveBytes        = 8 << 20
-	MaxXKeenArchiveEntries      = 256
-	MaxXKeenArchiveMemberBytes  = 1 << 20
-	MaxXKeenArchiveAggregate    = 16 << 20
+	MaxXKeenArchiveBytes       = 8 << 20
+	MaxXKeenArchiveEntries     = 256
+	MaxXKeenArchiveMemberBytes = 1 << 20
+	MaxXKeenArchiveAggregate   = 16 << 20
+	// GNU tar's default archive record is 20 blocks of 512 bytes.
+	MaxXKeenArchivePaddingBytes = 20 * 512
 	MaxXKeenGenerationEntries   = 512
 	MaxXKeenGenerationFileBytes = 1 << 20
 	MaxXKeenGenerationBytes     = 16 << 20
@@ -548,6 +550,9 @@ func (s *XKeenService) Rollback(ctx context.Context) error {
 	if err != nil {
 		return ErrXKeenPreviousUnavailable
 	}
+	if err := s.checkFreeSpace(0, previous.meta.Bytes, base.active.Bytes); err != nil {
+		return err
+	}
 	candidatePath, err := s.copyGenerationToCandidate(previous)
 	if err != nil {
 		return ErrXKeenCandidateRejected
@@ -837,7 +842,7 @@ func extractXKeenArchiveMembers(ctx context.Context, archivePath, destination st
 	reader := tar.NewReader(gzipReader)
 	expected := make(map[string]XKeenArchiveMember, len(members))
 	for _, member := range members {
-		if member.Name == "" || member.Type != xkeenArchiveDirectory && member.Type != xkeenArchiveRegular || member.Size < 0 || member.Size > MaxXKeenArchiveMemberBytes || member.Type == xkeenArchiveDirectory && member.Size != 0 || !validXKeenArchiveMemberMode(member) || validateXKeenArchiveName(member.Name, member.Type) != nil {
+		if member.Name == "" || member.Type != xkeenArchiveRegular || member.Size < 0 || member.Size > MaxXKeenArchiveMemberBytes || !validXKeenArchiveMemberMode(member) || validateXKeenArchiveName(member.Name, member.Type) != nil {
 			return xkeenGenerationMetadata{}, errXKeenArchiveRejected
 		}
 		if _, duplicate := expected[member.Name]; duplicate {
@@ -865,7 +870,7 @@ func extractXKeenArchiveMembers(ctx context.Context, archivePath, destination st
 		if nextErr != nil || header == nil || header.Name == "" || len(header.Name) > 256 {
 			return xkeenGenerationMetadata{}, errXKeenArchiveRejected
 		}
-		if header.Format != tar.FormatUSTAR || len(header.PAXRecords) != 0 || header.Linkname != "" {
+		if header.Format != tar.FormatGNU || len(header.PAXRecords) != 0 || header.Linkname != "" {
 			return xkeenGenerationMetadata{}, errXKeenArchiveRejected
 		}
 		member, ok := expected[header.Name]
@@ -878,23 +883,6 @@ func extractXKeenArchiveMembers(ctx context.Context, archivePath, destination st
 		seen[header.Name] = struct{}{}
 		if header.Mode&0o777 != int64(member.Mode) || header.Mode&^0o777 != 0 {
 			return xkeenGenerationMetadata{}, errXKeenArchiveRejected
-		}
-		if member.Type == xkeenArchiveDirectory {
-			if header.Typeflag != tar.TypeDir || header.Size != 0 || !strings.HasSuffix(header.Name, "/") {
-				return xkeenGenerationMetadata{}, errXKeenArchiveRejected
-			}
-			relativeDirectory := strings.TrimSuffix(strings.TrimPrefix(header.Name, "_xkeen/"), "/")
-			directory := filepath.Join(destination, ".xkeen", filepath.FromSlash(relativeDirectory))
-			if header.Name == "_xkeen/" {
-				directory = filepath.Join(destination, ".xkeen")
-			}
-			if header.Name == "xkeen/" {
-				return xkeenGenerationMetadata{}, errXKeenArchiveRejected
-			}
-			if err := ensureXKeenExtractDirectory(directory, member.Mode); err != nil {
-				return xkeenGenerationMetadata{}, errXKeenArchiveRejected
-			}
-			continue
 		}
 		if member.Type != xkeenArchiveRegular || header.Typeflag != tar.TypeReg || header.Size != member.Size || header.Size > MaxXKeenArchiveMemberBytes || aggregate > MaxXKeenArchiveAggregate-header.Size {
 			return xkeenGenerationMetadata{}, errXKeenArchiveRejected
@@ -926,9 +914,30 @@ func extractXKeenArchiveMembers(ctx context.Context, archivePath, destination st
 	if len(seen) != len(expected) {
 		return xkeenGenerationMetadata{}, errXKeenArchiveLayoutInvalid
 	}
-	var trailing [1]byte
-	if count, readErr := gzipReader.Read(trailing[:]); count != 0 || readErr != io.EOF {
-		return xkeenGenerationMetadata{}, errXKeenArchiveRejected
+	// GNU tar pads its final record with zero bytes after the two logical end
+	// blocks. Accept only that bounded zero padding; compressed trailing data
+	// remains rejected below.
+	var trailing [32 << 10]byte
+	var trailingBytes int64
+	for {
+		count, readErr := gzipReader.Read(trailing[:])
+		if count > 0 {
+			if trailingBytes > MaxXKeenArchivePaddingBytes-int64(count) {
+				return xkeenGenerationMetadata{}, errXKeenArchiveRejected
+			}
+			for _, value := range trailing[:count] {
+				if value != 0 {
+					return xkeenGenerationMetadata{}, errXKeenArchiveRejected
+				}
+			}
+			trailingBytes += int64(count)
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return xkeenGenerationMetadata{}, errXKeenArchiveRejected
+		}
 	}
 	if _, readErr := compressed.Peek(1); !errors.Is(readErr, io.EOF) {
 		return xkeenGenerationMetadata{}, errXKeenArchiveRejected
@@ -1173,7 +1182,15 @@ func (s *XKeenService) prepare(ctx context.Context, intended XKeenReleaseIdentit
 	if !sameXKeenIdentity(fresh, intended) {
 		return preparedXKeen{}, ErrXKeenCandidateStale
 	}
-	if err := s.checkFreeSpace(intended.SizeBytes, base.active.Bytes); err != nil {
+	entry, ok := reviewedXKeenEntry(intended.CommitSHA, intended.AssetName)
+	if !ok || validateXKeenCompatibilityEntry(entry) != nil || !entry.Installable {
+		return preparedXKeen{}, ErrXKeenCandidateRejected
+	}
+	candidateBytes, err := xkeenCatalogGenerationBytes(entry)
+	if err != nil {
+		return preparedXKeen{}, ErrXKeenCandidateRejected
+	}
+	if err := s.checkFreeSpace(intended.SizeBytes, candidateBytes, base.active.Bytes); err != nil {
 		return preparedXKeen{}, err
 	}
 	stageDir, err := s.newStagingDir()
@@ -1193,10 +1210,6 @@ func (s *XKeenService) prepare(ctx context.Context, intended XKeenReleaseIdentit
 	}
 	candidatePath := filepath.Join(stageDir, "candidate")
 	if err := ensureXKeenOwnedDirectory(candidatePath, xkeenOwnerValue); err != nil {
-		return preparedXKeen{}, ErrXKeenCandidateRejected
-	}
-	entry, ok := reviewedXKeenEntry(intended.CommitSHA, intended.AssetName)
-	if !ok || validateXKeenCompatibilityEntry(entry) != nil || !entry.Installable {
 		return preparedXKeen{}, ErrXKeenCandidateRejected
 	}
 	candidate, err := extractXKeenArchive(ctx, archivePath, candidatePath, entry)
@@ -1777,36 +1790,75 @@ func hashXKeenPreservedPath(destination io.Writer, absolute, logical string, sta
 	return nil
 }
 
-func (s *XKeenService) checkFreeSpace(candidateSize, previousSize int64) error {
-	if candidateSize <= 0 || candidateSize > MaxXKeenArchiveBytes || previousSize <= 0 || previousSize > MaxXKeenGenerationBytes {
+func xkeenCatalogGenerationBytes(entry xkeenCompatibilityEntry) (int64, error) {
+	if !entry.Installable || validateXKeenCompatibilityEntry(entry) != nil {
+		return 0, errXKeenFreeSpaceInsufficient
+	}
+	var total int64
+	for _, member := range entry.ArchiveMembers {
+		if member.Type != xkeenArchiveRegular || member.Size < 0 || member.Size > MaxXKeenArchiveMemberBytes || total > MaxXKeenGenerationBytes-member.Size {
+			return 0, errXKeenFreeSpaceInsufficient
+		}
+		total += member.Size
+	}
+	if total <= 0 {
+		return 0, errXKeenFreeSpaceInsufficient
+	}
+	return total, nil
+}
+
+type xkeenFreeSpaceRequirement struct {
+	directory string
+	bytes     uint64
+}
+
+type xkeenFreeSpaceGroup struct {
+	directory string
+	bytes     uint64
+}
+
+func (s *XKeenService) checkFreeSpace(archiveSize, candidateSize, previousSize int64) error {
+	if archiveSize < 0 || archiveSize > MaxXKeenArchiveBytes || candidateSize <= 0 || candidateSize > MaxXKeenGenerationBytes || previousSize <= 0 || previousSize > MaxXKeenGenerationBytes {
 		return errXKeenFreeSpaceInsufficient
 	}
-	need := uint64(candidateSize)
-	if uint64(previousSize) > ^uint64(0)-need {
-		return errXKeenFreeSpaceInsufficient
+	requirements := []xkeenFreeSpaceRequirement{
+		{directory: existingDirectory(filepath.Dir(s.config.StagingDir)), bytes: uint64(archiveSize) + uint64(candidateSize)},
+		{directory: existingDirectory(filepath.Dir(s.config.PreviousDir)), bytes: uint64(previousSize)},
+		{directory: existingDirectory(filepath.Dir(s.config.ActiveBinaryPath)), bytes: uint64(candidateSize)},
+		{directory: existingDirectory(filepath.Dir(s.config.MarkerPath))},
 	}
-	need += uint64(previousSize)
-	if uint64(candidateSize) > ^uint64(0)-need {
-		return errXKeenFreeSpaceInsufficient
-	}
-	need += uint64(candidateSize)
-	const reserve = uint64(8 << 20)
-	if reserve > ^uint64(0)-need {
-		return errXKeenFreeSpaceInsufficient
-	}
-	need += reserve
-	paths := []string{filepath.Dir(s.config.StagingDir), filepath.Dir(s.config.PreviousDir), filepath.Dir(s.config.ActiveBinaryPath), filepath.Dir(s.config.MarkerPath)}
-	seen := make(map[string]struct{}, len(paths))
-	for _, directory := range paths {
-		directory = existingDirectory(directory)
-		if directory == "" {
+	groups := make([]xkeenFreeSpaceGroup, 0, len(requirements))
+	for _, requirement := range requirements {
+		if requirement.directory == "" {
 			return errXKeenFreeSpaceUnavailable
 		}
-		if _, ok := seen[directory]; ok {
+		groupIndex := -1
+		for index, group := range groups {
+			same, err := sameFilesystem(group.directory, requirement.directory)
+			if err != nil {
+				return errXKeenFreeSpaceUnavailable
+			}
+			if same {
+				groupIndex = index
+				break
+			}
+		}
+		if groupIndex < 0 {
+			groups = append(groups, xkeenFreeSpaceGroup{directory: requirement.directory, bytes: requirement.bytes})
 			continue
 		}
-		seen[directory] = struct{}{}
-		available, err := s.config.AvailableSpace(directory)
+		if requirement.bytes > ^uint64(0)-groups[groupIndex].bytes {
+			return errXKeenFreeSpaceInsufficient
+		}
+		groups[groupIndex].bytes += requirement.bytes
+	}
+	const reserve = uint64(8 << 20)
+	for _, group := range groups {
+		if reserve > ^uint64(0)-group.bytes {
+			return errXKeenFreeSpaceInsufficient
+		}
+		need := group.bytes + reserve
+		available, err := s.config.AvailableSpace(group.directory)
 		if err != nil {
 			return errXKeenFreeSpaceUnavailable
 		}
@@ -1901,8 +1953,9 @@ func (s *XKeenService) prepareActivation(marker []byte) error {
 	if filepath.Dir(s.config.ModuleDir) != parent || filepath.Dir(s.config.ActivationPath) != parent || filepath.Clean(s.config.ActivationPath) == parent {
 		return errXKeenActivationInvalid
 	}
-	if err := ensurePrivateDirectory(parent); err != nil {
-		return err
+	parentInfo, err := os.Lstat(parent)
+	if err != nil || parentInfo.Mode()&os.ModeSymlink != 0 || !parentInfo.IsDir() {
+		return errXKeenActivationInvalid
 	}
 	if info, err := os.Lstat(s.config.ActiveBinaryPath); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
