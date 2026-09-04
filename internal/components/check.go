@@ -32,6 +32,7 @@ const (
 	MaxCandidateAssetBytes       = 128 << 20
 	MaxConcurrentMetadata        = 2
 	MaxXKeenDevArtifactBytes     = 8 << 20
+	MaxXKeenDevCommitFiles       = 64
 	MaxXKeenDevTreeEntries       = 4096
 
 	metadataHost                  = "api.github.com"
@@ -436,11 +437,10 @@ func (c *Checker) checkXKeen(ctx context.Context, channel string, installed Inve
 	if haveInstalled {
 		result.InstalledState = compareInstalledXKeenDev(installed.XKeen, identity.BuildCommitSHA)
 	}
-	// E0 is metadata-only. This candidate is eligible for the existing
-	// informational Check contract, but there is still no mutation/installer
-	// surface and no archive bytes have been fetched.
-	result.Eligible = true
-	result.ReasonCode = "supported-for-preview"
+	// E0 resolves an informational build identity only. It is intentionally not
+	// install-eligible until E1 binds the exact archive bytes, member layout and
+	// compatibility class in a reviewed product catalog.
+	result.ReasonCode = "dev-identity-resolved"
 	return result, nil
 }
 
@@ -455,6 +455,12 @@ type githubXKeenCommitListItem struct {
 	SHA string `json:"sha"`
 }
 
+type githubXKeenCommitFile struct {
+	Filename string `json:"filename"`
+	Status   string `json:"status"`
+	SHA      string `json:"sha"`
+}
+
 type githubXKeenCommitMetadata struct {
 	SHA     string `json:"sha"`
 	Parents []struct {
@@ -466,6 +472,7 @@ type githubXKeenCommitMetadata struct {
 			Verified bool `json:"verified"`
 		} `json:"verification"`
 	} `json:"commit"`
+	Files []githubXKeenCommitFile `json:"files"`
 }
 
 type githubXKeenTreeMetadata struct {
@@ -508,6 +515,13 @@ func (c *Checker) resolveXKeenDevBuild(ctx context.Context, budget *networkBudge
 	if len(commit.Parents) != 1 || !isGitSHA1(commit.Parents[0].SHA) {
 		return xkeenDevBuildIdentity{}, &metadataFailure{reason: "dev-build-shape-invalid"}, nil
 	}
+	if len(commit.Files) > MaxXKeenDevCommitFiles || len(commit.Files) != 1 {
+		return xkeenDevBuildIdentity{}, &metadataFailure{reason: "dev-build-shape-invalid"}, nil
+	}
+	changedFile := commit.Files[0]
+	if changedFile.Filename != xkeenDevArtifactPath || changedFile.Status != "modified" || !isGitSHA1(changedFile.SHA) {
+		return xkeenDevBuildIdentity{}, &metadataFailure{reason: "dev-build-shape-invalid"}, nil
+	}
 	sourceCommit := strings.ToLower(commit.Parents[0].SHA)
 
 	treePath := xkeenDevTreePathPrefix + buildCommit + xkeenDevTreePathSuffix
@@ -546,6 +560,9 @@ func (c *Checker) resolveXKeenDevBuild(ctx context.Context, budget *networkBudge
 	}
 	if artifact.Size > MaxXKeenDevArtifactBytes {
 		return xkeenDevBuildIdentity{}, &metadataFailure{reason: "asset-size-too-large"}, nil
+	}
+	if !strings.EqualFold(changedFile.SHA, artifact.SHA) {
+		return xkeenDevBuildIdentity{}, &metadataFailure{reason: "dev-build-shape-invalid"}, nil
 	}
 	return xkeenDevBuildIdentity{
 		BuildCommitSHA:  buildCommit,

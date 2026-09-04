@@ -105,7 +105,7 @@ These source-main capabilities are not a new stable release or production-qualif
 
 The next review boundary is Phase E0: a corrective, read-only **XKeen** inventory/check authority slice. It identifies the supported development channel as `jameszeroX/XKeen`, recognizes the current `S05xkeen` lifecycle layout and treats `S24xray` only as explicit legacy/migration state. Dev checks resolve a signed build commit touching the fixed `test/xkeen.tar.gz` path and project its exact build/source/blob identity without downloading artifact bytes or mutating component state. Xray and geodata remain on their existing stable channel. E0 adds no mutation HTTP/UI; transactional XKeen lifecycle remains a later Phase E1 boundary.
 
-Detailed Phase E constraints and acceptance are in Issue #4 comment `5538006418`.
+Detailed Phase E0 source/layout/channel constraints and acceptance are in Issue #4 comment `5538828870`; the older `5538006418` remains subordinate only for non-conflicting E1 transaction/recovery requirements.
 
 ## D.3 / Issue #5 — planned, not deployed
 

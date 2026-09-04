@@ -215,7 +215,7 @@ func TestXKeenDevCheckProjectsSignedBuildIdentityWithoutDownloadingArtifact(t *t
 	blobSHA := strings.Repeat("d", 40)
 	responses := map[string][]byte{
 		xkeenDevCommitListPath:                                        xkeenDevCommitList(t, buildCommit),
-		xkeenDevCommitPathPrefix + buildCommit:                        xkeenDevCommit(t, buildCommit, sourceCommit, true, xkeenDevBuildCommitMessage),
+		xkeenDevCommitPathPrefix + buildCommit:                        xkeenDevCommit(t, buildCommit, sourceCommit, true, xkeenDevBuildCommitMessage, blobSHA),
 		xkeenDevTreePathPrefix + buildCommit + xkeenDevTreePathSuffix: xkeenDevTree(t, xkeenDevArtifactPath, "100644", "blob", blobSHA, 111409),
 	}
 	checker, transport := newFixtureChecker(t, responses, func() (Inventory, bool) {
@@ -225,7 +225,7 @@ func TestXKeenDevCheckProjectsSignedBuildIdentityWithoutDownloadingArtifact(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SourceID != xkeenDevSourceID || result.Channel != xkeenDevChannel || !result.Eligible || result.MutationAvailable || result.ReasonCode != "supported-for-preview" || result.InstalledState != "current" {
+	if result.SourceID != xkeenDevSourceID || result.Channel != xkeenDevChannel || result.Eligible || result.MutationAvailable || result.ReasonCode != "dev-identity-resolved" || result.InstalledState != "current" {
 		t.Fatalf("xkeen result = %+v", result)
 	}
 	if result.Candidate == nil || result.Candidate.Generation != buildCommit || result.Candidate.AssetName != xkeenDevArtifactPath || result.Candidate.SizeBytes != 111409 || result.Candidate.BuildCommitSHA != buildCommit || result.Candidate.SourceCommitSHA != sourceCommit || result.Candidate.BlobSHA != blobSHA || result.Candidate.SHA256 != "" || result.Candidate.Version != "" {
@@ -264,7 +264,7 @@ func TestXKeenDevCheckRejectsUnsignedOrNonBuildCommits(t *testing.T) {
 			buildCommit := strings.Repeat("e", 40)
 			responses := map[string][]byte{
 				xkeenDevCommitListPath:                 xkeenDevCommitList(t, buildCommit),
-				xkeenDevCommitPathPrefix + buildCommit: xkeenDevCommit(t, buildCommit, strings.Repeat("f", 40), test.verified, test.message),
+				xkeenDevCommitPathPrefix + buildCommit: xkeenDevCommit(t, buildCommit, strings.Repeat("f", 40), test.verified, test.message, strings.Repeat("d", 40)),
 			}
 			checker, transport := newFixtureChecker(t, responses, nil)
 			result, err := checker.Check(context.Background(), CheckRequest{Component: KindXKeen, Channel: xkeenDevChannel})
@@ -297,7 +297,7 @@ func TestXKeenDevCheckRejectsInvalidArtifactTreeMetadata(t *testing.T) {
 			buildCommit := strings.Repeat("b", 40)
 			responses := map[string][]byte{
 				xkeenDevCommitListPath:                                        xkeenDevCommitList(t, buildCommit),
-				xkeenDevCommitPathPrefix + buildCommit:                        xkeenDevCommit(t, buildCommit, strings.Repeat("c", 40), true, xkeenDevBuildCommitMessage),
+				xkeenDevCommitPathPrefix + buildCommit:                        xkeenDevCommit(t, buildCommit, strings.Repeat("c", 40), true, xkeenDevBuildCommitMessage, strings.Repeat("a", 40)),
 				xkeenDevTreePathPrefix + buildCommit + xkeenDevTreePathSuffix: test.tree,
 			}
 			checker, transport := newFixtureChecker(t, responses, nil)
@@ -312,6 +312,54 @@ func TestXKeenDevCheckRejectsInvalidArtifactTreeMetadata(t *testing.T) {
 				t.Fatalf("xkeen artifact metadata calls = %v", got)
 			}
 		})
+	}
+}
+
+func TestXKeenDevCheckRejectsSameMessageCommitWithExtraChangedFile(t *testing.T) {
+	buildCommit := strings.Repeat("a", 40)
+	sourceCommit := strings.Repeat("b", 40)
+	blobSHA := strings.Repeat("c", 40)
+	commit := xkeenDevCommitWithFiles(t, buildCommit, sourceCommit, true, xkeenDevBuildCommitMessage, []githubXKeenCommitFile{
+		{Filename: xkeenDevArtifactPath, Status: "modified", SHA: blobSHA},
+		{Filename: "scripts/package-folder.sh", Status: "modified", SHA: strings.Repeat("d", 40)},
+	})
+	responses := map[string][]byte{
+		xkeenDevCommitListPath:                 xkeenDevCommitList(t, buildCommit),
+		xkeenDevCommitPathPrefix + buildCommit: commit,
+	}
+	checker, transport := newFixtureChecker(t, responses, nil)
+	result, err := checker.Check(context.Background(), CheckRequest{Component: KindXKeen, Channel: xkeenDevChannel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Eligible || result.MutationAvailable || result.ReasonCode != "dev-build-shape-invalid" || result.Candidate != nil {
+		t.Fatalf("extra-file build result = %+v", result)
+	}
+	if got := transportCalls(transport); len(got) != 2 {
+		t.Fatalf("extra-file build metadata calls = %v", got)
+	}
+}
+
+func TestXKeenDevCheckRejectsCommitTreeBlobMismatch(t *testing.T) {
+	buildCommit := strings.Repeat("e", 40)
+	sourceCommit := strings.Repeat("f", 40)
+	commitBlob := strings.Repeat("a", 40)
+	treeBlob := strings.Repeat("b", 40)
+	responses := map[string][]byte{
+		xkeenDevCommitListPath:                                        xkeenDevCommitList(t, buildCommit),
+		xkeenDevCommitPathPrefix + buildCommit:                        xkeenDevCommit(t, buildCommit, sourceCommit, true, xkeenDevBuildCommitMessage, commitBlob),
+		xkeenDevTreePathPrefix + buildCommit + xkeenDevTreePathSuffix: xkeenDevTree(t, xkeenDevArtifactPath, "100644", "blob", treeBlob, 111409),
+	}
+	checker, transport := newFixtureChecker(t, responses, nil)
+	result, err := checker.Check(context.Background(), CheckRequest{Component: KindXKeen, Channel: xkeenDevChannel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Eligible || result.MutationAvailable || result.ReasonCode != "dev-build-shape-invalid" || result.Candidate != nil {
+		t.Fatalf("blob mismatch result = %+v", result)
+	}
+	if got := transportCalls(transport); len(got) != 3 {
+		t.Fatalf("blob mismatch metadata calls = %v", got)
 	}
 }
 
@@ -337,11 +385,20 @@ func xkeenDevCommitList(t *testing.T, buildCommit string) []byte {
 	return contents
 }
 
-func xkeenDevCommit(t *testing.T, buildCommit, sourceCommit string, verified bool, message string) []byte {
+func xkeenDevCommit(t *testing.T, buildCommit, sourceCommit string, verified bool, message, artifactSHA string) []byte {
+	return xkeenDevCommitWithFiles(t, buildCommit, sourceCommit, verified, message, []githubXKeenCommitFile{{
+		Filename: xkeenDevArtifactPath,
+		Status:   "modified",
+		SHA:      artifactSHA,
+	}})
+}
+
+func xkeenDevCommitWithFiles(t *testing.T, buildCommit, sourceCommit string, verified bool, message string, files []githubXKeenCommitFile) []byte {
 	t.Helper()
 	contents, err := json.Marshal(map[string]any{
 		"sha":     buildCommit,
 		"parents": []map[string]string{{"sha": sourceCommit}},
+		"files":   files,
 		"commit": map[string]any{
 			"message":      message,
 			"verification": map[string]bool{"verified": verified},

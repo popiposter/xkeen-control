@@ -344,6 +344,21 @@ func TestXKeenRecognizesLegacyS24xrayWithoutTreatingItAsSupportedDevLayout(t *te
 	}
 }
 
+func TestXKeenRejectsMixedS05xkeenAndLegacyS24xrayLayout(t *testing.T) {
+	fixture := newInventoryFixture(t)
+	fixture.createXkeenLayout(t)
+	writeFixtureExecutable(t, fixture.config.XkeenLegacyRuntimeInit, "#!/bin/sh\nprintf legacy-init-executed > "+filepath.Join(fixture.root, "legacy-init-executed")+"\n")
+	writeFixtureFile(t, fixture.config.XkeenPackageMetadata, []byte("Package: xkeen\nVersion: 2.0.1\nArchitecture: all\n"), 0o644)
+
+	component := fixture.service().Snapshot(context.Background()).XKeen
+	if component.State != StatePresent || !component.Present || component.ReasonCode != "mixed-layout" || component.Capability != CapabilityUnsupported || !component.VersionUnknown || component.Version != "" || component.Channel != "" {
+		t.Fatalf("mixed xkeen = %+v", component)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.root, "legacy-init-executed")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy init was executed or could not be checked: %v", err)
+	}
+}
+
 func TestXrayRejectsSymlinksAndNonRegularFilesBeforeProbing(t *testing.T) {
 	t.Run("non-regular", func(t *testing.T) {
 		fixture := newInventoryFixture(t)

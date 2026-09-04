@@ -472,6 +472,22 @@ func (s *Service) inventoryXKeen(ctx context.Context, budget *readBudget) Compon
 		component.ReasonCode = "not-installed"
 		return component
 	}
+	if currentInit.state == StatePresent {
+		switch {
+		case legacyInit.state == StateUnknown:
+			component.State = StateUnknown
+			component.ReasonCode = "legacy-layout-unavailable"
+			return component
+		case legacyInit.present:
+			// A surviving legacy init alongside S05xkeen is mixed lifecycle
+			// ownership, not a supported dev layout. Do not expose a usable
+			// channel or version until migration is handled separately.
+			component.State = StatePresent
+			component.Present = true
+			component.ReasonCode = "mixed-layout"
+			return component
+		}
+	}
 	// S24xray is retained only as an explicit legacy/migration signal. It is
 	// never accepted as the current XKeen lifecycle dependency and cannot
 	// make the component supported or expose a dev candidate.
