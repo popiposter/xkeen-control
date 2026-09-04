@@ -124,7 +124,7 @@ These fixtures remain regression coverage after #2 completion; later slices must
 ## Issue #4 component lifecycle focused fixture
 
 The component inventory, trusted metadata-check and internal transactional
-Xray qualification fixture is:
+component lifecycle qualification fixture is:
 
 ```sh
 bash scripts/test-components.sh
@@ -143,18 +143,37 @@ automated build-commit plus exact tree/blob identity projection, rejection of
 the legacy `Skrill0/XKeen` release path, and `S05xkeen` versus explicit legacy
 `S24xray` inventory behavior. E0 remains metadata-only: it does not download
 the dev archive or add component mutation. Phase C fixtures additionally cover
-fresh exact-identity
-re-resolution, fixed HTTPS artifact transport, ZIP traversal/duplicate/
-non-regular rejection, complete candidate rendering and validation, shared
-Coordinator-to-authority lock order, stale authority rejection, one previous
-generation, journal fault injection, verified rollback, local-only startup
-recovery and restore-journal conflict. The Phase C primitive has no HTTP/UI
-mutation route and all source qualification remains synthetic/offline. Phase D
-fixtures additionally cover the complete six-file geodata transaction, fresh
-exact-set resolution, fixed-host artifact transport, staged Xray config
-validation, shared Xray/geodata recovery arbitration, whole-set rollback,
-unrelated-file preservation and fail-closed journal/maintenance behavior. No
-Phase D production mutation or temporary operator mutation surface exists.
+fresh exact-identity re-resolution, fixed HTTPS artifact transport, ZIP
+traversal/duplicate/non-regular rejection, complete candidate rendering and
+validation, shared Coordinator-to-authority lock order, stale authority
+rejection, one previous generation, journal fault injection, verified rollback,
+local-only startup recovery and restore-journal conflict. The Phase C primitive
+has no HTTP/UI mutation route and all source qualification remains
+offline/synthetic. Phase D fixtures additionally cover the complete six-file
+geodata transaction, fresh exact-set resolution, fixed-host artifact transport,
+staged Xray config validation, shared Xray/geodata recovery arbitration,
+whole-set rollback, unrelated-file preservation and fail-closed
+journal/maintenance behavior.
+
+Phase E1 fixtures additionally cover the internal transactional jameszeroX dev
+XKeen primitive: fixed exact build/tree/blob identity, bounded Git-blob
+downloader semantics, strict GNU-tar file-only/path/type/mode/trailing-data
+qualification, canonical `xkeen + .xkeen` generation hashing and marker
+coherence, purpose-specific `S05xkeen` runtime convergence without executing the
+candidate `xkeen`, preserved Xray/geodata/config/opkg/cron/Entware state,
+purpose-specific preserved-state bounds, uncompressed-generation free-space
+admission, shared `xray|geodata|xkeen` journal/recovery arbitration, one previous
+generation, activation-parent preservation, ordinary rollback and local-only
+startup recovery. The real `2.0.1/Beta` catalog entry remains non-installable on
+E1 main until Phase E2 independently pins the exact archive SHA-256, real GNU
+tar member manifest and canonical generation digest.
+
+Phase E2 qualification must keep repository CI deterministic/offline. A one-time
+immutable upstream artifact retrieval/content-equivalence/hash/manifest check is
+additional public review evidence for activating the fixed catalog entry; it
+must not turn `test-components.sh` or normal PR CI into a moving-network test.
+No Phase E2 production mutation or temporary operator mutation surface is
+authorized.
 
 ## Issue #3 Phase B focused fixtures
 
