@@ -1116,7 +1116,7 @@ func (c *metadataClient) fetch(ctx context.Context, path string, budget *network
 }
 
 func isFixedMetadataPath(path string) bool {
-	if path == xrayMetadataPath || path == xkeenDevCommitListPath {
+	if path == xrayMetadataPath || path == xkeenDevCommitListPath || isFixedXKeenMetadataPath(path) {
 		return true
 	}
 	if strings.HasPrefix(path, xkeenDevCommitPathPrefix) && isGitSHA1(strings.TrimPrefix(path, xkeenDevCommitPathPrefix)) {
@@ -1130,6 +1130,18 @@ func isFixedMetadataPath(path string) bool {
 	}
 	for _, entry := range productGeodataCatalog {
 		if path == geodataMetadataPath(entry) {
+			return true
+		}
+	}
+	return false
+}
+
+func isFixedXKeenMetadataPath(value string) bool {
+	if value == xkeenBuildCommitPath || value == xkeenBuildTreePath {
+		return true
+	}
+	for _, entry := range reviewedXKeenCompatibility {
+		if isHexSHA1(entry.BlobSHA) && value == xkeenBlobPathPrefix+entry.BlobSHA {
 			return true
 		}
 	}
