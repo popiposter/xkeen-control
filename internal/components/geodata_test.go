@@ -439,6 +439,83 @@ func TestGeodataJournalClearFailureFailsClosedAndStartupRecoveryIsLocal(t *testi
 	assertGeodataPrefixedSentinel(t, f)
 }
 
+func TestGeodataLegacyDatActivationNameRemainsUnrelated(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		directory bool
+	}{
+		{name: "regular-file"},
+		{name: "directory", directory: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newGeodataFixture(t)
+			path := filepath.Join(f.assetDir, geodataActivationTempDirName)
+			collision := createGeodataActivationCollision(t, path, test.directory)
+			if err := f.service.Apply(context.Background(), f.set); err != nil {
+				t.Fatalf("apply with legacy dat collision: %v", err)
+			}
+			assertGeodataActivationCollision(t, path, test.directory, collision)
+			if err := f.service.Rollback(context.Background()); err != nil {
+				t.Fatalf("rollback with legacy dat collision: %v", err)
+			}
+			assertGeodataActivationCollision(t, path, test.directory, collision)
+			assertGeodataActivationTempAbsent(t, f)
+		})
+	}
+}
+
+func TestGeodataPrivateActivationCollisionsFailClosedWithoutDeletingForeignPath(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		directory bool
+	}{
+		{name: "regular-file"},
+		{name: "directory", directory: true},
+	} {
+		for _, operation := range []string{"apply", "rollback"} {
+			t.Run(test.name+"/"+operation, func(t *testing.T) {
+				f := newGeodataFixture(t)
+				var activeBefore geodataSetMetadata
+				if operation == "rollback" {
+					if err := f.service.Apply(context.Background(), f.set); err != nil {
+						t.Fatalf("seed apply: %v", err)
+					}
+					var err error
+					activeBefore, err = f.service.readActiveSet()
+					if err != nil {
+						t.Fatalf("read active before collision: %v", err)
+					}
+				}
+				path := f.service.activationTempDir()
+				collision := createGeodataActivationCollision(t, path, test.directory)
+				var err error
+				if operation == "apply" {
+					err = f.service.Apply(context.Background(), f.set)
+				} else {
+					err = f.service.Rollback(context.Background())
+				}
+				if !errors.Is(err, ErrGeodataRecoveryFailed) {
+					t.Fatalf("%s with private activation collision: %v", operation, err)
+				}
+				assertGeodataActivationCollision(t, path, test.directory, collision)
+				if operation == "rollback" {
+					activeAfter, readErr := f.service.readActiveSet()
+					if readErr != nil || !sameGeodataSetMetadata(activeAfter, activeBefore) {
+						t.Fatalf("active generation changed during collision failure: %+v err=%v", activeAfter, readErr)
+					}
+				}
+				if recoveryErr := f.service.RecoverStartup(context.Background()); !errors.Is(recoveryErr, ErrGeodataRecoveryFailed) {
+					t.Fatalf("startup recovery with private activation collision: %v", recoveryErr)
+				}
+				assertGeodataActivationCollision(t, path, test.directory, collision)
+				if readyErr := f.service.Ready(); !errors.Is(readyErr, ErrGeodataRecoveryFailed) {
+					t.Fatalf("service readiness after collision: %v", readyErr)
+				}
+			})
+		}
+	}
+}
+
 func TestComponentRecoveryArbitratesOwnerAndConflicts(t *testing.T) {
 	f := newGeodataFixture(t)
 	xrayPrevious := filepath.Join(f.root, "control", "previous", "components", "xray.staging")
@@ -474,6 +551,55 @@ func assertGeodataPrefixedSentinel(t *testing.T, f *geodataFixture) {
 	t.Helper()
 	if actual := readFixtureFile(t, f.prefixedSentinel); !bytes.Equal(actual, []byte("prefix-sentinel")) {
 		t.Fatalf("unrelated activation-prefix sentinel changed: %q", actual)
+	}
+}
+
+func createGeodataActivationCollision(t *testing.T, path string, directory bool) []byte {
+	t.Helper()
+	if directory {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatalf("create activation collision directory: %v", err)
+		}
+		contents := []byte("foreign-directory-bytes")
+		if err := os.WriteFile(filepath.Join(path, "manual.dat"), contents, 0o640); err != nil {
+			t.Fatalf("write activation collision directory sentinel: %v", err)
+		}
+		return contents
+	}
+	contents := []byte("foreign-regular-file-bytes")
+	if err := os.WriteFile(path, contents, 0o640); err != nil {
+		t.Fatalf("create activation collision regular file: %v", err)
+	}
+	return contents
+}
+
+func assertGeodataActivationCollision(t *testing.T, path string, directory bool, expected []byte) {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("activation collision path missing: %v", err)
+	}
+	if directory {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			t.Fatalf("activation collision directory changed type: %v", info.Mode())
+		}
+		if actual := readFixtureFile(t, filepath.Join(path, "manual.dat")); !bytes.Equal(actual, expected) {
+			t.Fatalf("activation collision directory contents changed: %q", actual)
+		}
+		return
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("activation collision regular file changed type: %v", info.Mode())
+	}
+	if actual := readFixtureFile(t, path); !bytes.Equal(actual, expected) {
+		t.Fatalf("activation collision regular file contents changed: %q", actual)
+	}
+}
+
+func assertGeodataActivationTempAbsent(t *testing.T, f *geodataFixture) {
+	t.Helper()
+	if _, err := os.Lstat(f.service.activationTempDir()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("product-owned activation temp state remains: %v", err)
 	}
 }
 

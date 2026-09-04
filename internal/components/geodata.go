@@ -38,15 +38,17 @@ const (
 	MaxGeodataCandidateBytes = 128 << 20
 	GeodataFreeSpaceReserve  = 8 << 20
 
-	geodataMetadataName         = "metadata.json"
-	geodataActivationTempDir    = ".xkeen-geodata-transaction"
-	geodataPreviousStaging      = ".staging"
-	geodataPreviousOld          = ".old"
-	geodataOperationUpdate      = "update"
-	geodataOperationRollback    = "rollback"
-	geodataPhasePrepared        = "prepared"
-	geodataPhaseFilesCommitted  = "files-committed"
-	geodataPhaseRuntimeVerified = "runtime-verified"
+	geodataMetadataName            = "metadata.json"
+	geodataActivationTempDirName   = ".xkeen-geodata-transaction"
+	geodataActivationOwnerName     = ".owner"
+	geodataActivationOwnerContents = "xkeen-control geodata activation v1\n"
+	geodataPreviousStaging         = ".staging"
+	geodataPreviousOld             = ".old"
+	geodataOperationUpdate         = "update"
+	geodataOperationRollback       = "rollback"
+	geodataPhasePrepared           = "prepared"
+	geodataPhaseFilesCommitted     = "files-committed"
+	geodataPhaseRuntimeVerified    = "runtime-verified"
 )
 
 var (
@@ -1307,7 +1309,66 @@ func (s *GeodataService) stagingPresent() bool {
 }
 
 func (s *GeodataService) activationTempDir() string {
-	return filepath.Join(s.config.AssetDir, geodataActivationTempDir)
+	return filepath.Join(filepath.Dir(filepath.Clean(s.config.AssetDir)), geodataActivationTempDirName)
+}
+
+func (s *GeodataService) activationTempOwnerPath() string {
+	return filepath.Join(s.activationTempDir(), geodataActivationOwnerName)
+}
+
+func (s *GeodataService) validateActivationTempLocation() error {
+	activeInfo, err := os.Lstat(s.config.AssetDir)
+	if err != nil || activeInfo.Mode()&os.ModeSymlink != 0 || !activeInfo.IsDir() {
+		return errGeodataSetInvalid
+	}
+	parent := filepath.Dir(s.activationTempDir())
+	parentInfo, err := os.Lstat(parent)
+	if err != nil || parentInfo.Mode()&os.ModeSymlink != 0 || !parentInfo.IsDir() {
+		return errGeodataSetInvalid
+	}
+	same, err := sameFilesystem(s.config.AssetDir, parent)
+	if err != nil || !same {
+		return errGeodataSetInvalid
+	}
+	return nil
+}
+
+func (s *GeodataService) activationTempOwnerValid() error {
+	rootInfo, err := os.Lstat(s.activationTempDir())
+	if err != nil || rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
+		return errGeodataSetInvalid
+	}
+	if err := checkPrivateComponentDirectory(s.activationTempDir()); err != nil {
+		return errGeodataSetInvalid
+	}
+	contents, err := readPrivateComponentFile(s.activationTempOwnerPath(), len(geodataActivationOwnerContents))
+	if err != nil || !bytes.Equal(contents, []byte(geodataActivationOwnerContents)) {
+		return errGeodataSetInvalid
+	}
+	return nil
+}
+
+func (s *GeodataService) prepareActivationTempDir() error {
+	if err := s.validateActivationTempLocation(); err != nil {
+		return err
+	}
+	info, err := os.Lstat(s.activationTempDir())
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.Mkdir(s.activationTempDir(), 0o700); err != nil {
+			return errGeodataSetInvalid
+		}
+		if err := writeAtomicComponentFile(s.activationTempOwnerPath(), []byte(geodataActivationOwnerContents), 0o600, s.config.SyncDirectory); err != nil {
+			return errGeodataSetInvalid
+		}
+		if err := s.config.SyncDirectory(filepath.Dir(s.activationTempDir())); err != nil {
+			return errGeodataSetInvalid
+		}
+		return nil
+	}
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return errGeodataSetInvalid
+	}
+	return s.activationTempOwnerValid()
 }
 
 func (s *GeodataService) stagingPath() string {
@@ -1786,10 +1847,10 @@ func (s *GeodataService) activateGeodataSetInternal(ctx context.Context, source 
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return errGeodataSetInvalid
 	}
-	activationDir := s.activationTempDir()
-	if err := ensurePrivateDirectory(activationDir); err != nil {
+	if err := s.prepareActivationTempDir(); err != nil {
 		return errGeodataSetInvalid
 	}
+	activationDir := s.activationTempDir()
 	type replacement struct{ temporary, target string }
 	replacements := make([]replacement, 0, len(expected.Items))
 	cleanup := func() {
@@ -2061,17 +2122,23 @@ func (s *GeodataService) cleanupNonPreviousResidue() error {
 }
 
 func (s *GeodataService) removeActivationTemps() error {
-	info, err := os.Lstat(s.config.AssetDir)
+	info, err := os.Lstat(s.activationTempDir())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return errGeodataSetInvalid
 	}
+	if err := s.validateActivationTempLocation(); err != nil {
+		return err
+	}
+	if err := s.activationTempOwnerValid(); err != nil {
+		return err
+	}
 	if err := s.removeOwned(s.activationTempDir()); err != nil {
 		return err
 	}
-	return s.config.SyncDirectory(s.config.AssetDir)
+	return s.config.SyncDirectory(filepath.Dir(s.activationTempDir()))
 }
 
 func (s *GeodataService) removeOwned(path string) error {
