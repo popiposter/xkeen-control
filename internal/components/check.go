@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -30,13 +31,22 @@ const (
 	MaxMetadataStringBytes       = 256
 	MaxCandidateAssetBytes       = 128 << 20
 	MaxConcurrentMetadata        = 2
+	MaxXKeenDevArtifactBytes     = 8 << 20
+	MaxXKeenDevTreeEntries       = 4096
 
 	metadataHost                  = "api.github.com"
 	metadataBaseURL               = "https://" + metadataHost
 	xrayMetadataPath              = "/repos/XTLS/Xray-core/releases/latest"
-	xkeenMetadataPath             = "/repos/Skrill0/XKeen/releases/latest"
 	xrayCandidateAsset            = "Xray-linux-arm64-v8a.zip"
-	xkeenCandidateAsset           = "xkeen.tar"
+	xkeenDevRepository            = "jameszeroX/XKeen"
+	xkeenDevSourceID              = "github/" + xkeenDevRepository
+	xkeenDevChannel               = "dev"
+	xkeenDevArtifactPath          = "test/xkeen.tar.gz"
+	xkeenDevCommitListPath        = "/repos/" + xkeenDevRepository + "/commits?path=test%2Fxkeen.tar.gz&sha=main&per_page=1"
+	xkeenDevCommitPathPrefix      = "/repos/" + xkeenDevRepository + "/commits/"
+	xkeenDevTreePathPrefix        = "/repos/" + xkeenDevRepository + "/git/trees/"
+	xkeenDevTreePathSuffix        = "?recursive=1"
+	xkeenDevBuildCommitMessage    = "[github-actions] automated compiling build"
 	metadataUserAgent             = "xkeen-control-component-check/1"
 	metadataRequestTimeout        = 10 * time.Second
 	metadataTLSHandshakeTimeout   = 5 * time.Second
@@ -67,15 +77,19 @@ type CheckRequest struct {
 }
 
 func ValidateCheckRequest(request CheckRequest) error {
-	if request.Channel != "stable" {
-		return ErrInvalidCheckRequest
-	}
 	switch request.Component {
-	case KindXray, KindXKeen, KindGeodata:
-		return nil
+	case KindXray, KindGeodata:
+		if request.Channel == "stable" {
+			return nil
+		}
+	case KindXKeen:
+		if request.Channel == xkeenDevChannel {
+			return nil
+		}
 	default:
-		return ErrInvalidCheckRequest
+		// Fall through to the common closed-tuple rejection below.
 	}
+	return ErrInvalidCheckRequest
 }
 
 // CheckService is deliberately separate from ReadOnlyService. A check may
@@ -86,11 +100,14 @@ type CheckService interface {
 }
 
 type CheckCandidate struct {
-	Version    string `json:"version,omitempty"`
-	Generation string `json:"generation,omitempty"`
-	AssetName  string `json:"assetName,omitempty"`
-	SizeBytes  int64  `json:"sizeBytes,omitempty"`
-	SHA256     string `json:"sha256,omitempty"`
+	Version         string `json:"version,omitempty"`
+	Generation      string `json:"generation,omitempty"`
+	AssetName       string `json:"assetName,omitempty"`
+	SizeBytes       int64  `json:"sizeBytes,omitempty"`
+	SHA256          string `json:"sha256,omitempty"`
+	BuildCommitSHA  string `json:"buildCommitSha,omitempty"`
+	SourceCommitSHA string `json:"sourceCommitSha,omitempty"`
+	BlobSHA         string `json:"blobSha,omitempty"`
 }
 
 // XrayReleaseIdentity is the server-owned identity of one exact Xray
@@ -393,69 +410,163 @@ func (c *Checker) checkXray(ctx context.Context, channel string, installed Inven
 }
 
 func (c *Checker) checkXKeen(ctx context.Context, channel string, installed Inventory, haveInstalled bool) (CheckResult, error) {
-	result := newCheckResult(KindXKeen, channel, "github/Skrill0/XKeen", c.clock())
+	result := newCheckResult(KindXKeen, channel, xkeenDevSourceID, c.clock())
 	budget := newNetworkBudget()
-	body, err := c.client.fetch(ctx, xkeenMetadataPath, budget)
+	identity, failure, err := c.resolveXKeenDevBuild(ctx, budget)
 	if err != nil {
-		var failure *metadataFailure
-		if errors.As(err, &failure) {
-			result.ReasonCode = failure.reason
+		var metadataFailureValue *metadataFailure
+		if errors.As(err, &metadataFailureValue) {
+			result.ReasonCode = metadataFailureValue.reason
 			return result, nil
 		}
 		return CheckResult{}, err
 	}
-	release, failure := decodeReleaseMetadata(body)
-	if failure != nil {
-		result.ReasonCode = failure.reason
-		return result, nil
-	}
-	if failure = validateReleaseMetadata(release); failure != nil {
-		result.ReasonCode = failure.reason
-		return result, nil
-	}
-	if !metadataGenerationPattern.MatchString(release.TagName) {
-		result.ReasonCode = "version-invalid"
-		return result, nil
-	}
-	asset, failure := selectMetadataAsset(release.Assets, xkeenCandidateAsset, false)
 	if failure != nil {
 		result.ReasonCode = failure.reason
 		return result, nil
 	}
 	result.Candidate = &CheckCandidate{
-		Version:    release.TagName,
-		Generation: release.TagName,
-		AssetName:  xkeenCandidateAsset,
-		SizeBytes:  asset.Size,
-		SHA256:     asset.SHA256,
+		Generation:      identity.BuildCommitSHA,
+		AssetName:       xkeenDevArtifactPath,
+		SizeBytes:       identity.SizeBytes,
+		BuildCommitSHA:  identity.BuildCommitSHA,
+		SourceCommitSHA: identity.SourceCommitSHA,
+		BlobSHA:         identity.BlobSHA,
 	}
 	if haveInstalled {
-		result.InstalledState = compareInstalledOpaque(installed.XKeen, release.TagName)
+		result.InstalledState = compareInstalledXKeenDev(installed.XKeen, identity.BuildCommitSHA)
 	}
-	if compatibility, ok := reviewedXKeenCompatibility[release.TagName+"\x00"+xkeenCandidateAsset]; ok {
-		if asset.SHA256 == "" {
-			result.ReasonCode = "digest-unavailable"
-			return result, nil
-		}
-		if !strings.EqualFold(asset.SHA256, compatibility.SHA256) {
-			result.ReasonCode = "digest-mismatch"
-			return result, nil
-		}
-		result.Eligible = true
-		result.ReasonCode = "supported-for-preview"
-		return result, nil
-	}
-	// The compatibility catalog is intentionally empty until a product-owned
-	// archive/layout contract and digest have been reviewed.
-	result.ReasonCode = "compatibility-catalog-required"
+	// E0 is metadata-only. This candidate is eligible for the existing
+	// informational Check contract, but there is still no mutation/installer
+	// surface and no archive bytes have been fetched.
+	result.Eligible = true
+	result.ReasonCode = "supported-for-preview"
 	return result, nil
 }
 
-type xkeenCompatibilityEntry struct {
-	SHA256 string
+type xkeenDevBuildIdentity struct {
+	BuildCommitSHA  string
+	SourceCommitSHA string
+	BlobSHA         string
+	SizeBytes       int64
 }
 
-var reviewedXKeenCompatibility = map[string]xkeenCompatibilityEntry{}
+type githubXKeenCommitListItem struct {
+	SHA string `json:"sha"`
+}
+
+type githubXKeenCommitMetadata struct {
+	SHA     string `json:"sha"`
+	Parents []struct {
+		SHA string `json:"sha"`
+	} `json:"parents"`
+	Commit struct {
+		Message      string `json:"message"`
+		Verification struct {
+			Verified bool `json:"verified"`
+		} `json:"verification"`
+	} `json:"commit"`
+}
+
+type githubXKeenTreeMetadata struct {
+	Truncated bool `json:"truncated"`
+	Tree      []struct {
+		Path string `json:"path"`
+		Mode string `json:"mode"`
+		Type string `json:"type"`
+		SHA  string `json:"sha"`
+		Size int64  `json:"size"`
+	} `json:"tree"`
+}
+
+func (c *Checker) resolveXKeenDevBuild(ctx context.Context, budget *networkBudget) (xkeenDevBuildIdentity, *metadataFailure, error) {
+	body, err := c.client.fetch(ctx, xkeenDevCommitListPath, budget)
+	if err != nil {
+		return xkeenDevBuildIdentity{}, nil, err
+	}
+	var commits []githubXKeenCommitListItem
+	if err := json.Unmarshal(body, &commits); err != nil || len(commits) != 1 || !isGitSHA1(commits[0].SHA) {
+		return xkeenDevBuildIdentity{}, &metadataFailure{reason: "dev-build-invalid"}, nil
+	}
+	buildCommit := strings.ToLower(commits[0].SHA)
+
+	commitPath := xkeenDevCommitPathPrefix + buildCommit
+	body, err = c.client.fetch(ctx, commitPath, budget)
+	if err != nil {
+		return xkeenDevBuildIdentity{}, nil, err
+	}
+	var commit githubXKeenCommitMetadata
+	if err := json.Unmarshal(body, &commit); err != nil || !strings.EqualFold(commit.SHA, buildCommit) {
+		return xkeenDevBuildIdentity{}, &metadataFailure{reason: "dev-build-invalid"}, nil
+	}
+	if !commit.Commit.Verification.Verified {
+		return xkeenDevBuildIdentity{}, &metadataFailure{reason: "dev-build-unverified"}, nil
+	}
+	if strings.TrimSpace(commit.Commit.Message) != xkeenDevBuildCommitMessage {
+		return xkeenDevBuildIdentity{}, &metadataFailure{reason: "dev-build-not-automated"}, nil
+	}
+	if len(commit.Parents) != 1 || !isGitSHA1(commit.Parents[0].SHA) {
+		return xkeenDevBuildIdentity{}, &metadataFailure{reason: "dev-build-shape-invalid"}, nil
+	}
+	sourceCommit := strings.ToLower(commit.Parents[0].SHA)
+
+	treePath := xkeenDevTreePathPrefix + buildCommit + xkeenDevTreePathSuffix
+	body, err = c.client.fetch(ctx, treePath, budget)
+	if err != nil {
+		return xkeenDevBuildIdentity{}, nil, err
+	}
+	var tree githubXKeenTreeMetadata
+	if err := json.Unmarshal(body, &tree); err != nil || tree.Truncated || len(tree.Tree) > MaxXKeenDevTreeEntries {
+		return xkeenDevBuildIdentity{}, &metadataFailure{reason: "dev-artifact-tree-invalid"}, nil
+	}
+	matches := 0
+	var artifact struct {
+		Path string
+		Mode string
+		Type string
+		SHA  string
+		Size int64
+	}
+	for _, entry := range tree.Tree {
+		if entry.Path != xkeenDevArtifactPath {
+			continue
+		}
+		matches++
+		artifact.Path = entry.Path
+		artifact.Mode = entry.Mode
+		artifact.Type = entry.Type
+		artifact.SHA = entry.SHA
+		artifact.Size = entry.Size
+	}
+	if matches != 1 || artifact.Type != "blob" || artifact.Mode != "100644" || !isGitSHA1(artifact.SHA) {
+		return xkeenDevBuildIdentity{}, &metadataFailure{reason: "dev-artifact-invalid"}, nil
+	}
+	if artifact.Size <= 0 {
+		return xkeenDevBuildIdentity{}, &metadataFailure{reason: "asset-size-invalid"}, nil
+	}
+	if artifact.Size > MaxXKeenDevArtifactBytes {
+		return xkeenDevBuildIdentity{}, &metadataFailure{reason: "asset-size-too-large"}, nil
+	}
+	return xkeenDevBuildIdentity{
+		BuildCommitSHA:  buildCommit,
+		SourceCommitSHA: sourceCommit,
+		BlobSHA:         strings.ToLower(artifact.SHA),
+		SizeBytes:       artifact.Size,
+	}, nil, nil
+}
+
+func compareInstalledXKeenDev(installed Component, candidateBuild string) string {
+	if installed.State == StateMissing {
+		return "not-installed"
+	}
+	if installed.SourceCommit == "" || !isGitSHA1(installed.SourceCommit) {
+		return "unknown"
+	}
+	if strings.EqualFold(installed.SourceCommit, candidateBuild) {
+		return "current"
+	}
+	return "changed"
+}
 
 func (c *Checker) checkGeodata(ctx context.Context, channel string, installed Inventory, haveInstalled bool) (CheckResult, error) {
 	result := newCheckResult(KindGeodata, channel, "github/product-geodata-catalog", c.clock())
@@ -867,6 +978,14 @@ func isHexSHA256(value string) bool {
 	return err == nil
 }
 
+func isGitSHA1(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == 20
+}
+
 func cloneCheckResult(value CheckResult) CheckResult {
 	clone := value
 	if value.Candidate != nil {
@@ -932,7 +1051,7 @@ func (c *metadataClient) fetch(ctx context.Context, path string, budget *network
 	if err != nil {
 		return nil, ErrCheckUnavailable
 	}
-	if request.URL.Scheme != "https" || request.URL.Host != metadataHost || !isFixedMetadataPath(request.URL.Path) {
+	if !isFixedMetadataURL(request.URL) {
 		return nil, ErrCheckUnavailable
 	}
 	request.Header.Set("Accept", "application/vnd.github+json")
@@ -980,8 +1099,17 @@ func (c *metadataClient) fetch(ctx context.Context, path string, budget *network
 }
 
 func isFixedMetadataPath(path string) bool {
-	if path == xrayMetadataPath || path == xkeenMetadataPath {
+	if path == xrayMetadataPath || path == xkeenDevCommitListPath {
 		return true
+	}
+	if strings.HasPrefix(path, xkeenDevCommitPathPrefix) && isGitSHA1(strings.TrimPrefix(path, xkeenDevCommitPathPrefix)) {
+		return true
+	}
+	if strings.HasPrefix(path, xkeenDevTreePathPrefix) && strings.HasSuffix(path, xkeenDevTreePathSuffix) {
+		commit := strings.TrimSuffix(strings.TrimPrefix(path, xkeenDevTreePathPrefix), xkeenDevTreePathSuffix)
+		if isGitSHA1(commit) {
+			return true
+		}
 	}
 	for _, entry := range productGeodataCatalog {
 		if path == geodataMetadataPath(entry) {
@@ -989,6 +1117,17 @@ func isFixedMetadataPath(path string) bool {
 		}
 	}
 	return false
+}
+
+func isFixedMetadataURL(value *url.URL) bool {
+	if value == nil || value.Scheme != "https" || value.Host != metadataHost {
+		return false
+	}
+	path := value.EscapedPath()
+	if value.RawQuery != "" {
+		path += "?" + value.RawQuery
+	}
+	return isFixedMetadataPath(path)
 }
 
 func metadataErrorReason(err error) string {

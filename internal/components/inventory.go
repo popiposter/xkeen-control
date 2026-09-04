@@ -25,28 +25,29 @@ import (
 const (
 	SchemaVersion = 1
 
-	DefaultXrayBinary            = "/opt/sbin/xray"
-	DefaultXkeenBinary           = "/opt/sbin/xkeen"
-	DefaultXkeenModuleDir        = "/opt/sbin/.xkeen"
-	DefaultXkeenModuleImport     = "/opt/sbin/.xkeen/import.sh"
-	DefaultXkeenRuntimeInit      = "/opt/etc/init.d/S24xray"
-	DefaultXkeenConfig           = "/opt/etc/xkeen/xkeen.json"
-	DefaultXkeenPackageMetadata  = "/opt/lib/opkg/info/xkeen.control"
-	DefaultGeodataDir            = "/opt/etc/xray/dat"
-	DefaultAppliancePath         = "/opt/etc/xkeen-control/config/appliance.json"
-	DefaultRoutingPath           = "/opt/etc/xray/configs/05_routing.json"
-	DefaultDNSPath               = "/opt/etc/xray/configs/02_dns.json"
-	DefaultKeeneticOSVersionPath = "/etc/version"
-	DefaultEntwareReleasePath    = "/opt/etc/entware_release"
-	DefaultEntwareBinary         = "/opt/bin/opkg"
-	DefaultInventoryTimeout      = 2 * time.Second
-	DefaultXrayProbeTimeout      = 1 * time.Second
-	MaxXrayProbeOutput           = 64 << 10
-	MaxSignalBytes               = 4 << 10
-	MaxPolicyBytes               = 2 << 20
-	MaxGeodataFileBytes          = 64 << 20
-	MaxInventoryReadBytes        = 256 << 20
-	MaxGeodataItems              = 32
+	DefaultXrayBinary             = "/opt/sbin/xray"
+	DefaultXkeenBinary            = "/opt/sbin/xkeen"
+	DefaultXkeenModuleDir         = "/opt/sbin/.xkeen"
+	DefaultXkeenModuleImport      = "/opt/sbin/.xkeen/import.sh"
+	DefaultXkeenRuntimeInit       = "/opt/etc/init.d/S05xkeen"
+	DefaultXkeenLegacyRuntimeInit = "/opt/etc/init.d/S24xray"
+	DefaultXkeenConfig            = "/opt/etc/xkeen/xkeen.json"
+	DefaultXkeenPackageMetadata   = "/opt/lib/opkg/info/xkeen.control"
+	DefaultGeodataDir             = "/opt/etc/xray/dat"
+	DefaultAppliancePath          = "/opt/etc/xkeen-control/config/appliance.json"
+	DefaultRoutingPath            = "/opt/etc/xray/configs/05_routing.json"
+	DefaultDNSPath                = "/opt/etc/xray/configs/02_dns.json"
+	DefaultKeeneticOSVersionPath  = "/etc/version"
+	DefaultEntwareReleasePath     = "/opt/etc/entware_release"
+	DefaultEntwareBinary          = "/opt/bin/opkg"
+	DefaultInventoryTimeout       = 2 * time.Second
+	DefaultXrayProbeTimeout       = 1 * time.Second
+	MaxXrayProbeOutput            = 64 << 10
+	MaxSignalBytes                = 4 << 10
+	MaxPolicyBytes                = 2 << 20
+	MaxGeodataFileBytes           = 64 << 20
+	MaxInventoryReadBytes         = 256 << 20
+	MaxGeodataItems               = 32
 )
 
 var (
@@ -167,12 +168,13 @@ type Config struct {
 	XrayVersionProbe XrayVersionProbe
 	XrayProbeTimeout time.Duration
 
-	XkeenBinary          string
-	XkeenModuleDir       string
-	XkeenModuleImport    string
-	XkeenRuntimeInit     string
-	XkeenConfig          string
-	XkeenPackageMetadata string
+	XkeenBinary            string
+	XkeenModuleDir         string
+	XkeenModuleImport      string
+	XkeenRuntimeInit       string
+	XkeenLegacyRuntimeInit string
+	XkeenConfig            string
+	XkeenPackageMetadata   string
 
 	GeodataDir    string
 	AppliancePath string
@@ -214,6 +216,9 @@ func NewService(config Config) *Service {
 	}
 	if config.XkeenRuntimeInit == "" {
 		config.XkeenRuntimeInit = DefaultXkeenRuntimeInit
+	}
+	if config.XkeenLegacyRuntimeInit == "" {
+		config.XkeenLegacyRuntimeInit = DefaultXkeenLegacyRuntimeInit
 	}
 	if config.XkeenConfig == "" {
 		config.XkeenConfig = DefaultXkeenConfig
@@ -429,20 +434,24 @@ func ParseXrayVersionOutput(stdout, stderr []byte) (XrayVersionSignal, error) {
 
 func (s *Service) inventoryXKeen(ctx context.Context, budget *readBudget) Component {
 	component := Component{Kind: KindXKeen, VersionUnknown: true, Capability: CapabilityUnsupported}
-	checks := []pathCheck{
+	coreChecks := []pathCheck{
 		inspectPath(s.config.XkeenBinary, pathExecutable),
 		inspectPath(s.config.XkeenModuleDir, pathDirectory),
 		inspectPath(s.config.XkeenModuleImport, pathRegular),
-		inspectPath(s.config.XkeenRuntimeInit, pathExecutable),
 		inspectPath(s.config.XkeenConfig, pathRegular),
 	}
+	currentInit := inspectPath(s.config.XkeenRuntimeInit, pathExecutable)
+	legacyInit := inspectPath(s.config.XkeenLegacyRuntimeInit, pathExecutable)
+	checks := append(append([]pathCheck{}, coreChecks...), currentInit)
 	anyPresent := false
 	anyUnknown := false
 	allValid := true
 	firstReason := ""
-	for _, check := range checks {
+	for _, check := range append(append([]pathCheck{}, checks...), legacyInit) {
 		anyPresent = anyPresent || check.present
 		anyUnknown = anyUnknown || check.state == StateUnknown
+	}
+	for _, check := range checks {
 		if check.state != StatePresent || !check.valid {
 			allValid = false
 			if firstReason == "" {
@@ -463,6 +472,35 @@ func (s *Service) inventoryXKeen(ctx context.Context, budget *readBudget) Compon
 		component.ReasonCode = "not-installed"
 		return component
 	}
+	// S24xray is retained only as an explicit legacy/migration signal. It is
+	// never accepted as the current XKeen lifecycle dependency and cannot
+	// make the component supported or expose a dev candidate.
+	if legacyInit.present && currentInit.state != StatePresent {
+		if currentInit.state == StateUnknown {
+			component.State = StateUnknown
+			component.ReasonCode = "current-layout-unavailable"
+			return component
+		}
+		component.State = StatePresent
+		component.Present = true
+		if legacyInit.state == StatePresent && legacyInit.valid {
+			coreValid := true
+			for _, check := range coreChecks {
+				if check.state != StatePresent || !check.valid {
+					coreValid = false
+					if firstReason == "" {
+						firstReason = check.reason
+					}
+				}
+			}
+			if coreValid {
+				component.ReasonCode = "legacy-layout"
+				return component
+			}
+		}
+		component.ReasonCode = "legacy-layout-incomplete"
+		return component
+	}
 	if !allValid {
 		if firstReason == "" {
 			firstReason = "layout-incomplete"
@@ -470,6 +508,7 @@ func (s *Service) inventoryXKeen(ctx context.Context, budget *readBudget) Compon
 		component.ReasonCode = firstReason
 		return component
 	}
+	component.Channel = "dev"
 
 	metadata, metadataCheck := readRegularBytes(ctx, budget, s.config.XkeenPackageMetadata, MaxSignalBytes)
 	if metadataCheck.state != StatePresent || !metadataCheck.valid {

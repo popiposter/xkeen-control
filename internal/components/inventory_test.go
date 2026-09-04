@@ -57,23 +57,24 @@ func newInventoryFixture(t *testing.T) *inventoryFixture {
 				SourceCommit: strings.Repeat("a", 40),
 				Channel:      "stable",
 			},
-			XrayBinary:            filepath.Join(root, "opt", "sbin", "xray"),
-			XrayVersionProbe:      probe,
-			XrayProbeTimeout:      100 * time.Millisecond,
-			XkeenBinary:           filepath.Join(root, "opt", "sbin", "xkeen"),
-			XkeenModuleDir:        filepath.Join(root, "opt", "sbin", ".xkeen"),
-			XkeenModuleImport:     filepath.Join(root, "opt", "sbin", ".xkeen", "import.sh"),
-			XkeenRuntimeInit:      filepath.Join(root, "opt", "etc", "init.d", "S24xray"),
-			XkeenConfig:           filepath.Join(root, "opt", "etc", "xkeen", "xkeen.json"),
-			XkeenPackageMetadata:  filepath.Join(root, "opt", "lib", "opkg", "info", "xkeen.control"),
-			GeodataDir:            filepath.Join(root, "opt", "etc", "xray", "dat"),
-			AppliancePath:         filepath.Join(root, "opt", "etc", "xkeen-control", "config", "appliance.json"),
-			RoutingPath:           filepath.Join(root, "opt", "etc", "xray", "configs", "05_routing.json"),
-			DNSPath:               filepath.Join(root, "opt", "etc", "xray", "configs", "02_dns.json"),
-			KeeneticOSVersionPath: filepath.Join(root, "etc", "version"),
-			EntwareReleasePath:    filepath.Join(root, "opt", "etc", "entware_release"),
-			EntwareBinary:         filepath.Join(root, "opt", "bin", "opkg"),
-			InventoryTimeout:      500 * time.Millisecond,
+			XrayBinary:             filepath.Join(root, "opt", "sbin", "xray"),
+			XrayVersionProbe:       probe,
+			XrayProbeTimeout:       100 * time.Millisecond,
+			XkeenBinary:            filepath.Join(root, "opt", "sbin", "xkeen"),
+			XkeenModuleDir:         filepath.Join(root, "opt", "sbin", ".xkeen"),
+			XkeenModuleImport:      filepath.Join(root, "opt", "sbin", ".xkeen", "import.sh"),
+			XkeenRuntimeInit:       filepath.Join(root, "opt", "etc", "init.d", "S05xkeen"),
+			XkeenLegacyRuntimeInit: filepath.Join(root, "opt", "etc", "init.d", "S24xray"),
+			XkeenConfig:            filepath.Join(root, "opt", "etc", "xkeen", "xkeen.json"),
+			XkeenPackageMetadata:   filepath.Join(root, "opt", "lib", "opkg", "info", "xkeen.control"),
+			GeodataDir:             filepath.Join(root, "opt", "etc", "xray", "dat"),
+			AppliancePath:          filepath.Join(root, "opt", "etc", "xkeen-control", "config", "appliance.json"),
+			RoutingPath:            filepath.Join(root, "opt", "etc", "xray", "configs", "05_routing.json"),
+			DNSPath:                filepath.Join(root, "opt", "etc", "xray", "configs", "02_dns.json"),
+			KeeneticOSVersionPath:  filepath.Join(root, "etc", "version"),
+			EntwareReleasePath:     filepath.Join(root, "opt", "etc", "entware_release"),
+			EntwareBinary:          filepath.Join(root, "opt", "bin", "opkg"),
+			InventoryTimeout:       500 * time.Millisecond,
 		},
 	}
 }
@@ -157,7 +158,7 @@ func TestSnapshotReportsAllFixedClassesAndSafeFacts(t *testing.T) {
 	if snapshot.Xray.State != StatePresent || snapshot.Xray.Version != "1.8.24" || snapshot.Xray.Architecture != "arm64" || snapshot.Xray.Capability != CapabilitySupported {
 		t.Fatalf("xray = %+v", snapshot.Xray)
 	}
-	if snapshot.XKeen.State != StatePresent || snapshot.XKeen.Version != "0.8.2" || snapshot.XKeen.Capability != CapabilitySupported {
+	if snapshot.XKeen.State != StatePresent || snapshot.XKeen.Version != "0.8.2" || snapshot.XKeen.Channel != "dev" || snapshot.XKeen.Capability != CapabilitySupported {
 		t.Fatalf("xkeen = %+v", snapshot.XKeen)
 	}
 	if snapshot.Geodata.State != StatePresent || snapshot.Geodata.Capability != CapabilitySupported || len(snapshot.Geodata.Items) != len(productGeodataCatalog) {
@@ -322,6 +323,24 @@ func TestXKeenNeverExecutesFixedScriptsOrGuessesVersion(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(fixture.root, marker)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("xkeen marker %s exists or could not be checked: %v", marker, err)
 		}
+	}
+}
+
+func TestXKeenRecognizesLegacyS24xrayWithoutTreatingItAsSupportedDevLayout(t *testing.T) {
+	fixture := newInventoryFixture(t)
+	fixture.createXkeenLayout(t)
+	if err := os.Remove(fixture.config.XkeenRuntimeInit); err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureExecutable(t, fixture.config.XkeenLegacyRuntimeInit, "#!/bin/sh\nprintf legacy-init-executed > "+filepath.Join(fixture.root, "legacy-init-executed")+"\n")
+	writeFixtureFile(t, fixture.config.XkeenPackageMetadata, []byte("Package: xkeen\nVersion: 2.0.1\nArchitecture: all\n"), 0o644)
+
+	component := fixture.service().Snapshot(context.Background()).XKeen
+	if component.State != StatePresent || !component.Present || component.ReasonCode != "legacy-layout" || component.Capability != CapabilityUnsupported || !component.VersionUnknown || component.Version != "" || component.Channel != "" {
+		t.Fatalf("legacy xkeen = %+v", component)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.root, "legacy-init-executed")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy init was executed or could not be checked: %v", err)
 	}
 }
 

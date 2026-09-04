@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -41,8 +42,12 @@ func (transport *metadataFixtureTransport) RoundTrip(request *http.Request) (*ht
 		return nil, errors.New("unexpected metadata destination")
 	}
 	transport.mu.Lock()
-	transport.calls = append(transport.calls, request.URL.Path)
-	body, ok := transport.responses[request.URL.Path]
+	path := request.URL.EscapedPath()
+	if request.URL.RawQuery != "" {
+		path += "?" + request.URL.RawQuery
+	}
+	transport.calls = append(transport.calls, path)
+	body, ok := transport.responses[path]
 	transport.mu.Unlock()
 	if !ok {
 		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader("not found")), Request: request}, nil
@@ -204,25 +209,160 @@ func TestXrayCheckFailsClosedForReleaseAndAssetProblems(t *testing.T) {
 	})
 }
 
-func TestXKeenLatestIsInformationalWithoutProductTrust(t *testing.T) {
-	checker, transport := newFixtureChecker(t, map[string][]byte{
-		xkeenMetadataPath: releaseMetadata(t, "1.1.3", testAsset(xkeenCandidateAsset, 4567, "")),
-	}, func() (Inventory, bool) {
-		return Inventory{XKeen: Component{State: StatePresent, Version: "1.0.0"}}, true
+func TestXKeenDevCheckProjectsSignedBuildIdentityWithoutDownloadingArtifact(t *testing.T) {
+	buildCommit := strings.Repeat("b", 40)
+	sourceCommit := strings.Repeat("c", 40)
+	blobSHA := strings.Repeat("d", 40)
+	responses := map[string][]byte{
+		xkeenDevCommitListPath:                                        xkeenDevCommitList(t, buildCommit),
+		xkeenDevCommitPathPrefix + buildCommit:                        xkeenDevCommit(t, buildCommit, sourceCommit, true, xkeenDevBuildCommitMessage),
+		xkeenDevTreePathPrefix + buildCommit + xkeenDevTreePathSuffix: xkeenDevTree(t, xkeenDevArtifactPath, "100644", "blob", blobSHA, 111409),
+	}
+	checker, transport := newFixtureChecker(t, responses, func() (Inventory, bool) {
+		return Inventory{XKeen: Component{State: StatePresent, SourceCommit: buildCommit}}, true
 	})
-	result, err := checker.Check(context.Background(), CheckRequest{Component: KindXKeen, Channel: "stable"})
+	result, err := checker.Check(context.Background(), CheckRequest{Component: KindXKeen, Channel: xkeenDevChannel})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Candidate == nil || result.Candidate.Version != "1.1.3" || result.Candidate.AssetName != xkeenCandidateAsset || result.Candidate.SizeBytes != 4567 {
-		t.Fatalf("xkeen candidate = %+v", result.Candidate)
-	}
-	if result.Eligible || result.MutationAvailable || result.ReasonCode != "compatibility-catalog-required" || result.InstalledState != "changed" {
+	if result.SourceID != xkeenDevSourceID || result.Channel != xkeenDevChannel || !result.Eligible || result.MutationAvailable || result.ReasonCode != "supported-for-preview" || result.InstalledState != "current" {
 		t.Fatalf("xkeen result = %+v", result)
 	}
-	if got := transportCalls(transport); len(got) != 1 || got[0] != xkeenMetadataPath {
-		t.Fatalf("xkeen metadata calls = %v", got)
+	if result.Candidate == nil || result.Candidate.Generation != buildCommit || result.Candidate.AssetName != xkeenDevArtifactPath || result.Candidate.SizeBytes != 111409 || result.Candidate.BuildCommitSHA != buildCommit || result.Candidate.SourceCommitSHA != sourceCommit || result.Candidate.BlobSHA != blobSHA || result.Candidate.SHA256 != "" || result.Candidate.Version != "" {
+		t.Fatalf("xkeen candidate = %+v", result.Candidate)
 	}
+	wantCalls := []string{
+		xkeenDevCommitListPath,
+		xkeenDevCommitPathPrefix + buildCommit,
+		xkeenDevTreePathPrefix + buildCommit + xkeenDevTreePathSuffix,
+	}
+	if got := transportCalls(transport); !reflect.DeepEqual(got, wantCalls) {
+		t.Fatalf("xkeen metadata calls = %v, want %v", got, wantCalls)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"Skrill0/XKeen", "releases/latest", "raw.githubusercontent.com", "download_url", "http://", "https://"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("xkeen result contains %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestXKeenDevCheckRejectsUnsignedOrNonBuildCommits(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		verified bool
+		message  string
+		wantCode string
+	}{
+		{name: "unsigned", verified: false, message: xkeenDevBuildCommitMessage, wantCode: "dev-build-unverified"},
+		{name: "ordinary source commit", verified: true, message: "refactor: source-only change", wantCode: "dev-build-not-automated"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			buildCommit := strings.Repeat("e", 40)
+			responses := map[string][]byte{
+				xkeenDevCommitListPath:                 xkeenDevCommitList(t, buildCommit),
+				xkeenDevCommitPathPrefix + buildCommit: xkeenDevCommit(t, buildCommit, strings.Repeat("f", 40), test.verified, test.message),
+			}
+			checker, transport := newFixtureChecker(t, responses, nil)
+			result, err := checker.Check(context.Background(), CheckRequest{Component: KindXKeen, Channel: xkeenDevChannel})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Eligible || result.MutationAvailable || result.ReasonCode != test.wantCode || result.Candidate != nil {
+				t.Fatalf("xkeen rejection = %+v", result)
+			}
+			if got := transportCalls(transport); len(got) != 2 || got[1] != xkeenDevCommitPathPrefix+buildCommit {
+				t.Fatalf("xkeen rejection metadata calls = %v", got)
+			}
+		})
+	}
+}
+
+func TestXKeenDevCheckRejectsInvalidArtifactTreeMetadata(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		tree     []byte
+		wantCode string
+	}{
+		{name: "missing fixed artifact", tree: xkeenDevTree(t, "test/other.tar.gz", "100644", "blob", strings.Repeat("a", 40), 111409), wantCode: "dev-artifact-invalid"},
+		{name: "wrong type", tree: xkeenDevTree(t, xkeenDevArtifactPath, "100644", "tree", strings.Repeat("a", 40), 111409), wantCode: "dev-artifact-invalid"},
+		{name: "wrong mode", tree: xkeenDevTree(t, xkeenDevArtifactPath, "100755", "blob", strings.Repeat("a", 40), 111409), wantCode: "dev-artifact-invalid"},
+		{name: "bad blob sha", tree: xkeenDevTree(t, xkeenDevArtifactPath, "100644", "blob", "not-a-sha", 111409), wantCode: "dev-artifact-invalid"},
+		{name: "oversized artifact", tree: xkeenDevTree(t, xkeenDevArtifactPath, "100644", "blob", strings.Repeat("a", 40), MaxXKeenDevArtifactBytes+1), wantCode: "asset-size-too-large"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			buildCommit := strings.Repeat("b", 40)
+			responses := map[string][]byte{
+				xkeenDevCommitListPath:                                        xkeenDevCommitList(t, buildCommit),
+				xkeenDevCommitPathPrefix + buildCommit:                        xkeenDevCommit(t, buildCommit, strings.Repeat("c", 40), true, xkeenDevBuildCommitMessage),
+				xkeenDevTreePathPrefix + buildCommit + xkeenDevTreePathSuffix: test.tree,
+			}
+			checker, transport := newFixtureChecker(t, responses, nil)
+			result, err := checker.Check(context.Background(), CheckRequest{Component: KindXKeen, Channel: xkeenDevChannel})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Eligible || result.MutationAvailable || result.ReasonCode != test.wantCode || result.Candidate != nil {
+				t.Fatalf("xkeen artifact rejection = %+v", result)
+			}
+			if got := transportCalls(transport); len(got) != 3 {
+				t.Fatalf("xkeen artifact metadata calls = %v", got)
+			}
+		})
+	}
+}
+
+func TestXKeenCheckRejectsLegacySkrill0SourceAndStableTuple(t *testing.T) {
+	if isFixedMetadataPath("/repos/Skrill0/XKeen/releases/latest") {
+		t.Fatal("legacy Skrill0 release path is still an allowed metadata source")
+	}
+	checker, transport := newFixtureChecker(t, map[string][]byte{}, nil)
+	if _, err := checker.client.fetch(context.Background(), "/repos/Skrill0/XKeen/releases/latest", newNetworkBudget()); !errors.Is(err, ErrCheckUnavailable) {
+		t.Fatalf("legacy source fetch error = %v", err)
+	}
+	if len(transportCalls(transport)) != 0 {
+		t.Fatal("legacy source caused metadata traffic")
+	}
+}
+
+func xkeenDevCommitList(t *testing.T, buildCommit string) []byte {
+	t.Helper()
+	contents, err := json.Marshal([]githubXKeenCommitListItem{{SHA: buildCommit}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contents
+}
+
+func xkeenDevCommit(t *testing.T, buildCommit, sourceCommit string, verified bool, message string) []byte {
+	t.Helper()
+	contents, err := json.Marshal(map[string]any{
+		"sha":     buildCommit,
+		"parents": []map[string]string{{"sha": sourceCommit}},
+		"commit": map[string]any{
+			"message":      message,
+			"verification": map[string]bool{"verified": verified},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contents
+}
+
+func xkeenDevTree(t *testing.T, path, mode, kind, blobSHA string, size int64) []byte {
+	t.Helper()
+	contents, err := json.Marshal(map[string]any{
+		"truncated": false,
+		"tree":      []map[string]any{{"path": path, "mode": mode, "type": kind, "sha": blobSHA, "size": size}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contents
 }
 
 func TestGeodataCheckUsesFixedFiveSourceRequestsAndComparesDigests(t *testing.T) {
@@ -475,6 +615,9 @@ func TestCheckRejectsNonFixedRequestValues(t *testing.T) {
 	for _, request := range []CheckRequest{
 		{Component: KindPanel, Channel: "stable"},
 		{Component: KindXray, Channel: "beta"},
+		{Component: KindXray, Channel: xkeenDevChannel},
+		{Component: KindGeodata, Channel: xkeenDevChannel},
+		{Component: KindXKeen, Channel: "stable"},
 		{Component: ComponentKind("unknown"), Channel: "stable"},
 	} {
 		if err := ValidateCheckRequest(request); !errors.Is(err, ErrInvalidCheckRequest) {

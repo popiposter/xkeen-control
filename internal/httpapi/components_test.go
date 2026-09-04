@@ -27,12 +27,14 @@ func (stub *componentsHTTPStub) Snapshot(context.Context) components.Inventory {
 
 type componentCheckHTTPStub struct {
 	calls  atomic.Int32
+	last   components.CheckRequest
 	result components.CheckResult
 	err    error
 }
 
-func (stub *componentCheckHTTPStub) Check(context.Context, components.CheckRequest) (components.CheckResult, error) {
+func (stub *componentCheckHTTPStub) Check(_ context.Context, request components.CheckRequest) (components.CheckResult, error) {
 	stub.calls.Add(1)
+	stub.last = request
 	return stub.result, stub.err
 }
 
@@ -304,6 +306,12 @@ func TestComponentsCheckRouteIsClosedCSRFBoundAndSafe(t *testing.T) {
 		if strings.Contains(contents, forbidden) {
 			t.Fatalf("check response contains %q: %s", forbidden, contents)
 		}
+	}
+
+	response = postJSON(t, client, server.URL+"/api/v1/components/check", map[string]string{"component": "xkeen", "channel": "dev"}, login.CSRFToken)
+	contents = readBody(response)
+	if response.StatusCode != http.StatusOK || checker.calls.Load() != 2 || checker.last != (components.CheckRequest{Component: components.KindXKeen, Channel: "dev"}) {
+		t.Fatalf("valid xkeen dev check = %d calls=%d request=%+v body=%s", response.StatusCode, checker.calls.Load(), checker.last, contents)
 	}
 }
 
