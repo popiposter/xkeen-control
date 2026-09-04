@@ -192,15 +192,32 @@ Import preview uses strict bounded multipart parsing with one in-flight preview 
 
 D.1 does not expose raw JSON/Xray/XKeen editing, does not clone panel auth/listener/update state and does not install/repair XKeen/Xray. Before successful adoption, the explicit repository-derived/legacy compatibility boundary remains in force; unknown/manual drift fails closed. Component lifecycle remains the planned current/next slice #4, and broad visual typed configuration remains planned #5.
 
-Phase A of #4 adds the separate read-only component inventory foundation: an authenticated `GET /api/v1/components` returns a bounded typed projection for panel, XKeen, Xray, geodata, KeeneticOS and Entware. It performs no network discovery, persistence, coordinator/lease work, lifecycle mutation or panel-update-policy changes; the remaining component lifecycle stays planned.
+Phase A of #4 adds the separate read-only component inventory foundation: an authenticated `GET /api/v1/components` returns a bounded typed projection for panel, XKeen, Xray, geodata, KeeneticOS and Entware. It performs no network discovery, persistence, coordinator/lease work, lifecycle mutation or panel-update-policy changes; later lifecycle policy and UI remain planned.
 
 The Phase B source-main boundary adds an authenticated, same-origin/CSRF-bound `POST /api/v1/components/check` for explicit trusted metadata checks of only Xray, XKeen and the fixed product geodata catalog. Results are bounded and RAM-only; no artifact bytes are downloaded, no component or router state is changed, and no production-release or live-qualification claim follows from the source implementation.
 
+Phase F1 adds the backend-only manual component mutation broker on source `main`:
+
+```text
+POST /api/v1/components/preview
+POST /api/v1/components/apply
+POST /api/v1/components/rollback
+POST /api/v1/components/cancel
+```
+
+The broker accepts only typed Xray/geodata `stable` updates, XKeen `dev`
+updates, and typed rollback intents. Preview uses fresh uncached metadata and
+RAM-only session-bound tokens; Apply and Rollback dispatch the stored identity
+to the existing transaction services, which independently re-resolve, stage,
+validate, coordinate, journal, activate and recover. F1 has no Components UI,
+policy, scheduler, automatic update, Setup Mode or release surface, and these
+routes are not production-qualified or deployed.
+
 ## Planned later capabilities
 
-### #4 — component lifecycle
+### #4 — component lifecycle production qualification
 
-Typed/version-aware XKeen/Xray/geodata inventory/update/rollback will share the maintenance coordinator. It will not expose a shell or generic package manager.
+The source F1 broker is the backend seam for typed/version-aware XKeen/Xray/geodata inventory/update/rollback. A future production/release qualification must prove the live component paths, rollback/recovery behavior and operator controls before any #4 mutation route is deployed. It will not expose a shell or generic package manager.
 
 ### #5 — visual configuration
 

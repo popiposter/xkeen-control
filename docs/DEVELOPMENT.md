@@ -164,16 +164,28 @@ candidate `xkeen`, preserved Xray/geodata/config/opkg/cron/Entware state,
 purpose-specific preserved-state bounds, uncompressed-generation free-space
 admission, shared `xray|geodata|xkeen` journal/recovery arbitration, one previous
 generation, activation-parent preservation, ordinary rollback and local-only
-startup recovery. The real `2.0.1/Beta` catalog entry remains non-installable on
-E1 main until Phase E2 independently pins the exact archive SHA-256, real GNU
-tar member manifest and canonical generation digest.
+startup recovery. Phase E2 independently pins the real `2.0.1/Beta` catalog
+entry's exact archive SHA-256, GNU-tar member manifest and canonical generation
+digest for the installable fixed identity.
 
-Phase E2 qualification must keep repository CI deterministic/offline. A one-time
-immutable upstream artifact retrieval/content-equivalence/hash/manifest check is
-additional public review evidence for activating the fixed catalog entry; it
-must not turn `test-components.sh` or normal PR CI into a moving-network test.
-No Phase E2 production mutation or temporary operator mutation surface is
+Phase E2 qualification keeps repository CI deterministic/offline. The reviewed
+`2.0.1/Beta` catalog entry pins the exact archive SHA-256, GNU-tar member
+manifest and canonical generation digest; any one-time immutable upstream
+retrieval/content-equivalence check remains separate review evidence and must
+not turn `test-components.sh` or normal PR CI into a moving-network test. No
+Phase E2 production mutation or temporary operator mutation surface is
 authorized.
+
+Phase F1 fixtures cover the four authenticated backend routes, strict closed
+request/token bodies, exact `application/json` media type, trailing-data and
+unknown-field rejection, CSRF/origin enforcement, session/password preview
+invalidation, one-shot/TTL/bounded token retention and one in-flight preview.
+They prove fresh uncached preview resolution without artifact bodies, exact
+six-item geodata candidates, moving `jameszeroX/XKeen` `main` provenance mapped
+only to the reviewed installable catalog entry, typed Apply/Rollback dispatch,
+rollback target rotation/stale rejection and sanitized transaction errors. F1
+has no UI, persisted policy, scheduler, automatic update or production
+qualification; all fixtures remain offline/synthetic.
 
 ## Issue #3 Phase B focused fixtures
 

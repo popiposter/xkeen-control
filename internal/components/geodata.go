@@ -435,6 +435,23 @@ type loadedGeodataGeneration struct {
 	meta geodataSetMetadata
 }
 
+// GeodataPreviousItem is the safe identity of one file in the retained
+// component-owned geodata set. It contains no filesystem path.
+type GeodataPreviousItem struct {
+	ID        string
+	Name      string
+	SizeBytes int64
+	Mode      uint32
+	SHA256    string
+}
+
+// GeodataPreviousGeneration binds a rollback preview to the complete ordered
+// previous geodata set.
+type GeodataPreviousGeneration struct {
+	Generation string
+	Items      []GeodataPreviousItem
+}
+
 func NewGeodataService(config GeodataConfig) *GeodataService {
 	if config.Resolver == nil {
 		config.Resolver = NewGeodataResolver(nil, nil)
@@ -582,7 +599,37 @@ func (s *GeodataService) Update(ctx context.Context, intended GeodataCandidateSe
 	return s.Apply(ctx, intended)
 }
 
+// PreviousGeneration reads the complete component-owned previous geodata set.
+// It performs only bounded local reads and does not acquire mutation or
+// authority admission; RollbackExpected re-reads it under transaction
+// ownership before activation.
+func (s *GeodataService) PreviousGeneration() (GeodataPreviousGeneration, error) {
+	if err := s.Ready(); err != nil {
+		return GeodataPreviousGeneration{}, err
+	}
+	previous, err := s.loadPreviousGeneration()
+	if err != nil {
+		return GeodataPreviousGeneration{}, ErrGeodataPreviousUnavailable
+	}
+	return geodataPreviousGeneration(previous.meta), nil
+}
+
 func (s *GeodataService) Rollback(ctx context.Context) error {
+	return s.rollback(ctx, nil)
+}
+
+// RollbackExpected activates the previous set only when it still matches the
+// identity captured by a rollback preview.
+func (s *GeodataService) RollbackExpected(ctx context.Context, expected GeodataPreviousGeneration) error {
+	return s.rollback(ctx, &expected)
+}
+
+// RollbackWithExpected is a descriptive compatibility alias for typed callers.
+func (s *GeodataService) RollbackWithExpected(ctx context.Context, expected GeodataPreviousGeneration) error {
+	return s.RollbackExpected(ctx, expected)
+}
+
+func (s *GeodataService) rollback(ctx context.Context, expected *GeodataPreviousGeneration) error {
 	if err := s.Ready(); err != nil {
 		return err
 	}
@@ -609,6 +656,9 @@ func (s *GeodataService) Rollback(ctx context.Context) error {
 	previous, err := s.loadPreviousGeneration()
 	if err != nil {
 		return ErrGeodataPreviousUnavailable
+	}
+	if expected != nil && !sameGeodataPreviousGeneration(previous.meta, *expected) {
+		return ErrGeodataCandidateStale
 	}
 	// Rollback's candidate is copied into the private component staging root so
 	// a crash after .old is settled still retains the exact rollback target.
@@ -1582,6 +1632,27 @@ func sameGeodataSetMetadata(left, right geodataSetMetadata) bool {
 	}
 	for index := range left.Items {
 		if left.Items[index].ID != right.Items[index].ID || left.Items[index].Name != right.Items[index].Name || left.Items[index].Size != right.Items[index].Size || left.Items[index].Mode != right.Items[index].Mode || !strings.EqualFold(left.Items[index].SHA256, right.Items[index].SHA256) {
+			return false
+		}
+	}
+	return true
+}
+
+func geodataPreviousGeneration(meta geodataSetMetadata) GeodataPreviousGeneration {
+	items := make([]GeodataPreviousItem, len(meta.Items))
+	for index, item := range meta.Items {
+		items[index] = GeodataPreviousItem{ID: item.ID, Name: item.Name, SizeBytes: item.Size, Mode: item.Mode, SHA256: strings.ToLower(item.SHA256)}
+	}
+	return GeodataPreviousGeneration{Generation: meta.Generation, Items: items}
+}
+
+func sameGeodataPreviousGeneration(meta geodataSetMetadata, expected GeodataPreviousGeneration) bool {
+	if meta.Generation != expected.Generation || len(meta.Items) != len(expected.Items) {
+		return false
+	}
+	for index, item := range meta.Items {
+		previous := expected.Items[index]
+		if item.ID != previous.ID || item.Name != previous.Name || item.Size != previous.SizeBytes || item.Mode != previous.Mode || !strings.EqualFold(item.SHA256, previous.SHA256) {
 			return false
 		}
 	}

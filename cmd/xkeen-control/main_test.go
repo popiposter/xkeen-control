@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/popiposter/xkeen-control/internal/components"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 )
 
@@ -33,7 +34,10 @@ func TestHTTPWriteWindowExceedsNodeTransactionBudget(t *testing.T) {
 	if httpWriteTimeout <= nodes.DefaultTransactionTimeout+nodes.DefaultApplyGateWaitTimeout {
 		t.Fatalf("HTTP write timeout %s does not exceed gate plus transaction budget %s", httpWriteTimeout, nodes.DefaultTransactionTimeout+nodes.DefaultApplyGateWaitTimeout)
 	}
-	if got := httpWriteTimeout - nodes.DefaultTransactionTimeout - nodes.DefaultApplyGateWaitTimeout; got != nodeApplyResponseGrace {
+	if httpWriteTimeout <= components.DefaultXKeenTransactionTimeout+components.DefaultMutationWaitTimeout {
+		t.Fatalf("HTTP write timeout %s does not exceed XKeen transaction plus admission budget %s", httpWriteTimeout, components.DefaultXKeenTransactionTimeout+components.DefaultMutationWaitTimeout)
+	}
+	if got := httpWriteTimeout - components.DefaultMutationOperationTimeout; got != componentMutationResponseGrace {
 		t.Fatalf("HTTP response grace = %s", got)
 	}
 }

@@ -380,10 +380,48 @@ func (s *XrayService) Update(ctx context.Context, intended XrayReleaseIdentity) 
 	return s.Apply(ctx, intended)
 }
 
+// PreviousGeneration reads the one component-owned previous Xray generation.
+// It performs only bounded local reads and does not acquire mutation or
+// authority admission; RollbackExpected re-reads it under transaction
+// ownership before activation.
+func (s *XrayService) PreviousGeneration() (XrayPreviousGeneration, error) {
+	if err := s.Ready(); err != nil {
+		return XrayPreviousGeneration{}, err
+	}
+	previous, err := s.loadPreviousGeneration()
+	if err != nil {
+		return XrayPreviousGeneration{}, ErrXrayPreviousUnavailable
+	}
+	return XrayPreviousGeneration{
+		Generation: strings.ToLower(previous.meta.SHA256),
+		Version:    previous.meta.Version,
+		SizeBytes:  previous.meta.Size,
+		SHA256:     strings.ToLower(previous.meta.SHA256),
+		Mode:       previous.meta.Mode,
+	}, nil
+}
+
 // Rollback activates the one saved previous Xray generation without any
 // upstream dependency. It follows the same Coordinator -> authority lease
 // order and the same runtime verification path as Apply.
 func (s *XrayService) Rollback(ctx context.Context) error {
+	return s.rollback(ctx, nil)
+}
+
+// RollbackExpected activates the previous generation only when it still
+// matches the identity captured by a rollback preview. The comparison happens
+// after the existing transaction admission and immediately before any
+// candidate preparation or activation.
+func (s *XrayService) RollbackExpected(ctx context.Context, expected XrayPreviousGeneration) error {
+	return s.rollback(ctx, &expected)
+}
+
+// RollbackWithExpected is a descriptive compatibility alias for typed callers.
+func (s *XrayService) RollbackWithExpected(ctx context.Context, expected XrayPreviousGeneration) error {
+	return s.RollbackExpected(ctx, expected)
+}
+
+func (s *XrayService) rollback(ctx context.Context, expected *XrayPreviousGeneration) error {
 	if err := s.Ready(); err != nil {
 		return err
 	}
@@ -412,6 +450,9 @@ func (s *XrayService) Rollback(ctx context.Context) error {
 	previous, err := s.loadPreviousGeneration()
 	if err != nil {
 		return ErrXrayPreviousUnavailable
+	}
+	if expected != nil && !sameXrayPreviousGeneration(previous.meta, *expected) {
+		return ErrXrayCandidateStale
 	}
 	if err := s.validateLocalCandidate(transactionContext, previous.path, base.authority); err != nil {
 		return ErrXrayCandidateRejected
@@ -1207,6 +1248,17 @@ type loadedXrayGeneration struct {
 	meta xrayBinaryMetadata
 }
 
+// XrayPreviousGeneration is the safe, typed identity used to bind a rollback
+// preview to the exact local generation it inspected. It deliberately omits
+// the filesystem path and the component bytes.
+type XrayPreviousGeneration struct {
+	Generation string
+	Version    string
+	SizeBytes  int64
+	SHA256     string
+	Mode       uint32
+}
+
 func validXrayBinaryMetadata(value xrayBinaryMetadata, requireVersion bool) bool {
 	if !value.Exists || value.Size <= 0 || value.Size > MaxXrayCandidateBinaryBytes || !isHexSHA256(value.SHA256) || value.Mode&0o111 == 0 && runtime.GOOS != "windows" {
 		return false
@@ -1222,6 +1274,11 @@ func validXrayBinaryMetadata(value xrayBinaryMetadata, requireVersion bool) bool
 
 func sameBinaryMetadata(left, right xrayBinaryMetadata) bool {
 	return left.Exists == right.Exists && left.Version == right.Version && strings.EqualFold(left.SHA256, right.SHA256) && left.Size == right.Size && left.Mode == right.Mode
+}
+
+func sameXrayPreviousGeneration(meta xrayBinaryMetadata, expected XrayPreviousGeneration) bool {
+	return meta.Exists && meta.Version == expected.Version && meta.Size == expected.SizeBytes && meta.Mode == expected.Mode &&
+		strings.EqualFold(meta.SHA256, expected.SHA256) && strings.EqualFold(meta.SHA256, expected.Generation)
 }
 
 func binaryMetadata(path, expectedVersion string, probe XrayCandidateProbe, ctx context.Context) (xrayBinaryMetadata, error) {

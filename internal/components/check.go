@@ -212,6 +212,7 @@ type InstalledSnapshot func() (Inventory, bool)
 
 type CheckerConfig struct {
 	InstalledSnapshot InstalledSnapshot
+	MutationAvailable func(ComponentKind, string) bool
 	Resolver          netguard.IPResolver
 	HTTPClient        *http.Client
 	CacheTTL          time.Duration
@@ -222,6 +223,7 @@ type CheckerConfig struct {
 type Checker struct {
 	client            *metadataClient
 	installedSnapshot InstalledSnapshot
+	mutationAvailable func(ComponentKind, string) bool
 	cacheTTL          time.Duration
 	negativeCacheTTL  time.Duration
 	now               func() time.Time
@@ -260,6 +262,7 @@ func NewChecker(config CheckerConfig) *Checker {
 	return &Checker{
 		client:            client,
 		installedSnapshot: config.InstalledSnapshot,
+		mutationAvailable: config.MutationAvailable,
 		cacheTTL:          cacheTTL,
 		negativeCacheTTL:  negativeTTL,
 		now:               now,
@@ -406,6 +409,7 @@ func (c *Checker) checkXray(ctx context.Context, channel string, installed Inven
 		result.InstalledState = compareInstalledVersion(installed.Xray, version)
 	}
 	result.Eligible = true
+	result.MutationAvailable = c.supportsMutation(KindXray, channel)
 	result.ReasonCode = "supported-for-preview"
 	return result, nil
 }
@@ -447,6 +451,7 @@ func (c *Checker) checkXKeen(ctx context.Context, channel string, installed Inve
 	result.Candidate.Generation = entry.GenerationSHA256
 	result.Candidate.SHA256 = entry.SHA256
 	result.Eligible = true
+	result.MutationAvailable = c.supportsMutation(KindXKeen, channel)
 	result.ReasonCode = "catalog-qualified"
 	return result, nil
 }
@@ -507,7 +512,11 @@ type githubXKeenTreeMetadata struct {
 }
 
 func (c *Checker) resolveXKeenDevBuild(ctx context.Context, budget *networkBudget) (xkeenDevBuildIdentity, *metadataFailure, error) {
-	body, err := c.client.fetch(ctx, xkeenDevCommitListPath, budget)
+	return resolveXKeenDevBuild(c.client, ctx, budget)
+}
+
+func resolveXKeenDevBuild(client *metadataClient, ctx context.Context, budget *networkBudget) (xkeenDevBuildIdentity, *metadataFailure, error) {
+	body, err := client.fetch(ctx, xkeenDevCommitListPath, budget)
 	if err != nil {
 		return xkeenDevBuildIdentity{}, nil, err
 	}
@@ -518,7 +527,7 @@ func (c *Checker) resolveXKeenDevBuild(ctx context.Context, budget *networkBudge
 	buildCommit := strings.ToLower(commits[0].SHA)
 
 	commitPath := xkeenDevCommitPathPrefix + buildCommit
-	body, err = c.client.fetch(ctx, commitPath, budget)
+	body, err = client.fetch(ctx, commitPath, budget)
 	if err != nil {
 		return xkeenDevBuildIdentity{}, nil, err
 	}
@@ -545,7 +554,7 @@ func (c *Checker) resolveXKeenDevBuild(ctx context.Context, budget *networkBudge
 	sourceCommit := strings.ToLower(commit.Parents[0].SHA)
 
 	treePath := xkeenDevTreePathPrefix + buildCommit + xkeenDevTreePathSuffix
-	body, err = c.client.fetch(ctx, treePath, budget)
+	body, err = client.fetch(ctx, treePath, budget)
 	if err != nil {
 		return xkeenDevBuildIdentity{}, nil, err
 	}
@@ -712,11 +721,16 @@ func (c *Checker) checkGeodata(ctx context.Context, channel string, installed In
 	}
 	result.InstalledState = aggregateInstalledState(result.Items)
 	if result.Eligible {
+		result.MutationAvailable = c.supportsMutation(KindGeodata, channel)
 		result.ReasonCode = "supported-for-preview"
 	} else {
 		result.ReasonCode = "required-candidate-ineligible"
 	}
 	return result, nil
+}
+
+func (c *Checker) supportsMutation(component ComponentKind, channel string) bool {
+	return c != nil && c.mutationAvailable != nil && c.mutationAvailable(component, channel)
 }
 
 func (c *Checker) checkGeodataRelease(entry catalogEntry, release githubReleaseMetadata, installed Inventory, haveInstalled bool) CheckItem {
