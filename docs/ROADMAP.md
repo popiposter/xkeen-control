@@ -42,7 +42,7 @@ public source + signed GitHub Releases (#2, done)
         ↓
 local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
-managed XKeen / Xray / geodata lifecycle (#4, active; Phases A+B+C+D source merged, Phase E0 next)
+managed XKeen / Xray / geodata lifecycle (#4, active; Phases A+B+C+D+E0 source merged, Phase E1 next)
         ↓
 visual typed configuration + transactional render/apply (#5, planned)
 ```
@@ -58,7 +58,7 @@ visual typed configuration + transactional render/apply (#5, planned)
 | Pre-D — canonical Go module/import identity | Done | Issue #8 / PR #9 | Canonical `github.com/popiposter/xkeen-control` provenance; no runtime behavior change |
 | D — releases/bootstrap/panel self-update | Done | Issue #2 / `v0.1.1` | Public signed Releases, CI/release pipeline, one-command bootstrap, setup mode, transactional panel update/rollback |
 | D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
-| D.2 — component lifecycle | **Active — Phases A+B+C+D source merged; Phase E0 next** | Issue #4 / `main` `47c4357…` | Read-only inventory, trusted fixed-source metadata checks, transactional Xray and complete geodata-set cores merged; XKeen inventory/check authority correction is next; component mutation remains not deployed |
+| D.2 — component lifecycle | **Active — Phases A+B+C+D+E0 source merged; Phase E1 next** | Issue #4 / `main` `c320df4…` | Read-only inventory + trusted checks, transactional Xray and complete geodata cores, and corrected jameszeroX dev XKeen authority are merged; transactional XKeen core is next; component mutation remains not deployed |
 | D.3 — visual configuration | Planned | Issue #5 | Planned typed routing/DNS/XKeen/Xray/panel/performance UI and deterministic render/apply; not deployed |
 | E — notifications/security hardening | Planned after D.3 | master issue #1 | Outbound alerts, management-VPN guidance, final attack-surface hardening |
 
@@ -91,7 +91,7 @@ Safe export excludes secrets by default; secret-bearing export is explicit and e
 
 Pre-adoption compatibility is explicit: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit and unknown/manual drift fails closed.
 
-## D.2 / Issue #4 — active; Phases A+B+C+D source merged, Phase E next
+## D.2 / Issue #4 — active; Phases A+B+C+D+E0 source merged, Phase E1 next
 
 Phase A merged via PR #23 to `main` `bda9dd0cc7bb142a4cb1468811fff9b5146b1e8e`; source main gained the bounded read-only component inventory and authenticated `GET /api/v1/components` for panel, XKeen, Xray, geodata, KeeneticOS and Entware.
 
@@ -101,11 +101,13 @@ Phase C merged via PR #27 to `main` `94ef0878e743a1c3355042132102dd97b4151508`; 
 
 Phase D merged via PR #29 to `main` `6091b3f28e9f5e2285732e6bdc5118fca3e896b9`. Source main now also contains the internal transactional complete six-file geodata update/rollback core, shared Xray/geodata component mutation and startup recovery arbitration, one bounded previous whole geodata generation, unrelated-asset preservation and post-runtime exact generation re-verification. Phase D deliberately adds no browser/API mutation controls.
 
+Phase E0 merged via PR #31 to `main` `c320df478e33482a61b78e44abcee83a1093180e`. Source main now describes the actual supported XKeen development authority: fixed `jameszeroX/XKeen` / `dev`, current `S05xkeen` lifecycle layout with `S24xray` treated only as legacy/mixed state, and a GitHub-verified exact build/source/blob metadata projection for fixed `test/xkeen.tar.gz`. E0 remains read-only/informational: it downloads no archive bytes and exposes no install/update/rollback authorization.
+
 These source-main capabilities are not a new stable release or production-qualification claim. Current production still has no #4 component update/install/rollback controls; signed stable production remains D.1 `v0.2.0`.
 
-The next review boundary is Phase E0: a corrective, read-only **XKeen** inventory/check authority slice. It identifies the supported development channel as `jameszeroX/XKeen`, recognizes the current `S05xkeen` lifecycle layout and treats `S24xray` only as explicit legacy/migration state. Dev checks resolve a signed build commit touching the fixed `test/xkeen.tar.gz` path and project its exact build/source/blob identity without downloading artifact bytes or mutating component state. Xray and geodata remain on their existing stable channel. E0 adds no mutation HTTP/UI; transactional XKeen lifecycle remains a later Phase E1 boundary.
+The next review boundary is Phase E1: an internal transactional **XKeen** update/rollback primitive for product-reviewed exact `jameszeroX/XKeen` dev build entries. It extends the existing component mutation gate, Coordinator → authority-lease order, single component journal/recovery arbiter and one-previous-generation model. E1 owns only the managed `xkeen + .xkeen` generation plus its product marker; `S05xkeen`, user XKeen config, Xray/geodata, D.1 authorities, opkg state and cron remain preserved. E1 adds no HTTP/UI/scheduler/Setup Mode mutation and makes no production-qualified claim.
 
-Detailed Phase E0 source/layout/channel constraints and acceptance are in Issue #4 comment `5538828870`; the older `5538006418` remains subordinate only for non-conflicting E1 transaction/recovery requirements.
+Detailed Phase E1 architecture, trust, transaction/recovery and acceptance are in Issue #4 comment `5540141932`; factual jameszeroX dev source/layout correction is comment `5538828870`. Older Phase E comment `5538006418` is subordinate only where its transaction/recovery requirements do not conflict with these newer authorities.
 
 ## D.3 / Issue #5 — planned, not deployed
 
