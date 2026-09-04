@@ -18,52 +18,138 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/popiposter/xkeen-control/internal/authority"
 )
 
-func TestXKeenCatalogStartsNonInstallable(t *testing.T) {
+func TestXKeenCatalogIsFullyQualified(t *testing.T) {
 	entry, ok := reviewedXKeenEntry(xkeenCatalogBuildCommit, xkeenCatalogAsset)
 	if !ok {
 		t.Fatal("fixed XKeen build catalog entry is missing")
 	}
-	if err := validateXKeenCompatibilityEntry(entry); err != nil {
+	if err := validateFixedXKeenCatalogEntry(entry); err != nil {
 		t.Fatalf("catalog validation: %v", err)
 	}
 	if entry.Repository != "jameszeroX/XKeen" || entry.Channel != "dev" || entry.Version != "2.0.1" ||
 		entry.CommitSHA != "e461c4e9964fb8ac78e5fe01aa2e27ab980af712" ||
 		entry.SourceParentSHA != "bb4060d6a87364eff8314fa723a168454df372bd" ||
 		entry.AssetName != "test/xkeen.tar.gz" || entry.BlobSHA != "e6218668692c41565d288bf3a0bc6a420650edbd" ||
-		entry.SizeBytes != 111409 {
+		entry.SizeBytes != 111409 || entry.SHA256 != xkeenCatalogArchiveSHA256 ||
+		entry.GenerationSHA256 != xkeenCatalogGenerationSHA || len(entry.ArchiveMembers) != xkeenCatalogArchiveMembers {
 		t.Fatalf("catalog identity changed: %+v", entry)
 	}
-	if entry.Installable || entry.SHA256 != "" || entry.GenerationSHA256 != "" || len(entry.ArchiveMembers) != 0 {
-		t.Fatalf("unqualified entry became installable: %+v", entry)
+	if !entry.Installable {
+		t.Fatalf("qualified entry is not installable: %+v", entry)
 	}
 	identity := XKeenReleaseIdentity{
 		Repository: entry.Repository, Channel: entry.Channel, Tag: entry.Tag, Version: entry.Version,
 		CommitSHA: entry.CommitSHA, SourceParentSHA: entry.SourceParentSHA, AssetName: entry.AssetName,
-		BlobSHA: entry.BlobSHA, SizeBytes: entry.SizeBytes,
+		BlobSHA: entry.BlobSHA, SizeBytes: entry.SizeBytes, SHA256: entry.SHA256,
+		GenerationSHA256: entry.GenerationSHA256, Generation: entry.GenerationSHA256,
 	}
-	if validXKeenIdentity(identity) {
-		t.Fatal("unqualified catalog identity authorized mutation")
+	if !validXKeenIdentity(identity) {
+		t.Fatal("fully qualified catalog identity was rejected")
 	}
-	if _, _, err := markerForGeneration(strings.Repeat("a", 64)); !errors.Is(err, errXKeenMarkerInvalid) {
-		t.Fatalf("marker authorization error = %v", err)
+	if bytes, err := xkeenCatalogGenerationBytes(entry); err != nil || bytes != xkeenCatalogArchiveBytes {
+		t.Fatalf("catalog generation bytes = %d, %v", bytes, err)
 	}
 }
 
-func TestXKeenResolverDoesNotFetchNonInstallableCatalog(t *testing.T) {
-	var calls atomic.Int32
-	resolver := NewXKeenResolver(nil, &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-		calls.Add(1)
-		return nil, errors.New("unexpected network request")
-	})})
-	_, err := resolver.ResolveXKeen(context.Background())
-	if !errors.Is(err, ErrXKeenResolutionUnavailable) || calls.Load() != 0 {
-		t.Fatalf("resolver result = %v, network calls = %d", err, calls.Load())
+func TestXKeenCatalogRejectsPartialOrMalformedQualification(t *testing.T) {
+	original, ok := reviewedXKeenEntry(xkeenCatalogBuildCommit, xkeenCatalogAsset)
+	if !ok {
+		t.Fatal("fixed XKeen build catalog entry is missing")
+	}
+	clone := func() xkeenCompatibilityEntry {
+		entry := original
+		entry.ArchiveMembers = append([]XKeenArchiveMember(nil), original.ArchiveMembers...)
+		return entry
+	}
+	tests := []struct {
+		name      string
+		entry     func() xkeenCompatibilityEntry
+		validator func(xkeenCompatibilityEntry) error
+	}{
+		{
+			name: "non-installable partial entry",
+			entry: func() xkeenCompatibilityEntry {
+				entry := clone()
+				entry.Installable = false
+				return entry
+			},
+			validator: validateXKeenCompatibilityEntry,
+		},
+		{
+			name: "wrong fixed identity",
+			entry: func() xkeenCompatibilityEntry {
+				entry := clone()
+				entry.BlobSHA = strings.Repeat("0", 40)
+				return entry
+			},
+			validator: validateFixedXKeenCatalogEntry,
+		},
+		{
+			name: "partial manifest",
+			entry: func() xkeenCompatibilityEntry {
+				entry := clone()
+				entry.ArchiveMembers = entry.ArchiveMembers[:1]
+				return entry
+			},
+			validator: validateFixedXKeenCatalogEntry,
+		},
+		{
+			name: "duplicate member",
+			entry: func() xkeenCompatibilityEntry {
+				entry := clone()
+				entry.ArchiveMembers[1] = entry.ArchiveMembers[0]
+				return entry
+			},
+			validator: validateXKeenCompatibilityEntry,
+		},
+		{
+			name: "unsafe member",
+			entry: func() xkeenCompatibilityEntry {
+				entry := clone()
+				entry.ArchiveMembers[0].Name = "../xkeen"
+				return entry
+			},
+			validator: validateXKeenCompatibilityEntry,
+		},
+		{
+			name: "unreviewed mode",
+			entry: func() xkeenCompatibilityEntry {
+				entry := clone()
+				entry.ArchiveMembers[0].Mode = 0o600
+				return entry
+			},
+			validator: validateXKeenCompatibilityEntry,
+		},
+		{
+			name: "unreviewed type",
+			entry: func() xkeenCompatibilityEntry {
+				entry := clone()
+				entry.ArchiveMembers[0].Type = xkeenArchiveDirectory
+				return entry
+			},
+			validator: validateXKeenCompatibilityEntry,
+		},
+		{
+			name: "missing required pair member",
+			entry: func() xkeenCompatibilityEntry {
+				entry := clone()
+				entry.ArchiveMembers = []XKeenArchiveMember{entry.ArchiveMembers[0]}
+				return entry
+			},
+			validator: validateXKeenCompatibilityEntry,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.validator(test.entry()); err == nil {
+				t.Fatal("malformed catalog entry was accepted")
+			}
+		})
 	}
 }
 

@@ -209,14 +209,14 @@ func TestXrayCheckFailsClosedForReleaseAndAssetProblems(t *testing.T) {
 	})
 }
 
-func TestXKeenDevCheckProjectsSignedBuildIdentityWithoutDownloadingArtifact(t *testing.T) {
-	buildCommit := strings.Repeat("b", 40)
-	sourceCommit := strings.Repeat("c", 40)
-	blobSHA := strings.Repeat("d", 40)
+func TestXKeenDevCheckProjectsQualifiedCatalogWithoutDownloadingArtifact(t *testing.T) {
+	buildCommit := xkeenCatalogBuildCommit
+	sourceCommit := xkeenCatalogSourceParent
+	blobSHA := xkeenCatalogBlobSHA
 	responses := map[string][]byte{
 		xkeenDevCommitListPath:                                        xkeenDevCommitList(t, buildCommit),
 		xkeenDevCommitPathPrefix + buildCommit:                        xkeenDevCommit(t, buildCommit, sourceCommit, true, xkeenDevBuildCommitMessage, blobSHA),
-		xkeenDevTreePathPrefix + buildCommit + xkeenDevTreePathSuffix: xkeenDevTree(t, xkeenDevArtifactPath, "100644", "blob", blobSHA, 111409),
+		xkeenDevTreePathPrefix + buildCommit + xkeenDevTreePathSuffix: xkeenDevTree(t, xkeenDevArtifactPath, "100644", "blob", blobSHA, xkeenCatalogAssetSize),
 	}
 	checker, transport := newFixtureChecker(t, responses, func() (Inventory, bool) {
 		return Inventory{XKeen: Component{State: StatePresent, SourceCommit: buildCommit}}, true
@@ -225,10 +225,10 @@ func TestXKeenDevCheckProjectsSignedBuildIdentityWithoutDownloadingArtifact(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.SourceID != xkeenDevSourceID || result.Channel != xkeenDevChannel || result.Eligible || result.MutationAvailable || result.ReasonCode != "dev-identity-resolved" || result.InstalledState != "current" {
+	if result.SourceID != xkeenDevSourceID || result.Channel != xkeenDevChannel || !result.Eligible || result.MutationAvailable || result.ReasonCode != "catalog-qualified" || result.InstalledState != "current" {
 		t.Fatalf("xkeen result = %+v", result)
 	}
-	if result.Candidate == nil || result.Candidate.Generation != buildCommit || result.Candidate.AssetName != xkeenDevArtifactPath || result.Candidate.SizeBytes != 111409 || result.Candidate.BuildCommitSHA != buildCommit || result.Candidate.SourceCommitSHA != sourceCommit || result.Candidate.BlobSHA != blobSHA || result.Candidate.SHA256 != "" || result.Candidate.Version != "" {
+	if result.Candidate == nil || result.Candidate.Generation != xkeenCatalogGenerationSHA || result.Candidate.AssetName != xkeenDevArtifactPath || result.Candidate.SizeBytes != xkeenCatalogAssetSize || result.Candidate.BuildCommitSHA != buildCommit || result.Candidate.SourceCommitSHA != sourceCommit || result.Candidate.BlobSHA != blobSHA || result.Candidate.SHA256 != xkeenCatalogArchiveSHA256 || result.Candidate.Version != xkeenCatalogVersion {
 		t.Fatalf("xkeen candidate = %+v", result.Candidate)
 	}
 	wantCalls := []string{
@@ -247,6 +247,45 @@ func TestXKeenDevCheckProjectsSignedBuildIdentityWithoutDownloadingArtifact(t *t
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("xkeen result contains %q: %s", forbidden, encoded)
 		}
+	}
+}
+
+func TestXKeenDevCheckKeepsChangedCatalogIdentityNonEligible(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		buildCommit  string
+		sourceCommit string
+		blobSHA      string
+		artifactSize int64
+	}{
+		{name: "build commit", buildCommit: strings.Repeat("c", 40), sourceCommit: xkeenCatalogSourceParent, blobSHA: xkeenCatalogBlobSHA, artifactSize: xkeenCatalogAssetSize},
+		{name: "source parent", buildCommit: xkeenCatalogBuildCommit, sourceCommit: strings.Repeat("a", 40), blobSHA: xkeenCatalogBlobSHA, artifactSize: xkeenCatalogAssetSize},
+		{name: "blob", buildCommit: xkeenCatalogBuildCommit, sourceCommit: xkeenCatalogSourceParent, blobSHA: strings.Repeat("b", 40), artifactSize: xkeenCatalogAssetSize},
+		{name: "size", buildCommit: xkeenCatalogBuildCommit, sourceCommit: xkeenCatalogSourceParent, blobSHA: xkeenCatalogBlobSHA, artifactSize: xkeenCatalogAssetSize - 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			responses := map[string][]byte{
+				xkeenDevCommitListPath:                                             xkeenDevCommitList(t, test.buildCommit),
+				xkeenDevCommitPathPrefix + test.buildCommit:                        xkeenDevCommit(t, test.buildCommit, test.sourceCommit, true, xkeenDevBuildCommitMessage, test.blobSHA),
+				xkeenDevTreePathPrefix + test.buildCommit + xkeenDevTreePathSuffix: xkeenDevTree(t, xkeenDevArtifactPath, "100644", "blob", test.blobSHA, test.artifactSize),
+			}
+			checker, transport := newFixtureChecker(t, responses, nil)
+			result, err := checker.Check(context.Background(), CheckRequest{Component: KindXKeen, Channel: xkeenDevChannel})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Eligible || result.MutationAvailable || result.ReasonCode != "compatibility-catalog-required" || result.Candidate == nil {
+				t.Fatalf("changed identity result = %+v", result)
+			}
+			if result.Candidate.Version != "" || result.Candidate.Generation != "" || result.Candidate.SHA256 != "" {
+				t.Fatalf("changed identity inherited catalog trust: %+v", result.Candidate)
+			}
+			for _, call := range transportCalls(transport) {
+				if call == xkeenBlobPathPrefix+xkeenCatalogBlobSHA {
+					t.Fatal("metadata Check fetched the artifact blob")
+				}
+			}
+		})
 	}
 }
 
