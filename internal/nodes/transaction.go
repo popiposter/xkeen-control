@@ -339,6 +339,7 @@ type CommandActivator struct {
 	XrayBinary            string
 	XrayAssetDir          string
 	XkeenBinary           string
+	FixedLifecycleInit    string
 	APIAddress            string
 	ActiveOutboundsPath   string
 	RoutingPath           string
@@ -379,6 +380,12 @@ func xrayEnvironment(assetDir string) []string {
 }
 
 func (a CommandActivator) Restart(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if a.FixedLifecycleInit != "" {
+		return a.restartViaFixedInit(ctx)
+	}
 	if a.XkeenBinary == "" {
 		a.XkeenBinary = "xkeen"
 	}
@@ -408,6 +415,74 @@ func (a CommandActivator) Restart(ctx context.Context) error {
 		return nil
 	}
 	return errors.New("Xray restart failed")
+}
+
+func (a CommandActivator) restartViaFixedInit(ctx context.Context) error {
+	info, err := os.Lstat(a.FixedLifecycleInit)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return errors.New("Xray restart failed")
+	}
+	timeout := a.RestartTimeout
+	if timeout <= 0 {
+		timeout = 45 * time.Second
+	}
+	restartContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	attemptTimeout := a.RestartAttemptTimeout
+	if attemptTimeout <= 0 {
+		attemptTimeout = 20 * time.Second
+	}
+	if attemptTimeout >= timeout {
+		attemptTimeout = timeout / 2
+	}
+	attemptContext, cancelAttempt := context.WithTimeout(restartContext, attemptTimeout)
+	restartErr := a.runFixedLifecycle(attemptContext, "restart")
+	cancelAttempt()
+	if restartErr == nil {
+		return nil
+	}
+	if restartContext.Err() == nil && a.runFixedLifecycle(restartContext, "start") == nil {
+		return nil
+	}
+	return errors.New("Xray restart failed")
+}
+
+func (a CommandActivator) runFixedLifecycle(ctx context.Context, action string) error {
+	if action != "restart" && action != "start" || a.FixedLifecycleInit == "" {
+		return errors.New("Xray restart failed")
+	}
+	previousPIDs := xrayPIDSet(ctx)
+	command := exec.Command(a.FixedLifecycleInit, action, "on")
+	command.Env = xkeenForegroundEnvironment()
+	command.Stdout = io.Discard
+	command.Stderr = io.Discard
+	configureCommandProcessGroup(command)
+	if err := command.Start(); err != nil {
+		return errors.New("Xray restart failed")
+	}
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				return errors.New("Xray restart failed")
+			}
+			return nil
+		case <-ticker.C:
+			if a.newXrayRuntimeStarted(ctx, previousPIDs) {
+				_ = command.Process.Kill()
+				drainCommand(done)
+				return nil
+			}
+		case <-ctx.Done():
+			killCommandProcessGroup(command)
+			drainCommand(done)
+			return errors.New("Xray restart failed")
+		}
+	}
 }
 
 func (a CommandActivator) runXkeenLifecycle(ctx context.Context, action string) error {

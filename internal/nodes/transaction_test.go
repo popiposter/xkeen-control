@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -442,6 +443,37 @@ esac
 	contents, err := os.ReadFile(marker)
 	if err != nil || string(contents) != "start" {
 		t.Fatalf("fallback marker = %q, %v", contents, err)
+	}
+}
+
+func TestCommandActivatorFixedLifecycleUsesOnlyPreservedInit(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("fixed-init execution fixture requires the Linux qualification environment")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "marker")
+	forbidden := filepath.Join(dir, "candidate-ran")
+	initPath := filepath.Join(dir, "S05xkeen")
+	candidate := filepath.Join(dir, "candidate")
+	if err := os.WriteFile(candidate, []byte("#!/bin/sh\nprintf candidate > \"$XKEEN_FORBIDDEN\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	initScript := "#!/bin/sh\nprintf '%s:%s' \"$1\" \"$2\" >> \"$XKEEN_FIXED_MARKER\"\ncase \"$1\" in\n  restart) exit 1 ;;\n  start) exit 0 ;;\n  *) exit 2 ;;\nesac\n"
+	if err := os.WriteFile(initPath, []byte(initScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XKEEN_FIXED_MARKER", marker)
+	t.Setenv("XKEEN_FORBIDDEN", forbidden)
+	activator := CommandActivator{XkeenBinary: candidate, FixedLifecycleInit: initPath, RestartTimeout: time.Second, RestartAttemptTimeout: 100 * time.Millisecond}
+	if err := activator.Restart(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(marker)
+	if err != nil || string(contents) != "restart:onstart:on" {
+		t.Fatalf("fixed-init arguments = %q, %v", contents, err)
+	}
+	if _, err := os.Stat(forbidden); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("candidate executable was invoked: %v", err)
 	}
 }
 

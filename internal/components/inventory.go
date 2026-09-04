@@ -48,6 +48,7 @@ const (
 	MaxGeodataFileBytes           = 64 << 20
 	MaxInventoryReadBytes         = 256 << 20
 	MaxGeodataItems               = 32
+	DefaultXkeenGenerationMarker  = DefaultXKeenMarkerPath
 )
 
 var (
@@ -173,8 +174,11 @@ type Config struct {
 	XkeenModuleImport      string
 	XkeenRuntimeInit       string
 	XkeenLegacyRuntimeInit string
+	XkeenSiblingModule     string
+	XkeenInstallHelper     string
 	XkeenConfig            string
 	XkeenPackageMetadata   string
+	XkeenGenerationMarker  string
 
 	GeodataDir    string
 	AppliancePath string
@@ -220,11 +224,20 @@ func NewService(config Config) *Service {
 	if config.XkeenLegacyRuntimeInit == "" {
 		config.XkeenLegacyRuntimeInit = DefaultXkeenLegacyRuntimeInit
 	}
+	if config.XkeenSiblingModule == "" {
+		config.XkeenSiblingModule = filepath.Join(filepath.Dir(config.XkeenModuleDir), "_xkeen")
+	}
+	if config.XkeenInstallHelper == "" {
+		config.XkeenInstallHelper = "/opt/root/install.sh"
+	}
 	if config.XkeenConfig == "" {
 		config.XkeenConfig = DefaultXkeenConfig
 	}
 	if config.XkeenPackageMetadata == "" {
 		config.XkeenPackageMetadata = DefaultXkeenPackageMetadata
+	}
+	if config.XkeenGenerationMarker == "" {
+		config.XkeenGenerationMarker = DefaultXkeenGenerationMarker
 	}
 	if config.GeodataDir == "" {
 		config.GeodataDir = DefaultGeodataDir
@@ -442,12 +455,20 @@ func (s *Service) inventoryXKeen(ctx context.Context, budget *readBudget) Compon
 	}
 	currentInit := inspectPath(s.config.XkeenRuntimeInit, pathExecutable)
 	legacyInit := inspectPath(s.config.XkeenLegacyRuntimeInit, pathExecutable)
+	forbiddenArtifacts := []pathCheck{
+		inspectPath(s.config.XkeenSiblingModule, pathRegular),
+		inspectPath(s.config.XkeenInstallHelper, pathRegular),
+	}
 	checks := append(append([]pathCheck{}, coreChecks...), currentInit)
 	anyPresent := false
 	anyUnknown := false
 	allValid := true
 	firstReason := ""
 	for _, check := range append(append([]pathCheck{}, checks...), legacyInit) {
+		anyPresent = anyPresent || check.present
+		anyUnknown = anyUnknown || check.state == StateUnknown
+	}
+	for _, check := range forbiddenArtifacts {
 		anyPresent = anyPresent || check.present
 		anyUnknown = anyUnknown || check.state == StateUnknown
 	}
@@ -517,6 +538,19 @@ func (s *Service) inventoryXKeen(ctx context.Context, budget *readBudget) Compon
 		component.ReasonCode = "legacy-layout-incomplete"
 		return component
 	}
+	for _, check := range forbiddenArtifacts {
+		if check.state == StateUnknown {
+			component.State = StateUnknown
+			component.ReasonCode = "lifecycle-boundary-unavailable"
+			return component
+		}
+		if check.present {
+			component.State = StatePresent
+			component.Present = true
+			component.ReasonCode = "lifecycle-incompatible"
+			return component
+		}
+	}
 	if !allValid {
 		if firstReason == "" {
 			firstReason = "layout-incomplete"
@@ -525,6 +559,33 @@ func (s *Service) inventoryXKeen(ctx context.Context, budget *readBudget) Compon
 		return component
 	}
 	component.Channel = "dev"
+
+	marker, markerContents, _, markerErr := readXKeenMarker(s.config.XkeenGenerationMarker)
+	if markerErr == nil {
+		generation, generationErr := readXKeenGeneration(s.config.XkeenBinary, s.config.XkeenModuleDir)
+		if generationErr != nil || !strings.EqualFold(generation.Generation, marker.GenerationSHA256) {
+			component.ReasonCode = "managed-drift"
+			return component
+		}
+		_ = markerContents
+		component.Version = marker.Version
+		component.VersionUnknown = false
+		component.SourceCommit = marker.BuildCommitSHA
+		component.Channel = marker.Channel
+		component.Capability = CapabilitySupported
+		component.ReasonCode = "managed-marker-qualified"
+		return component
+	}
+	if !errors.Is(markerErr, os.ErrNotExist) {
+		// A present managed marker is authoritative. Never fall back to stale
+		// opkg metadata after marker validation fails.
+		if _, markerPathErr := os.Lstat(s.config.XkeenGenerationMarker); markerPathErr == nil {
+			component.ReasonCode = "managed-marker-invalid"
+			return component
+		}
+		component.ReasonCode = "version-unavailable"
+		return component
+	}
 
 	metadata, metadataCheck := readRegularBytes(ctx, budget, s.config.XkeenPackageMetadata, MaxSignalBytes)
 	if metadataCheck.state != StatePresent || !metadataCheck.valid {
