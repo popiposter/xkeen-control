@@ -271,12 +271,16 @@ Check existence/type/size only, without deleting or dumping, for
 `state/appliance-import-transaction.json`, component previous directories
 `/opt/etc/xkeen-control/previous/components/{xray,geodata,xkeen}` and their
 `.staging`/`.old` siblings, `/tmp/xkeen-control/components/{xray,geodata,xkeen}`,
-`/opt/etc/xray/dat/.xkeen-geodata-transaction`, and
+`/opt/etc/xray/.xkeen-geodata-transaction`, and
 `/opt/sbin/.xkeen-control-activation`, and
 `/opt/etc/xkeen-control/state/xkeen-generation.json.staging`. Also inspect node/panel pending state
 using the installed generation's fixed paths. A retained previous generation
 alone is normal; journal/staging/activation residue or unclassified state is
 NO-GO until its owner and settlement are proven.
+
+Geodata activation is a sibling of `dat`: `GeodataService.activationTempDir()`
+uses the parent of the asset directory. An absent child path cannot establish
+that the activation area is clear.
 
 Inspect at most 32 relevant cron/init/deployment configuration files, each
 at most 64 KiB, in a private bounded session: `/opt/etc/crontab`,
