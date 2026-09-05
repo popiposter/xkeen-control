@@ -174,23 +174,51 @@ Safe export is authenticated and excludes VPN/subscription secrets by default. S
 
 Restore is authenticated, same-origin/CSRF protected, session-bound, bounded and preview-first. Apply uses typed validation, authority coordination, a transaction journal and interrupted-import recovery. An equivalent settings-only restore is a no-op that preserves `nodes.json`, generated policy and runtime state without an Xray/XKeen restart. The adapter does not expose raw JSON, filesystem, archive or command surfaces.
 
-## Current/next D.2 component lifecycle (#4) — F1 source-only, not deployed
+## D.2 component lifecycle (#4) — F1/F2 source complete, not deployed
 
-Issue #4 Phase F1 now provides a source-main backend broker for typed manual
-XKeen/Xray/geodata preview, update and rollback routes. It has no UI, persisted
-policy, scheduler, automatic update or release surface, and its source fixtures
-are offline/synthetic only. The four routes are not production-qualified and
-must not be called or exposed on the signed stable router until a separate live
-and release qualification explicitly authorizes them. Do not add generic
-shell/package-manager endpoints. #5 visual typed configuration remains
-planned as well.
+PR #39 completes the source-main Components / Updates UI over the existing F1
+Preview/Apply/Rollback/Cancel broker. Source now includes session-safe one-shot
+operations, truthful unknown outcomes, stable component error codes and
+Coordinator lifecycle hints. There is no component scheduler, automatic
+install or Setup Mode repair. The production-qualified baseline remains D.1
+`v0.2.0`; source merge does not authorize exposing or invoking new routes on it.
+
+The next source task is Q0 in [Issue #4](https://github.com/popiposter/xkeen-control/issues/4):
+include the existing browser suite in release qualification and prepare the
+bounded Q1 operator protocol here. Q0 itself has no router access or release
+publication. The detailed Q1 architecture is in the issue; it is not permission
+to execute live operations.
+
+Q1 separates read-only preflight, exact signed trial publication, panel
+installation and per-component update/rollback authorization. Use existing
+#2 explicit-version signed release paths and F1/F2 typed component paths only.
+Before a trial panel exists, the stable panel has no F1/F2 component endpoints;
+initial preflight must use the existing safe observation/typed D.1 boundary.
+Panel HTTP 202 is handoff acceptance, not verified completion. A lost component
+response is an unknown outcome, not evidence of success or restoration.
+
+Qualify one exact component update/rollback pair at a time, prove authority and
+unrelated-state preservation, and settle component journals before rolling the
+panel back. Panel rollback does not restore component binaries or geodata.
+Bound resource collection and account for staging, retained copies and RAM-backed
+`/tmp`; do not add a monitoring agent or infer flash writes from hashes alone.
+No forced kill, power-loss, reboot, sustained benchmark or generic repair belongs
+to the live trial. #5 and automated component lifecycle remain later work.
 
 ## Geodata
 
-Current repository deploy/update tooling owns the exact geodata files referenced by policy. Any update must keep candidate validation/rollback semantics and must not introduce a competing updater schedule.
+The source D.2 core manages the complete product geodata set transactionally.
+Historical `scripts/update-geodata.sh` still replaces active files individually
+with fallback mirrors, and `scripts/deploy.sh` invokes it. Neither script is a
+D.2 qualification shortcut or part of the typed component transaction boundary.
 
-Later #4 phases may consolidate component/geodata scheduling under one
-maintenance manager; F1 adds no scheduler or automatic mutation.
+Before any authorized live component trial, inspect relevant external writers
+without publishing raw cron/process details. Source script presence is not
+proof that a job is active. An active competing geodata/legacy writer blocks the
+trial until its exact entry and reversible change are separately authorized;
+do not stop all cron or delete unrelated jobs. Q0/F2 add no scheduler or automatic
+mutation, and the signed stable baseline is not relabeled as product geodata
+ownership merely because its replacement code merged.
 
 ## Logs / diagnostics
 

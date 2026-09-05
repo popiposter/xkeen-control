@@ -42,7 +42,7 @@ public source + signed GitHub Releases (#2, done)
         ↓
 local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
-managed XKeen / Xray / geodata lifecycle (#4, active; Phases A+B+C+D+E0+E1+E2+F1 source merged, Phase F2 next)
+managed XKeen / Xray / geodata lifecycle (#4, active; manual source complete through F2; Q0 release/live preparation next)
         ↓
 visual typed configuration + transactional render/apply (#5, planned)
 ```
@@ -58,7 +58,7 @@ visual typed configuration + transactional render/apply (#5, planned)
 | Pre-D — canonical Go module/import identity | Done | Issue #8 / PR #9 | Canonical `github.com/popiposter/xkeen-control` provenance; no runtime behavior change |
 | D — releases/bootstrap/panel self-update | Done | Issue #2 / `v0.1.1` | Public signed Releases, CI/release pipeline, one-command bootstrap, setup mode, transactional panel update/rollback |
 | D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
-| D.2 — component lifecycle | **Active — Phases A+B+C+D+E0+E1+E2+F1 source merged; Phase F2 next** | Issue #4 / `main` `db034f2…` | Inventory/check, qualified component transaction cores/catalog and manual mutation API are merged; Components/Updates UI is next; component mutation remains not deployed |
+| D.2 — component lifecycle | **Active — manual source complete through F2; Q0 next** | Issue #4 / `main` `125c486…` | Inventory/check, component transactions, manual API and Components/Updates UI are merged; release-readiness and bounded manual live qualification are next; not deployed |
 | D.3 — visual configuration | Planned | Issue #5 | Planned typed routing/DNS/XKeen/Xray/panel/performance UI and deterministic render/apply; not deployed |
 | E — notifications/security hardening | Planned after D.3 | master issue #1 | Outbound alerts, management-VPN guidance, final attack-surface hardening |
 
@@ -91,7 +91,7 @@ Safe export excludes secrets by default; secret-bearing export is explicit and e
 
 Pre-adoption compatibility is explicit: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit and unknown/manual drift fails closed.
 
-## D.2 / Issue #4 — active; Phases A+B+C+D+E0+E1+E2+F1 source merged, Phase F2 next
+## D.2 / Issue #4 — active; manual source complete through F2; Q0 release/live preparation next
 
 Phase A merged via PR #23 to `main` `bda9dd0cc7bb142a4cb1468811fff9b5146b1e8e`; source main gained the bounded read-only component inventory and authenticated `GET /api/v1/components` for panel, XKeen, Xray, geodata, KeeneticOS and Entware.
 
@@ -109,15 +109,19 @@ Phase E2 merged via PR #35 to `main` `6766a5618e1e4eaa9dbca5994bd5b4f02d9ecad9` 
 
 Phase F1 merged via PR #37 to `main` `db034f277278788dfb6ec90950bc97648922b54d` from approved exact HEAD `8b5aee28eaff10b5f718ee0b66f444487408156e`. Post-merge CI #103 / run `33961698349` completed successfully on that main revision. Source main now has authenticated, same-origin/CSRF-bound component Preview/Apply/Rollback/Cancel over the existing transaction cores: fresh exact intent, bounded RAM/session one-shot tokens, separate component admission, stale rollback-target rejection, verified-restoration error classification and a recovery-inclusive synchronous HTTP response window. F1 has no mutation UI, scheduler or policy persistence.
 
+Phase F2 merged via PR #39 to `main` `125c48612cf5812816d8972ecafdd36434329abe` from approved HEAD `536a130a1eaed152813e49a0b94c56c9ee2b993a` (review `5121493878`). Both have tree `d9d29db07ad4ad953570c5231cab1744ca10a339`. Post-merge CI #109 / run `33982591217` completed successfully on that main revision. Source now includes the first-class Components/Updates UI, stable component error codes, Coordinator lifecycle hints and 29 synthetic browser cases, including late-session completion and missing/unknown presence regressions. Inventory stays outside five-second polling; transaction cores and source trust boundaries remain unchanged.
+
 These source-main capabilities are not a new stable release or production-qualification claim. Current production still has no #4 component update/install/rollback controls; signed stable production remains D.1 `v0.2.0`.
 
-The next implementation boundary is **Phase F2 — one Components/Updates UI over the reviewed F1 API**. Keep installed-state inventory and explicit Check separate from fresh Preview authorization. Preserve one-shot pending/result state across navigation, distinguish restored from unknown outcomes, and use lazy/manual/post-mutation inventory refresh rather than adding repeated file hashing to dashboard polling. The only planned backend additions in F2 are stable component error codes and a compact read-only lifecycle projection on the existing status endpoint; no transaction-core redesign or new operation service.
+The next implementation boundary is **Q0 — offline release-readiness correction and the bounded manual-qualification runbook**. Normal CI/dev-check already run the F2 browser suite, but the Release workflow currently omits it. Add the existing suite to the unprivileged release build and a narrow regression, without changing signing permissions, dependency versions or runtime code. Document exact authorized operations, resource/competing-writer preflight, stop conditions and component-versus-panel rollback in the existing operational docs. Q0 performs no router access, release publication or production mutation.
 
-The current [Issue #4 body](https://github.com/popiposter/xkeen-control/issues/4) is the detailed F2 contract. Historical F1 authority remains comments `5546100341` and `5546129428`; E2 qualification authority remains comments `5544682382` and `5544718868`; E1 transaction/recovery authority remains comments `5540141932` and `5540184800`.
+The current [Issue #4 body](https://github.com/popiposter/xkeen-control/issues/4) is the detailed Q0/Q1 contract. Completed F2 authority is PR #39 and approval review `5121493878`. Historical F1 authority remains comments `5546100341` and `5546129428`; E2 qualification authority remains comments `5544682382` and `5544718868`; E1 transaction/recovery authority remains comments `5540141932` and `5540184800`.
 
-The simplicity review is recorded in [master issue #1](https://github.com/popiposter/xkeen-control/issues/1). Retain the single Go process, embedded UI, distinct component gate → runtime Coordinator → authority lease boundaries, fixed trust adapters and bounded journals/rollback. Do not add a generic transaction/form framework, job queue/history, database, WebSocket/SSE or new runtime dependencies for F2. A small feature module and dev-only behavior tests are sufficient; unrelated frontend/core refactoring is not a prerequisite.
+The simplicity decisions in [master issue #1](https://github.com/popiposter/xkeen-control/issues/1) remain in force: one Go process, embedded UI, distinct component gate → runtime Coordinator → authority lease boundaries, fixed trust adapters and bounded journals/rollback. Q0 adds no generic transaction/form/pipeline framework, job queue/history, database, metrics agent, new API or runtime dependencies. Existing F2 behavior is the subject of qualification, not a reason to expand the product.
 
-After F2 source review, separately architect and obtain operator authorization for the exact signed-artifact manual update/rollback live gate, including measured memory/temporary-storage/write budgets and competing legacy geodata writer checks. Then refresh F3 bounded `off|notify|manual` check-only policy/scheduler and G supported Setup Mode installation against that evidence and concrete need. F3/G remain planned, not canceled or deployed, but are not prerequisites for manual lifecycle qualification. Issue #4 stays open until its explicitly retained product scope is qualified and closed out; #5 requires separate activation.
+After Q0 source review, **Q1 requires separate operator authorization** for bounded read-only appliance preflight, exact signed trial publication/panel installation and each component update/rollback pair. The proposed trial vehicle is the existing explicit-version beta path, not a new channel or automatic stable release. Qualify Xray, the complete geodata set and XKeen one at a time, restoring each verified baseline before the next class; settle component journals before any original-panel rollback. Measure memory, temporary/persistent space and bounded write observations, and prove no external geodata/legacy writer can race the trial. Unknown outcome or inadequate resources stops further mutation; no forced crash/reboot/benchmark experiment on the live router.
+
+Then refresh F3 bounded `off|notify|manual` check-only policy/scheduler and G supported Setup Mode installation against evidence and concrete need. F3/G remain planned, not canceled or deployed, and are not prerequisites for manual qualification. Issue #4 stays open until its explicitly retained scope is qualified and closed out; #5 and stable promotion require separate decisions.
 
 ## D.3 / Issue #5 — planned, not deployed
 
