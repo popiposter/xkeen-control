@@ -129,3 +129,27 @@ func TestCollectorProjectsPersistedControlPlaneThroughputIntoNodeList(t *testing
 		t.Fatalf("control-plane throughput projection = %+v", view.Nodes)
 	}
 }
+
+func TestCollectorProjectsLifecycleOnlyWhenCoordinatorAvailable(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	withoutCoordinator := NewCollector("test", now, Dependencies{OutboundTags: func(string) ([]string, error) { return nil, nil }})
+	view := withoutCoordinator.Snapshot(context.Background())
+	if view.Status.Lifecycle != nil {
+		t.Fatalf("missing coordinator was represented as ready: %+v", view.Status.Lifecycle)
+	}
+	encoded, err := json.Marshal(view.Status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"lifecycle"`) {
+		t.Fatalf("unavailable lifecycle projection was serialized: %s", encoded)
+	}
+
+	coordinator := c1.NewCoordinator(c1.DefaultPolicy(), nil, nil, nil)
+	coordinator.EnterMaintenance()
+	withCoordinator := NewCollector("test", now, Dependencies{C1: coordinator, OutboundTags: func(string) ([]string, error) { return nil, nil }})
+	view = withCoordinator.Snapshot(context.Background())
+	if view.Status.Lifecycle == nil || !view.Status.Lifecycle.Maintenance || view.Status.Lifecycle.Applying {
+		t.Fatalf("coordinator lifecycle projection = %+v", view.Status.Lifecycle)
+	}
+}

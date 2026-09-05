@@ -19,6 +19,8 @@ keenetic_cred.txt
 dist/
 web/dist/
 web/node_modules/
+web/test-results/
+web/playwright-report/
 
 # The Go embed input must be versioned so a fresh checkout compiles before
 # the workstation-only frontend build runs.

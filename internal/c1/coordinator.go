@@ -39,8 +39,18 @@ type ThroughputStatus struct {
 }
 
 type Status struct {
-	Selection SelectionStatus `json:"selection"`
-	Benchmark BenchmarkStatus `json:"benchmark"`
+	Selection SelectionStatus  `json:"selection"`
+	Benchmark BenchmarkStatus  `json:"benchmark"`
+	Lifecycle *LifecycleStatus `json:"lifecycle,omitempty"`
+}
+
+// LifecycleStatus is the compact read-only projection used by the UI. It is
+// deliberately derived under Coordinator.mu rather than becoming another
+// operation owner. Applying includes admitted waiters and the active lifecycle
+// mutation; an ordinary benchmark is intentionally not applying.
+type LifecycleStatus struct {
+	Maintenance bool `json:"maintenance"`
+	Applying    bool `json:"applying"`
 }
 
 type Coordinator struct {
@@ -474,11 +484,12 @@ func (c *Coordinator) Snapshot() Status {
 	}
 	c.mu.Lock()
 	benchmark := c.benchmark
+	lifecycle := &LifecycleStatus{Maintenance: c.maintenance, Applying: c.applyWaiters > 0 || c.applyActive}
 	c.mu.Unlock()
 	if c.supervisor != nil {
-		return Status{Selection: c.supervisor.Snapshot(), Benchmark: benchmark}
+		return Status{Selection: c.supervisor.Snapshot(), Benchmark: benchmark, Lifecycle: lifecycle}
 	}
-	return Status{Benchmark: benchmark}
+	return Status{Benchmark: benchmark, Lifecycle: lifecycle}
 }
 
 func (c *Coordinator) schedule(ctx context.Context) {

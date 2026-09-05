@@ -1,6 +1,7 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles.css'
+import { ComponentLifecycleNotices, ComponentsUpdatesSection, useComponentsController } from './components-updates.jsx'
 
 import flagAE from 'flag-icons/flags/4x3/ae.svg'
 import flagAM from 'flag-icons/flags/4x3/am.svg'
@@ -268,6 +269,12 @@ function Dashboard({ dashboard, session, error, onRefresh, onLogout, onRunBenchm
   const [restoreState, setRestoreState] = useState({ preview: null })
   const registryNodes = nodes.nodes || []
   const nodesByTag = useMemo(() => new Map(registryNodes.map((node) => [node.outboundTag || node.tag, node])), [registryNodes])
+  const componentController = useComponentsController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized })
+  const openComponents = useCallback(() => {
+    setSection('components')
+    void componentController.loadInventory()
+  }, [componentController.loadInventory])
+  const lifecycleBlocked = componentController.lifecycleMutationBlocked
 
   return <Shell>
     <header className="topbar">
@@ -280,18 +287,21 @@ function Dashboard({ dashboard, session, error, onRefresh, onLogout, onRunBenchm
     <nav className="section-nav" aria-label="Dashboard sections">
       <button type="button" className={section === 'overview' ? 'active' : ''} onClick={() => setSection('overview')}>Overview</button>
       <button type="button" className={section === 'nodes' ? 'active' : ''} onClick={() => setSection('nodes')}>Nodes <span>{nodes.total || 0}</span></button>
+      <button type="button" className={section === 'components' ? 'active' : ''} onClick={openComponents}>Components / Updates</button>
       <button type="button" className={section === 'system' ? 'active' : ''} onClick={() => setSection('system')}>System</button>
       <button type="button" className={section === 'backup' ? 'active' : ''} onClick={() => setSection('backup')}>Backup &amp; Restore</button>
     </nav>
+    <ComponentLifecycleNotices controller={componentController} lifecycle={status.lifecycle} onOpenComponents={openComponents} />
     {error && <Notice message={error} />}
-    {section === 'overview' && <Overview status={status} nodeTotal={nodes.total || 0} nodesByTag={nodesByTag} onRunBenchmark={onRunBenchmark} />}
-    {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} manualOverride={status.selection?.manualOverride || ''} csrf={session.csrfToken} onRefresh={onRefresh} viewState={nodeView} onViewStateChange={setNodeView} />}
+    {section === 'overview' && <Overview status={status} nodeTotal={nodes.total || 0} nodesByTag={nodesByTag} onRunBenchmark={onRunBenchmark} lifecycleBlocked={lifecycleBlocked} />}
+    {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} manualOverride={status.selection?.manualOverride || ''} csrf={session.csrfToken} onRefresh={onRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} />}
+    {section === 'components' && <ComponentsUpdatesSection controller={componentController} lifecycle={status.lifecycle} onOpenSystem={() => setSection('system')} />}
     {section === 'system' && <SystemSection status={status} config={config} nodesByTag={nodesByTag} update={update} onCheckUpdate={onCheckUpdate} />}
-    {section === 'backup' && <BackupRestoreSection csrf={session.csrfToken} restoreState={restoreState} setRestoreState={setRestoreState} onRefresh={onRefresh} onUnauthorized={onUnauthorized} />}
+    {section === 'backup' && <BackupRestoreSection csrf={session.csrfToken} restoreState={restoreState} setRestoreState={setRestoreState} onRefresh={onRefresh} onUnauthorized={onUnauthorized} lifecycleBlocked={lifecycleBlocked} />}
   </Shell>
 }
 
-function Overview({ status, nodeTotal, nodesByTag, onRunBenchmark }) {
+function Overview({ status, nodeTotal, nodesByTag, onRunBenchmark, lifecycleBlocked }) {
   const healthy = status.observatory?.healthy || 0
   const total = status.observatory?.total || nodeTotal
   const healthText = total ? `${healthy}/${total} healthy` : 'No node data'
@@ -307,12 +317,12 @@ function Overview({ status, nodeTotal, nodesByTag, onRunBenchmark }) {
       <SelectionCard label="Native leastPing" node={nodesByTag.get(status.balancer?.nativeSelected)} tone="blue" />
       <SelectionCard label="Manual override" node={nodesByTag.get(status.selection?.manualOverride)} tone="amber" emptyText="Automatic selection" />
       <SelectionCard label="Effective" node={nodesByTag.get(status.balancer?.effective)} tone="green" />
-      <div className="panel schedule-card"><div className="schedule-heading"><span className="panel-label">Selection & benchmark</span><IconButton icon="gauge" label={status.benchmark?.controlPlane?.running ? 'Full benchmark running' : 'Run full benchmark'} active={status.benchmark?.controlPlane?.running} onClick={onRunBenchmark} disabled={status.benchmark?.controlPlane?.running} /></div><strong>{status.selection?.state || 'starting'} · {status.selection?.effectiveTarget || status.balancer?.effective || 'native fallback'}</strong><p>{status.selection?.lastSwitchReason || 'No selection change recorded'} · evidence: {status.selection?.latencyEvidence ?? 0} RTT samples · dwell: {status.selection?.dwellRemainingSeconds ? `${status.selection.dwellRemainingSeconds}s` : 'ready'}</p><small>Run policy: {formatBytes(status.benchmark?.controlPlane?.totalBudgetBytes)} total · {formatBytes(status.benchmark?.controlPlane?.payloadBytes)} planned/node · {status.benchmark?.controlPlane?.perNodeTimeoutMs ? `${status.benchmark.controlPlane.perNodeTimeoutMs / 1000}s` : '10s'} timeout · next: {formatTime(status.benchmark?.controlPlane?.nextRunAt)}</small></div>
+      <div className="panel schedule-card"><div className="schedule-heading"><span className="panel-label">Selection & benchmark</span><IconButton icon="gauge" label={status.benchmark?.controlPlane?.running ? 'Full benchmark running' : 'Run full benchmark'} active={status.benchmark?.controlPlane?.running} onClick={onRunBenchmark} disabled={status.benchmark?.controlPlane?.running || lifecycleBlocked} /></div><strong>{status.selection?.state || 'starting'} · {status.selection?.effectiveTarget || status.balancer?.effective || 'native fallback'}</strong><p>{status.selection?.lastSwitchReason || 'No selection change recorded'} · evidence: {status.selection?.latencyEvidence ?? 0} RTT samples · dwell: {status.selection?.dwellRemainingSeconds ? `${status.selection.dwellRemainingSeconds}s` : 'ready'}</p><small>Run policy: {formatBytes(status.benchmark?.controlPlane?.totalBudgetBytes)} total · {formatBytes(status.benchmark?.controlPlane?.payloadBytes)} planned/node · {status.benchmark?.controlPlane?.perNodeTimeoutMs ? `${status.benchmark.controlPlane.perNodeTimeoutMs / 1000}s` : '10s'} timeout · next: {formatTime(status.benchmark?.controlPlane?.nextRunAt)}</small></div>
     </section>
   </div>
 }
 
-function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, viewState, onViewStateChange }) {
+function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, viewState, onViewStateChange, lifecycleBlocked }) {
   const [profiles, setProfiles] = useState('')
   const [subscriptionUrl, setSubscriptionUrl] = useState('')
   const [subscriptionName, setSubscriptionName] = useState('')
@@ -396,6 +406,7 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
   }
 
   const requestPreview = async (path, payload, effectiveImpact = '') => {
+    if (lifecycleBlocked) return
     setBusy(true)
     setNotice(null)
     try {
@@ -409,7 +420,7 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
   }
 
   const applyPreview = async () => {
-    if (!preview) return
+    if (!preview || lifecycleBlocked) return
     setBusy(true)
     setNotice(null)
     try {
@@ -444,6 +455,7 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
   }
 
   const setManualOverride = async (target) => {
+    if (lifecycleBlocked) return
     setBusy(true)
     setNotice(null)
     try {
@@ -461,8 +473,8 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
     <div className="workspace-heading">
       <h2>Nodes <span className="count">{nodes.length}</span></h2>
       <div className="workspace-actions">
-        <IconButton icon="plus" label="Add VLESS profiles" onClick={() => setComposer(composer === 'profiles' ? '' : 'profiles')} />
-        <IconButton icon="link" label="Add subscription" onClick={() => composer === 'subscription' ? closeComposer() : startNewSubscription()} />
+        <IconButton icon="plus" label="Add VLESS profiles" disabled={lifecycleBlocked} onClick={() => setComposer(composer === 'profiles' ? '' : 'profiles')} />
+        <IconButton icon="link" label="Add subscription" disabled={lifecycleBlocked} onClick={() => composer === 'subscription' ? closeComposer() : startNewSubscription()} />
         <IconButton icon="refresh" label="Refresh dashboard" onClick={onRefresh} />
       </div>
     </div>
@@ -472,7 +484,7 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
     {composer === 'profiles' && <form className="composer" onSubmit={(event) => { event.preventDefault(); requestPreview('/api/v1/nodes/import/preview', { profiles }) }}>
       <div><span className="panel-label">Add profiles</span><h3>Import VLESS + REALITY links</h3><p>Names are read from link fragments. Keys stay inside the authenticated request and RAM-only preview.</p></div>
       <textarea value={profiles} onChange={(event) => setProfiles(event.target.value)} placeholder="Paste one or more vless:// links" autoFocus />
-      <div className="composer-actions"><button className="ghost" type="button" onClick={closeComposer}>Cancel</button><button type="submit" disabled={busy || !profiles.trim()}>Preview add</button></div>
+      <div className="composer-actions"><button className="ghost" type="button" onClick={closeComposer}>Cancel</button><button type="submit" disabled={busy || lifecycleBlocked || !profiles.trim()}>Preview add</button></div>
     </form>}
 
     {composer === 'subscription' && <form className="composer compact" onSubmit={(event) => { event.preventDefault(); requestPreview('/api/v1/subscriptions/refresh/preview', { ...(subscriptionID ? { subscriptionId: subscriptionID } : {}), name: subscriptionName, url: subscriptionUrl }) }}>
@@ -481,17 +493,17 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
       <input id="subscription-name" value={subscriptionName} onChange={(event) => setSubscriptionName(event.target.value)} placeholder="Home provider" />
       <label htmlFor="subscription-url">Subscription URL</label>
       <input id="subscription-url" type="password" value={subscriptionUrl} onChange={(event) => setSubscriptionUrl(event.target.value)} placeholder={subscriptionID ? 'Leave blank to keep the saved URL' : 'https://…'} autoComplete="off" />
-      <div className="composer-actions"><button className="ghost" type="button" onClick={closeComposer}>Cancel</button><button type="submit" disabled={busy || (!subscriptionID && !subscriptionUrl.trim())}>{subscriptionID ? 'Preview update' : 'Preview subscription'}</button></div>
+      <div className="composer-actions"><button className="ghost" type="button" onClick={closeComposer}>Cancel</button><button type="submit" disabled={busy || lifecycleBlocked || (!subscriptionID && !subscriptionUrl.trim())}>{subscriptionID ? 'Preview update' : 'Preview subscription'}</button></div>
     </form>}
 
     {!!subscriptions.length && <div className="subscription-strip">
       {subscriptions.map((subscription) => { const enabled = subscription.enabled !== false; const name = subscription.name || 'Unnamed subscription'; return <div className={`subscription-card ${enabled ? '' : 'disabled'}`} key={subscription.id}>
         <div><strong>{name}</strong><small>{enabled ? 'Enabled' : 'Disabled'} · {subscription.nodeCount} nodes{subscription.staleCount ? ` · ${subscription.staleCount} stale` : ''}</small></div>
         <div className="subscription-actions">
-          <IconButton icon="refresh" label={`Refresh ${name}`} disabled={busy} onClick={() => requestPreview('/api/v1/subscriptions/refresh/preview', { subscriptionId: subscription.id })} />
+          <IconButton icon="refresh" label={`Refresh ${name}`} disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/refresh/preview', { subscriptionId: subscription.id })} />
           <IconButton icon="edit" label={`Edit ${name}`} disabled={busy} onClick={() => openSubscriptionEditor(subscription)} />
-          <IconButton icon="power" label={enabled ? `Disable ${name}` : `Enable ${name}`} active={!enabled} disabled={busy} onClick={() => requestPreview('/api/v1/subscriptions/state/preview', { subscriptionId: subscription.id, enabled: !enabled })} />
-          <IconButton icon="trash" label={`Remove ${name}`} tone="danger" disabled={busy} onClick={() => requestPreview('/api/v1/subscriptions/remove/preview', { subscriptionId: subscription.id })} />
+          <IconButton icon="power" label={enabled ? `Disable ${name}` : `Enable ${name}`} active={!enabled} disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/state/preview', { subscriptionId: subscription.id, enabled: !enabled })} />
+          <IconButton icon="trash" label={`Remove ${name}`} tone="danger" disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/remove/preview', { subscriptionId: subscription.id })} />
         </div>
       </div> })}
     </div>}
@@ -515,12 +527,12 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
     </div>
 
     <div className="table-wrap"><table className="nodes-table"><thead><tr><SortHeader label="Name" sortKey="name" sort={sort} onSort={changeSort} /><SortHeader label="Address" sortKey="address" sort={sort} onSort={changeSort} /><SortHeader label="Health" sortKey="health" sort={sort} onSort={changeSort} /><SortHeader label="Latency" sortKey="latency" sort={sort} onSort={changeSort} /><SortHeader label="Role" sortKey="role" sort={sort} onSort={changeSort} /><SortHeader label="Source" sortKey="source" sort={sort} onSort={changeSort} /><SortHeader label="Throughput" sortKey="throughput" sort={sort} onSort={changeSort} /><th aria-label="Actions"></th></tr></thead><tbody>
-      {visibleNodes.map((node) => <NodeRows key={node.id || node.tag} node={node} manualOverride={manualOverride} onSetManualOverride={setManualOverride} editing={editingID === node.id} replacement={replacement} setReplacement={setReplacement} busy={busy} openEditor={openEditor} requestPreview={requestPreview} />)}
+      {visibleNodes.map((node) => <NodeRows key={node.id || node.tag} node={node} manualOverride={manualOverride} onSetManualOverride={setManualOverride} editing={editingID === node.id} replacement={replacement} setReplacement={setReplacement} busy={busy || lifecycleBlocked} openEditor={openEditor} requestPreview={requestPreview} />)}
       {!visibleNodes.length && <tr><td colSpan="8" className="empty">No nodes match this view.</td></tr>}
     </tbody></table></div>
 
     <Pagination page={page} totalPages={totalPages} onPage={(value) => onViewStateChange((current) => ({ ...current, page: value }))} />
-    {preview && <PreviewDialog preview={preview} busy={busy} onCancel={cancelPreview} onApply={applyPreview} />}
+    {preview && <PreviewDialog preview={preview} busy={busy || lifecycleBlocked} onCancel={cancelPreview} onApply={applyPreview} />}
   </section>
 }
 
@@ -589,7 +601,7 @@ const restoreBlockerMessages = {
 
 const restoreBlockerMessage = (code) => restoreBlockerMessages[code] || 'Restore is blocked by a compatibility check.'
 
-function BackupRestoreSection({ csrf, restoreState, setRestoreState, onRefresh, onUnauthorized }) {
+function BackupRestoreSection({ csrf, restoreState, setRestoreState, onRefresh, onUnauthorized, lifecycleBlocked }) {
   const [safeBusy, setSafeBusy] = useState(false)
   const [secretBusy, setSecretBusy] = useState(false)
   const [restoreBusy, setRestoreBusy] = useState(false)
@@ -670,7 +682,7 @@ function BackupRestoreSection({ csrf, restoreState, setRestoreState, onRefresh, 
   }
 
   const previewRestore = async () => {
-    if (!file) return
+    if (!file || lifecycleBlocked) return
     if (file.size > MAX_RESTORE_BUNDLE_BYTES) {
       setNotice({ tone: 'error', message: 'The selected backup exceeds the 9 MiB bundle limit.' })
       return
@@ -704,7 +716,7 @@ function BackupRestoreSection({ csrf, restoreState, setRestoreState, onRefresh, 
 
   const applyRestore = async () => {
     const token = previewToken
-    if (!canApply) return
+    if (!canApply || lifecycleBlocked) return
     setRestoreBusy(true)
     setNotice(null)
     try {
@@ -758,13 +770,13 @@ function BackupRestoreSection({ csrf, restoreState, setRestoreState, onRefresh, 
     <section className="panel backup-card">
       <div><span className="panel-label">Restore</span><h2>Import a local backup</h2><p className="muted">Choose one JSON bundle. The server enforces the 10 MiB request and 9 MiB bundle limits.</p></div>
       <div className="restore-form">
-        <label>Restore mode<select value={effectiveMode} onChange={(event) => { setMode(event.target.value); setRestoreState({ preview: null }); setDestructiveConfirmed(false) }} disabled={restoreBusy || Boolean(preview)}><option value="settings-only">Settings only</option><option value="replace-registry">Replace registry (destructive)</option><option value="merge-registry">Merge registry (destructive)</option></select></label>
-        <label>Backup bundle<input ref={fileInput} type="file" accept="application/json,.json" onChange={chooseFile} disabled={restoreBusy || Boolean(preview)} /></label>
-        <label>Passphrase (encrypted backup only)<input type="password" autoComplete="off" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} disabled={restoreBusy || Boolean(preview)} /></label>
+        <label>Restore mode<select value={effectiveMode} onChange={(event) => { setMode(event.target.value); setRestoreState({ preview: null }); setDestructiveConfirmed(false) }} disabled={restoreBusy || lifecycleBlocked || Boolean(preview)}><option value="settings-only">Settings only</option><option value="replace-registry">Replace registry (destructive)</option><option value="merge-registry">Merge registry (destructive)</option></select></label>
+        <label>Backup bundle<input ref={fileInput} type="file" accept="application/json,.json" onChange={chooseFile} disabled={restoreBusy || lifecycleBlocked || Boolean(preview)} /></label>
+        <label>Passphrase (encrypted backup only)<input type="password" autoComplete="off" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} disabled={restoreBusy || lifecycleBlocked || Boolean(preview)} /></label>
       </div>
-      {destructive && <label className="restore-confirm"><input type="checkbox" checked={destructiveConfirmed} onChange={(event) => setDestructiveConfirmed(event.target.checked)} disabled={restoreBusy} /> I understand this restore can replace or merge secret-bearing node registry state.</label>}
-      {!preview && <div className="preview-actions"><button type="button" onClick={previewRestore} disabled={restoreBusy || !file || (destructive && !destructiveConfirmed)}>{restoreBusy ? 'Previewing…' : 'Preview restore'}</button></div>}
-      {preview && <RestorePreviewSummary preview={preview} blockers={blockers} busy={restoreBusy} canApply={canApply} onCancel={cancelRestore} onApply={applyRestore} />}
+      {destructive && <label className="restore-confirm"><input type="checkbox" checked={destructiveConfirmed} onChange={(event) => setDestructiveConfirmed(event.target.checked)} disabled={restoreBusy || lifecycleBlocked} /> I understand this restore can replace or merge secret-bearing node registry state.</label>}
+      {!preview && <div className="preview-actions"><button type="button" onClick={previewRestore} disabled={restoreBusy || lifecycleBlocked || !file || (destructive && !destructiveConfirmed)}>{restoreBusy ? 'Previewing…' : 'Preview restore'}</button></div>}
+      {preview && <RestorePreviewSummary preview={preview} blockers={blockers} busy={restoreBusy || lifecycleBlocked} canApply={canApply && !lifecycleBlocked} onCancel={cancelRestore} onApply={applyRestore} />}
     </section>
   </div>
 }

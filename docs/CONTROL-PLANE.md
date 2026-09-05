@@ -213,11 +213,24 @@ validate, coordinate, journal, activate and recover. F1 has no Components UI,
 policy, scheduler, automatic update, Setup Mode or release surface, and these
 routes are not production-qualified or deployed.
 
+Phase F2 adds the source-main Components / Updates UI over those unchanged F1
+routes. Inventory is loaded lazily on first entry and by explicit refresh, not
+through the five-second dashboard collector. Check and Preview remain explicit
+one-component requests; confirmed Apply/Rollback sends only the consumed
+server preview token and is never replayed after an error or lost response.
+The authenticated status projection now includes Coordinator-observed
+`lifecycle.maintenance` and `lifecycle.applying` hints. They add no new owner,
+journal or persistence, and an unavailable projection fails closed in the UI.
+Component errors expose a stable allowlisted `code` alongside the existing safe
+message without changing their HTTP statuses. F2 adds no policy, scheduler,
+automatic install, operation-history endpoint, production deployment or live
+qualification.
+
 ## Planned later capabilities
 
 ### #4 — component lifecycle production qualification
 
-The source F1 broker is the backend seam for typed/version-aware XKeen/Xray/geodata inventory/update/rollback. A future production/release qualification must prove the live component paths, rollback/recovery behavior and operator controls before any #4 mutation route is deployed. It will not expose a shell or generic package manager.
+The source F1 broker and F2 operator UI are the typed/version-aware XKeen/Xray/geodata inventory/update/rollback surface. A future production/release qualification must prove the live component paths, rollback/recovery behavior and operator controls before any #4 mutation route is deployed. It will not expose a shell or generic package manager.
 
 ### #5 — visual configuration
 

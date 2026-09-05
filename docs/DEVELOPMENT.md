@@ -187,6 +187,27 @@ rollback target rotation/stale rejection and sanitized transaction errors. F1
 has no UI, persisted policy, scheduler, automatic update or production
 qualification; all fixtures remain offline/synthetic.
 
+Phase F2 adds the real mounted Components / Updates UI and two bounded
+presentation seams: stable allowlisted component-mutation error codes and the
+Coordinator-backed `maintenance` / `applying` status projection. The pinned
+dev-only Chromium suite uses synthetic intercepted API responses, one browser
+and one worker; it performs no external metadata passthrough and stores no
+production cookies, HAR files or component tokens. Run it after `npm ci` with:
+
+```sh
+cd web
+npx playwright install --with-deps chromium
+npm run test:components-ui
+```
+
+The suite covers lazy inventory, explicit Check/Preview, token-only one-shot
+Apply/Rollback, navigation and dashboard refresh during a delayed synchronous
+request, cancellation/expiry/session invalidation, conservative unknown
+outcomes, lifecycle maintenance, browser-storage absence, keyboard focus and
+desktop/mobile screenshots from synthetic fixtures. Full developer
+qualification and hosted CI install the pinned Playwright Chromium build and
+run this suite off-router.
+
 ## Issue #3 Phase B focused fixtures
 
 The typed backup/export qualification fixture is:

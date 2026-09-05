@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -98,7 +100,13 @@ func TestComponentMutationRoutesAreStrictAuthenticatedAndInvalidateSessions(t *t
 	if response.StatusCode != http.StatusBadRequest || mutations.previews.Load() != 0 {
 		t.Fatalf("unknown mutation field = %d calls=%d", response.StatusCode, mutations.previews.Load())
 	}
-	response.Body.Close()
+	var invalidBody struct {
+		Code string `json:"code"`
+	}
+	decodeResponse(t, response, &invalidBody)
+	if invalidBody.Code != "invalid-request" {
+		t.Fatalf("unknown mutation field code = %q", invalidBody.Code)
+	}
 
 	response = componentMutationRawPost(t, client, server.URL+"/api/v1/components/preview", body+`{}`, "application/json", login.CSRFToken, "")
 	if response.StatusCode != http.StatusBadRequest || mutations.previews.Load() != 0 {
@@ -199,6 +207,47 @@ func TestComponentMutationRouteDoesNotClaimRestoreForUnprovenFailure(t *testing.
 	contents := readBody(response)
 	if response.StatusCode != http.StatusInternalServerError || !strings.Contains(contents, "outcome is not proven") || strings.Contains(contents, "previous generation restored") {
 		t.Fatalf("unproven failure = %d %s", response.StatusCode, contents)
+	}
+}
+
+func TestComponentMutationErrorsExposeStableAllowlistedCodes(t *testing.T) {
+	tests := []struct {
+		err     error
+		status  int
+		code    string
+		message string
+	}{
+		{components.ErrInvalidMutationRequest, http.StatusBadRequest, "invalid-request", "invalid component mutation request"},
+		{components.ErrMutationOperationMismatch, http.StatusBadRequest, "invalid-request", "invalid component mutation request"},
+		{components.ErrMutationBusy, http.StatusConflict, "busy", "component mutation busy"},
+		{components.ErrMutationPreviewExpired, http.StatusConflict, "preview-expired", "component mutation preview expired or invalid"},
+		{components.ErrMutationPreviewStale, http.StatusConflict, "preview-stale", "component mutation preview is stale"},
+		{components.ErrMutationNoPrevious, http.StatusConflict, "no-previous", "previous component generation unavailable"},
+		{components.ErrMutationMetadataUnavailable, http.StatusBadGateway, "metadata-unavailable", "component metadata unavailable"},
+		{components.ErrMutationCandidateRejected, http.StatusBadGateway, "candidate-rejected", "component candidate rejected"},
+		{components.ErrMutationTransactionFailed, http.StatusInternalServerError, "transaction-restored", "component transaction failed; previous generation restored"},
+		{components.ErrMutationTransactionUnproven, http.StatusInternalServerError, "transaction-unproven", "component transaction failed; outcome is not proven"},
+		{components.ErrMutationRollbackUnproven, http.StatusServiceUnavailable, "rollback-unproven", "component rollback or recovery is not proven"},
+		{components.ErrMutationMaintenance, http.StatusServiceUnavailable, "maintenance", "component mutation unavailable during maintenance"},
+		{components.ErrMutationUnavailable, http.StatusServiceUnavailable, "unavailable", "component mutation unavailable"},
+		{errors.New("synthetic unknown backend failure"), http.StatusServiceUnavailable, "unavailable", "component mutation unavailable"},
+	}
+	for _, test := range tests {
+		recorder := httptest.NewRecorder()
+		writeComponentMutationError(recorder, test.err)
+		var body struct {
+			Code  string `json:"code"`
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode %v: %v", test.err, err)
+		}
+		if recorder.Code != test.status || body.Code != test.code || body.Error != test.message {
+			t.Fatalf("mapping %v = status %d body %+v", test.err, recorder.Code, body)
+		}
+		if strings.Contains(recorder.Body.String(), "synthetic unknown backend failure") {
+			t.Fatalf("backend detail leaked for %v: %s", test.err, recorder.Body.String())
+		}
 	}
 }
 

@@ -29,6 +29,7 @@ bash scripts/test-public-hygiene.sh
 echo "== Web checks =="
 npm --prefix web ci --prefer-offline
 npm --prefix web run check
+(cd web && npx playwright install --with-deps chromium && npm run test:components-ui)
 npm --prefix web audit --audit-level=high
 
 echo "== Embedded web assets =="
