@@ -123,8 +123,8 @@ const mutationErrorResult = (cause, pending) => {
   }
 }
 
-const restoreFocus = (target) => {
-  window.setTimeout(() => target?.focus?.(), 0)
+const restoreFocus = (target, isCurrent = () => true) => {
+  window.setTimeout(() => { if (isCurrent()) target?.focus?.() }, 0)
 }
 
 export function useComponentsController({ csrfToken, lifecycle, onUnauthorized }) {
@@ -254,7 +254,13 @@ export function useComponentsController({ csrfToken, lifecycle, onUnauthorized }
     const current = previewRef.current
     if (!current || submitGuard.current || lifecycleUnavailable || lifecycle.maintenance || (lifecycle.applying && !pending)) return
     submitGuard.current = true
+    const epoch = sessionEpoch.current
+    // The request must finish normally, but its continuations belong only to
+    // the initiating authenticated shell/CSRF generation, including finally.
+    const isCurrentSession = () => epoch === sessionEpoch.current && csrfRef.current === csrfToken
+    const focusTarget = focusRef.current
     const token = current.previewToken
+    previewRef.current = null
     const operation = { component: current.component, operation: current.operation, channel: current.channel || '', startedAt: new Date().toISOString() }
     setPreview(null)
     setPending(operation)
@@ -264,6 +270,7 @@ export function useComponentsController({ csrfToken, lifecycle, onUnauthorized }
     try {
       const path = current.operation === 'rollback' ? '/api/v1/components/rollback' : '/api/v1/components/apply'
       const value = await postJSON(path, csrfToken, { previewToken: token })
+      if (!isCurrentSession()) return
       if (!validResult(value, operation)) {
         throw new ComponentRequestError('The server returned an invalid success result. The operation outcome is unknown.', { kind: 'malformed' })
       }
@@ -273,17 +280,21 @@ export function useComponentsController({ csrfToken, lifecycle, onUnauthorized }
       setResult({ tone: 'success', title: `${label} ${operation.operation} completed`, message: `The server verified ${target}.${retention}`, outcome: 'success' })
       refreshAfterResult = true
     } catch (cause) {
+      if (!isCurrentSession()) return
       const mapped = mutationErrorResult(cause, operation)
       setResult(mapped)
       refreshAfterResult = ['unknown', 'restored', 'maintenance'].includes(mapped.outcome)
       if (cause.status === 401) onUnauthorized()
     } finally {
-      setPending(null)
-      submitGuard.current = false
-      restoreFocus(focusRef.current)
+      if (isCurrentSession()) {
+        setPending(null)
+        submitGuard.current = false
+        restoreFocus(focusTarget, isCurrentSession)
+      }
     }
-    if (refreshAfterResult) {
+    if (refreshAfterResult && isCurrentSession()) {
       const refreshed = await loadInventory({ force: true })
+      if (!isCurrentSession()) return
       if (!refreshed) setRefreshError('The operation result is preserved, but the subsequent component inventory refresh failed.')
     }
   }, [csrfToken, lifecycle, lifecycleUnavailable, loadInventory, onUnauthorized, pending])
@@ -303,6 +314,8 @@ export function useComponentsController({ csrfToken, lifecycle, onUnauthorized }
     sessionEpoch.current++
     requestSequence.current++
     safeCancel(previewRef.current?.previewToken, previousCSRF)
+    previewRef.current = null
+    submitGuard.current = false
     setPreview(null)
     setPending(null)
     setResult(null)
@@ -341,11 +354,10 @@ const formatBytes = (value) => value ? `${new Intl.NumberFormat().format(Math.ro
 const shortDigest = (value) => value ? `${String(value).slice(0, 12)}…` : '—'
 const componentState = (component) => component?.state || 'unknown'
 const componentVersion = (component) => {
-  if (!component) return 'Unknown'
-  if (component.version) return component.version
-  if (component.versionUnknown) return 'Present · version unknown'
-  if (component.state === 'missing') return 'Missing'
-  return 'Unknown'
+  if (component?.state === 'missing') return 'Missing'
+  if (component?.state !== 'present') return 'Unknown'
+  if (component.version && !component.versionUnknown) return component.version
+  return 'Present · version unknown'
 }
 
 export function ComponentLifecycleNotices({ controller, lifecycle, onOpenComponents }) {
