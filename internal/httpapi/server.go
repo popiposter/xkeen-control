@@ -1040,11 +1040,11 @@ func (s *Server) decodeComponentMutationRequest(w http.ResponseWriter, r *http.R
 		return false
 	}
 	if r.URL.RawQuery != "" {
-		writeError(w, http.StatusBadRequest, "invalid request")
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid request")
 		return false
 	}
 	if r.ContentLength > maxComponentMutationBody {
-		writeError(w, http.StatusRequestEntityTooLarge, "request too large")
+		writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
 		return false
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxComponentMutationBody)
@@ -1054,9 +1054,9 @@ func (s *Server) decodeComponentMutationRequest(w http.ResponseWriter, r *http.R
 	if err := decoder.Decode(value); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			writeError(w, http.StatusRequestEntityTooLarge, "request too large")
+			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
 		} else {
-			writeError(w, http.StatusBadRequest, "invalid request")
+			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid request")
 		}
 		return false
 	}
@@ -1064,10 +1064,10 @@ func (s *Server) decodeComponentMutationRequest(w http.ResponseWriter, r *http.R
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			writeError(w, http.StatusRequestEntityTooLarge, "request too large")
+			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
 			return false
 		}
-		writeError(w, http.StatusBadRequest, "invalid request")
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid request")
 		return false
 	}
 	return true
@@ -1241,7 +1241,7 @@ func (s *Server) previewComponentMutation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if s.componentMutations == nil {
-		writeError(w, http.StatusServiceUnavailable, "component mutation unavailable")
+		writeComponentMutationError(w, components.ErrMutationUnavailable)
 		return
 	}
 	var request components.MutationRequest
@@ -1278,7 +1278,7 @@ func (s *Server) applyOrRollbackComponentMutation(w http.ResponseWriter, r *http
 		return
 	}
 	if s.componentMutations == nil {
-		writeError(w, http.StatusServiceUnavailable, "component mutation unavailable")
+		writeComponentMutationError(w, components.ErrMutationUnavailable)
 		return
 	}
 	var request components.MutationTokenRequest
@@ -1313,7 +1313,7 @@ func (s *Server) cancelComponentMutation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if s.componentMutations == nil {
-		writeError(w, http.StatusServiceUnavailable, "component mutation unavailable")
+		writeComponentMutationError(w, components.ErrMutationUnavailable)
 		return
 	}
 	var request components.MutationTokenRequest
@@ -1333,31 +1333,31 @@ func (s *Server) cancelComponentMutation(w http.ResponseWriter, r *http.Request)
 func writeComponentMutationError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, components.ErrInvalidMutationRequest), errors.Is(err, components.ErrMutationOperationMismatch):
-		writeError(w, http.StatusBadRequest, "invalid component mutation request")
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid component mutation request")
 	case errors.Is(err, components.ErrMutationBusy):
-		writeError(w, http.StatusConflict, "component mutation busy")
+		writeCodedError(w, http.StatusConflict, "busy", "component mutation busy")
 	case errors.Is(err, components.ErrMutationPreviewExpired):
-		writeError(w, http.StatusConflict, "component mutation preview expired or invalid")
+		writeCodedError(w, http.StatusConflict, "preview-expired", "component mutation preview expired or invalid")
 	case errors.Is(err, components.ErrMutationPreviewStale):
-		writeError(w, http.StatusConflict, "component mutation preview is stale")
+		writeCodedError(w, http.StatusConflict, "preview-stale", "component mutation preview is stale")
 	case errors.Is(err, components.ErrMutationNoPrevious):
-		writeError(w, http.StatusConflict, "previous component generation unavailable")
+		writeCodedError(w, http.StatusConflict, "no-previous", "previous component generation unavailable")
 	case errors.Is(err, components.ErrMutationMetadataUnavailable):
-		writeError(w, http.StatusBadGateway, "component metadata unavailable")
+		writeCodedError(w, http.StatusBadGateway, "metadata-unavailable", "component metadata unavailable")
 	case errors.Is(err, components.ErrMutationCandidateRejected):
-		writeError(w, http.StatusBadGateway, "component candidate rejected")
+		writeCodedError(w, http.StatusBadGateway, "candidate-rejected", "component candidate rejected")
 	case errors.Is(err, components.ErrMutationTransactionFailed):
-		writeError(w, http.StatusInternalServerError, "component transaction failed; previous generation restored")
+		writeCodedError(w, http.StatusInternalServerError, "transaction-restored", "component transaction failed; previous generation restored")
 	case errors.Is(err, components.ErrMutationTransactionUnproven):
-		writeError(w, http.StatusInternalServerError, "component transaction failed; outcome is not proven")
+		writeCodedError(w, http.StatusInternalServerError, "transaction-unproven", "component transaction failed; outcome is not proven")
 	case errors.Is(err, components.ErrMutationRollbackUnproven):
-		writeError(w, http.StatusServiceUnavailable, "component rollback or recovery is not proven")
+		writeCodedError(w, http.StatusServiceUnavailable, "rollback-unproven", "component rollback or recovery is not proven")
 	case errors.Is(err, components.ErrMutationMaintenance):
-		writeError(w, http.StatusServiceUnavailable, "component mutation unavailable during maintenance")
+		writeCodedError(w, http.StatusServiceUnavailable, "maintenance", "component mutation unavailable during maintenance")
 	case errors.Is(err, components.ErrMutationUnavailable):
-		writeError(w, http.StatusServiceUnavailable, "component mutation unavailable")
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "component mutation unavailable")
 	default:
-		writeError(w, http.StatusServiceUnavailable, "component mutation unavailable")
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "component mutation unavailable")
 	}
 }
 
@@ -1434,6 +1434,13 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, struct {
 		Error string `json:"error"`
 	}{Error: message})
+}
+
+func writeCodedError(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}{Code: code, Error: message})
 }
 
 func methodNotAllowed(w http.ResponseWriter, method string) {

@@ -55,15 +55,16 @@ type View struct {
 }
 
 type Status struct {
-	ControlPlane ControlPlaneStatus `json:"controlPlane"`
-	Xray         XrayStatus         `json:"xray"`
-	Xkeen        XkeenStatus        `json:"xkeen"`
-	Balancer     BalancerStatus     `json:"balancer"`
-	Observatory  ObservatoryStatus  `json:"observatory"`
-	Benchmark    BenchmarkStatus    `json:"benchmark"`
-	Watchdog     WatchdogStatus     `json:"watchdog"`
-	Selection    c1.SelectionStatus `json:"selection"`
-	Setup        SetupStatus        `json:"setup"`
+	ControlPlane ControlPlaneStatus  `json:"controlPlane"`
+	Xray         XrayStatus          `json:"xray"`
+	Xkeen        XkeenStatus         `json:"xkeen"`
+	Balancer     BalancerStatus      `json:"balancer"`
+	Observatory  ObservatoryStatus   `json:"observatory"`
+	Benchmark    BenchmarkStatus     `json:"benchmark"`
+	Watchdog     WatchdogStatus      `json:"watchdog"`
+	Selection    c1.SelectionStatus  `json:"selection"`
+	Setup        SetupStatus         `json:"setup"`
+	Lifecycle    *c1.LifecycleStatus `json:"lifecycle,omitempty"`
 }
 
 type ControlPlaneStatus struct {
@@ -388,6 +389,7 @@ func (c *Collector) collect(ctx context.Context) View {
 		},
 		Watchdog:  WatchdogStatus{Installed: xkeenState.Watchdog.Installed, Enabled: xkeenState.Watchdog.Enabled},
 		Selection: c1State.Selection,
+		Lifecycle: c1State.Lifecycle,
 	}
 	status.Setup = c.setupStatus(status, xkeenState, xrayState, configState)
 

@@ -28,6 +28,9 @@ func TestCoordinatorStartsWithAvailableLifecycleToken(t *testing.T) {
 func TestCoordinatorMaintenanceRejectsNormalMutationsButAdmitsRecovery(t *testing.T) {
 	coordinator := NewCoordinator(DefaultPolicy(), nil, nil, nil)
 	coordinator.EnterMaintenance()
+	if snapshot := coordinator.Snapshot(); snapshot.Lifecycle == nil || !snapshot.Lifecycle.Maintenance || snapshot.Lifecycle.Applying {
+		t.Fatalf("maintenance lifecycle projection = %+v", snapshot.Lifecycle)
+	}
 	if _, err := coordinator.BeginApply(context.Background()); !errors.Is(err, ErrLifecycleBusy) {
 		t.Fatalf("normal lifecycle mutation while in maintenance = %v", err)
 	}
@@ -41,7 +44,13 @@ func TestCoordinatorMaintenanceRejectsNormalMutationsButAdmitsRecovery(t *testin
 	if err != nil {
 		t.Fatalf("lifecycle mutation after maintenance = %v", err)
 	}
+	if snapshot := coordinator.Snapshot(); snapshot.Lifecycle == nil || snapshot.Lifecycle.Maintenance || !snapshot.Lifecycle.Applying {
+		t.Fatalf("active Apply lifecycle projection = %+v", snapshot.Lifecycle)
+	}
 	release()
+	if snapshot := coordinator.Snapshot(); snapshot.Lifecycle == nil || snapshot.Lifecycle.Maintenance || snapshot.Lifecycle.Applying {
+		t.Fatalf("idle lifecycle projection = %+v", snapshot.Lifecycle)
+	}
 }
 
 func TestCoordinatorApplyAdmissionWinsForcedInterleaving(t *testing.T) {
@@ -63,6 +72,9 @@ func TestCoordinatorApplyAdmissionWinsForcedInterleaving(t *testing.T) {
 		result <- applyResult{release: release, err: err}
 	}()
 	<-hookEntered
+	if snapshot := coordinator.Snapshot(); snapshot.Lifecycle == nil || !snapshot.Lifecycle.Applying {
+		t.Fatalf("waiting Apply was not projected: %+v", snapshot.Lifecycle)
+	}
 	if err := coordinator.TriggerBenchmark(); !errors.Is(err, ErrBenchmarkBusy) {
 		t.Fatalf("benchmark won after Apply admission: %v", err)
 	}
@@ -78,6 +90,18 @@ func TestCoordinatorApplyAdmissionWinsForcedInterleaving(t *testing.T) {
 	if coordinator.IsLifecycleBusy() {
 		t.Fatal("Apply release left lifecycle busy")
 	}
+}
+
+func TestCoordinatorBenchmarkDoesNotProjectAsLifecycleApply(t *testing.T) {
+	coordinator := NewCoordinator(DefaultPolicy(), nil, &BenchmarkRunner{}, nil)
+	if err := coordinator.TriggerBenchmark(); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := coordinator.Snapshot()
+	if snapshot.Lifecycle == nil || snapshot.Lifecycle.Maintenance || snapshot.Lifecycle.Applying {
+		t.Fatalf("benchmark was confused with lifecycle Apply: %+v", snapshot.Lifecycle)
+	}
+	coordinator.Stop()
 }
 
 func TestCoordinatorApplyCancelsAlreadyRunningBenchmark(t *testing.T) {

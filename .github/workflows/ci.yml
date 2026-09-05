@@ -53,6 +53,7 @@ jobs:
         run: |
           npm --prefix web ci --ignore-scripts
           npm --prefix web run check
+          (cd web && npx playwright install --with-deps chromium && npm run test:components-ui)
       - name: Embedded asset consistency
         run: |
           npm --prefix web run build
