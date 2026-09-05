@@ -37,8 +37,18 @@ import (
 const (
 	defaultListenAddress           = "127.0.0.1:8787"
 	componentMutationResponseGrace = components.DefaultMutationResponseGrace
-	httpWriteTimeout               = components.DefaultMutationWaitTimeout + components.DefaultMutationOperationTimeout + componentMutationResponseGrace
 )
+
+var httpWriteTimeout = componentHTTPWriteWindow(
+	components.DefaultMutationWaitTimeout,
+	components.DefaultMutationOperationTimeout,
+	components.DefaultMutationRecoveryTimeout,
+	componentMutationResponseGrace,
+)
+
+func componentHTTPWriteWindow(admission, operation, recovery, responseGrace time.Duration) time.Duration {
+	return admission + operation + recovery + responseGrace
+}
 
 func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "version" {
@@ -294,10 +304,11 @@ func main() {
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		// Component Apply/Rollback may wait for shared admission and then run the
-		// largest synchronous XKeen transaction. Keep the response window longer
-		// than both budgets so the operator can observe the committed or recovered
-		// result.
+		// Component Apply/Rollback may wait for shared admission, run the largest
+		// synchronous transaction, and then perform ordinary recovery on an
+		// independent bounded context after a late activation failure. Keep the
+		// response window longer than all of those budgets so the operator can
+		// observe the committed or recovered result.
 		WriteTimeout:   httpWriteTimeout,
 		IdleTimeout:    30 * time.Second,
 		MaxHeaderBytes: 16 << 10,

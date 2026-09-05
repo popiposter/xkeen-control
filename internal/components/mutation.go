@@ -31,7 +31,11 @@ const (
 	// separately by DefaultMutationWaitTimeout, so this is the full transaction
 	// budget after the broker has admitted the operation.
 	DefaultMutationOperationTimeout = DefaultXKeenTransactionTimeout + DefaultXKeenAuthorityWaitTimeout
-	MaxMutationTokenBytes           = 256
+	// Ordinary transaction recovery deliberately runs on an independent bounded
+	// context after a late activation failure. Keep that recovery reserve in the
+	// synchronous HTTP response window as well.
+	DefaultMutationRecoveryTimeout = max(DefaultXrayRollbackTimeout, DefaultGeodataRollbackTimeout, DefaultXKeenRollbackTimeout)
+	MaxMutationTokenBytes          = 256
 
 	mutationTokenBytes = 32
 )

@@ -1,9 +1,22 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/cookiejar"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/popiposter/xkeen-control/internal/auth"
 	"github.com/popiposter/xkeen-control/internal/components"
+	"github.com/popiposter/xkeen-control/internal/httpapi"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 )
 
@@ -37,8 +50,131 @@ func TestHTTPWriteWindowExceedsNodeTransactionBudget(t *testing.T) {
 	if components.DefaultMutationOperationTimeout != components.DefaultXKeenTransactionTimeout+components.DefaultXKeenAuthorityWaitTimeout {
 		t.Fatalf("component operation budget = %s, want XKeen transaction plus authority budget %s", components.DefaultMutationOperationTimeout, components.DefaultXKeenTransactionTimeout+components.DefaultXKeenAuthorityWaitTimeout)
 	}
-	expected := components.DefaultMutationWaitTimeout + components.DefaultMutationOperationTimeout + componentMutationResponseGrace
+	if components.DefaultMutationRecoveryTimeout != max(components.DefaultXrayRollbackTimeout, components.DefaultGeodataRollbackTimeout, components.DefaultXKeenRollbackTimeout) {
+		t.Fatalf("component recovery budget = %s, want largest rollback budget", components.DefaultMutationRecoveryTimeout)
+	}
+	expected := componentHTTPWriteWindow(components.DefaultMutationWaitTimeout, components.DefaultMutationOperationTimeout, components.DefaultMutationRecoveryTimeout, componentMutationResponseGrace)
 	if httpWriteTimeout != expected {
-		t.Fatalf("HTTP write window = %s, want admission + operation + response grace %s", httpWriteTimeout, expected)
+		t.Fatalf("HTTP write window = %s, want admission + operation + recovery + response grace %s", httpWriteTimeout, expected)
 	}
 }
+
+type lateRecoveryComponentMutationStub struct {
+	operation  time.Duration
+	recovery   time.Duration
+	postCommit atomic.Bool
+	recovered  atomic.Bool
+}
+
+func (stub *lateRecoveryComponentMutationStub) Preview(_ context.Context, _ string, request components.MutationRequest) (components.MutationPreview, error) {
+	return components.MutationPreview{
+		SchemaVersion: components.MutationSchemaVersion,
+		PreviewToken:  "scaled-late-recovery-preview-token",
+		Component:     request.Component,
+		Operation:     request.Operation,
+		Channel:       request.Channel,
+		ExpiresAt:     time.Now().UTC().Add(time.Minute),
+	}, nil
+}
+
+func (stub *lateRecoveryComponentMutationStub) Apply(context.Context, string, string) (components.MutationResult, error) {
+	time.Sleep(stub.operation)
+	stub.postCommit.Store(true)
+	time.Sleep(stub.recovery)
+	stub.recovered.Store(true)
+	return components.MutationResult{}, components.ErrMutationTransactionFailed
+}
+
+func (*lateRecoveryComponentMutationStub) Rollback(context.Context, string, string) (components.MutationResult, error) {
+	return components.MutationResult{}, components.ErrMutationRollbackUnproven
+}
+
+func (*lateRecoveryComponentMutationStub) Cancel(string, string) {}
+func (*lateRecoveryComponentMutationStub) Invalidate(string)     {}
+func (*lateRecoveryComponentMutationStub) InvalidateAll()        {}
+
+func TestComponentWriteWindowPreservesLateRecoveryHTTPResponse(t *testing.T) {
+	const (
+		admission = 20 * time.Millisecond
+		operation = 100 * time.Millisecond
+		recovery  = 200 * time.Millisecond
+		grace     = 100 * time.Millisecond
+	)
+	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
+	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
+		t.Fatal(err)
+	}
+	mutations := &lateRecoveryComponentMutationStub{operation: admission + operation, recovery: recovery}
+	server := httptest.NewUnstartedServer(httpapi.New(httpapi.Config{
+		Auth:               auth.NewManager(auth.Config{HashPath: passwordPath}),
+		ComponentMutations: mutations,
+	}))
+	server.Start()
+	defer server.Close()
+	client := server.Client()
+	client.Jar, _ = cookiejar.New(nil)
+
+	loginResponse := postMainJSON(t, client, server.URL+"/api/v1/session/login", map[string]string{"password": "synthetic-control-password"}, "")
+	if loginResponse.StatusCode != http.StatusOK {
+		t.Fatalf("login = %d %s", loginResponse.StatusCode, readMainBody(loginResponse))
+	}
+	var login struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	if err := json.NewDecoder(loginResponse.Body).Decode(&login); err != nil {
+		loginResponse.Body.Close()
+		t.Fatal(err)
+	}
+	loginResponse.Body.Close()
+	if login.CSRFToken == "" {
+		t.Fatal("login did not return csrf token")
+	}
+
+	preview := postMainJSON(t, client, server.URL+"/api/v1/components/preview", map[string]string{"component": "xray", "operation": "update", "channel": "stable"}, login.CSRFToken)
+	if preview.StatusCode != http.StatusOK {
+		t.Fatalf("preview = %d %s", preview.StatusCode, readMainBody(preview))
+	}
+	preview.Body.Close()
+	// Keep the deliberately slow synthetic password check outside the scaled
+	// component write window. The production server uses its full-sized window
+	// for every route; this test only scales the Apply/Rollback budget.
+	server.Config.WriteTimeout = componentHTTPWriteWindow(admission, operation, recovery, grace)
+
+	response := postMainJSON(t, client, server.URL+"/api/v1/components/apply", map[string]string{"previewToken": "scaled-late-recovery-preview-token"}, login.CSRFToken)
+	contents := readMainBody(response)
+	if response.StatusCode != http.StatusInternalServerError || !strings.Contains(contents, "previous generation restored") {
+		t.Fatalf("late recovered failure = %d %s", response.StatusCode, contents)
+	}
+	if !mutations.postCommit.Load() || !mutations.recovered.Load() {
+		t.Fatalf("late recovery stages = post-commit:%v recovered:%v", mutations.postCommit.Load(), mutations.recovered.Load())
+	}
+}
+
+func postMainJSON(t *testing.T, client *http.Client, target string, value any, csrf string) *http.Response {
+	t.Helper()
+	body, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if csrf != "" {
+		request.Header.Set(auth.CSRFHeader, csrf)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
+
+func readMainBody(response *http.Response) string {
+	defer response.Body.Close()
+	body, _ := io.ReadAll(response.Body)
+	return string(body)
+}
+
+var _ httpapi.ComponentMutationService = (*lateRecoveryComponentMutationStub)(nil)
