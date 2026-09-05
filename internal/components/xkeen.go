@@ -89,6 +89,7 @@ var (
 	ErrXKeenAuthorityBusy          = errors.New("XKeen authority is busy")
 	ErrXKeenTransactionUnavailable = errors.New("XKeen transaction is unavailable")
 	ErrXKeenApplyFailed            = errors.New("XKeen activation failed")
+	ErrXKeenApplyRestored          = errors.New("XKeen activation failed and previous generation was verified restored")
 	ErrXKeenRollbackFailed         = errors.New("XKeen rollback failed")
 	ErrXKeenPreviousUnavailable    = errors.New("previous Xkeen generation is unavailable")
 	ErrXKeenRecoveryRequired       = errors.New("XKeen component recovery is required")
@@ -195,11 +196,47 @@ func (r *XKeenResolver) ResolveXKeen(ctx context.Context) (XKeenReleaseIdentity,
 	if matches != 1 {
 		return XKeenReleaseIdentity{}, ErrXKeenCandidateRejected
 	}
+	return xkeenReleaseIdentityFromEntry(entry), nil
+}
+
+// XKeenMovingDevResolver resolves the moving upstream main branch used by the
+// metadata Check contract. It is intentionally separate from XKeenResolver:
+// the latter re-verifies one fixed immutable catalog entry for Apply, while
+// this resolver proves the current build commit, source parent and tree/blob
+// identity before mapping it to that catalog.
+type XKeenMovingDevResolver struct{ client *metadataClient }
+
+func NewXKeenMovingDevResolver(resolver netguard.IPResolver, supplied *http.Client) *XKeenMovingDevResolver {
+	return &XKeenMovingDevResolver{client: newMetadataClient(resolver, supplied)}
+}
+
+func (r *XKeenMovingDevResolver) ResolveXKeen(ctx context.Context) (XKeenReleaseIdentity, error) {
+	if r == nil || r.client == nil {
+		return XKeenReleaseIdentity{}, ErrXKeenResolutionUnavailable
+	}
+	identity, failure, err := resolveXKeenDevBuild(r.client, ctx, newNetworkBudget())
+	if err != nil {
+		if ctx != nil && ctx.Err() != nil {
+			return XKeenReleaseIdentity{}, ctx.Err()
+		}
+		return XKeenReleaseIdentity{}, ErrXKeenResolutionUnavailable
+	}
+	if failure != nil {
+		return XKeenReleaseIdentity{}, ErrXKeenCandidateRejected
+	}
+	entry, ok := reviewedXKeenDevBuild(identity)
+	if !ok {
+		return XKeenReleaseIdentity{}, ErrXKeenCandidateRejected
+	}
+	return xkeenReleaseIdentityFromEntry(entry), nil
+}
+
+func xkeenReleaseIdentityFromEntry(entry xkeenCompatibilityEntry) XKeenReleaseIdentity {
 	return XKeenReleaseIdentity{
 		Repository: entry.Repository, Channel: entry.Channel, Tag: entry.Tag, Version: entry.Version, CommitSHA: entry.CommitSHA,
 		SourceParentSHA: entry.SourceParentSHA, AssetName: entry.AssetName, BlobSHA: entry.BlobSHA, SizeBytes: entry.SizeBytes, SHA256: entry.SHA256,
 		GenerationSHA256: entry.GenerationSHA256, Generation: entry.GenerationSHA256,
-	}, nil
+	}
 }
 
 type XKeenStage string
@@ -352,6 +389,19 @@ type loadedXKeenGeneration struct {
 	meta       xkeenGenerationMetadata
 	marker     []byte
 	markerInfo os.FileInfo
+}
+
+// XKeenPreviousGeneration is the safe summary of the retained component-owned
+// generation used to bind a rollback preview. It omits all filesystem paths
+// and component bytes.
+type XKeenPreviousGeneration struct {
+	Generation     string
+	Entries        int
+	Bytes          int64
+	MarkerPresent  bool
+	MarkerSHA256   string
+	Version        string
+	BuildCommitSHA string
 }
 
 func NewXKeenService(config XKeenConfig) *XKeenService {
@@ -522,7 +572,38 @@ func (s *XKeenService) Update(ctx context.Context, intended XKeenReleaseIdentity
 	return s.Apply(ctx, intended)
 }
 
+// PreviousGeneration reads the one component-owned previous XKeen generation.
+// It performs only bounded local reads and does not acquire mutation or
+// authority admission; RollbackExpected re-reads it under transaction
+// ownership before activation.
+func (s *XKeenService) PreviousGeneration() (XKeenPreviousGeneration, error) {
+	if err := s.Ready(); err != nil {
+		return XKeenPreviousGeneration{}, err
+	}
+	previous, err := s.loadPreviousGeneration()
+	if err != nil {
+		return XKeenPreviousGeneration{}, ErrXKeenPreviousUnavailable
+	}
+	result := xkeenPreviousGeneration(previous)
+	return result, nil
+}
+
 func (s *XKeenService) Rollback(ctx context.Context) error {
+	return s.rollback(ctx, nil)
+}
+
+// RollbackExpected activates the previous generation only when it still
+// matches the identity captured by a rollback preview.
+func (s *XKeenService) RollbackExpected(ctx context.Context, expected XKeenPreviousGeneration) error {
+	return s.rollback(ctx, &expected)
+}
+
+// RollbackWithExpected is a descriptive compatibility alias for typed callers.
+func (s *XKeenService) RollbackWithExpected(ctx context.Context, expected XKeenPreviousGeneration) error {
+	return s.RollbackExpected(ctx, expected)
+}
+
+func (s *XKeenService) rollback(ctx context.Context, expected *XKeenPreviousGeneration) error {
 	if err := s.Ready(); err != nil {
 		return err
 	}
@@ -549,6 +630,9 @@ func (s *XKeenService) Rollback(ctx context.Context) error {
 	previous, err := s.loadPreviousGeneration()
 	if err != nil {
 		return ErrXKeenPreviousUnavailable
+	}
+	if expected != nil && !sameXKeenPreviousGeneration(previous, *expected) {
+		return ErrXKeenCandidateStale
 	}
 	if err := s.checkFreeSpace(0, previous.meta.Bytes, base.active.Bytes); err != nil {
 		return err
@@ -2460,6 +2544,9 @@ func (s *XKeenService) failAndRecover(ctx context.Context, journal xkeenTransact
 	if journal.Operation == xkeenOperationRollback {
 		return ErrXKeenRollbackFailed
 	}
+	if journal.Phase != xkeenPhasePrepared {
+		return errors.Join(ErrXKeenApplyFailed, ErrXKeenApplyRestored)
+	}
 	return ErrXKeenApplyFailed
 }
 
@@ -2482,6 +2569,39 @@ func sameXKeenLoadedSummary(generation loadedXKeenGeneration, summary xkeenGener
 		digest := sha256.Sum256(generation.marker)
 		return strings.EqualFold(hex.EncodeToString(digest[:]), summary.MarkerSHA256)
 	}())
+}
+
+func xkeenPreviousGeneration(generation loadedXKeenGeneration) XKeenPreviousGeneration {
+	summary := makeXKeenGenerationSummary(generation.meta, generation.marker)
+	result := XKeenPreviousGeneration{
+		Generation:    summary.Generation,
+		Entries:       summary.Entries,
+		Bytes:         summary.Bytes,
+		MarkerPresent: summary.MarkerPresent,
+		MarkerSHA256:  summary.MarkerSHA256,
+	}
+	if len(generation.marker) > 0 {
+		if marker, err := parseXKeenMarker(generation.marker); err == nil {
+			result.Version = marker.Version
+			result.BuildCommitSHA = marker.BuildCommitSHA
+		}
+	}
+	return result
+}
+
+func sameXKeenPreviousGeneration(generation loadedXKeenGeneration, expected XKeenPreviousGeneration) bool {
+	summary := xkeenGenerationSummary{
+		Generation:    expected.Generation,
+		Entries:       expected.Entries,
+		Bytes:         expected.Bytes,
+		MarkerPresent: expected.MarkerPresent,
+		MarkerSHA256:  expected.MarkerSHA256,
+	}
+	if !sameXKeenLoadedSummary(generation, summary) {
+		return false
+	}
+	actual := xkeenPreviousGeneration(generation)
+	return actual.Version == expected.Version && actual.BuildCommitSHA == expected.BuildCommitSHA
 }
 
 func (s *XKeenService) restorePreviousAfterFailure(journal xkeenTransactionJournal) error {

@@ -319,6 +319,56 @@ func TestGeodataRollbackUsesPreviousWithoutResolverAndPreservesOneStepTarget(t *
 	assertGeodataPrefixedSentinel(t, f)
 }
 
+func TestGeodataRollbackExpectedRejectsRotatedPreviousBeforeActivation(t *testing.T) {
+	f := newGeodataFixture(t)
+	if err := f.service.Apply(context.Background(), f.set); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	expected, err := f.service.PreviousGeneration()
+	if err != nil {
+		t.Fatalf("first previous generation: %v", err)
+	}
+	if err := f.service.Apply(context.Background(), f.set); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	rotated, err := f.service.PreviousGeneration()
+	if err != nil {
+		t.Fatalf("rotated previous generation: %v", err)
+	}
+	if rotated.Generation == expected.Generation {
+		t.Fatal("second apply did not rotate the retained previous generation")
+	}
+	activeBefore, err := f.service.readActiveSet()
+	if err != nil {
+		t.Fatalf("active set before stale rollback: %v", err)
+	}
+	restartsBefore := f.runtime.restartCalls
+	if err := f.service.RollbackExpected(context.Background(), expected); !errors.Is(err, ErrGeodataCandidateStale) {
+		t.Fatalf("rotated rollback error = %v", err)
+	}
+	activeAfter, err := f.service.readActiveSet()
+	if err != nil {
+		t.Fatalf("active set after stale rollback: %v", err)
+	}
+	if !sameGeodataSetMetadata(activeAfter, activeBefore) {
+		t.Fatalf("stale rollback changed active set: before=%+v after=%+v", activeBefore, activeAfter)
+	}
+	if f.runtime.restartCalls != restartsBefore {
+		t.Fatalf("stale rollback restarted runtime: before=%d after=%d", restartsBefore, f.runtime.restartCalls)
+	}
+	if present, _ := componentTransactionPresent(f.journalPath); present {
+		t.Fatal("stale rollback left a transaction journal")
+	}
+	actual, err := f.service.PreviousGeneration()
+	if err != nil {
+		t.Fatalf("retained generation after stale rollback: %v", err)
+	}
+	if actual.Generation != rotated.Generation {
+		t.Fatalf("stale rollback changed retained generation: got=%s want=%s", actual.Generation, rotated.Generation)
+	}
+	assertGeodataPrefixedSentinel(t, f)
+}
+
 func TestGeodataRuntimeMutationAfterRestartFailsClosedAndRestores(t *testing.T) {
 	f := newGeodataFixture(t)
 	f.runtime.restartMutation = func() {
@@ -326,7 +376,7 @@ func TestGeodataRuntimeMutationAfterRestartFailsClosedAndRestores(t *testing.T) 
 			t.Fatalf("write synthetic runtime drift: %v", err)
 		}
 	}
-	if err := f.service.Apply(context.Background(), f.set); !errors.Is(err, ErrGeodataApplyFailed) {
+	if err := f.service.Apply(context.Background(), f.set); !errors.Is(err, ErrGeodataApplyFailed) || !errors.Is(err, ErrGeodataApplyRestored) {
 		t.Fatalf("runtime mutation result = %v", err)
 	}
 	for name, expected := range f.oldFiles {
@@ -340,6 +390,25 @@ func TestGeodataRuntimeMutationAfterRestartFailsClosedAndRestores(t *testing.T) 
 	assertGeodataPrefixedSentinel(t, f)
 	if err := f.service.Ready(); err != nil {
 		t.Fatalf("service not ready after runtime mutation recovery: %v", err)
+	}
+}
+
+func TestGeodataPreCommitFailureDoesNotClaimVerifiedRestore(t *testing.T) {
+	f := newGeodataFixture(t)
+	f.service.config.InjectFailure = func(stage GeodataStage) error {
+		if stage == GeodataStagePreviousSaved {
+			return errors.New("synthetic pre-commit preparation failure")
+		}
+		return nil
+	}
+	err := f.service.Apply(context.Background(), f.set)
+	if !errors.Is(err, ErrGeodataApplyFailed) || errors.Is(err, ErrGeodataApplyRestored) {
+		t.Fatalf("pre-commit result = %v", err)
+	}
+	for name, expected := range f.oldFiles {
+		if actual := readFixtureFile(t, filepath.Join(f.assetDir, name)); !bytes.Equal(actual, expected) {
+			t.Fatalf("pre-commit failure changed active %s: %q", name, actual)
+		}
 	}
 }
 

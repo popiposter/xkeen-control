@@ -35,10 +35,20 @@ import (
 )
 
 const (
-	defaultListenAddress   = "127.0.0.1:8787"
-	nodeApplyResponseGrace = 15 * time.Second
-	httpWriteTimeout       = nodes.DefaultTransactionTimeout + nodes.DefaultApplyGateWaitTimeout + nodeApplyResponseGrace
+	defaultListenAddress           = "127.0.0.1:8787"
+	componentMutationResponseGrace = components.DefaultMutationResponseGrace
 )
+
+var httpWriteTimeout = componentHTTPWriteWindow(
+	components.DefaultMutationWaitTimeout,
+	components.DefaultMutationOperationTimeout,
+	components.DefaultMutationRecoveryTimeout,
+	componentMutationResponseGrace,
+)
+
+func componentHTTPWriteWindow(admission, operation, recovery, responseGrace time.Duration) time.Duration {
+	return admission + operation + recovery + responseGrace
+}
 
 func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "version" {
@@ -152,6 +162,18 @@ func main() {
 	componentXrayService := newXrayService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
 	componentGeodataService := newGeodataService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
 	componentXKeenService := newXKeenService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
+	componentMutations := components.NewMutationService(components.MutationConfig{
+		// Preview resolution is intentionally separate from the transaction
+		// services. Apply/Rollback then dispatch only the stored typed intent to
+		// those services, which independently re-read their authority/source.
+		XrayResolver:    components.NewXrayResolver(nil, nil),
+		Xray:            componentXrayService,
+		GeodataResolver: components.NewGeodataResolver(nil, nil),
+		Geodata:         componentGeodataService,
+		XKeenResolver:   components.NewXKeenMovingDevResolver(nil, nil),
+		XKeen:           componentXKeenService,
+		MutationGate:    componentGate,
+	})
 	stateDir := getenv("XKEEN_APPLIANCE_IMPORT_STATE_DIR", "/opt/etc/xkeen-control/state")
 	restoreJournalPath := filepath.Join(stateDir, "appliance-import-transaction.json")
 	restorePending, restoreJournalErr := transactionJournalPresent(restoreJournalPath)
@@ -254,19 +276,21 @@ func main() {
 	})
 	componentChecker := components.NewChecker(components.CheckerConfig{
 		InstalledSnapshot: componentService.Latest,
+		MutationAvailable: componentMutations.Supports,
 	})
 	handler := httpapi.New(httpapi.Config{
-		Collector:       collector,
-		Auth:            authManager,
-		Nodes:           nodeManager,
-		Benchmark:       coordinator,
-		Selection:       coordinator,
-		Assets:          webassets.Handler(),
-		StartedAt:       startedAt,
-		Components:      componentService,
-		ComponentChecks: componentChecker,
-		Updates:         updateManager,
-		Restore:         restoreService,
+		Collector:          collector,
+		Auth:               authManager,
+		Nodes:              nodeManager,
+		Benchmark:          coordinator,
+		Selection:          coordinator,
+		Assets:             webassets.Handler(),
+		StartedAt:          startedAt,
+		Components:         componentService,
+		ComponentChecks:    componentChecker,
+		ComponentMutations: componentMutations,
+		Updates:            updateManager,
+		Restore:            restoreService,
 		Backup: backup.NewService(backup.Config{
 			Appliance:      applianceService,
 			Nodes:          nodeManager,
@@ -280,9 +304,11 @@ func main() {
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		// The bounded gate wait happens before the five-minute application
-		// transaction budget. Keep the HTTP response window longer than both
-		// windows so the operator can observe the committed or recovered result.
+		// Component Apply/Rollback may wait for shared admission, run the largest
+		// synchronous transaction, and then perform ordinary recovery on an
+		// independent bounded context after a late activation failure. Keep the
+		// response window longer than all of those budgets so the operator can
+		// observe the committed or recovered result.
 		WriteTimeout:   httpWriteTimeout,
 		IdleTimeout:    30 * time.Second,
 		MaxHeaderBytes: 16 << 10,

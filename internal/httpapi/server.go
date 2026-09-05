@@ -23,11 +23,12 @@ import (
 )
 
 const (
-	maxLoginBody          = 16 << 10
-	maxMutationBody       = 384 << 10
-	maxComponentCheckBody = 4 << 10
-	maxJSONResponse       = 512 << 10
-	csrfRequiredPath      = "/api/v1/session/logout"
+	maxLoginBody             = 16 << 10
+	maxMutationBody          = 384 << 10
+	maxComponentCheckBody    = 4 << 10
+	maxComponentMutationBody = 4 << 10
+	maxJSONResponse          = 512 << 10
+	csrfRequiredPath         = "/api/v1/session/logout"
 )
 
 type BackupService interface {
@@ -38,6 +39,15 @@ type BackupService interface {
 type RestoreService interface {
 	PreviewBundle(context.Context, string, []byte, string, restore.Mode) (restore.Preview, error)
 	Apply(context.Context, string, string) (restore.ApplyResult, error)
+	Cancel(string, string)
+	Invalidate(string)
+	InvalidateAll()
+}
+
+type ComponentMutationService interface {
+	Preview(context.Context, string, components.MutationRequest) (components.MutationPreview, error)
+	Apply(context.Context, string, string) (components.MutationResult, error)
+	Rollback(context.Context, string, string) (components.MutationResult, error)
 	Cancel(string, string)
 	Invalidate(string)
 	InvalidateAll()
@@ -57,6 +67,7 @@ type Server struct {
 	}
 	components         components.ReadOnlyService
 	componentChecks    components.CheckService
+	componentMutations ComponentMutationService
 	updates            panelupdate.Service
 	backup             BackupService
 	restore            RestoreService
@@ -75,18 +86,19 @@ type Config struct {
 	Selection interface {
 		SetManualOverride(context.Context, string) error
 	}
-	Components      components.ReadOnlyService
-	ComponentChecks components.CheckService
-	Updates         panelupdate.Service
-	Backup          BackupService
-	Restore         RestoreService
+	Components         components.ReadOnlyService
+	ComponentChecks    components.CheckService
+	ComponentMutations ComponentMutationService
+	Updates            panelupdate.Service
+	Backup             BackupService
+	Restore            RestoreService
 }
 
 func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, updates: config.Updates, backup: config.Backup, restore: config.Restore, restorePreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, updates: config.Updates, backup: config.Backup, restore: config.Restore, restorePreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -104,6 +116,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case "/api/v1/session/login", "/api/v1/session/logout", "/api/v1/session",
 		"/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary", "/api/v1/components", "/api/v1/components/check",
+		"/api/v1/components/preview", "/api/v1/components/apply", "/api/v1/components/rollback", "/api/v1/components/cancel",
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
 		"/api/v1/session/password",
 		"/api/v1/benchmark/run",
@@ -202,6 +215,30 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.checkComponents(w, r)
+	case "/api/v1/components/preview":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.previewComponentMutation(w, r)
+	case "/api/v1/components/apply":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.applyComponentMutation(w, r)
+	case "/api/v1/components/rollback":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.rollbackComponentMutation(w, r)
+	case "/api/v1/components/cancel":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.cancelComponentMutation(w, r)
 	case "/api/v1/benchmark/run":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -486,6 +523,9 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if s.nodes != nil {
 		s.nodes.Invalidate(session.CSRFToken)
 	}
+	if s.componentMutations != nil {
+		s.componentMutations.Invalidate(session.CSRFToken)
+	}
 	s.auth.ClearSessionCookie(w)
 	writeJSON(w, http.StatusOK, struct {
 		Authenticated bool `json:"authenticated"`
@@ -517,6 +557,9 @@ func (s *Server) replacePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.restore != nil {
 		s.restore.InvalidateAll()
+	}
+	if s.componentMutations != nil {
+		s.componentMutations.InvalidateAll()
 	}
 	s.auth.ClearSessionCookie(w)
 	writeJSON(w, http.StatusOK, struct {
@@ -990,6 +1033,46 @@ func (s *Server) decodeComponentCheckRequest(w http.ResponseWriter, r *http.Requ
 	return true
 }
 
+func (s *Server) decodeComponentMutationRequest(w http.ResponseWriter, r *http.Request, value any) bool {
+	contentTypes := r.Header.Values("Content-Type")
+	if len(contentTypes) != 1 || strings.TrimSpace(contentTypes[0]) != "application/json" {
+		writeError(w, http.StatusUnsupportedMediaType, "unsupported media type")
+		return false
+	}
+	if r.URL.RawQuery != "" {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return false
+	}
+	if r.ContentLength > maxComponentMutationBody {
+		writeError(w, http.StatusRequestEntityTooLarge, "request too large")
+		return false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxComponentMutationBody)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request too large")
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid request")
+		}
+		return false
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request too large")
+			return false
+		}
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return false
+	}
+	return true
+}
+
 func (s *Server) decodeSecretBackupRequest(w http.ResponseWriter, r *http.Request, value any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, backup.MaxSecretRequestBody)
 	defer r.Body.Close()
@@ -1145,6 +1228,136 @@ func (s *Server) writeComponentCheckError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadGateway, "component metadata rejected")
 	default:
 		writeError(w, http.StatusServiceUnavailable, "component check unavailable")
+	}
+}
+
+func (s *Server) previewComponentMutation(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.componentMutations == nil {
+		writeError(w, http.StatusServiceUnavailable, "component mutation unavailable")
+		return
+	}
+	var request components.MutationRequest
+	if !s.decodeComponentMutationRequest(w, r, &request) {
+		return
+	}
+	if err := components.ValidateMutationRequest(request); err != nil {
+		writeComponentMutationError(w, err)
+		return
+	}
+	preview, err := s.componentMutations.Preview(r.Context(), session.CSRFToken, request)
+	if err != nil {
+		writeComponentMutationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
+func (s *Server) applyComponentMutation(w http.ResponseWriter, r *http.Request) {
+	s.applyOrRollbackComponentMutation(w, r, false)
+}
+
+func (s *Server) rollbackComponentMutation(w http.ResponseWriter, r *http.Request) {
+	s.applyOrRollbackComponentMutation(w, r, true)
+}
+
+func (s *Server) applyOrRollbackComponentMutation(w http.ResponseWriter, r *http.Request, rollback bool) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.componentMutations == nil {
+		writeError(w, http.StatusServiceUnavailable, "component mutation unavailable")
+		return
+	}
+	var request components.MutationTokenRequest
+	if !s.decodeComponentMutationRequest(w, r, &request) {
+		return
+	}
+	if err := components.ValidateMutationToken(request.PreviewToken); err != nil {
+		writeComponentMutationError(w, err)
+		return
+	}
+	var result components.MutationResult
+	var err error
+	if rollback {
+		result, err = s.componentMutations.Rollback(r.Context(), session.CSRFToken, request.PreviewToken)
+	} else {
+		result, err = s.componentMutations.Apply(r.Context(), session.CSRFToken, request.PreviewToken)
+	}
+	if err != nil {
+		writeComponentMutationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) cancelComponentMutation(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.componentMutations == nil {
+		writeError(w, http.StatusServiceUnavailable, "component mutation unavailable")
+		return
+	}
+	var request components.MutationTokenRequest
+	if !s.decodeComponentMutationRequest(w, r, &request) {
+		return
+	}
+	if err := components.ValidateMutationToken(request.PreviewToken); err != nil {
+		writeComponentMutationError(w, err)
+		return
+	}
+	s.componentMutations.Cancel(session.CSRFToken, request.PreviewToken)
+	writeJSON(w, http.StatusOK, struct {
+		Canceled bool `json:"canceled"`
+	}{Canceled: true})
+}
+
+func writeComponentMutationError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, components.ErrInvalidMutationRequest), errors.Is(err, components.ErrMutationOperationMismatch):
+		writeError(w, http.StatusBadRequest, "invalid component mutation request")
+	case errors.Is(err, components.ErrMutationBusy):
+		writeError(w, http.StatusConflict, "component mutation busy")
+	case errors.Is(err, components.ErrMutationPreviewExpired):
+		writeError(w, http.StatusConflict, "component mutation preview expired or invalid")
+	case errors.Is(err, components.ErrMutationPreviewStale):
+		writeError(w, http.StatusConflict, "component mutation preview is stale")
+	case errors.Is(err, components.ErrMutationNoPrevious):
+		writeError(w, http.StatusConflict, "previous component generation unavailable")
+	case errors.Is(err, components.ErrMutationMetadataUnavailable):
+		writeError(w, http.StatusBadGateway, "component metadata unavailable")
+	case errors.Is(err, components.ErrMutationCandidateRejected):
+		writeError(w, http.StatusBadGateway, "component candidate rejected")
+	case errors.Is(err, components.ErrMutationTransactionFailed):
+		writeError(w, http.StatusInternalServerError, "component transaction failed; previous generation restored")
+	case errors.Is(err, components.ErrMutationTransactionUnproven):
+		writeError(w, http.StatusInternalServerError, "component transaction failed; outcome is not proven")
+	case errors.Is(err, components.ErrMutationRollbackUnproven):
+		writeError(w, http.StatusServiceUnavailable, "component rollback or recovery is not proven")
+	case errors.Is(err, components.ErrMutationMaintenance):
+		writeError(w, http.StatusServiceUnavailable, "component mutation unavailable during maintenance")
+	case errors.Is(err, components.ErrMutationUnavailable):
+		writeError(w, http.StatusServiceUnavailable, "component mutation unavailable")
+	default:
+		writeError(w, http.StatusServiceUnavailable, "component mutation unavailable")
 	}
 }
 

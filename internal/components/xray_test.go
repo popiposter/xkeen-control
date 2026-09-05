@@ -215,8 +215,13 @@ func TestXrayApplyFaultsRecoverBeforeJournalClear(t *testing.T) {
 				}
 				return nil
 			}
-			if err := fixture.service.Apply(context.Background(), fixture.identity); !errors.Is(err, ErrXrayApplyFailed) {
+			err := fixture.service.Apply(context.Background(), fixture.identity)
+			if !errors.Is(err, ErrXrayApplyFailed) {
 				t.Fatalf("fault result = %v", err)
+			}
+			preCommit := stage == XrayStagePreviousSaved || stage == XrayStageJournalPrepared
+			if errors.Is(err, ErrXrayApplyRestored) == preCommit {
+				t.Fatalf("restoration proof for %s = %v, preCommit=%t", stage, errors.Is(err, ErrXrayApplyRestored), preCommit)
 			}
 			if got := string(readFixtureFile(t, fixture.activePath)); got != "old-xray-binary" {
 				t.Fatalf("fault changed active binary: %q", got)
@@ -312,6 +317,48 @@ func TestXrayRollbackUsesPreviousWithoutUpstream(t *testing.T) {
 	previous, err := fixture.service.loadPreviousGeneration()
 	if err != nil || previous.meta.Version != fixture.identity.Version {
 		t.Fatalf("rollback previous generation = %+v, err=%v", previous.meta, err)
+	}
+}
+
+func TestXrayRollbackExpectedRejectsRotatedPreviousBeforeActivation(t *testing.T) {
+	fixture := newXrayFixture(t)
+	if err := fixture.service.Apply(context.Background(), fixture.identity); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	expected, err := fixture.service.PreviousGeneration()
+	if err != nil {
+		t.Fatalf("first previous generation: %v", err)
+	}
+	if err := fixture.service.Apply(context.Background(), fixture.identity); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	rotated, err := fixture.service.PreviousGeneration()
+	if err != nil {
+		t.Fatalf("rotated previous generation: %v", err)
+	}
+	if rotated.Generation == expected.Generation {
+		t.Fatal("second apply did not rotate the retained previous generation")
+	}
+	activeBefore := readFixtureFile(t, fixture.activePath)
+	restartsBefore := fixture.runtime.restartCalls
+	if err := fixture.service.RollbackExpected(context.Background(), expected); !errors.Is(err, ErrXrayCandidateStale) {
+		t.Fatalf("rotated rollback error = %v", err)
+	}
+	if actual := readFixtureFile(t, fixture.activePath); !bytes.Equal(actual, activeBefore) {
+		t.Fatalf("stale rollback changed active binary: %q", actual)
+	}
+	if fixture.runtime.restartCalls != restartsBefore {
+		t.Fatalf("stale rollback restarted runtime: before=%d after=%d", restartsBefore, fixture.runtime.restartCalls)
+	}
+	if present, _ := componentTransactionPresent(fixture.journalPath); present {
+		t.Fatal("stale rollback left a transaction journal")
+	}
+	actual, err := fixture.service.PreviousGeneration()
+	if err != nil {
+		t.Fatalf("retained generation after stale rollback: %v", err)
+	}
+	if actual.Generation != rotated.Generation {
+		t.Fatalf("stale rollback changed retained generation: got=%s want=%s", actual.Generation, rotated.Generation)
 	}
 }
 

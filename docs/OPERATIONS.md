@@ -174,15 +174,23 @@ Safe export is authenticated and excludes VPN/subscription secrets by default. S
 
 Restore is authenticated, same-origin/CSRF protected, session-bound, bounded and preview-first. Apply uses typed validation, authority coordination, a transaction journal and interrupted-import recovery. An equivalent settings-only restore is a no-op that preserves `nodes.json`, generated policy and runtime state without an Xray/XKeen restart. The adapter does not expose raw JSON, filesystem, archive or command surfaces.
 
-## Current/next D.2 component lifecycle (#4) — planned, not deployed
+## Current/next D.2 component lifecycle (#4) — F1 source-only, not deployed
 
-XKeen/Xray/geodata inventory/update/rollback will be managed through typed capability-aware operations in #4. Until that slice is implemented and qualified, do not add generic shell/package-manager endpoints and do not treat component lifecycle controls as available. #5 visual typed configuration remains planned as well.
+Issue #4 Phase F1 now provides a source-main backend broker for typed manual
+XKeen/Xray/geodata preview, update and rollback routes. It has no UI, persisted
+policy, scheduler, automatic update or release surface, and its source fixtures
+are offline/synthetic only. The four routes are not production-qualified and
+must not be called or exposed on the signed stable router until a separate live
+and release qualification explicitly authorizes them. Do not add generic
+shell/package-manager endpoints. #5 visual typed configuration remains
+planned as well.
 
 ## Geodata
 
 Current repository deploy/update tooling owns the exact geodata files referenced by policy. Any update must keep candidate validation/rollback semantics and must not introduce a competing updater schedule.
 
-#4 will consolidate component/geodata schedules under one maintenance manager.
+Later #4 phases may consolidate component/geodata scheduling under one
+maintenance manager; F1 adds no scheduler or automatic mutation.
 
 ## Logs / diagnostics
 
