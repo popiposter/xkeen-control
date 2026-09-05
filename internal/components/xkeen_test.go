@@ -378,12 +378,27 @@ func TestXKeenApplySwapsOnlyTheManagedPairAndUsesFixedRuntime(t *testing.T) {
 	}
 
 	service.config.InjectFailure = func(stage XKeenStage) error {
+		if stage == XKeenStagePreviousSaved {
+			return errors.New("synthetic pre-commit preparation failure")
+		}
+		return nil
+	}
+	err = service.Apply(context.Background(), identity)
+	if !errors.Is(err, ErrXKeenApplyFailed) || errors.Is(err, ErrXKeenApplyRestored) {
+		t.Fatalf("pre-commit failure error = %v", err)
+	}
+	if actual, readErr := os.ReadFile(activeBinary); readErr != nil || string(actual) != "old-xkeen" {
+		t.Fatalf("pre-commit failure changed xkeen = %q, %v", actual, readErr)
+	}
+
+	service.config.InjectFailure = func(stage XKeenStage) error {
 		if stage == XKeenStageFilesCommitted {
 			return errors.New("ordinary activation failure")
 		}
 		return nil
 	}
-	if err := service.Apply(context.Background(), identity); !errors.Is(err, ErrXKeenApplyFailed) {
+	err = service.Apply(context.Background(), identity)
+	if !errors.Is(err, ErrXKeenApplyFailed) || !errors.Is(err, ErrXKeenApplyRestored) {
 		t.Fatalf("ordinary failure error = %v", err)
 	}
 	service.config.InjectFailure = nil

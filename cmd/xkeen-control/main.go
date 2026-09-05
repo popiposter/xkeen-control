@@ -37,7 +37,7 @@ import (
 const (
 	defaultListenAddress           = "127.0.0.1:8787"
 	componentMutationResponseGrace = components.DefaultMutationResponseGrace
-	httpWriteTimeout               = components.DefaultMutationOperationTimeout + componentMutationResponseGrace
+	httpWriteTimeout               = components.DefaultMutationWaitTimeout + components.DefaultMutationOperationTimeout + componentMutationResponseGrace
 )
 
 func main() {
@@ -162,6 +162,7 @@ func main() {
 		Geodata:         componentGeodataService,
 		XKeenResolver:   components.NewXKeenMovingDevResolver(nil, nil),
 		XKeen:           componentXKeenService,
+		MutationGate:    componentGate,
 	})
 	stateDir := getenv("XKEEN_APPLIANCE_IMPORT_STATE_DIR", "/opt/etc/xkeen-control/state")
 	restoreJournalPath := filepath.Join(stateDir, "appliance-import-transaction.json")

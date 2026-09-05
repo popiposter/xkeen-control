@@ -34,10 +34,11 @@ func TestHTTPWriteWindowExceedsNodeTransactionBudget(t *testing.T) {
 	if httpWriteTimeout <= nodes.DefaultTransactionTimeout+nodes.DefaultApplyGateWaitTimeout {
 		t.Fatalf("HTTP write timeout %s does not exceed gate plus transaction budget %s", httpWriteTimeout, nodes.DefaultTransactionTimeout+nodes.DefaultApplyGateWaitTimeout)
 	}
-	if httpWriteTimeout <= components.DefaultXKeenTransactionTimeout+components.DefaultMutationWaitTimeout {
-		t.Fatalf("HTTP write timeout %s does not exceed XKeen transaction plus admission budget %s", httpWriteTimeout, components.DefaultXKeenTransactionTimeout+components.DefaultMutationWaitTimeout)
+	if components.DefaultMutationOperationTimeout != components.DefaultXKeenTransactionTimeout+components.DefaultXKeenAuthorityWaitTimeout {
+		t.Fatalf("component operation budget = %s, want XKeen transaction plus authority budget %s", components.DefaultMutationOperationTimeout, components.DefaultXKeenTransactionTimeout+components.DefaultXKeenAuthorityWaitTimeout)
 	}
-	if got := httpWriteTimeout - components.DefaultMutationOperationTimeout; got != componentMutationResponseGrace {
-		t.Fatalf("HTTP response grace = %s", got)
+	expected := components.DefaultMutationWaitTimeout + components.DefaultMutationOperationTimeout + componentMutationResponseGrace
+	if httpWriteTimeout != expected {
+		t.Fatalf("HTTP write window = %s, want admission + operation + response grace %s", httpWriteTimeout, expected)
 	}
 }

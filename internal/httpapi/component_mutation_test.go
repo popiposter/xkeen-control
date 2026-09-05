@@ -172,6 +172,36 @@ func TestComponentMutationRouteSanitizesBackendFailure(t *testing.T) {
 	}
 }
 
+func TestComponentMutationRouteDoesNotClaimRestoreForUnprovenFailure(t *testing.T) {
+	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
+	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
+		t.Fatal(err)
+	}
+	mutations := &f1ComponentMutationHTTPStub{applyErr: components.ErrMutationTransactionUnproven}
+	server := httptest.NewServer(New(Config{Auth: auth.NewManager(auth.Config{HashPath: passwordPath}), ComponentMutations: mutations}))
+	defer server.Close()
+	client := &http.Client{Jar: mustCookieJar(t)}
+	loginResponse := postJSON(t, client, server.URL+"/api/v1/session/login", map[string]string{"password": "synthetic-control-password"}, "")
+	var login struct {
+		CSRFToken string
+	}
+	decodeResponse(t, loginResponse, &login)
+	csrf := login.CSRFToken
+	if csrf == "" {
+		t.Fatal("login did not return csrf token")
+	}
+	preview := postJSON(t, client, server.URL+"/api/v1/components/preview", map[string]string{"component": "xray", "operation": "update", "channel": "stable"}, csrf)
+	if preview.StatusCode != http.StatusOK {
+		t.Fatalf("preview = %d %s", preview.StatusCode, readBody(preview))
+	}
+	preview.Body.Close()
+	response := postJSON(t, client, server.URL+"/api/v1/components/apply", map[string]string{"previewToken": "synthetic-preview-token"}, csrf)
+	contents := readBody(response)
+	if response.StatusCode != http.StatusInternalServerError || !strings.Contains(contents, "outcome is not proven") || strings.Contains(contents, "previous generation restored") {
+		t.Fatalf("unproven failure = %d %s", response.StatusCode, contents)
+	}
+}
+
 func componentMutationRawPost(t *testing.T, client *http.Client, target, body, contentType, csrf, origin string) *http.Response {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodPost, target, strings.NewReader(body))

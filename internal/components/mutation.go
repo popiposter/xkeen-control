@@ -27,10 +27,10 @@ const (
 	DefaultMutationWaitTimeout    = 15 * time.Second
 	DefaultMutationResponseGrace  = 15 * time.Second
 	// The transaction services already include their authority admission inside
-	// their transaction context. Keep an additional explicit admission budget at
-	// the broker boundary so HTTP cannot time out while waiting for the shared
-	// component gate.
-	DefaultMutationOperationTimeout = DefaultXKeenTransactionTimeout + DefaultMutationWaitTimeout + DefaultXKeenAuthorityWaitTimeout
+	// their transaction context. Shared component-gate admission is bounded
+	// separately by DefaultMutationWaitTimeout, so this is the full transaction
+	// budget after the broker has admitted the operation.
+	DefaultMutationOperationTimeout = DefaultXKeenTransactionTimeout + DefaultXKeenAuthorityWaitTimeout
 	MaxMutationTokenBytes           = 256
 
 	mutationTokenBytes = 32
@@ -48,6 +48,7 @@ var (
 	ErrMutationMetadataUnavailable = errors.New("component mutation metadata is unavailable")
 	ErrMutationCandidateRejected   = errors.New("component mutation candidate was rejected")
 	ErrMutationTransactionFailed   = errors.New("component transaction failed; previous generation restored")
+	ErrMutationTransactionUnproven = errors.New("component transaction failed; outcome is not proven")
 	ErrMutationRollbackUnproven    = errors.New("component rollback or recovery is not proven")
 )
 
@@ -289,7 +290,9 @@ type MutationConfig struct {
 	PreviewTTL       time.Duration
 	MaxPreviews      int
 	PreviewTimeout   time.Duration
+	AdmissionTimeout time.Duration
 	OperationTimeout time.Duration
+	MutationGate     *ComponentMutationGate
 	Now              func() time.Time
 	Random           io.Reader
 }
@@ -333,6 +336,9 @@ func NewMutationService(config MutationConfig) *MutationService {
 	}
 	if config.PreviewTimeout <= 0 {
 		config.PreviewTimeout = DefaultMutationPreviewTimeout
+	}
+	if config.AdmissionTimeout <= 0 || config.AdmissionTimeout > DefaultMutationWaitTimeout {
+		config.AdmissionTimeout = DefaultMutationWaitTimeout
 	}
 	if config.OperationTimeout <= 0 {
 		config.OperationTimeout = DefaultMutationOperationTimeout
@@ -418,11 +424,11 @@ func (s *MutationService) Apply(ctx context.Context, binding, token string) (Mut
 	if err != nil {
 		return MutationResult{}, err
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	operationContext, releaseOperation, err := s.beginOperation(ctx)
+	if err != nil {
+		return MutationResult{}, err
 	}
-	operationContext, cancel := context.WithTimeout(ctx, s.config.OperationTimeout)
-	defer cancel()
+	defer releaseOperation()
 
 	switch entry.Request.Component {
 	case KindXray:
@@ -454,11 +460,11 @@ func (s *MutationService) Rollback(ctx context.Context, binding, token string) (
 	if err != nil {
 		return MutationResult{}, err
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	operationContext, releaseOperation, err := s.beginOperation(ctx)
+	if err != nil {
+		return MutationResult{}, err
 	}
-	operationContext, cancel := context.WithTimeout(ctx, s.config.OperationTimeout)
-	defer cancel()
+	defer releaseOperation()
 
 	switch entry.Request.Component {
 	case KindXray:
@@ -538,6 +544,41 @@ func (s *MutationService) supportsRequest(request MutationRequest) bool {
 	default:
 		return false
 	}
+}
+
+// beginOperation admits Apply/Rollback through the one shared component gate
+// before creating the transaction context. The gate is acquired exactly once
+// here; the existing transaction core sees the ownership marker and keeps its
+// established Coordinator -> authority lease order without a second gate
+// acquisition. A token is already consumed when this is called, so a bounded
+// admission conflict cannot be replayed.
+func (s *MutationService) beginOperation(ctx context.Context) (context.Context, func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var (
+		gate    = s.config.MutationGate
+		release func()
+	)
+	if gate != nil {
+		admissionContext, cancelAdmission := context.WithTimeout(ctx, s.config.AdmissionTimeout)
+		var err error
+		release, err = gate.Acquire(admissionContext)
+		cancelAdmission()
+		if err != nil {
+			return nil, nil, ErrMutationBusy
+		}
+	}
+	operationContext, cancel := context.WithTimeout(ctx, s.config.OperationTimeout)
+	if gate != nil {
+		operationContext = withComponentMutationGate(operationContext, gate)
+	}
+	return operationContext, func() {
+		cancel()
+		if release != nil {
+			release()
+		}
+	}, nil
 }
 
 func (s *MutationService) backendReady(component ComponentKind) error {
@@ -684,6 +725,9 @@ func classifyMutationError(component ComponentKind, operation string, err error)
 	if errors.Is(err, ErrMutationPreviewStale) || errors.Is(err, ErrMutationNoPrevious) {
 		return err
 	}
+	if errors.Is(err, ErrMutationTransactionUnproven) {
+		return ErrMutationTransactionUnproven
+	}
 	switch component {
 	case KindXray:
 		switch {
@@ -701,8 +745,10 @@ func classifyMutationError(component ComponentKind, operation string, err error)
 			return ErrMutationCandidateRejected
 		case errors.Is(err, ErrXrayRollbackFailed):
 			return ErrMutationRollbackUnproven
-		case errors.Is(err, ErrXrayApplyFailed):
+		case errors.Is(err, ErrXrayApplyRestored):
 			return ErrMutationTransactionFailed
+		case errors.Is(err, ErrXrayApplyFailed):
+			return ErrMutationTransactionUnproven
 		}
 	case KindGeodata:
 		switch {
@@ -720,8 +766,10 @@ func classifyMutationError(component ComponentKind, operation string, err error)
 			return ErrMutationCandidateRejected
 		case errors.Is(err, ErrGeodataRollbackFailed):
 			return ErrMutationRollbackUnproven
-		case errors.Is(err, ErrGeodataApplyFailed):
+		case errors.Is(err, ErrGeodataApplyRestored):
 			return ErrMutationTransactionFailed
+		case errors.Is(err, ErrGeodataApplyFailed):
+			return ErrMutationTransactionUnproven
 		}
 	case KindXKeen:
 		switch {
@@ -739,25 +787,31 @@ func classifyMutationError(component ComponentKind, operation string, err error)
 			return ErrMutationCandidateRejected
 		case errors.Is(err, ErrXKeenRollbackFailed):
 			return ErrMutationRollbackUnproven
-		case errors.Is(err, ErrXKeenApplyFailed):
+		case errors.Is(err, ErrXKeenApplyRestored):
 			return ErrMutationTransactionFailed
+		case errors.Is(err, ErrXKeenApplyFailed):
+			return ErrMutationTransactionUnproven
 		}
 	}
 	if operation == MutationOperationRollback {
 		return ErrMutationRollbackUnproven
 	}
-	return ErrMutationTransactionFailed
+	return ErrMutationTransactionUnproven
 }
 
 func (s *MutationService) classifyOperationError(component ComponentKind, operation string, err error) error {
 	classified := classifyMutationError(component, operation, err)
-	if classified != ErrMutationTransactionFailed {
+	switch classified {
+	case ErrMutationTransactionFailed, ErrMutationTransactionUnproven, ErrMutationRollbackUnproven:
+		// Continue below and verify that the core did not leave unresolved
+		// maintenance state before exposing any operation outcome.
+	default:
 		return classified
 	}
-	// A few existing transaction failure points intentionally return their
-	// historical ApplyFailed error while marking the core not-ready when
-	// recovery is required. Re-read that typed readiness state so the broker
-	// never reports "restored" for an unresolved transaction.
+	// A few existing transaction failure points intentionally return a typed
+	// failure while marking the core not-ready when recovery is required. Re-read
+	// that state so the broker never reports a restored or neutral outcome for an
+	// unresolved transaction.
 	readiness := s.backendReady(component)
 	if readiness == ErrMutationMaintenance || readiness == ErrMutationUnavailable {
 		return readiness

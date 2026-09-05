@@ -1348,6 +1348,8 @@ func writeComponentMutationError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadGateway, "component candidate rejected")
 	case errors.Is(err, components.ErrMutationTransactionFailed):
 		writeError(w, http.StatusInternalServerError, "component transaction failed; previous generation restored")
+	case errors.Is(err, components.ErrMutationTransactionUnproven):
+		writeError(w, http.StatusInternalServerError, "component transaction failed; outcome is not proven")
 	case errors.Is(err, components.ErrMutationRollbackUnproven):
 		writeError(w, http.StatusServiceUnavailable, "component rollback or recovery is not proven")
 	case errors.Is(err, components.ErrMutationMaintenance):

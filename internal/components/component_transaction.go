@@ -21,6 +21,28 @@ type ComponentMutationGate struct {
 	gate chan struct{}
 }
 
+// componentMutationGateContextKey marks a context whose caller already owns
+// the shared component gate. The mutation broker uses this marker to bound
+// admission once, while the existing transaction cores can retain their
+// normal gate acquisition at the same point in the lock order without
+// deadlocking or acquiring the gate twice.
+type componentMutationGateContextKey struct{}
+
+func withComponentMutationGate(ctx context.Context, gate *ComponentMutationGate) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, componentMutationGateContextKey{}, gate)
+}
+
+func componentMutationGateOwned(ctx context.Context, gate *ComponentMutationGate) bool {
+	if ctx == nil || gate == nil {
+		return false
+	}
+	owned, ok := ctx.Value(componentMutationGateContextKey{}).(*ComponentMutationGate)
+	return ok && owned == gate
+}
+
 func NewComponentMutationGate() *ComponentMutationGate {
 	return &ComponentMutationGate{}
 }
@@ -34,6 +56,9 @@ func (g *ComponentMutationGate) init() {
 
 func (g *ComponentMutationGate) Acquire(ctx context.Context) (func(), error) {
 	if g == nil {
+		return func() {}, nil
+	}
+	if componentMutationGateOwned(ctx, g) {
 		return func() {}, nil
 	}
 	g.init()

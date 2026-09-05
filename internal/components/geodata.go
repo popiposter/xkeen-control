@@ -60,6 +60,7 @@ var (
 	ErrGeodataAuthorityBusy          = errors.New("geodata authority is busy")
 	ErrGeodataTransactionUnavailable = errors.New("geodata transaction is unavailable")
 	ErrGeodataApplyFailed            = errors.New("geodata activation failed")
+	ErrGeodataApplyRestored          = errors.New("geodata activation failed and previous generation was verified restored")
 	ErrGeodataRollbackFailed         = errors.New("geodata rollback failed")
 	ErrGeodataPreviousUnavailable    = errors.New("previous geodata generation is unavailable")
 	ErrGeodataRecoveryRequired       = errors.New("geodata component recovery is required")
@@ -1159,6 +1160,9 @@ func (s *GeodataService) failAndRecover(ctx context.Context, journal geodataTran
 	}
 	if journal.Operation == geodataOperationRollback {
 		return ErrGeodataRollbackFailed
+	}
+	if journal.Phase != geodataPhasePrepared {
+		return errors.Join(ErrGeodataApplyFailed, ErrGeodataApplyRestored)
 	}
 	return ErrGeodataApplyFailed
 }

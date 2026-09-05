@@ -67,6 +67,7 @@ var (
 	ErrXrayAuthorityBusy          = errors.New("xray authority is busy")
 	ErrXrayTransactionUnavailable = errors.New("xray transaction is unavailable")
 	ErrXrayApplyFailed            = errors.New("xray activation failed")
+	ErrXrayApplyRestored          = errors.New("xray activation failed and previous generation was verified restored")
 	ErrXrayRollbackFailed         = errors.New("xray rollback failed")
 	ErrXrayPreviousUnavailable    = errors.New("previous xray generation is unavailable")
 	ErrXrayRecoveryRequired       = errors.New("xray component recovery is required")
@@ -1028,6 +1029,9 @@ func (s *XrayService) failAndRecover(ctx context.Context, journal xrayTransactio
 	}
 	if journal.Operation == xrayOperationRollback {
 		return ErrXrayRollbackFailed
+	}
+	if journal.Phase != xrayPhasePrepared {
+		return errors.Join(ErrXrayApplyFailed, ErrXrayApplyRestored)
 	}
 	return ErrXrayApplyFailed
 }

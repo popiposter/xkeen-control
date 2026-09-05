@@ -48,6 +48,36 @@ type f1XrayBackend struct {
 	rollbackErr error
 }
 
+type f1GatedXrayBackend struct {
+	gate       *ComponentMutationGate
+	previous   XrayPreviousGeneration
+	applyCalls atomic.Int32
+	deadlines  chan time.Duration
+}
+
+func (b *f1GatedXrayBackend) Ready() error { return nil }
+
+func (b *f1GatedXrayBackend) PreviousGeneration() (XrayPreviousGeneration, error) {
+	return b.previous, nil
+}
+
+func (b *f1GatedXrayBackend) Apply(ctx context.Context, _ XrayReleaseIdentity) error {
+	release, err := b.gate.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	b.applyCalls.Add(1)
+	if deadline, ok := ctx.Deadline(); ok {
+		b.deadlines <- time.Until(deadline)
+	}
+	return nil
+}
+
+func (b *f1GatedXrayBackend) RollbackExpected(context.Context, XrayPreviousGeneration) error {
+	return nil
+}
+
 func (b *f1XrayBackend) Ready() error { return b.readyErr }
 
 func (b *f1XrayBackend) PreviousGeneration() (XrayPreviousGeneration, error) {
@@ -311,6 +341,94 @@ func TestMutationServiceAllowsOnlyOneConcurrentPreview(t *testing.T) {
 	close(release)
 	if err := <-result; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMutationServiceBoundsGateAdmissionAndPreservesTransactionBudget(t *testing.T) {
+	gate := NewComponentMutationGate()
+	backend := &f1GatedXrayBackend{
+		gate:      gate,
+		previous:  XrayPreviousGeneration{Generation: strings.Repeat("b", 64), Version: "1.0.0", SizeBytes: 10, SHA256: strings.Repeat("b", 64), Mode: 0o755},
+		deadlines: make(chan time.Duration, 1),
+	}
+	service := NewMutationService(MutationConfig{
+		XrayResolver:     &f1XrayResolver{identity: f1XrayIdentity()},
+		Xray:             backend,
+		MutationGate:     gate,
+		AdmissionTimeout: 25 * time.Millisecond,
+		OperationTimeout: 100 * time.Millisecond,
+	})
+	request := MutationRequest{Component: KindXray, Operation: MutationOperationUpdate, Channel: MutationChannelStable}
+
+	busyPreview, err := service.Preview(context.Background(), "session-busy", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	if _, err := service.Apply(context.Background(), "session-busy", busyPreview.PreviewToken); !errors.Is(err, ErrMutationBusy) {
+		t.Fatalf("held-gate apply error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("gate admission was not bounded: %s", elapsed)
+	}
+	if backend.applyCalls.Load() != 0 {
+		t.Fatalf("busy operation reached the transaction backend: %d calls", backend.applyCalls.Load())
+	}
+	release()
+
+	admittedPreview, err := service.Preview(context.Background(), "session-admitted", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err = gate.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		release()
+	}()
+	if _, err := service.Apply(context.Background(), "session-admitted", admittedPreview.PreviewToken); err != nil {
+		t.Fatalf("admitted apply error = %v", err)
+	}
+	select {
+	case remaining := <-backend.deadlines:
+		if remaining < 75*time.Millisecond {
+			t.Fatalf("admitted transaction received only %s of its 100ms budget", remaining)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("transaction backend did not observe an operation deadline")
+	}
+	if backend.applyCalls.Load() != 1 {
+		t.Fatalf("admitted operation calls = %d, want 1", backend.applyCalls.Load())
+	}
+}
+
+func TestMutationErrorMappingRequiresVerifiedCoreRestore(t *testing.T) {
+	cases := []struct {
+		name      string
+		component ComponentKind
+		err       error
+		want      error
+	}{
+		{name: "xray pre-commit", component: KindXray, err: ErrXrayApplyFailed, want: ErrMutationTransactionUnproven},
+		{name: "geodata pre-commit", component: KindGeodata, err: ErrGeodataApplyFailed, want: ErrMutationTransactionUnproven},
+		{name: "xkeen pre-commit", component: KindXKeen, err: ErrXKeenApplyFailed, want: ErrMutationTransactionUnproven},
+		{name: "xray verified restore", component: KindXray, err: errors.Join(ErrXrayApplyFailed, ErrXrayApplyRestored), want: ErrMutationTransactionFailed},
+		{name: "geodata verified restore", component: KindGeodata, err: errors.Join(ErrGeodataApplyFailed, ErrGeodataApplyRestored), want: ErrMutationTransactionFailed},
+		{name: "xkeen verified restore", component: KindXKeen, err: errors.Join(ErrXKeenApplyFailed, ErrXKeenApplyRestored), want: ErrMutationTransactionFailed},
+		{name: "unknown update failure", component: KindXray, err: errors.New("synthetic preparation failure"), want: ErrMutationTransactionUnproven},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if got := classifyMutationError(test.component, MutationOperationUpdate, test.err); got != test.want {
+				t.Fatalf("classified error = %v, want %v", got, test.want)
+			}
+		})
 	}
 }
 

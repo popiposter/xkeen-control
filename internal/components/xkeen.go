@@ -89,6 +89,7 @@ var (
 	ErrXKeenAuthorityBusy          = errors.New("XKeen authority is busy")
 	ErrXKeenTransactionUnavailable = errors.New("XKeen transaction is unavailable")
 	ErrXKeenApplyFailed            = errors.New("XKeen activation failed")
+	ErrXKeenApplyRestored          = errors.New("XKeen activation failed and previous generation was verified restored")
 	ErrXKeenRollbackFailed         = errors.New("XKeen rollback failed")
 	ErrXKeenPreviousUnavailable    = errors.New("previous Xkeen generation is unavailable")
 	ErrXKeenRecoveryRequired       = errors.New("XKeen component recovery is required")
@@ -2542,6 +2543,9 @@ func (s *XKeenService) failAndRecover(ctx context.Context, journal xkeenTransact
 	}
 	if journal.Operation == xkeenOperationRollback {
 		return ErrXKeenRollbackFailed
+	}
+	if journal.Phase != xkeenPhasePrepared {
+		return errors.Join(ErrXKeenApplyFailed, ErrXKeenApplyRestored)
 	}
 	return ErrXKeenApplyFailed
 }
