@@ -99,7 +99,7 @@ The protected manual Release workflow:
 
 - takes explicit `version`, `channel` and full `source_ref` inputs;
 - checks that `source_ref` equals the exact checkout and current remote `main`;
-- runs full release qualification;
+- runs full release qualification, including the lockfile-pinned, single-worker Chromium `test:components-ui` suite after `npm ci` and before unsigned assembly; a failure blocks `publish` through `needs: build`;
 - assembles unsigned deterministic assets in the unprivileged build job;
 - transfers only secretless release inputs to the protected `release` environment;
 - verifies the protected public key matches the compiled/source-pinned trust anchor;
@@ -118,6 +118,8 @@ bash scripts/test-release.sh
 ```
 
 It covers manifest/signature tamper rejection, candidate hash/size validation, policy bounds, bootstrap idempotence, managed rerun trust, historical C.1 adoption, updater lifecycle/rollback, legacy node-Apply recovery, and absence of blanket package upgrades or upstream interactive installer invocation.
+
+The release fixture also runs `TestReleaseBrowserBuildBoundary`: a narrow workflow-contract regression that rejects a missing or ignored F2 invocation and a detached publish job. Its negative cases remove the suite in memory, without dispatching a workflow. Browser installation/execution stays in the read-only build job, outside the protected signing environment.
 
 These fixtures remain regression coverage after #2 completion; later slices must not weaken them.
 
