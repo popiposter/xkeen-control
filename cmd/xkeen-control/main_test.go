@@ -105,16 +105,32 @@ func TestComponentWriteWindowPreservesLateRecoveryHTTPResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	mutations := &lateRecoveryComponentMutationStub{operation: admission + operation, recovery: recovery}
-	server := httptest.NewUnstartedServer(httpapi.New(httpapi.Config{
+	handler := httpapi.New(httpapi.Config{
 		Auth:               auth.NewManager(auth.Config{HashPath: passwordPath}),
 		ComponentMutations: mutations,
-	}))
+	})
+	server := httptest.NewUnstartedServer(handler)
+	// Configure the bounded response window before starting any connection
+	// goroutine; a live http.Server configuration must not be mutated.
+	server.Config.WriteTimeout = componentHTTPWriteWindow(admission, operation, recovery, grace)
 	server.Start()
 	defer server.Close()
 	client := server.Client()
-	client.Jar, _ = cookiejar.New(nil)
+	client.Timeout = 5 * time.Second
+	var err error
+	client.Jar, err = cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	loginResponse := postMainJSON(t, client, server.URL+"/api/v1/session/login", map[string]string{"password": "synthetic-control-password"}, "")
+	// Exercise the real login handler in-process so bcrypt stays outside the
+	// scaled network write window, including under the race detector. Preview
+	// and Apply below still use real HTTP with the resulting session and CSRF.
+	loginRequest := httptest.NewRequest(http.MethodPost, server.URL+"/api/v1/session/login", strings.NewReader(`{"password":"synthetic-control-password"}`))
+	loginRequest.Header.Set("Content-Type", "application/json")
+	loginRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(loginRecorder, loginRequest)
+	loginResponse := loginRecorder.Result()
 	if loginResponse.StatusCode != http.StatusOK {
 		t.Fatalf("login = %d %s", loginResponse.StatusCode, readMainBody(loginResponse))
 	}
@@ -129,16 +145,13 @@ func TestComponentWriteWindowPreservesLateRecoveryHTTPResponse(t *testing.T) {
 	if login.CSRFToken == "" {
 		t.Fatal("login did not return csrf token")
 	}
+	client.Jar.SetCookies(loginRequest.URL, loginResponse.Cookies())
 
 	preview := postMainJSON(t, client, server.URL+"/api/v1/components/preview", map[string]string{"component": "xray", "operation": "update", "channel": "stable"}, login.CSRFToken)
 	if preview.StatusCode != http.StatusOK {
 		t.Fatalf("preview = %d %s", preview.StatusCode, readMainBody(preview))
 	}
 	preview.Body.Close()
-	// Keep the deliberately slow synthetic password check outside the scaled
-	// component write window. The production server uses its full-sized window
-	// for every route; this test only scales the Apply/Rollback budget.
-	server.Config.WriteTimeout = componentHTTPWriteWindow(admission, operation, recovery, grace)
 
 	response := postMainJSON(t, client, server.URL+"/api/v1/components/apply", map[string]string{"previewToken": "scaled-late-recovery-preview-token"}, login.CSRFToken)
 	contents := readMainBody(response)

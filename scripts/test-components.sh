@@ -11,6 +11,9 @@ cd "$ROOT"
 go test -count=1 ./internal/components ./internal/httpapi
 go test -race -count=1 ./internal/components
 
+# Repeat the scaled late-recovery HTTP regression under race detection.
+go test -race -count=5 -run '^TestComponentWriteWindowPreservesLateRecoveryHTTPResponse$' ./cmd/xkeen-control
+
 # F1 exposes only the four authenticated manual backend routes. Keep policy,
 # scheduler and automatic-mutation surfaces rejected at source level.
 if grep -R -n -E '/api/v1/components/(policy|schedule|auto)' internal/httpapi; then
