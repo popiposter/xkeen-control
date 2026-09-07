@@ -252,9 +252,45 @@ successful. Do not call `adopt`, `render`, upstream info/install/repair or
 bootstrap as diagnostics. Before the trial, no `/api/v1/components*` route is
 assumed to exist. Missing adoption or unknown/manual layout blocks the trial.
 
-Use `stat -c '%F %a %s %d' <fixed-path>` and `sha256sum <fixed-file>` locally
-to create an existence/type/mode/size/device/hash baseline. Reject symlinks or
-unexpected objects before hashing. Include `config/appliance.json`,
+Create the local existence/type/mode/size/filesystem/hash baseline with existing
+appliance tools, one fixed path at a time, without recursion:
+
+1. Check `[ -L "$path" ]` before `[ -e "$path" ]` so even a dangling symlink
+   is BLOCKED. Use `ls -ldn "$path"` and shell `[ -f "$path" ]` /
+   `[ -d "$path" ]` checks to confirm the expected regular file or directory.
+   Record symbolic mode and numeric owner/group from the listing. Exact octal
+   mode is optional if an installed tool provides it; the required access
+   restrictions in [SECURITY.md](../SECURITY.md) still apply. Unexpected types,
+   inaccessible paths or ambiguous results are BLOCKED before content reads
+   or hashing.
+2. For a confirmed regular file, record exact bytes with `wc -c < "$path"`;
+   collect its `sha256sum "$path"` only at a settled boundary after the
+   manifest budget check. Do not read/hash directories or infer aggregate
+   content size from their `ls` listing.
+3. Record `df -Pk "$path"` for filesystem grouping and available space. For
+   an expected-absent optional path, record absence explicitly and use its
+   nearest existing, accessible parent for `df`; record that parent too.
+   A failed existence check alone cannot distinguish absence from inaccessible
+   state. Missing required paths, symlinks, unexpected objects or ambiguous
+   parent/filesystem identification remain BLOCKED. Use the filesystem and
+   mount information to group shared storage; numeric `st_dev` is not required.
+
+Keep the same 30-second / 64 KiB per-observation limits, settled-boundary
+manifest limits and operator-local secret fingerprints. Command failure is
+unavailable evidence, not a property of the inspected path. Do not install
+coreutils/BusyBox extras, copy helper binaries, widen shell access, delete
+state or otherwise mutate the appliance to obtain metadata.
+
+The [Gate 1 portability prerequisite](https://github.com/popiposter/xkeen-control/issues/4#issuecomment-5576115415)
+records the earlier unsupported `stat -c` observation as a runbook defect,
+not an appliance-state failure. Gate 1 remains BLOCKED on that prerequisite
+until this docs-only correction is reviewed and merged. Then resume from the
+failed metadata step within the authorized Gate 1 boundary; retain earlier
+observations only while their timestamps, source identity and state remain
+consistent and fresh for that window, otherwise refresh them. This correction
+does not authorize Gate 2 or any mutation.
+
+Include `config/appliance.json`,
 `secrets/nodes.json`, `auth/password.bcrypt`, `listen-address`,
 `state/update-policy.json`, `state/installed-release.json` under
 `/opt/etc/xkeen-control`; `/opt/etc/xray/configs` (all fixed policy files,
