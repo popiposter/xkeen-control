@@ -42,7 +42,7 @@ public source + signed GitHub Releases (#2, done)
         ↓
 local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
-managed XKeen / Xray / geodata lifecycle (#4, active; manual source and Q0 complete; Q1 read-only preflight next)
+managed XKeen / Xray / geodata lifecycle (#4, active; Q1 Gate 1 passed; Gate 2 preparation next)
         ↓
 visual typed configuration + transactional render/apply (#5, planned)
 ```
@@ -58,7 +58,7 @@ visual typed configuration + transactional render/apply (#5, planned)
 | Pre-D — canonical Go module/import identity | Done | Issue #8 / PR #9 | Canonical `github.com/popiposter/xkeen-control` provenance; no runtime behavior change |
 | D — releases/bootstrap/panel self-update | Done | Issue #2 / `v0.1.1` | Public signed Releases, CI/release pipeline, one-command bootstrap, setup mode, transactional panel update/rollback |
 | D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
-| D.2 — component lifecycle | **Active — manual source and Q0 complete; Q1 Gate 1 next** | Issue #4 / PR #41 / `main` `f71e59f…` | Manual API/UI, release browser qualification and bounded runbook are merged; separately authorized read-only preflight is next; not deployed |
+| D.2 — component lifecycle | **Active — Q1 Gate 1 PASS; Gate 2 preparation next** | Issue #4 / report `5584461861` / `main` `5a7b6d3…` | Manual API/UI and Q0 release/runbook work are merged; live read-only baseline passed after bounded prerequisite remediation; exact signed beta freeze/publication preparation is next; not deployed |
 | D.3 — visual configuration | Planned | Issue #5 | Planned typed routing/DNS/XKeen/Xray/panel/performance UI and deterministic render/apply; not deployed |
 | E — notifications/security hardening | Planned after D.3 | master issue #1 | Outbound alerts, management-VPN guidance, final attack-surface hardening |
 
@@ -91,7 +91,7 @@ Safe export excludes secrets by default; secret-bearing export is explicit and e
 
 Pre-adoption compatibility is explicit: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit and unknown/manual drift fails closed.
 
-## D.2 / Issue #4 — active; Q0 complete; Q1 read-only preflight next
+## D.2 / Issue #4 — active; Gate 1 passed; Gate 2 preparation next
 
 Phase A merged via PR #23 to `main` `bda9dd0cc7bb142a4cb1468811fff9b5146b1e8e`; source main gained the bounded read-only component inventory and authenticated `GET /api/v1/components` for panel, XKeen, Xray, geodata, KeeneticOS and Entware.
 
@@ -111,17 +111,19 @@ Phase F1 merged via PR #37 to `main` `db034f277278788dfb6ec90950bc97648922b54d` 
 
 Phase F2 merged via PR #39 to `main` `125c48612cf5812816d8972ecafdd36434329abe` from approved HEAD `536a130a1eaed152813e49a0b94c56c9ee2b993a` (review `5121493878`). Both have tree `d9d29db07ad4ad953570c5231cab1744ca10a339`. Post-merge CI #109 / run `33982591217` completed successfully on that main revision. Source now includes the first-class Components/Updates UI, stable component error codes, Coordinator lifecycle hints and 29 synthetic browser cases, including late-session completion and missing/unknown presence regressions. Inventory stays outside five-second polling; transaction cores and source trust boundaries remain unchanged.
 
-These source-main capabilities are not a new stable release or production-qualification claim. The last documented production-qualified baseline remains D.1 `v0.2.0`; actual installed state must be established by Q1 Gate 1.
+These source-main capabilities are not a new stable release or production-qualification claim. The last documented production-qualified baseline remains D.1 `v0.2.0`. Gate 1 live evidence now confirms the appliance is coherently running that signed baseline and is eligible to prepare Gate 2; this does not qualify D.2 or a trial panel.
 
 Q0 merged via PR #41 to `main` `f71e59fa72a4181ef7249046630b4dae8d9dd72c` from approved HEAD `ef7ab4e4d8ffa0703238b7182475c846b0030816` (review `5122799862`). Both have tree `11b8b11d95b1f95919ac700cfcbf1e10196ca7ce`. Pre-merge CI #113 / run `33988598752` and exact-main post-merge CI #114 / run `33989694840` completed successfully. The unprivileged Release build now runs the existing pinned browser suite before unsigned assembly, protected by a narrow workflow regression. The bounded Q1 runbook is merged, including the corrected sibling geodata activation path. Q0 changed no runtime, dependency, catalog or signing permissions and performed no live qualification.
 
-The current [Issue #4 body](https://github.com/popiposter/xkeen-control/issues/4) is the Q1 scope/acceptance contract; the exact bounded operator protocol is in `docs/OPERATIONS.md`. Completed Q0 authority is PR #41 and approval review `5122799862`; completed F2 authority is PR #39 and approval review `5121493878`. Historical F1 authority remains comments `5546100341` and `5546129428`; E2 qualification authority remains comments `5544682382` and `5544718868`; E1 transaction/recovery authority remains comments `5540141932` and `5540184800`.
+PR #43 then merged the Gate 1 metadata portability correction to `main` `5a7b6d3676e3cd5e651306a0674ae657c7381787`; exact-main CI #118 / run `34166927949` completed successfully. Gate 1 completed **PASS / eligible to prepare Gate 2** in sanitized report `5584461861` after bounded prerequisite remediation. The two proven orphan node-candidate scratch directories were removed by exact path, and the single external 02:00 geodata writer was reversibly contained and remains disabled through Q1 while `crond` stays running. Fresh identity, health, D.1 coherence, pending-state, writer, protected-fingerprint and idle-resource checks passed. The operator-owned `manual-override` selection is intentional dynamic C.1 state and was not normalized. `/proc/<pid>/io` remained unavailable, so only a bounded block-device delta was observed; this is not evidence of zero writes or physical flash wear.
+
+The current [Issue #4](https://github.com/popiposter/xkeen-control/issues/4) remains the Q1 scope/acceptance authority and `docs/OPERATIONS.md` remains the exact bounded operator protocol. Gate 1 live authority is report `5584461861`; Gate 2 preparation/authorization boundaries are recorded in comment `5585385892`. Completed Q0 authority is PR #41 / review `5122799862`; completed F2 authority is PR #39 / review `5121493878`.
 
 The simplicity decisions in [master issue #1](https://github.com/popiposter/xkeen-control/issues/1) remain in force: one Go process, embedded UI, distinct component gate → runtime Coordinator → authority lease boundaries, fixed trust adapters and bounded journals/rollback. Q1 adds no generic transaction/form/pipeline framework, job queue/history, database, metrics agent, new API or runtime dependencies. Existing F2 behavior is the subject of qualification, not a reason to expand the product.
 
-**Next is Q1 Gate 1: a separately authorized bounded read-only appliance baseline**, not another implementation slice. Establish actual installed/running identities, D.1 authority coherence, pending-state ownership, external/overlapping writers and idle RAM/tmp/persistent-space observations using the installed generation's diagnostics. Return one sanitized report in #4: baseline assessed/eligible to prepare Gate 2, or BLOCKED with an exact prerequisite. Gate 1 remains NOT RUN until authorized and executed; it permits no restart, adoption, package/cron change, release, panel swap or component mutation. No empty PR, permanent diagnostic framework or new preparation phase is needed.
+**Next is Q1 Gate 2 preparation:** first land this sequencing/status correction, then freeze the then-current reviewed `main` only after its CI is green. Recheck the proposed beta tag/release availability, record exact version/channel/source/compatibility and the current original-panel rollback identity, then request a separate exact publication authorization. The `v0.3.0-beta.1` shape remains a proposal until that explicit decision. Do not dispatch Release merely to test the status transition.
 
-Later gates separately authorize exact signed trial publication, panel installation/return, read-only F2 smoke and each component update/rollback pair. The existing explicit-version beta path remains the proposal, not an allocated version or automatic stable release. Freeze the then-current reviewed main after status changes and green CI; the Q0 merge SHA is not automatically the release source. Gate 1 is not GO to install: evaluate and refresh candidate-specific RAM/tmp/persistent headroom before the exact panel install and each component pair.
+Publication itself is not installation permission. Before any separately authorized exact beta Apply, refresh pending/writer/resource admission, require the geodata writer to remain contained, preserve the intentional `manual-override` selection intent, and verify that the updater snapshots the then-current installed `v0.2.0` generation as the trial rollback authority. Panel install/return is a separate authorization; Gate 3 F2 smoke and every component update/rollback pair remain later, separately authorized boundaries.
 
 Qualify Xray, the complete geodata set and XKeen one at a time, restoring each verified baseline before the next class; settle component journals before any original-panel rollback. Measure operation memory, temporary/persistent space and bounded write observations at the appropriate later gate, and prove no external writer can race the trial. Unknown outcome or inadequate resources stops further mutation; no forced crash/reboot/benchmark experiment on the live router.
 
