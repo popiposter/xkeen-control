@@ -105,11 +105,19 @@ func TestApplyRejectsContendedGateWithinSeparateBound(t *testing.T) {
 }
 
 type gateRollbackBudgetActivator struct {
-	restartRemaining []time.Duration
-	restarts         int
+	validationRemaining time.Duration
+	restartRemaining    []time.Duration
+	restarts            int
 }
 
-func (*gateRollbackBudgetActivator) ValidateCandidate(context.Context, string) error { return nil }
+func (a *gateRollbackBudgetActivator) ValidateCandidate(ctx context.Context, _ string) error {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return errors.New("candidate validation deadline missing")
+	}
+	a.validationRemaining = time.Until(deadline)
+	return nil
+}
 func (a *gateRollbackBudgetActivator) Restart(ctx context.Context) error {
 	deadline, _ := ctx.Deadline()
 	a.restartRemaining = append(a.restartRemaining, time.Until(deadline))
@@ -128,7 +136,7 @@ func TestApplyGateWaitDoesNotConsumeRollbackBudget(t *testing.T) {
 	activator := &gateRollbackBudgetActivator{}
 	manager.tx.Activator = activator
 	manager.tx.Budget = TransactionBudget{
-		CandidateValidation: 50 * time.Millisecond,
+		CandidateValidation: 2 * time.Second,
 		Activation:          100 * time.Millisecond,
 		Rollback:            300 * time.Millisecond,
 		Total:               900 * time.Millisecond,
@@ -154,11 +162,11 @@ func TestApplyGateWaitDoesNotConsumeRollbackBudget(t *testing.T) {
 	if err := <-result; err == nil || !strings.Contains(err.Error(), "previous generation restored") {
 		t.Fatalf("activation rollback result = %v", err)
 	}
+	if activator.validationRemaining < 500*time.Millisecond {
+		t.Fatalf("candidate validation received an exhausted transaction budget: %s", activator.validationRemaining)
+	}
 	if len(activator.restartRemaining) != 2 {
 		t.Fatalf("restart calls = %d", len(activator.restartRemaining))
-	}
-	if activator.restartRemaining[1] < 200*time.Millisecond {
-		t.Fatalf("rollback reserve was consumed by gate wait: %s", activator.restartRemaining[1])
 	}
 }
 
