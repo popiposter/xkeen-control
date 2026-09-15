@@ -15,15 +15,15 @@ const (
 	xkeenCatalogChannel        = "dev"
 	xkeenCatalogTag            = "Beta"
 	xkeenCatalogVersion        = "2.0.1"
-	xkeenCatalogBuildCommit    = "e461c4e9964fb8ac78e5fe01aa2e27ab980af712"
-	xkeenCatalogSourceParent   = "bb4060d6a87364eff8314fa723a168454df372bd"
+	xkeenCatalogBuildCommit    = "51725f5a7eab27d64d37c68911839e589aaed057"
+	xkeenCatalogSourceParent   = "694d60dc0021212ad48c0b00f30f76546f59376e"
 	xkeenCatalogAsset          = "test/xkeen.tar.gz"
-	xkeenCatalogBlobSHA        = "e6218668692c41565d288bf3a0bc6a420650edbd"
-	xkeenCatalogAssetSize      = int64(111409)
-	xkeenCatalogArchiveSHA256  = "efbcd977321c35191cb8d31ee5209e5911b81225352c071bad99894b3d0ccc66"
-	xkeenCatalogGenerationSHA  = "341ea86523c2b4ab3c853218a90704dcbeea859bb1f7efe0195d994d0ed36c4e"
+	xkeenCatalogBlobSHA        = "fbe5c23b3b946cb96cd4cacc7f5451c6b7cbcbe0"
+	xkeenCatalogAssetSize      = int64(111435)
+	xkeenCatalogArchiveSHA256  = "25b6160e24e4dc9e5f83412b37bd1fdf4a468220dd8f51b0053503eeb542a64f"
+	xkeenCatalogGenerationSHA  = "acaae7d05f2492de691e179c6cc5432d11706ce1e327acf654757aa08be0b424"
 	xkeenCatalogArchiveMembers = 72
-	xkeenCatalogArchiveBytes   = int64(508719)
+	xkeenCatalogArchiveBytes   = int64(509223)
 	xkeenCatalogLifecycleClass = "preserved-s05-v1"
 	xkeenCatalogCompatibility  = "panel-xray-managed-runtime-v1"
 )
@@ -90,8 +90,8 @@ var reviewedXKeenCompatibility = map[string]xkeenCompatibilityEntry{
 			{Name: "_xkeen/01_info/08_info_router.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 3916},
 			{Name: "_xkeen/02_install/00_install_import.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 475},
 			{Name: "_xkeen/02_install/01_install_packages.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 990},
-			{Name: "_xkeen/02_install/02_install_mihomo.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 6100},
-			{Name: "_xkeen/02_install/02_install_xray.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 5990},
+			{Name: "_xkeen/02_install/02_install_mihomo.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 6034},
+			{Name: "_xkeen/02_install/02_install_xray.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 5926},
 			{Name: "_xkeen/02_install/03_install_xkeen.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 2631},
 			{Name: "_xkeen/02_install/04_install_geofile.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 9475},
 			{Name: "_xkeen/02_install/05_install_geoipset.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 7501},
@@ -102,7 +102,7 @@ var reviewedXKeenCompatibility = map[string]xkeenCompatibilityEntry{
 			{Name: "_xkeen/02_install/07_install_register/01_register_xray.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 979},
 			{Name: "_xkeen/02_install/07_install_register/02_register_xkeen.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 6303},
 			{Name: "_xkeen/02_install/07_install_register/03_register_cron.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 3230},
-			{Name: "_xkeen/02_install/07_install_register/04_register_init.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 166395},
+			{Name: "_xkeen/02_install/07_install_register/04_register_init.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 166437},
 			{Name: "_xkeen/02_install/08_install_configs/00_configs_import.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 156},
 			{Name: "_xkeen/02_install/08_install_configs/01_configs_install.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 1304},
 			{Name: "_xkeen/02_install/08_install_configs/02_configs_xray/01_log.json", Type: xkeenArchiveRegular, Mode: 0o644, Size: 151},
@@ -135,9 +135,9 @@ var reviewedXKeenCompatibility = map[string]xkeenCompatibilityEntry{
 			{Name: "_xkeen/04_tools/06_tools_backups/02_backups_configs_mihomo.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 1443},
 			{Name: "_xkeen/04_tools/06_tools_backups/02_backups_configs_xray.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 1419},
 			{Name: "_xkeen/04_tools/07_tools_downloaders/00_downloaders_import.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 440},
-			{Name: "_xkeen/04_tools/07_tools_downloaders/00_fetch_with_mirrors.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 25740},
-			{Name: "_xkeen/04_tools/07_tools_downloaders/01_downloaders_mihomo.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 6566},
-			{Name: "_xkeen/04_tools/07_tools_downloaders/01_downloaders_xray.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 4531},
+			{Name: "_xkeen/04_tools/07_tools_downloaders/00_fetch_with_mirrors.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 26285},
+			{Name: "_xkeen/04_tools/07_tools_downloaders/01_downloaders_mihomo.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 6548},
+			{Name: "_xkeen/04_tools/07_tools_downloaders/01_downloaders_xray.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 4523},
 			{Name: "_xkeen/04_tools/07_tools_downloaders/02_downloaders_xkeen.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 2183},
 			{Name: "_xkeen/04_tools/08_tools_balancer/00_balancer_import.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 196},
 			{Name: "_xkeen/04_tools/08_tools_balancer/01_balancer_core.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 9703},
@@ -148,7 +148,7 @@ var reviewedXKeenCompatibility = map[string]xkeenCompatibilityEntry{
 			{Name: "_xkeen/05_tests/03_tests_storage.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 4000},
 			{Name: "_xkeen/about.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 13321},
 			{Name: "_xkeen/import.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: 1076},
-			{Name: "xkeen", Type: xkeenArchiveRegular, Mode: 0o755, Size: 57831},
+			{Name: "xkeen", Type: xkeenArchiveRegular, Mode: 0o755, Size: 57904},
 		},
 		LifecycleClass:     xkeenCatalogLifecycleClass,
 		CompatibilityClass: xkeenCatalogCompatibility,
