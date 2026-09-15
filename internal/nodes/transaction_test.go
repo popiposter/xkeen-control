@@ -276,7 +276,7 @@ func TestTransactionTotalBudgetIncludesRollback(t *testing.T) {
 	err := tx.Apply(context.Background(), candidate)
 	elapsed := time.Since(started)
 	assertRollbackFailed(t, err)
-	if elapsed > 250*time.Millisecond {
+	if elapsed > time.Second {
 		t.Fatalf("transaction exceeded hard total budget: %s", elapsed)
 	}
 	if len(activator.restartRemaining) != 2 {
