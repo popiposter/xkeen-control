@@ -42,7 +42,7 @@ public source + signed GitHub Releases (#2, done)
         ↓
 local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
-managed XKeen / Xray / geodata lifecycle (#4, active; beta.2 source freeze → publication + host verification next)
+managed XKeen / Xray / geodata lifecycle (#4, active; beta.2 published; independent host verification next)
         ↓
 visual typed configuration + transactional render/apply (#5, planned)
 ```
@@ -58,7 +58,7 @@ visual typed configuration + transactional render/apply (#5, planned)
 | Pre-D — canonical Go module/import identity | Done | Issue #8 / PR #9 | Canonical `github.com/popiposter/xkeen-control` provenance; no runtime behavior change |
 | D — releases/bootstrap/panel self-update | Done | Issue #2 / `v0.1.1` | Public signed Releases, CI/release pipeline, one-command bootstrap, setup mode, transactional panel update/rollback |
 | D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
-| D.2 — component lifecycle | **Active — beta.2 source freeze next; publication + independent host verification after authorization** | Issue #4 / #47 / PRs #48/#53/#54 | Refreshed XKeen catalog and repository qualification prerequisites are complete; `v0.3.0-beta.1` remains historical evidence only; production router remains `v0.2.0` |
+| D.2 — component lifecycle | **Active — beta.2 protected publication PASS; independent public-host verification next** | Issue #4 / `v0.3.0-beta.2` | Refreshed XKeen catalog and repository qualification prerequisites are complete; signed beta.2 is public but not installed; production router remains `v0.2.0` |
 | D.3 — visual configuration | Planned | Issue #5 | Planned typed routing/DNS/XKeen/Xray/panel/performance UI and deterministic render/apply; not deployed |
 | E — notifications/security hardening | Planned after D.3 | master issue #1 | Outbound alerts, management-VPN guidance, final attack-surface hardening |
 
@@ -91,7 +91,7 @@ Safe export excludes secrets by default; secret-bearing export is explicit and e
 
 Pre-adoption compatibility is explicit: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit and unknown/manual drift fails closed.
 
-## D.2 / Issue #4 — active; beta.2 source freeze → publication + host verification next
+## D.2 / Issue #4 — active; beta.2 published; independent host verification next
 
 Phase A merged via PR #23 to `main` `bda9dd0cc7bb142a4cb1468811fff9b5146b1e8e`; source main gained the bounded read-only component inventory and authenticated `GET /api/v1/components` for panel, XKeen, Xray, geodata, KeeneticOS and Entware.
 
@@ -119,13 +119,13 @@ PR #43 then merged the Gate 1 metadata portability correction to `main` `5a7b6d3
 
 PR #44 merged the Gate 1 closeout/status handoff as source `e7b4673e6f3d8db79916aef03c8b5ba1d63e845c`, tree `44f7153428dcc2b70d97403047aa5adee9b43f22`; exact-main CI #120 completed successfully. Protected Release run `34241228068` then published signed prerelease `v0.3.0-beta.1` targeted exactly at that source. The release workflow re-downloaded and verified its signed seven-asset draft before publication. Independent post-publication host verification in report `5591023511` downloaded exactly the seven public assets within bounds and passed pinned-key, signature, asset hash/size and `SHA256SUMS` verification with the exact frozen manifest/compatibility tuple.
 
-PR #48 then refreshed the one immutable qualified XKeen catalog entry to the September 15 upstream automated build under completed Issue #47. PR #51 subsequently parallelized ordinary PR/main CI without changing runtime or protected Release workflow semantics. PR #52 corrected D.2 sequencing so a new beta.2 publication and independent host verification precede router install admission. PR #53 removed self-referential exact-source SHA wording from ROADMAP, and #50 / PR #54 closed the two known scheduler-sensitive node timing false negatives with test-only changes. Exact beta.2 `source_ref` remains intentionally **outside ROADMAP**: Issue #4 owns the freeze after this status closeout merges and exact-main CI is green. `v0.3.0-beta.2` is not yet published.
+PR #48 then refreshed the one immutable qualified XKeen catalog entry to the September 15 upstream automated build under completed Issue #47. PR #51 subsequently parallelized ordinary PR/main CI without changing runtime or protected Release workflow semantics. PR #52 corrected D.2 sequencing so a new beta.2 publication and independent host verification precede router install admission. PR #53 removed self-referential exact-source SHA wording from ROADMAP, #50 / PR #54 closed the two known scheduler-sensitive node timing false negatives with test-only changes, and PR #55 closed the repository prerequisites. The protected Release workflow then published signed prerelease `v0.3.0-beta.2`. Exact source/run/asset metadata remain in Issue #4 rather than being duplicated here. Independent public-host verification of the published bytes is now the next gate.
 
 The current [Issue #4](https://github.com/popiposter/xkeen-control/issues/4) remains the Q1 scope/acceptance authority and `docs/OPERATIONS.md` remains the exact bounded operator protocol. Completed Q0 authority is PR #41 / review `5122799862`; completed F2 authority is PR #39 / review `5121493878`. Gate 1 authority is report `5584461861`; report `5591023511` is the historical beta.1 public-byte authority.
 
 The simplicity decisions in [master issue #1](https://github.com/popiposter/xkeen-control/issues/1) remain in force: one Go process, embedded UI, distinct component gate → runtime Coordinator → authority lease boundaries, fixed trust adapters and bounded journals/rollback. Q1 adds no generic transaction/form/pipeline framework, job queue/history, database, metrics agent, new API or runtime dependencies. Existing F2 behavior is the subject of qualification, not a reason to expand the product.
 
-**Next is final beta.2 source freeze in #4 after this status closeout merges and exact-main CI is green, then separately authorized protected publication + independent public-host verification**, not router install admission. ROADMAP intentionally carries no exact release source SHA; if `main` moves after the freeze, that freeze expires.
+**Next is independent public-host verification of signed `v0.3.0-beta.2`**, not router install admission. Only after that public-byte verification PASS may one separately authorized bounded read-only panel install-admission session be considered.
 
 Panel install admission remains separately authorized and is deferred until beta.2 host verification passes. At that point refresh running `v0.2.0` identity/health, D.1 authority coherence, pending-state settlement, geodata-writer containment and competing-writer absence, intentional `manual-override` state, and current RAM/`/tmp`/persistent free space. Recompute trial resource accounting from the exact beta.2 release bytes; do not reuse beta.1 exact byte guardrails. Only after admission PASS may one exact beta.2 Apply and eventual original-panel Rollback be proposed. HTTP 202 is handoff acceptance only: independently verify exact running version/source/channel, PID/executable path/hash and health. The trial rollback authority is the updater-created fresh snapshot of the then-current signed `v0.2.0` generation, not historical previous-panel contents.
 
