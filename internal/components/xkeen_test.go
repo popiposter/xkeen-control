@@ -32,10 +32,10 @@ func TestXKeenCatalogIsFullyQualified(t *testing.T) {
 		t.Fatalf("catalog validation: %v", err)
 	}
 	if entry.Repository != "jameszeroX/XKeen" || entry.Channel != "dev" || entry.Version != "2.0.1" ||
-		entry.CommitSHA != "e461c4e9964fb8ac78e5fe01aa2e27ab980af712" ||
-		entry.SourceParentSHA != "bb4060d6a87364eff8314fa723a168454df372bd" ||
-		entry.AssetName != "test/xkeen.tar.gz" || entry.BlobSHA != "e6218668692c41565d288bf3a0bc6a420650edbd" ||
-		entry.SizeBytes != 111409 || entry.SHA256 != xkeenCatalogArchiveSHA256 ||
+		entry.CommitSHA != "51725f5a7eab27d64d37c68911839e589aaed057" ||
+		entry.SourceParentSHA != "694d60dc0021212ad48c0b00f30f76546f59376e" ||
+		entry.AssetName != "test/xkeen.tar.gz" || entry.BlobSHA != "fbe5c23b3b946cb96cd4cacc7f5451c6b7cbcbe0" ||
+		entry.SizeBytes != 111435 || entry.SHA256 != xkeenCatalogArchiveSHA256 ||
 		entry.GenerationSHA256 != xkeenCatalogGenerationSHA || len(entry.ArchiveMembers) != xkeenCatalogArchiveMembers {
 		t.Fatalf("catalog identity changed: %+v", entry)
 	}

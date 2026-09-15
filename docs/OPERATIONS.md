@@ -416,11 +416,13 @@ Xray's fixed official stable ARM64 asset and digest, strict ZIP layout and
 extracted binary digest; all six geodata files and their exact digest/size/set
 identity (`geosite_refilter.dat`, `geosite_v2fly.dat`, `geosite_zkeen.dat`,
 `geoip_refilter.dat`, `geoip_v2fly.dat`, `geoip_zkeenip.dat`); XKeen's catalog
-build `e461c4e9964fb8ac78e5fe01aa2e27ab980af712`, source parent
-`bb4060d6a87364eff8314fa723a168454df372bd`, blob
-`e6218668692c41565d288bf3a0bc6a420650edbd`, archive SHA-256
-`efbcd977321c35191cb8d31ee5209e5911b81225352c071bad99894b3d0ccc66`
-and catalog member/generation identity. Use the fixed source mapping in
+build `51725f5a7eab27d64d37c68911839e589aaed057`, source parent
+`694d60dc0021212ad48c0b00f30f76546f59376e`, blob
+`fbe5c23b3b946cb96cd4cacc7f5451c6b7cbcbe0`, archive SHA-256
+`25b6160e24e4dc9e5f83412b37bd1fdf4a468220dd8f51b0053503eeb542a64f`
+(111435 bytes; 72 regular members; canonical generation SHA-256
+`acaae7d05f2492de691e179c6cc5432d11706ce1e327acf654757aa08be0b424`).
+Use the fixed source mapping in
 `internal/components/inventory.go` and the reviewed core/catalog rules;
 no arbitrary download URL or candidate execution. Limit this host qualification
 to one candidate per class, ten minutes, and the byte/member ceilings below.

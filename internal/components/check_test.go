@@ -326,10 +326,10 @@ func TestXKeenDevCheckRejectsInvalidArtifactTreeMetadata(t *testing.T) {
 		tree     []byte
 		wantCode string
 	}{
-		{name: "missing fixed artifact", tree: xkeenDevTree(t, "test/other.tar.gz", "100644", "blob", strings.Repeat("a", 40), 111409), wantCode: "dev-artifact-invalid"},
-		{name: "wrong type", tree: xkeenDevTree(t, xkeenDevArtifactPath, "100644", "tree", strings.Repeat("a", 40), 111409), wantCode: "dev-artifact-invalid"},
-		{name: "wrong mode", tree: xkeenDevTree(t, xkeenDevArtifactPath, "100755", "blob", strings.Repeat("a", 40), 111409), wantCode: "dev-artifact-invalid"},
-		{name: "bad blob sha", tree: xkeenDevTree(t, xkeenDevArtifactPath, "100644", "blob", "not-a-sha", 111409), wantCode: "dev-artifact-invalid"},
+		{name: "missing fixed artifact", tree: xkeenDevTree(t, "test/other.tar.gz", "100644", "blob", strings.Repeat("a", 40), 111435), wantCode: "dev-artifact-invalid"},
+		{name: "wrong type", tree: xkeenDevTree(t, xkeenDevArtifactPath, "100644", "tree", strings.Repeat("a", 40), 111435), wantCode: "dev-artifact-invalid"},
+		{name: "wrong mode", tree: xkeenDevTree(t, xkeenDevArtifactPath, "100755", "blob", strings.Repeat("a", 40), 111435), wantCode: "dev-artifact-invalid"},
+		{name: "bad blob sha", tree: xkeenDevTree(t, xkeenDevArtifactPath, "100644", "blob", "not-a-sha", 111435), wantCode: "dev-artifact-invalid"},
 		{name: "oversized artifact", tree: xkeenDevTree(t, xkeenDevArtifactPath, "100644", "blob", strings.Repeat("a", 40), MaxXKeenDevArtifactBytes+1), wantCode: "asset-size-too-large"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -387,7 +387,7 @@ func TestXKeenDevCheckRejectsCommitTreeBlobMismatch(t *testing.T) {
 	responses := map[string][]byte{
 		xkeenDevCommitListPath:                                        xkeenDevCommitList(t, buildCommit),
 		xkeenDevCommitPathPrefix + buildCommit:                        xkeenDevCommit(t, buildCommit, sourceCommit, true, xkeenDevBuildCommitMessage, commitBlob),
-		xkeenDevTreePathPrefix + buildCommit + xkeenDevTreePathSuffix: xkeenDevTree(t, xkeenDevArtifactPath, "100644", "blob", treeBlob, 111409),
+		xkeenDevTreePathPrefix + buildCommit + xkeenDevTreePathSuffix: xkeenDevTree(t, xkeenDevArtifactPath, "100644", "blob", treeBlob, 111435),
 	}
 	checker, transport := newFixtureChecker(t, responses, nil)
 	result, err := checker.Check(context.Background(), CheckRequest{Component: KindXKeen, Channel: xkeenDevChannel})
