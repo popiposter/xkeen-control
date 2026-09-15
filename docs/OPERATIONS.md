@@ -194,6 +194,9 @@ installation and per-component update/rollback authorization. Use existing
 #2 explicit-version signed release paths and F1/F2 typed component paths only.
 Before a trial panel exists, the stable panel has no F1/F2 component endpoints;
 initial preflight must use the existing safe observation/typed D.1 boundary.
+A fresh install-admission window may start only after writer containment passes
+under the scheduler-provenance rule below. Do not carry an incomplete or
+BLOCKED scheduler-binding observation forward as an admission PASS.
 Panel HTTP 202 is handoff acceptance, not verified completion. A lost component
 response is an unknown outcome, not evidence of success or restoration.
 
@@ -330,6 +333,51 @@ writers or an overlapping deploy/package job block the trial. An active writer
 requires a separate proposal naming its exact entry, local rollback snapshot
 and reversible disable/restore operation; never stop all cron or grep-delete
 entries. In-process locks cannot exclude external writers.
+
+#### Scheduler provenance and external-writer containment
+
+This check proves scheduler provenance and writer containment; it is not a
+generic scheduler detector and must not infer a daemon's compiled default. Keep
+raw PIDs, paths, argv, environments, cron contents and init contents
+operator-local. Within the bounded observation limits, classify the live
+scheduler with `/proc/<pid>/exe`, `/proc/<pid>/cwd` and NUL-delimited
+`/proc/<pid>/cmdline`, and inspect only the installed cron init/service
+metadata needed to resolve an explicit scheduler option or override. Do not
+source or execute installed metadata. Use `[ -L ]` before `[ -e ]`, bounded
+`ls -ldn` and shell type checks; inaccessible, truncated or ambiguous evidence
+is BLOCKED.
+
+There are two scheduler-provenance cases:
+
+- **Explicit binding.** If live argv or installed init/service configuration
+  contains a scheduler directory/file option or other scheduler-location
+  override, resolve it to the exact accepted scheduler location. The live
+  executable identity, init/service identity and scheduler-file identity must
+  agree with the accepted baseline. A missing, multiple, ambiguous or
+  mismatched explicit binding, or a second scheduler, is BLOCKED.
+- **Implicit/default binding.** If bounded evidence exposes no explicit
+  scheduler path or override and the daemon's compiled/default location is not
+  observable, do not require argv or cwd to reveal that default and do not
+  infer it from a conventional path, binary name or upstream documentation.
+  Preserve the accepted Gate 1 scheduler provenance instead. PASS requires one
+  fresh bounded window proving all of the following: exactly one healthy
+  `crond`; live executable path/identity unchanged from the accepted installed
+  scheduler executable; installed cron init/service identity and metadata
+  unchanged with no new scheduler-location override; accepted scheduler
+  file/disabled-marker identity and metadata unchanged; every bounded
+  alternate cron location already required above inspected with no active
+  relevant writer entry or unexplained new scheduler source; active relevant
+  cron entries equal zero; recognized updater/deploy/package/geodata/
+  legacy-writer processes and executable matches equal zero; no concurrent
+  operator/deploy/package mutation; and the six already-qualified static
+  writer-surface objects unchanged when freshness requires their re-check.
+
+The implicit case is baseline-provenance equivalence, not a claim that `/proc`
+exposes the daemon's compile-time default. Scheduler executable/init/config
+drift, a new cron root or source, an explicit override mismatch, a second
+scheduler, an active writer or incomplete bounded inspection remains BLOCKED.
+Do not add a test cron entry, restart or signal `crond`, install diagnostic
+tools, or otherwise mutate the appliance to make the default observable.
 
 ### Gate 2 — freeze, publish, then separately authorize panel installation
 
@@ -539,9 +587,10 @@ with fallback mirrors, and `scripts/deploy.sh` invokes it. Neither script is a
 D.2 qualification shortcut or part of the typed component transaction boundary.
 
 Before any authorized live component trial, inspect relevant external writers
-without publishing raw cron/process details. Source script presence is not
-proof that a job is active. An active competing geodata/legacy writer blocks the
-trial until its exact entry and reversible change are separately authorized;
+without publishing raw cron/process details, using the scheduler-provenance and
+containment rule above. Source script presence is not proof that a job is
+active. An active competing geodata/legacy writer blocks the trial until its
+exact entry and reversible change are separately authorized;
 do not stop all cron or delete unrelated jobs. Q0/F2 add no scheduler or automatic
 mutation, and the signed stable baseline is not relabeled as product geodata
 ownership merely because its replacement code merged.
