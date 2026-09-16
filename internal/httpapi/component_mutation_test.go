@@ -180,6 +180,43 @@ func TestComponentMutationRouteSanitizesBackendFailure(t *testing.T) {
 	}
 }
 
+func TestComponentMutationRouteProjectsOnlySanitizedCandidateReason(t *testing.T) {
+	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
+	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
+		t.Fatal(err)
+	}
+	mutations := &f1ComponentMutationHTTPStub{applyErr: &components.MutationCandidateRejectedError{ReasonCode: "artifact-integrity"}}
+	server := httptest.NewServer(New(Config{Auth: auth.NewManager(auth.Config{HashPath: passwordPath}), ComponentMutations: mutations}))
+	defer server.Close()
+	client := &http.Client{Jar: mustCookieJar(t)}
+	loginResponse := postJSON(t, client, server.URL+"/api/v1/session/login", map[string]string{"password": "synthetic-control-password"}, "")
+	var login struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	decodeResponse(t, loginResponse, &login)
+	preview := postJSON(t, client, server.URL+"/api/v1/components/preview", map[string]string{"component": "xray", "operation": "update", "channel": "stable"}, login.CSRFToken)
+	if preview.StatusCode != http.StatusOK {
+		t.Fatalf("preview = %d %s", preview.StatusCode, readBody(preview))
+	}
+	preview.Body.Close()
+	response := postJSON(t, client, server.URL+"/api/v1/components/apply", map[string]string{"previewToken": "synthetic-preview-token"}, login.CSRFToken)
+	contents := readBody(response)
+	var body struct {
+		Code       string `json:"code"`
+		Error      string `json:"error"`
+		ReasonCode string `json:"reasonCode"`
+	}
+	if err := json.Unmarshal([]byte(contents), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusBadGateway || body.Code != "candidate-rejected" || body.Error != "component candidate rejected" || body.ReasonCode != "artifact-integrity" {
+		t.Fatalf("candidate rejection response = %d %+v", response.StatusCode, body)
+	}
+	if strings.Contains(contents, "synthetic") || strings.Contains(contents, "artifact.zip") {
+		t.Fatalf("candidate rejection response leaked detail: %s", contents)
+	}
+}
+
 func TestComponentMutationRouteDoesNotClaimRestoreForUnprovenFailure(t *testing.T) {
 	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
 	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
@@ -212,41 +249,48 @@ func TestComponentMutationRouteDoesNotClaimRestoreForUnprovenFailure(t *testing.
 
 func TestComponentMutationErrorsExposeStableAllowlistedCodes(t *testing.T) {
 	tests := []struct {
-		err     error
-		status  int
-		code    string
-		message string
+		err        error
+		status     int
+		code       string
+		message    string
+		reasonCode string
 	}{
-		{components.ErrInvalidMutationRequest, http.StatusBadRequest, "invalid-request", "invalid component mutation request"},
-		{components.ErrMutationOperationMismatch, http.StatusBadRequest, "invalid-request", "invalid component mutation request"},
-		{components.ErrMutationBusy, http.StatusConflict, "busy", "component mutation busy"},
-		{components.ErrMutationPreviewExpired, http.StatusConflict, "preview-expired", "component mutation preview expired or invalid"},
-		{components.ErrMutationPreviewStale, http.StatusConflict, "preview-stale", "component mutation preview is stale"},
-		{components.ErrMutationNoPrevious, http.StatusConflict, "no-previous", "previous component generation unavailable"},
-		{components.ErrMutationMetadataUnavailable, http.StatusBadGateway, "metadata-unavailable", "component metadata unavailable"},
-		{components.ErrMutationCandidateRejected, http.StatusBadGateway, "candidate-rejected", "component candidate rejected"},
-		{components.ErrMutationTransactionFailed, http.StatusInternalServerError, "transaction-restored", "component transaction failed; previous generation restored"},
-		{components.ErrMutationTransactionUnproven, http.StatusInternalServerError, "transaction-unproven", "component transaction failed; outcome is not proven"},
-		{components.ErrMutationRollbackUnproven, http.StatusServiceUnavailable, "rollback-unproven", "component rollback or recovery is not proven"},
-		{components.ErrMutationMaintenance, http.StatusServiceUnavailable, "maintenance", "component mutation unavailable during maintenance"},
-		{components.ErrMutationUnavailable, http.StatusServiceUnavailable, "unavailable", "component mutation unavailable"},
-		{errors.New("synthetic unknown backend failure"), http.StatusServiceUnavailable, "unavailable", "component mutation unavailable"},
+		{components.ErrInvalidMutationRequest, http.StatusBadRequest, "invalid-request", "invalid component mutation request", ""},
+		{components.ErrMutationOperationMismatch, http.StatusBadRequest, "invalid-request", "invalid component mutation request", ""},
+		{components.ErrMutationBusy, http.StatusConflict, "busy", "component mutation busy", ""},
+		{components.ErrMutationPreviewExpired, http.StatusConflict, "preview-expired", "component mutation preview expired or invalid", ""},
+		{components.ErrMutationPreviewStale, http.StatusConflict, "preview-stale", "component mutation preview is stale", ""},
+		{components.ErrMutationNoPrevious, http.StatusConflict, "no-previous", "previous component generation unavailable", ""},
+		{components.ErrMutationMetadataUnavailable, http.StatusBadGateway, "metadata-unavailable", "component metadata unavailable", ""},
+		{components.ErrMutationCandidateRejected, http.StatusBadGateway, "candidate-rejected", "component candidate rejected", ""},
+		{&components.MutationCandidateRejectedError{ReasonCode: "binary-probe"}, http.StatusBadGateway, "candidate-rejected", "component candidate rejected", "binary-probe"},
+		{&components.MutationCandidateRejectedError{ReasonCode: "https://router.example/secret"}, http.StatusBadGateway, "candidate-rejected", "component candidate rejected", ""},
+		{components.ErrMutationTransactionFailed, http.StatusInternalServerError, "transaction-restored", "component transaction failed; previous generation restored", ""},
+		{components.ErrMutationTransactionUnproven, http.StatusInternalServerError, "transaction-unproven", "component transaction failed; outcome is not proven", ""},
+		{components.ErrMutationRollbackUnproven, http.StatusServiceUnavailable, "rollback-unproven", "component rollback or recovery is not proven", ""},
+		{components.ErrMutationMaintenance, http.StatusServiceUnavailable, "maintenance", "component mutation unavailable during maintenance", ""},
+		{components.ErrMutationUnavailable, http.StatusServiceUnavailable, "unavailable", "component mutation unavailable", ""},
+		{errors.New("synthetic unknown backend failure"), http.StatusServiceUnavailable, "unavailable", "component mutation unavailable", ""},
 	}
 	for _, test := range tests {
 		recorder := httptest.NewRecorder()
 		writeComponentMutationError(recorder, test.err)
 		var body struct {
-			Code  string `json:"code"`
-			Error string `json:"error"`
+			Code       string `json:"code"`
+			Error      string `json:"error"`
+			ReasonCode string `json:"reasonCode"`
 		}
 		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 			t.Fatalf("decode %v: %v", test.err, err)
 		}
-		if recorder.Code != test.status || body.Code != test.code || body.Error != test.message {
+		if recorder.Code != test.status || body.Code != test.code || body.Error != test.message || body.ReasonCode != test.reasonCode {
 			t.Fatalf("mapping %v = status %d body %+v", test.err, recorder.Code, body)
 		}
 		if strings.Contains(recorder.Body.String(), "synthetic unknown backend failure") {
 			t.Fatalf("backend detail leaked for %v: %s", test.err, recorder.Body.String())
+		}
+		if strings.Contains(recorder.Body.String(), "router.example") {
+			t.Fatalf("invalid reason leaked for %v: %s", test.err, recorder.Body.String())
 		}
 	}
 }

@@ -122,6 +122,130 @@ func TestXrayApplyRejectsArtifactHashSizeAndFreeSpaceBeforeActivation(t *testing
 	}
 }
 
+func TestXrayApplyReportsSanitizedPreCommitRejectionReasons(t *testing.T) {
+	tests := []struct {
+		name     string
+		reason   XrayCandidateReason
+		identity func(*xrayFixture) XrayReleaseIdentity
+		setup    func(*xrayFixture)
+	}{
+		{
+			name:   "artifact download",
+			reason: XrayCandidateReasonArtifactDownload,
+			setup: func(fixture *xrayFixture) {
+				fixture.downloader.err = errors.New("synthetic upstream transport detail")
+			},
+		},
+		{
+			name:   "artifact integrity",
+			reason: XrayCandidateReasonArtifactIntegrity,
+			setup: func(fixture *xrayFixture) {
+				fixture.identity.SHA256 = strings.Repeat("b", 64)
+				fixture.resolver.identity = fixture.identity
+			},
+		},
+		{
+			name:   "archive extract",
+			reason: XrayCandidateReasonArchiveExtract,
+			setup: func(fixture *xrayFixture) {
+				archive := []byte("synthetic archive rejection")
+				digest := sha256.Sum256(archive)
+				fixture.identity.SizeBytes = int64(len(archive))
+				fixture.identity.SHA256 = fmt.Sprintf("%x", digest[:])
+				fixture.resolver.identity = fixture.identity
+				fixture.downloader.archive = archive
+			},
+		},
+		{
+			name:   "binary probe",
+			reason: XrayCandidateReasonBinaryProbe,
+			setup: func(fixture *xrayFixture) {
+				fixture.probe.newVersion = "1.2.4"
+			},
+		},
+		{
+			name:   "candidate render",
+			reason: XrayCandidateReasonCandidateRender,
+			setup: func(fixture *xrayFixture) {
+				fixture.service.config.InjectFailure = func(stage XrayStage) error {
+					if stage == XrayStageCandidateRender {
+						return errors.New("synthetic candidate render detail")
+					}
+					return nil
+				}
+			},
+		},
+		{
+			name:   "candidate config validation",
+			reason: XrayCandidateReasonCandidateConfig,
+			setup: func(fixture *xrayFixture) {
+				fixture.validator.err = errors.New("synthetic config validation detail")
+			},
+		},
+		{
+			name:   "staging io",
+			reason: XrayCandidateReasonStagingIO,
+			setup: func(fixture *xrayFixture) {
+				fixture.service.config.InjectFailure = func(stage XrayStage) error {
+					if stage == XrayStageCandidateWrite {
+						return errors.New("synthetic staging detail")
+					}
+					return nil
+				}
+			},
+		},
+		{
+			name:   "generic candidate validation fallback",
+			reason: XrayCandidateReasonCandidateValidation,
+			identity: func(fixture *xrayFixture) XrayReleaseIdentity {
+				return XrayReleaseIdentity{Tag: fixture.identity.Tag}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newXrayFixture(t)
+			if test.setup != nil {
+				test.setup(fixture)
+			}
+			identity := fixture.identity
+			if test.identity != nil {
+				identity = test.identity(fixture)
+			}
+			err := fixture.service.Apply(context.Background(), identity)
+			if !errors.Is(err, ErrXrayCandidateRejected) {
+				t.Fatalf("apply error = %v, want candidate rejection", err)
+			}
+			reason, ok := XrayCandidateReasonCode(err)
+			if !ok || reason != string(test.reason) {
+				t.Fatalf("reason code = %q, present=%v, want %q", reason, ok, test.reason)
+			}
+			if strings.Contains(err.Error(), "synthetic") || strings.Contains(err.Error(), string(test.reason)) {
+				t.Fatalf("candidate detail leaked through error text: %q", err)
+			}
+			if got := string(readFixtureFile(t, fixture.activePath)); got != "old-xray-binary" {
+				t.Fatalf("rejected candidate changed active binary: %q", got)
+			}
+			for _, path := range []string{fixture.journalPath, fixture.previousDir, fixture.previousDir + xrayPreviousStagingSuffix, fixture.previousDir + xrayPreviousOldSuffix} {
+				if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
+					t.Fatalf("pre-commit rejection left persistent path %q: %v", path, statErr)
+				}
+			}
+			entries, readErr := os.ReadDir(fixture.stagingDir)
+			if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+				t.Fatalf("read staging root: %v", readErr)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("pre-commit rejection left staging entries: %v", entries)
+			}
+			if fixture.runtime.validateCalls != 0 || fixture.runtime.restartCalls != 0 || fixture.runtime.readyCalls != 0 || fixture.runtime.verifyCalls != 0 {
+				t.Fatalf("pre-commit rejection reached runtime: validate=%d restart=%d ready=%d verify=%d", fixture.runtime.validateCalls, fixture.runtime.restartCalls, fixture.runtime.readyCalls, fixture.runtime.verifyCalls)
+			}
+		})
+	}
+}
+
 func TestXrayApplyStagesCompleteCandidateAndCommitsOnePreviousGeneration(t *testing.T) {
 	fixture := newXrayFixture(t)
 	if err := fixture.service.Apply(context.Background(), fixture.identity); err != nil {
@@ -511,6 +635,127 @@ func TestXrayArtifactTransportIsFixedAndRedirectBounded(t *testing.T) {
 	if err := xrayArtifactRedirectPolicy(request, []*http.Request{{}, {}, {}}); err == nil {
 		t.Fatal("redirect limit was not enforced")
 	}
+}
+
+func TestXrayApplyReportsProductionDownloaderReasonClasses(t *testing.T) {
+	tests := []struct {
+		name      string
+		roundTrip func(*http.Request, []byte) (*http.Response, error)
+		reason    XrayCandidateReason
+	}{
+		{
+			name: "transport",
+			roundTrip: func(*http.Request, []byte) (*http.Response, error) {
+				return nil, errors.New("synthetic production transport detail")
+			},
+			reason: XrayCandidateReasonArtifactDownload,
+		},
+		{
+			name: "status",
+			roundTrip: func(request *http.Request, _ []byte) (*http.Response, error) {
+				return xrayArtifactTestResponse(request, http.StatusServiceUnavailable, []byte("synthetic status body"), -1), nil
+			},
+			reason: XrayCandidateReasonArtifactDownload,
+		},
+		{
+			name: "redirect",
+			roundTrip: func(request *http.Request, _ []byte) (*http.Response, error) {
+				response := xrayArtifactTestResponse(request, http.StatusFound, nil, 0)
+				response.Header.Set("Location", "https://example.com/unsafe")
+				return response, nil
+			},
+			reason: XrayCandidateReasonArtifactDownload,
+		},
+		{
+			name: "short body",
+			roundTrip: func(request *http.Request, archive []byte) (*http.Response, error) {
+				return xrayArtifactTestResponse(request, http.StatusOK, archive[:len(archive)-1], int64(len(archive))), nil
+			},
+			reason: XrayCandidateReasonArtifactIntegrity,
+		},
+		{
+			name: "content length",
+			roundTrip: func(request *http.Request, archive []byte) (*http.Response, error) {
+				return xrayArtifactTestResponse(request, http.StatusOK, archive, int64(len(archive)+1)), nil
+			},
+			reason: XrayCandidateReasonArtifactIntegrity,
+		},
+		{
+			name: "extra body",
+			roundTrip: func(request *http.Request, archive []byte) (*http.Response, error) {
+				body := append(append([]byte(nil), archive...), 'x')
+				return xrayArtifactTestResponse(request, http.StatusOK, body, -1), nil
+			},
+			reason: XrayCandidateReasonArtifactIntegrity,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newXrayFixture(t)
+			fixture.service.config.Downloader = NewXrayArtifactDownloader(nil, &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				return test.roundTrip(request, fixture.downloader.archive)
+			})})
+			err := fixture.service.Apply(context.Background(), fixture.identity)
+			if !errors.Is(err, ErrXrayCandidateRejected) {
+				t.Fatalf("apply error = %v, want candidate rejection", err)
+			}
+			reason, ok := XrayCandidateReasonCode(err)
+			if !ok || reason != string(test.reason) {
+				t.Fatalf("reason code = %q, present=%v, want %q", reason, ok, test.reason)
+			}
+			if strings.Contains(err.Error(), "synthetic") || strings.Contains(err.Error(), string(test.reason)) {
+				t.Fatalf("candidate detail leaked through error text: %q", err)
+			}
+			if got := string(readFixtureFile(t, fixture.activePath)); got != "old-xray-binary" {
+				t.Fatalf("rejected candidate changed active binary: %q", got)
+			}
+			for _, path := range []string{fixture.journalPath, fixture.previousDir, fixture.previousDir + xrayPreviousStagingSuffix, fixture.previousDir + xrayPreviousOldSuffix} {
+				if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
+					t.Fatalf("rejected candidate left %s: %v", path, statErr)
+				}
+			}
+			if fixture.service.stagingPresent() {
+				t.Fatal("rejected candidate left staging state")
+			}
+			if fixture.runtime.validateCalls != 0 || fixture.runtime.restartCalls != 0 || fixture.runtime.readyCalls != 0 || fixture.runtime.verifyCalls != 0 {
+				t.Fatalf("runtime was reached after rejection: validate=%d restart=%d ready=%d verify=%d", fixture.runtime.validateCalls, fixture.runtime.restartCalls, fixture.runtime.readyCalls, fixture.runtime.verifyCalls)
+			}
+		})
+	}
+}
+
+func TestXrayProductionDownloaderClassifiesDestinationWriteFailure(t *testing.T) {
+	fixture := newXrayFixture(t)
+	downloader := NewXrayArtifactDownloader(nil, &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return xrayArtifactTestResponse(request, http.StatusOK, fixture.downloader.archive, int64(len(fixture.downloader.archive))), nil
+	})})
+	err := downloader.DownloadXray(context.Background(), fixture.identity, xrayFailingDestination{})
+	if !errors.Is(err, errXrayArtifactDestination) {
+		t.Fatalf("download error = %v, want destination failure", err)
+	}
+	if reason := xrayArtifactCandidateReason(err); reason != XrayCandidateReasonStagingIO {
+		t.Fatalf("download reason = %q, want %q", reason, XrayCandidateReasonStagingIO)
+	}
+	if strings.Contains(err.Error(), "synthetic") {
+		t.Fatalf("destination detail leaked through error text: %q", err)
+	}
+}
+
+func xrayArtifactTestResponse(request *http.Request, status int, body []byte, contentLength int64) *http.Response {
+	return &http.Response{
+		StatusCode:    status,
+		Body:          io.NopCloser(bytes.NewReader(body)),
+		Header:        make(http.Header),
+		ContentLength: contentLength,
+		Request:       request,
+	}
+}
+
+type xrayFailingDestination struct{}
+
+func (xrayFailingDestination) Write([]byte) (int, error) {
+	return 0, errors.New("synthetic destination detail")
 }
 
 func TestXrayApplyRejectsCandidateProbeMismatchBeforeCommit(t *testing.T) {

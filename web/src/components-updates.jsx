@@ -12,13 +12,25 @@ const COMPONENTS = [
 const COMPONENT_BY_KIND = new Map(COMPONENTS.map((component) => [component.kind, component]))
 
 class ComponentRequestError extends Error {
-  constructor(message, { status = 0, code = '', kind = 'response' } = {}) {
+  constructor(message, { status = 0, code = '', reasonCode = '', kind = 'response' } = {}) {
     super(message)
     this.status = status
     this.code = code
+    this.reasonCode = reasonCode
     this.kind = kind
   }
 }
+
+const CANDIDATE_REJECTION_MESSAGES = Object.freeze({
+  'artifact-download': 'The fixed artifact could not be downloaded.',
+  'artifact-integrity': 'The downloaded artifact failed its bounded size or digest check.',
+  'archive-extract': 'The candidate archive could not be safely extracted.',
+  'binary-probe': 'The candidate binary failed the fixed version or architecture probe.',
+  'candidate-render': 'The complete candidate configuration could not be rendered.',
+  'candidate-config-validation': 'The candidate configuration failed validation.',
+  'staging-io': 'The bounded candidate staging operation failed.',
+  'candidate-validation': 'The fixed candidate validation did not complete safely.',
+})
 
 const requestJSON = async (path, options = {}) => {
   let response
@@ -47,6 +59,7 @@ const requestJSON = async (path, options = {}) => {
     throw new ComponentRequestError(body?.error || `Request failed (${response.status})`, {
       status: response.status,
       code: typeof body?.code === 'string' ? body.code : '',
+      reasonCode: typeof body?.reasonCode === 'string' ? body.reasonCode : '',
     })
   }
   return body
@@ -108,7 +121,11 @@ const mutationErrorResult = (cause, pending) => {
     case 'metadata-unavailable':
       return { tone: 'warning', title: 'Metadata unavailable', message: 'The fixed upstream metadata could not be verified. No automatic retry was started.', outcome: 'rejected' }
     case 'candidate-rejected':
-      return { tone: 'warning', title: 'Candidate rejected', message: 'The fixed candidate did not pass the server trust boundary. No automatic retry was started.', outcome: 'rejected' }
+      {
+        const reasonCode = Object.prototype.hasOwnProperty.call(CANDIDATE_REJECTION_MESSAGES, cause.reasonCode) ? cause.reasonCode : ''
+        const reason = reasonCode ? ` ${CANDIDATE_REJECTION_MESSAGES[reasonCode]}` : ' The fixed candidate did not pass the server trust boundary.'
+        return { tone: 'warning', title: 'Candidate rejected', message: `${reason} No automatic retry was started.`, reasonCode, outcome: 'rejected' }
+      }
     case 'invalid-request':
     case 'unavailable':
       return { tone: 'error', title: 'Component operation unavailable', message: 'The server rejected this one-shot request. Inspect current state and create a fresh Preview if appropriate.', outcome: 'rejected' }
@@ -469,7 +486,7 @@ function ComponentConfirmation({ preview, busy, onCancel, onConfirm }) {
 
 function OperationResult({ result, refreshError, onDismiss }) {
   return <section className={`operation-result ${result.tone}`} role={result.outcome === 'unknown' || result.outcome === 'maintenance' ? 'alert' : 'status'}>
-    <div><strong>{result.title}</strong><p>{result.message}</p>{refreshError && <small>{refreshError}</small>}</div>
+    <div><strong>{result.title}</strong><p>{result.message}</p>{result.reasonCode && <small>Reason code: <code>{result.reasonCode}</code></small>}{refreshError && <small>{refreshError}</small>}</div>
     <button className="ghost" type="button" onClick={onDismiss}>Dismiss</button>
   </section>
 }

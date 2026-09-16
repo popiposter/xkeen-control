@@ -23,11 +23,27 @@ const (
 )
 
 var (
-	errXrayArtifactHTTP     = errors.New("xray artifact request failed")
-	errXrayArtifactStatus   = errors.New("xray artifact response was rejected")
-	errXrayArtifactContent  = errors.New("xray artifact content length was rejected")
-	errXrayArtifactRedirect = errors.New("xray artifact redirect was rejected")
+	errXrayArtifactHTTP        = errors.New("xray artifact request failed")
+	errXrayArtifactStatus      = errors.New("xray artifact response was rejected")
+	errXrayArtifactContent     = errors.New("xray artifact content length was rejected")
+	errXrayArtifactRedirect    = errors.New("xray artifact redirect was rejected")
+	errXrayArtifactDestination = errors.New("xray artifact destination write failed")
 )
+
+type xrayArtifactDestinationWriter struct {
+	destination io.Writer
+}
+
+func (writer xrayArtifactDestinationWriter) Write(value []byte) (int, error) {
+	if writer.destination == nil {
+		return 0, errXrayArtifactDestination
+	}
+	written, err := writer.destination.Write(value)
+	if err != nil || written != len(value) {
+		return written, errXrayArtifactDestination
+	}
+	return written, nil
+}
 
 // XrayArtifactClient downloads only the fixed official arm64 Xray asset. It
 // deliberately has no URL-taking method: the release identity is resolved
@@ -91,6 +107,9 @@ func (c *XrayArtifactClient) DownloadXray(ctx context.Context, identity XrayRele
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if errors.Is(err, errXrayArtifactRedirect) {
+			return errXrayArtifactRedirect
+		}
 		return errXrayArtifactHTTP
 	}
 	defer response.Body.Close()
@@ -100,14 +119,27 @@ func (c *XrayArtifactClient) DownloadXray(ctx context.Context, identity XrayRele
 	if response.ContentLength >= 0 && response.ContentLength != identity.SizeBytes {
 		return errXrayArtifactContent
 	}
-	count, err := io.CopyN(destination, response.Body, identity.SizeBytes)
-	if err != nil || count != identity.SizeBytes {
+	count, err := io.CopyN(xrayArtifactDestinationWriter{destination: destination}, response.Body, identity.SizeBytes)
+	if err != nil {
+		switch {
+		case errors.Is(err, errXrayArtifactDestination), errors.Is(err, io.ErrShortWrite):
+			return errXrayArtifactDestination
+		case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+			return errXrayArtifactContent
+		default:
+			return errXrayArtifactHTTP
+		}
+	}
+	if count != identity.SizeBytes {
 		return errXrayArtifactContent
 	}
 	var extra [1]byte
 	read, readErr := response.Body.Read(extra[:])
-	if read > 0 || readErr != io.EOF {
+	if read > 0 {
 		return errXrayArtifactContent
+	}
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return errXrayArtifactHTTP
 	}
 	return nil
 }
