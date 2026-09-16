@@ -88,6 +88,9 @@ GET  /api/v1/nodes
 GET  /api/v1/performance
 GET  /api/v1/config-summary
 GET  /api/v1/components
+POST /api/v1/components/check
+GET  /api/v1/components/policy
+POST /api/v1/components/policy
 GET  /healthz
 ```
 
@@ -161,7 +164,7 @@ Panel install/update does not install or repair XKeen/Xray and does not rewrite 
 
 Normal polling, update checks and runtime telemetry cause no persistent writes unless the operator deliberately changes policy or applies a release/state mutation.
 
-Persistent writes are purpose-specific and bounded, including auth/listener changes, explicit typed `appliance.json` adoption/restore changes, explicit `nodes.json` mutations plus generated active outbounds, real stable-selection changes, one compact completed benchmark snapshot, compact panel release/update markers and bounded rollback generations.
+Persistent writes are purpose-specific and bounded, including auth/listener changes, explicit typed `appliance.json` adoption/restore changes, explicit `nodes.json` mutations plus generated active outbounds, the authenticated component policy at `/opt/etc/xkeen-control/state/component-policy.json`, real stable-selection changes, one compact completed benchmark snapshot, compact panel release/update markers and bounded rollback generations. Component scheduler timestamps, status, notification dedupe and failures remain in RAM.
 
 No SQLite/Redis/Prometheus/Grafana/growing revision history belongs on the router.
 
@@ -190,9 +193,9 @@ The safe export requires an authenticated same-origin session and contains only 
 
 Import preview uses strict bounded multipart parsing with one in-flight preview admission and returns only a session-bound, expiring server token plus safe change metadata. Apply and cancel accept that token rather than a replacement mode or candidate payload; the mode and candidate are fixed by preview. Restore Apply is preview-first, typed, authority-coordinated and journaled for interrupted-import recovery. An equivalent settings-only restore is a no-op: it preserves node/generated/runtime state and does not restart Xray/XKeen. Secret-bearing backups must never be uploaded to public GitHub evidence.
 
-D.1 does not expose raw JSON/Xray/XKeen editing, does not clone panel auth/listener/update state and does not install/repair XKeen/Xray. Before successful adoption, the explicit repository-derived/legacy compatibility boundary remains in force; unknown/manual drift fails closed. Component lifecycle remains the planned current/next slice #4, and broad visual typed configuration remains planned #5.
+D.1 does not expose raw JSON/Xray/XKeen editing, does not clone panel auth/listener/update state and does not install/repair XKeen/Xray. Before successful adoption, the explicit repository-derived/legacy compatibility boundary remains in force; unknown/manual drift fails closed. Component lifecycle remains source-only under #4, and broad visual typed configuration remains planned #5.
 
-Phase A of #4 adds the separate read-only component inventory foundation: an authenticated `GET /api/v1/components` returns a bounded typed projection for panel, XKeen, Xray, geodata, KeeneticOS and Entware. It performs no network discovery, persistence, coordinator/lease work, lifecycle mutation or panel-update-policy changes; later lifecycle policy and UI remain planned.
+Phase A of #4 adds the separate read-only component inventory foundation: an authenticated `GET /api/v1/components` returns a bounded typed projection for panel, XKeen, Xray, geodata, KeeneticOS and Entware. It performs no network discovery, persistence, coordinator/lease work, lifecycle mutation or panel-update-policy changes; later mutation policy remains a separate typed boundary.
 
 The Phase B source-main boundary adds an authenticated, same-origin/CSRF-bound `POST /api/v1/components/check` for explicit trusted metadata checks of only Xray, XKeen and the fixed product geodata catalog. Results are bounded and RAM-only; no artifact bytes are downloaded, no component or router state is changed, and no production-release or live-qualification claim follows from the source implementation.
 
@@ -230,11 +233,40 @@ or `candidate-validation`); raw errors and candidate details never cross the
 HTTP/UI boundary. F2 adds no policy, scheduler, automatic install,
 operation-history endpoint, production deployment or live qualification.
 
+## Phase F3 — bounded component policy and check-only scheduler
+
+F3 adds the authenticated, same-origin/CSRF-bound policy surface:
+
+```text
+GET  /api/v1/components/policy
+POST /api/v1/components/policy
+```
+
+The persisted policy is the exact schema-versioned object at
+`/opt/etc/xkeen-control/state/component-policy.json`:
+`{schemaVersion:1, mode:"manual", checkCadenceMinutes:1440}`. An absent file
+means `manual`; present malformed, oversized, non-regular, symlinked or
+permission-unsafe input fails closed to effective `off` with a bounded reason.
+Only `manual`, `notify` and `off` are accepted, with a 60-minute to 7-day
+cadence. `manual` leaves Check and typed Preview/Apply explicit. `notify`
+adds a sequential, cached, bounded background Check-only cycle over the fixed
+Xray stable, geodata stable and XKeen dev tuples; it never previews, applies,
+rolls back or downloads mutation bodies. `off` disables discovery and update
+admission while inventory and rollback Preview/Rollback/Cancel remain usable.
+
+The scheduler starts its first cycle only after a full cadence, skips during
+unavailable/maintenance/applying lifecycle states, uses no catch-up loop or
+persistent status writes, and may call only a typed in-process notification
+hook with safe projected fields. Policy changes invalidate existing update
+previews below the HTTP/UI layer. F3 is source/CI-only: it adds no release
+dispatch, router access, production mutation, live qualification or external
+notification transport.
+
 ## Planned later capabilities
 
 ### #4 — component lifecycle production qualification
 
-The source F1 broker and F2 operator UI are the typed/version-aware XKeen/Xray/geodata inventory/update/rollback surface. A future production/release qualification must prove the live component paths, rollback/recovery behavior and operator controls before any #4 mutation route is deployed. It will not expose a shell or generic package manager.
+The source F1 broker, F2 operator UI and F3 bounded policy/check-only scheduler are the typed/version-aware XKeen/Xray/geodata inventory/update/rollback surface. A future production/release qualification must prove the live component paths, rollback/recovery behavior and operator controls before any #4 mutation route is deployed. It will not expose a shell or generic package manager.
 
 ### #5 — visual configuration
 

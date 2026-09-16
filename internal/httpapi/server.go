@@ -27,6 +27,7 @@ const (
 	maxMutationBody          = 384 << 10
 	maxComponentCheckBody    = 4 << 10
 	maxComponentMutationBody = 4 << 10
+	maxComponentPolicyBody   = 4 << 10
 	maxJSONResponse          = 512 << 10
 	csrfRequiredPath         = "/api/v1/session/logout"
 )
@@ -53,6 +54,11 @@ type ComponentMutationService interface {
 	InvalidateAll()
 }
 
+type ComponentPolicyService interface {
+	Status() components.ComponentPolicyStatus
+	SetPolicy(components.ComponentPolicy) (components.ComponentPolicyStatus, error)
+}
+
 type Server struct {
 	collector *controlruntime.Collector
 	auth      *auth.Manager
@@ -68,6 +74,7 @@ type Server struct {
 	components         components.ReadOnlyService
 	componentChecks    components.CheckService
 	componentMutations ComponentMutationService
+	componentPolicy    ComponentPolicyService
 	updates            panelupdate.Service
 	backup             BackupService
 	restore            RestoreService
@@ -89,6 +96,7 @@ type Config struct {
 	Components         components.ReadOnlyService
 	ComponentChecks    components.CheckService
 	ComponentMutations ComponentMutationService
+	ComponentPolicy    ComponentPolicyService
 	Updates            panelupdate.Service
 	Backup             BackupService
 	Restore            RestoreService
@@ -98,7 +106,7 @@ func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, updates: config.Updates, backup: config.Backup, restore: config.Restore, restorePreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, updates: config.Updates, backup: config.Backup, restore: config.Restore, restorePreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +123,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "ok\n")
 		return
 	case "/api/v1/session/login", "/api/v1/session/logout", "/api/v1/session",
-		"/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary", "/api/v1/components", "/api/v1/components/check",
+		"/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary", "/api/v1/components", "/api/v1/components/check", "/api/v1/components/policy",
 		"/api/v1/components/preview", "/api/v1/components/apply", "/api/v1/components/rollback", "/api/v1/components/cancel",
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
 		"/api/v1/session/password",
@@ -215,6 +223,15 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.checkComponents(w, r)
+	case "/api/v1/components/policy":
+		switch r.Method {
+		case http.MethodGet:
+			s.readComponentPolicy(w, r)
+		case http.MethodPost:
+			s.setComponentPolicy(w, r)
+		default:
+			methodNotAllowed(w, http.MethodGet+", "+http.MethodPost)
+		}
 	case "/api/v1/components/preview":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -1033,6 +1050,46 @@ func (s *Server) decodeComponentCheckRequest(w http.ResponseWriter, r *http.Requ
 	return true
 }
 
+func (s *Server) decodeComponentPolicyRequest(w http.ResponseWriter, r *http.Request, value any) bool {
+	contentTypes := r.Header.Values("Content-Type")
+	if len(contentTypes) != 1 || strings.TrimSpace(contentTypes[0]) != "application/json" {
+		writeCodedError(w, http.StatusUnsupportedMediaType, "invalid-request", "unsupported media type")
+		return false
+	}
+	if r.URL.RawQuery != "" {
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid component policy request")
+		return false
+	}
+	if r.ContentLength > maxComponentPolicyBody {
+		writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		return false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxComponentPolicyBody)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		} else {
+			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid component policy request")
+		}
+		return false
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		} else {
+			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid component policy request")
+		}
+		return false
+	}
+	return true
+}
+
 func (s *Server) decodeComponentMutationRequest(w http.ResponseWriter, r *http.Request, value any) bool {
 	contentTypes := r.Header.Values("Content-Type")
 	if len(contentTypes) != 1 || strings.TrimSpace(contentTypes[0]) != "application/json" {
@@ -1216,8 +1273,46 @@ func (s *Server) checkComponents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (s *Server) readComponentPolicy(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	if s.componentPolicy == nil {
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "component policy unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.componentPolicy.Status())
+}
+
+func (s *Server) setComponentPolicy(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.componentPolicy == nil {
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "component policy unavailable")
+		return
+	}
+	var policy components.ComponentPolicy
+	if !s.decodeComponentPolicyRequest(w, r, &policy) {
+		return
+	}
+	status, err := s.componentPolicy.SetPolicy(policy)
+	if err != nil {
+		writeComponentPolicyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
 func (s *Server) writeComponentCheckError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, components.ErrComponentPolicyDisabled):
+		writeCodedError(w, http.StatusConflict, "policy-disabled", "component policy disables component checks")
 	case errors.Is(err, components.ErrInvalidCheckRequest):
 		writeError(w, http.StatusBadRequest, "invalid component check request")
 	case errors.Is(err, components.ErrCheckBusy):
@@ -1228,6 +1323,17 @@ func (s *Server) writeComponentCheckError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadGateway, "component metadata rejected")
 	default:
 		writeError(w, http.StatusServiceUnavailable, "component check unavailable")
+	}
+}
+
+func writeComponentPolicyError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, components.ErrInvalidComponentPolicy):
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid component policy request")
+	case errors.Is(err, components.ErrComponentPolicySave), errors.Is(err, components.ErrComponentPolicyUnavailable):
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "component policy unavailable")
+	default:
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "component policy unavailable")
 	}
 }
 
@@ -1332,6 +1438,8 @@ func (s *Server) cancelComponentMutation(w http.ResponseWriter, r *http.Request)
 
 func writeComponentMutationError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, components.ErrMutationPolicyDisabled), errors.Is(err, components.ErrComponentPolicyDisabled):
+		writeCodedError(w, http.StatusConflict, "policy-disabled", "component policy disables component updates")
 	case errors.Is(err, components.ErrInvalidMutationRequest), errors.Is(err, components.ErrMutationOperationMismatch):
 		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid component mutation request")
 	case errors.Is(err, components.ErrMutationBusy):

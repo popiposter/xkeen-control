@@ -51,6 +51,7 @@ var (
 	ErrMutationMaintenance         = errors.New("component mutation is in maintenance")
 	ErrMutationMetadataUnavailable = errors.New("component mutation metadata is unavailable")
 	ErrMutationCandidateRejected   = errors.New("component mutation candidate was rejected")
+	ErrMutationPolicyDisabled      = ErrComponentPolicyDisabled
 	ErrMutationTransactionFailed   = errors.New("component transaction failed; previous generation restored")
 	ErrMutationTransactionUnproven = errors.New("component transaction failed; outcome is not proven")
 	ErrMutationRollbackUnproven    = errors.New("component rollback or recovery is not proven")
@@ -329,6 +330,7 @@ type MutationConfig struct {
 	AdmissionTimeout time.Duration
 	OperationTimeout time.Duration
 	MutationGate     *ComponentMutationGate
+	Policy           UpdatePolicyGate
 	Now              func() time.Time
 	Random           io.Reader
 }
@@ -342,12 +344,13 @@ type MutationService struct {
 }
 
 type mutationPreviewEntry struct {
-	Token     string
-	Binding   string
-	Request   MutationRequest
-	Sequence  uint64
-	IssuedAt  time.Time
-	ExpiresAt time.Time
+	Token       string
+	Binding     string
+	Request     MutationRequest
+	Sequence    uint64
+	IssuedAt    time.Time
+	ExpiresAt   time.Time
+	PolicyEpoch uint64
 
 	XrayCandidate    *XrayReleaseIdentity
 	GeodataCandidate *GeodataCandidateSet
@@ -417,6 +420,14 @@ func (s *MutationService) Preview(ctx context.Context, binding string, request M
 	if err := ValidateMutationRequest(request); err != nil {
 		return MutationPreview{}, err
 	}
+	var policyEpoch uint64
+	if request.Operation == MutationOperationUpdate && s.config.Policy != nil {
+		epoch, err := s.config.Policy.AdmitUpdate()
+		if err != nil {
+			return MutationPreview{}, ErrMutationPolicyDisabled
+		}
+		policyEpoch = epoch
+	}
 	if !s.supportsRequest(request) {
 		return MutationPreview{}, ErrMutationUnavailable
 	}
@@ -439,7 +450,7 @@ func (s *MutationService) Preview(ctx context.Context, binding string, request M
 	previewContext, cancel := context.WithTimeout(ctx, s.config.PreviewTimeout)
 	defer cancel()
 
-	entry := mutationPreviewEntry{Binding: binding, Request: request}
+	entry := mutationPreviewEntry{Binding: binding, Request: request, PolicyEpoch: policyEpoch}
 	switch request.Operation {
 	case MutationOperationUpdate:
 		if err := s.resolveUpdate(previewContext, request, &entry); err != nil {
@@ -459,6 +470,9 @@ func (s *MutationService) Apply(ctx context.Context, binding, token string) (Mut
 	entry, err := s.take(binding, token, MutationOperationUpdate)
 	if err != nil {
 		return MutationResult{}, err
+	}
+	if s.config.Policy != nil && !s.config.Policy.AllowUpdate(entry.PolicyEpoch) {
+		return MutationResult{}, ErrMutationPolicyDisabled
 	}
 	operationContext, releaseOperation, err := s.beginOperation(ctx)
 	if err != nil {

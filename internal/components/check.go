@@ -77,18 +77,24 @@ type CheckRequest struct {
 	Channel   string        `json:"channel"`
 }
 
+// componentCheckTuples is the one package-owned source/channel matrix used by
+// both explicit checks and the F3 scheduler. Keep additions explicit and
+// server-owned; callers cannot supply a repository, URL or path.
+var componentCheckTuples = [...]CheckRequest{
+	{Component: KindXray, Channel: "stable"},
+	{Component: KindGeodata, Channel: "stable"},
+	{Component: KindXKeen, Channel: xkeenDevChannel},
+}
+
+func fixedComponentCheckTuples() []CheckRequest {
+	return append([]CheckRequest(nil), componentCheckTuples[:]...)
+}
+
 func ValidateCheckRequest(request CheckRequest) error {
-	switch request.Component {
-	case KindXray, KindGeodata:
-		if request.Channel == "stable" {
+	for _, tuple := range componentCheckTuples {
+		if request == tuple {
 			return nil
 		}
-	case KindXKeen:
-		if request.Channel == xkeenDevChannel {
-			return nil
-		}
-	default:
-		// Fall through to the common closed-tuple rejection below.
 	}
 	return ErrInvalidCheckRequest
 }

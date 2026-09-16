@@ -162,6 +162,7 @@ func main() {
 	componentXrayService := newXrayService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
 	componentGeodataService := newGeodataService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
 	componentXKeenService := newXKeenService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
+	componentPolicy := components.NewPolicyManager()
 	componentMutations := components.NewMutationService(components.MutationConfig{
 		// Preview resolution is intentionally separate from the transaction
 		// services. Apply/Rollback then dispatch only the stored typed intent to
@@ -173,6 +174,7 @@ func main() {
 		XKeenResolver:   components.NewXKeenMovingDevResolver(nil, nil),
 		XKeen:           componentXKeenService,
 		MutationGate:    componentGate,
+		Policy:          componentPolicy,
 	})
 	stateDir := getenv("XKEEN_APPLIANCE_IMPORT_STATE_DIR", "/opt/etc/xkeen-control/state")
 	restoreJournalPath := filepath.Join(stateDir, "appliance-import-transaction.json")
@@ -278,6 +280,22 @@ func main() {
 		InstalledSnapshot: componentService.Latest,
 		MutationAvailable: componentMutations.Supports,
 	})
+	componentPolicyChecker := components.NewPolicyCheckService(componentChecker, componentPolicy)
+	componentScheduler := components.NewCheckScheduler(components.CheckSchedulerConfig{
+		Policy: componentPolicy,
+		Checks: componentPolicyChecker,
+		Lifecycle: func() (components.LifecycleProjection, bool) {
+			coordinatorState := coordinator.Snapshot()
+			if coordinatorState.Lifecycle == nil {
+				return components.LifecycleProjection{}, false
+			}
+			return components.LifecycleProjection{
+				Maintenance: coordinatorState.Lifecycle.Maintenance,
+				Applying:    coordinatorState.Lifecycle.Applying,
+			}, true
+		},
+	})
+	componentPolicy.SetScheduler(componentScheduler)
 	handler := httpapi.New(httpapi.Config{
 		Collector:          collector,
 		Auth:               authManager,
@@ -287,8 +305,9 @@ func main() {
 		Assets:             webassets.Handler(),
 		StartedAt:          startedAt,
 		Components:         componentService,
-		ComponentChecks:    componentChecker,
+		ComponentChecks:    componentPolicyChecker,
 		ComponentMutations: componentMutations,
+		ComponentPolicy:    componentPolicy,
 		Updates:            updateManager,
 		Restore:            restoreService,
 		Backup: backup.NewService(backup.Config{
@@ -314,16 +333,20 @@ func main() {
 		MaxHeaderBytes: 16 << 10,
 	}
 
+	runtimeContext, cancelRuntime := context.WithCancel(context.Background())
 	shutdown := make(chan os.Signal, 1)
 	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-shutdown
+		cancelRuntime()
+		componentScheduler.Stop()
 		coordinator.Stop()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = server.Shutdown(ctx)
 	}()
-	coordinator.Start(context.Background())
+	coordinator.Start(runtimeContext)
+	componentScheduler.Start(runtimeContext)
 
 	log.Printf("xkeen-control %s listening on %s", buildinfo.Current().Version, listenAddress)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
