@@ -96,6 +96,22 @@ GET  /healthz
 
 Typed node/subscription mutations include preview/cancel/apply operations for import, replacement, subscription refresh, node enable/disable/remove and manual selection. Preview candidates are RAM-only, session-bound, bounded, expiring and one-shot. Apply receives a server-issued preview token rather than posting the secret payload again.
 
+The source-main Slice A batch node preview routes are:
+
+```text
+POST /api/v1/nodes/batch/state/preview
+POST /api/v1/nodes/batch/remove/preview
+```
+
+They accept only a bounded, duplicate-free list of safe node IDs plus the
+typed desired state where applicable. The Nodes workspace selects across the
+complete filtered result, including pages beyond the visible 25-row page, and
+uses one selection toolbar for batch state/remove previews and single-node
+manual override or profile replacement. These routes reuse the existing
+session-bound Preview, BaseDigest, token-only Apply/Cancel, Coordinator,
+authority lease and full-registry transaction boundary. Slice A is source/CI
+behavior; it is not production-qualified or deployed.
+
 Current panel lifecycle endpoints are:
 
 ```text

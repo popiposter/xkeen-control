@@ -329,6 +329,7 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
   const [subscriptionID, setSubscriptionID] = useState('')
   const [replacement, setReplacement] = useState('')
   const [editingID, setEditingID] = useState('')
+  const [selectedIDs, setSelectedIDs] = useState(() => new Set())
   const [composer, setComposer] = useState('')
   const [preview, setPreview] = useState(null)
   const [notice, setNotice] = useState(null)
@@ -352,6 +353,12 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
   const ordered = useMemo(() => sortNodes(filtered, sort.key, sort.direction), [filtered, sort])
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const visibleNodes = ordered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const selectedNodes = useMemo(() => nodes.filter((node) => node.id && selectedIDs.has(node.id)), [nodes, selectedIDs])
+  const selectedNodeIDs = useMemo(() => selectedNodes.map((node) => node.id), [selectedNodes])
+  const selectedFilteredCount = useMemo(() => filtered.reduce((count, node) => count + (node.id && selectedIDs.has(node.id) ? 1 : 0), 0), [filtered, selectedIDs])
+  const allFilteredSelected = filtered.length > 0 && selectedFilteredCount === filtered.length
+  const selectedNode = selectedNodes.length === 1 ? selectedNodes[0] : null
+  const selectedManual = selectedNode && manualOverride === (selectedNode.outboundTag || selectedNode.tag)
   const countryOptions = useMemo(() => [...new Set(nodes.map((node) => node.countryCode).filter(Boolean))].sort(), [nodes])
   const sourceOptions = useMemo(() => [...new Set(nodes.map((node) => node.sourceType).filter(Boolean))].sort(), [nodes])
   const statusCounts = useMemo(() => ({
@@ -366,6 +373,26 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
   useEffect(() => {
     if (page > totalPages) onViewStateChange((current) => current.page > totalPages ? { ...current, page: totalPages } : current)
   }, [page, totalPages, onViewStateChange])
+
+  useEffect(() => {
+    const allowed = new Set(filtered.map((node) => node.id).filter(Boolean))
+    setSelectedIDs((current) => {
+      let changed = false
+      const next = new Set()
+      for (const id of current) {
+        if (allowed.has(id)) next.add(id)
+        else changed = true
+      }
+      return changed ? next : current
+    })
+  }, [filtered])
+
+  useEffect(() => {
+    if (editingID && (!selectedNode || selectedNode.id !== editingID)) {
+      setEditingID('')
+      setReplacement('')
+    }
+  }, [editingID, selectedNode])
 
   const chooseFilter = (key, value) => {
     onViewStateChange((current) => ({ ...current, [key]: value, page: 1 }))
@@ -404,6 +431,31 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
       page: 1,
     }))
   }
+
+  const toggleSelection = (id) => {
+    if (!id) return
+    setSelectedIDs((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleAllFiltered = () => {
+    const filteredIDs = filtered.map((node) => node.id).filter(Boolean)
+    setSelectedIDs((current) => {
+      const next = new Set(current)
+      const allSelected = filteredIDs.length > 0 && filteredIDs.every((id) => next.has(id))
+      for (const id of filteredIDs) {
+        if (allSelected) next.delete(id)
+        else next.add(id)
+      }
+      return next
+    })
+  }
+
+  const clearSelection = () => setSelectedIDs(new Set())
 
   const requestPreview = async (path, payload, effectiveImpact = '') => {
     if (lifecycleBlocked) return
@@ -449,8 +501,9 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
     }
   }
 
-  const openEditor = (id) => {
-    setEditingID(editingID === id ? '' : id)
+  const openEditor = () => {
+    if (!selectedNode) return
+    setEditingID(editingID === selectedNode.id ? '' : selectedNode.id)
     setReplacement('')
   }
 
@@ -526,22 +579,38 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
       </div>
     </div>
 
-    <div className="table-wrap"><table className="nodes-table"><thead><tr><SortHeader label="Name" sortKey="name" sort={sort} onSort={changeSort} /><SortHeader label="Address" sortKey="address" sort={sort} onSort={changeSort} /><SortHeader label="Health" sortKey="health" sort={sort} onSort={changeSort} /><SortHeader label="Latency" sortKey="latency" sort={sort} onSort={changeSort} /><SortHeader label="Role" sortKey="role" sort={sort} onSort={changeSort} /><SortHeader label="Source" sortKey="source" sort={sort} onSort={changeSort} /><SortHeader label="Throughput" sortKey="throughput" sort={sort} onSort={changeSort} /><th aria-label="Actions"></th></tr></thead><tbody>
-      {visibleNodes.map((node) => <NodeRows key={node.id || node.tag} node={node} manualOverride={manualOverride} onSetManualOverride={setManualOverride} editing={editingID === node.id} replacement={replacement} setReplacement={setReplacement} busy={busy || lifecycleBlocked} openEditor={openEditor} requestPreview={requestPreview} />)}
+    <div className="node-selection-toolbar" role="toolbar" aria-label="Selected node actions">
+      <div className="selection-summary"><strong data-testid="selected-count">{selectedIDs.size} selected</strong><button className="clear-filters" type="button" onClick={toggleAllFiltered} disabled={busy || lifecycleBlocked || !filtered.length || allFilteredSelected}>Select all {filtered.length} filtered</button><button className="clear-filters" type="button" onClick={clearSelection} disabled={busy || lifecycleBlocked || !selectedIDs.size}>Clear selection</button></div>
+      <div className="selection-actions">
+        <button type="button" onClick={() => setManualOverride(selectedManual ? '' : (selectedNode.outboundTag || selectedNode.tag))} disabled={busy || lifecycleBlocked || !selectedNode || (!selectedManual && !selectedNode.enabled)}>{selectedManual ? 'Clear manual override' : 'Set manual override'}</button>
+        <button type="button" onClick={openEditor} disabled={busy || lifecycleBlocked || selectedNodes.length !== 1}>Edit / replace profile</button>
+        <button type="button" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: true })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => node.enabled)}>Enable</button>
+        <button type="button" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: false })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => !node.enabled)}>Disable</button>
+        <button type="button" className="danger-action" onClick={() => requestPreview('/api/v1/nodes/batch/remove/preview', { nodeIds: selectedNodeIDs })} disabled={busy || lifecycleBlocked || !selectedNodes.length}>Delete</button>
+      </div>
+    </div>
+
+    {selectedNode && editingID === selectedNode.id && <div className="selection-editor">
+      <div><span className="panel-label">Replace profile</span><NodeName node={selectedNode} /><small>Stable tag: <code>{selectedNode.outboundTag || selectedNode.tag}</code></small></div>
+      <input aria-label="Replacement VLESS profile" value={replacement} onChange={(event) => setReplacement(event.target.value)} placeholder="Replacement vless:// profile" type="password" autoComplete="off" autoFocus />
+      <div className="inline-editor-actions"><button className="ghost" type="button" onClick={() => { setEditingID(''); setReplacement('') }}>Cancel</button><button type="button" disabled={busy || lifecycleBlocked || !replacement.trim()} onClick={() => requestPreview('/api/v1/nodes/replace/preview', { id: selectedNode.id, profile: replacement })}>Preview replacement</button></div>
+    </div>}
+
+    <div className="table-wrap"><table className="nodes-table"><thead><tr><th className="selection-column"><SelectionCheckbox label="Select all filtered nodes" checked={allFilteredSelected} indeterminate={selectedFilteredCount > 0 && !allFilteredSelected} onChange={toggleAllFiltered} /></th><SortHeader label="Name" sortKey="name" sort={sort} onSort={changeSort} /><SortHeader label="Address" sortKey="address" sort={sort} onSort={changeSort} /><SortHeader label="Health" sortKey="health" sort={sort} onSort={changeSort} /><SortHeader label="Latency" sortKey="latency" sort={sort} onSort={changeSort} /><SortHeader label="Role" sortKey="role" sort={sort} onSort={changeSort} /><SortHeader label="Source" sortKey="source" sort={sort} onSort={changeSort} /><SortHeader label="Throughput" sortKey="throughput" sort={sort} onSort={changeSort} /></tr></thead><tbody>
+      {visibleNodes.map((node) => <NodeRows key={node.id || node.tag} node={node} selected={selectedIDs.has(node.id)} onToggle={() => toggleSelection(node.id)} />)}
       {!visibleNodes.length && <tr><td colSpan="8" className="empty">No nodes match this view.</td></tr>}
     </tbody></table></div>
 
     <Pagination page={page} totalPages={totalPages} onPage={(value) => onViewStateChange((current) => ({ ...current, page: value }))} />
-    {preview && <PreviewDialog preview={preview} busy={busy || lifecycleBlocked} onCancel={cancelPreview} onApply={applyPreview} />}
+    {preview && <PreviewDialog preview={preview} nodes={nodes} manualOverride={manualOverride} busy={busy || lifecycleBlocked} onCancel={cancelPreview} onApply={applyPreview} />}
   </section>
 }
 
-function NodeRows({ node, manualOverride, onSetManualOverride, editing, replacement, setReplacement, busy, openEditor, requestPreview }) {
+function NodeRows({ node, selected, onToggle }) {
   const health = node.alive ? 'Alive' : (node.enabled ? (node.lastError || 'No data') : 'Disabled')
-  const target = node.outboundTag || node.tag
-  const manual = manualOverride === target
   return <>
-    <tr className={editing ? 'editing' : ''}>
+    <tr>
+      <td className="selection-column"><SelectionCheckbox label={`Select ${visibleNodeName(node)}`} checked={selected} onChange={onToggle} /></td>
       <td><NodeName node={node} />{node.stale && <span className="chip amber">stale</span>}</td>
       <td><code className="address">{node.address || '—'}</code></td>
       <td><span className={`status-dot ${node.alive ? 'up' : 'down'}`}></span>{health}</td>
@@ -549,31 +618,31 @@ function NodeRows({ node, manualOverride, onSetManualOverride, editing, replacem
       <td><NodeBadges node={node} /></td>
       <td><span>{node.subscriptionName || node.sourceType || 'legacy'}</span></td>
       <td>{formatThroughput(node)}</td>
-      <td><div className="row-actions">
-        <IconButton icon="target" label={manual ? `Clear manual override for ${visibleNodeName(node)}` : `Set ${visibleNodeName(node)} as manual override`} active={manual} disabled={busy || (!node.enabled && !manual)} onClick={() => onSetManualOverride(manual ? '' : target)} />
-        <IconButton icon="edit" label={`Edit ${visibleNodeName(node)}`} disabled={busy || !node.id} active={editing} onClick={() => openEditor(node.id)} />
-        <IconButton icon="power" label={node.enabled ? `Disable ${visibleNodeName(node)}` : `Enable ${visibleNodeName(node)}`} disabled={busy || !node.id} onClick={() => requestPreview(`/api/v1/nodes/${node.id}/state/preview`, { enabled: !node.enabled }, node.isEffective && node.enabled ? 'disable' : '')} />
-        <IconButton icon="trash" label={`Remove ${visibleNodeName(node)}`} tone="danger" disabled={busy || !node.id} onClick={() => requestPreview(`/api/v1/nodes/${node.id}/remove/preview`, {}, node.isEffective ? 'remove' : '')} />
-      </div></td>
     </tr>
-    {editing && <tr className="editor-row"><td colSpan="8"><div className="inline-editor">
-      <div><span className="panel-label">Replace profile</span><strong>{visibleNodeName(node)}</strong><small>Stable tag: <code>{node.outboundTag || node.tag}</code></small></div>
-      <input value={replacement} onChange={(event) => setReplacement(event.target.value)} placeholder="Replacement vless:// profile" type="password" autoComplete="off" autoFocus />
-      <div className="inline-editor-actions"><button className="ghost" type="button" onClick={() => openEditor(node.id)}>Cancel</button><button type="button" disabled={busy || !replacement.trim()} onClick={() => requestPreview('/api/v1/nodes/replace/preview', { id: node.id, profile: replacement })}>Preview replacement</button></div>
-    </div></td></tr>}
   </>
 }
 
-function PreviewDialog({ preview, busy, onCancel, onApply }) {
+function PreviewDialog({ preview, nodes, manualOverride, busy, onCancel, onApply }) {
+  const byID = new Map(nodes.map((node) => [node.id, node]))
+  const changes = preview.changes || []
+  const effectiveChanged = changes.some((change) => byID.get(change.id)?.isEffective)
+  const manualChanged = changes.some((change) => {
+    const node = byID.get(change.id)
+    return node && (node.isOverride || manualOverride === (node.outboundTag || node.tag))
+  })
+  const subscriptionRemovals = changes.some((change) => change.action && change.after === 'removed' && change.sourceType === 'subscription')
   return <div className="modal-backdrop" role="presentation">
     <div className="preview-dialog" role="dialog" aria-modal="true" aria-label="Preview node change">
       <div className="dialog-heading"><div><span className="panel-label">Preview · {preview.operation}</span><h3>{preview.noop ? 'No persistent change' : `${preview.changes?.length || 0} node changes`}</h3></div><IconButton icon="close" label="Close preview" onClick={onCancel} disabled={busy} /></div>
       <div className="diff-list">
-        {(preview.changes || []).map((change) => <div className="diff-row" key={`${change.action}-${change.id}`}><strong>{change.name}</strong><span>{change.before} → {change.after}</span></div>)}
+        {changes.map((change) => <div className="diff-row" key={`${change.action}-${change.id}`}><strong>{change.name}</strong><span>{change.before} → {change.after}</span></div>)}
         {preview.noop && <p className="muted">The fetched or requested state matches the current registry.</p>}
       </div>
       {preview.requiresAcceptance && <p className="warning">The provider response is missing existing nodes. Applying keeps them stale/missing; remove them separately through another explicit preview.</p>}
-      {preview.effectiveImpact && <p className="warning" role="alert">This operation will {preview.effectiveImpact} the currently effective node. Active proxy traffic will be reselected after Apply.</p>}
+      {effectiveChanged && <p className="warning" role="alert">The currently effective node changes in this preview. Active proxy traffic will be reselected after Apply.</p>}
+      {manualChanged && <p className="warning" role="alert">The current manual-override node changes in this preview. The supervisor owns subsequent reconciliation; this batch mutation does not write override state.</p>}
+      {subscriptionRemovals && <p className="warning" role="alert">A removed subscription-owned node may return on a later subscription refresh while it remains upstream.</p>}
+      {preview.effectiveImpact && !effectiveChanged && <p className="warning" role="alert">This operation will {preview.effectiveImpact} the currently effective node. Active proxy traffic will be reselected after Apply.</p>}
       <div className="preview-actions"><button className="ghost" type="button" onClick={onCancel} disabled={busy}>Cancel</button><button type="button" onClick={onApply} disabled={busy}>{busy ? 'Applying…' : (preview.noop ? 'Confirm no-op' : 'Apply and validate')}</button></div>
     </div>
   </div>
@@ -820,6 +889,14 @@ function SortHeader({ label, sortKey, sort, onSort }) {
   const active = sort.key === sortKey
   const direction = active ? sort.direction : 'none'
   return <th aria-sort={direction === 'none' ? 'none' : direction === 'asc' ? 'ascending' : 'descending'}><button className={`sort-button ${active ? 'active' : ''}`} type="button" onClick={() => onSort(sortKey)}>{label}<span aria-hidden="true">{active ? (sort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></button></th>
+}
+
+function SelectionCheckbox({ checked, indeterminate = false, label, onChange }) {
+  const inputRef = useRef(null)
+  useEffect(() => {
+    if (inputRef.current) inputRef.current.indeterminate = indeterminate
+  }, [indeterminate])
+  return <input ref={inputRef} type="checkbox" aria-label={label} checked={checked} onChange={onChange} />
 }
 
 function NodeName({ node }) {

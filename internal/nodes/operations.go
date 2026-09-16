@@ -32,6 +32,7 @@ var (
 	ErrSubscriptionDisabled  = errors.New("subscription is disabled")
 	ErrPreviewCandidate      = errors.New("preview candidate is invalid")
 	ErrSnapshotUnavailable   = errors.New("node registry snapshot unavailable")
+	ErrBatchInvalid          = errors.New("node batch selection is invalid")
 )
 
 type Config struct {
@@ -290,6 +291,38 @@ func (m *Manager) PreviewState(binding, id string, enabled bool) (Preview, error
 	return Preview{}, ErrNodeNotFound
 }
 
+// PreviewBatchState builds one candidate for the complete selected node set.
+// Validation happens before the candidate is cloned or mutated so a malformed,
+// duplicate, unknown, or subscription-inadmissible selection cannot create a
+// partially valid preview.
+func (m *Manager) PreviewBatchState(binding string, nodeIDs []string, enabled bool) (Preview, error) {
+	registry, err := m.current()
+	if err != nil {
+		return Preview{}, err
+	}
+	selected, err := validateBatchNodeIDs(registry, nodeIDs)
+	if err != nil {
+		return Preview{}, err
+	}
+	if enabled && batchHasDisabledSubscription(registry, selected) {
+		return Preview{}, ErrSubscriptionDisabled
+	}
+	before, err := cloneRegistry(registry)
+	if err != nil {
+		return Preview{}, err
+	}
+	for index := range registry.Nodes {
+		if _, ok := selected[registry.Nodes[index].ID]; ok {
+			registry.Nodes[index].Enabled = enabled
+		}
+	}
+	operation := "batch-disable"
+	if enabled {
+		operation = "batch-enable"
+	}
+	return m.createPreview(binding, before, registry, operation, false)
+}
+
 func (m *Manager) PreviewSubscriptionState(binding, id string, enabled bool) (Preview, error) {
 	registry, err := m.current()
 	if err != nil {
@@ -368,6 +401,32 @@ func (m *Manager) PreviewRemove(binding, id string) (Preview, error) {
 		}
 	}
 	return Preview{}, ErrNodeNotFound
+}
+
+// PreviewBatchRemove builds one candidate that removes exactly the selected
+// nodes. Subscription records are intentionally retained; exact upstream
+// reconciliation belongs to the later subscription slice.
+func (m *Manager) PreviewBatchRemove(binding string, nodeIDs []string) (Preview, error) {
+	registry, err := m.current()
+	if err != nil {
+		return Preview{}, err
+	}
+	selected, err := validateBatchNodeIDs(registry, nodeIDs)
+	if err != nil {
+		return Preview{}, err
+	}
+	before, err := cloneRegistry(registry)
+	if err != nil {
+		return Preview{}, err
+	}
+	filtered := make([]Node, 0, len(registry.Nodes)-len(selected))
+	for _, node := range registry.Nodes {
+		if _, ok := selected[node.ID]; !ok {
+			filtered = append(filtered, node)
+		}
+	}
+	registry.Nodes = filtered
+	return m.createPreview(binding, before, registry, "batch-remove", false)
 }
 
 func (m *Manager) PreviewRefresh(ctx context.Context, binding, subscriptionID, name, rawURL string) (Preview, error) {
@@ -657,6 +716,46 @@ func (m *Manager) createPreview(binding string, before, registry Registry, opera
 	m.previews[token] = entry
 	m.mu.Unlock()
 	return Preview{Token: token, Operation: operation, ExpiresAt: expires, Changes: changes, RequiresAcceptance: requiresAcceptance, Noop: noop}, nil
+}
+
+func validateBatchNodeIDs(registry Registry, nodeIDs []string) (map[string]struct{}, error) {
+	if len(nodeIDs) < 1 || len(nodeIDs) > MaxNodes {
+		return nil, ErrBatchInvalid
+	}
+	selected := make(map[string]struct{}, len(nodeIDs))
+	available := make(map[string]struct{}, len(registry.Nodes))
+	for _, node := range registry.Nodes {
+		available[node.ID] = struct{}{}
+	}
+	for _, id := range nodeIDs {
+		if !validIdentifier(id) {
+			return nil, ErrBatchInvalid
+		}
+		if _, exists := selected[id]; exists {
+			return nil, ErrBatchInvalid
+		}
+		if _, exists := available[id]; !exists {
+			return nil, ErrBatchInvalid
+		}
+		selected[id] = struct{}{}
+	}
+	return selected, nil
+}
+
+func batchHasDisabledSubscription(registry Registry, selected map[string]struct{}) bool {
+	subscriptions := make(map[string]bool, len(registry.Subscriptions))
+	for _, subscription := range registry.Subscriptions {
+		subscriptions[subscription.ID] = subscription.Enabled
+	}
+	for _, node := range registry.Nodes {
+		if _, ok := selected[node.ID]; !ok || node.Source.Type != "subscription" {
+			continue
+		}
+		if !subscriptions[node.Source.SubscriptionID] {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) purgeExpiredLocked(now time.Time) {
