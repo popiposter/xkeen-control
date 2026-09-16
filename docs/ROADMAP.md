@@ -42,7 +42,7 @@ public source + signed GitHub Releases (#2, done)
         ↓
 local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
-managed XKeen / Xray / geodata lifecycle (#4, active; beta.2 admission PASS; exact install authorization next)
+managed XKeen / Xray / geodata lifecycle (#4, active; trial beta.2 VERIFIED BETA; Gate 3 authorized/next)
         ↓
 visual typed configuration + transactional render/apply (#5, planned)
 ```
@@ -58,7 +58,7 @@ visual typed configuration + transactional render/apply (#5, planned)
 | Pre-D — canonical Go module/import identity | Done | Issue #8 / PR #9 | Canonical `github.com/popiposter/xkeen-control` provenance; no runtime behavior change |
 | D — releases/bootstrap/panel self-update | Done | Issue #2 / `v0.1.1` | Public signed Releases, CI/release pipeline, one-command bootstrap, setup mode, transactional panel update/rollback |
 | D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
-| D.2 — component lifecycle | **Active — beta.2 admission PASS; exact beta install/original-return authorization next** | Issue #4 / `v0.3.0-beta.2` | Signed beta.2 is public and independently verified; read-only install admission passed; production router remains `v0.2.0` until separately authorized exact Apply |
+| D.2 — component lifecycle | **Active — trial beta.2 VERIFIED BETA; Gate 3 read-only smoke authorized/next** | Issue #4 / `v0.3.0-beta.2` | Live router temporarily runs verified beta.2; production-qualified stable remains `v0.2.0`; fresh exact stable rollback snapshot is retained; component mutation is not yet authorized |
 | D.3 — visual configuration | Planned | Issue #5 | Planned typed routing/DNS/XKeen/Xray/panel/performance UI and deterministic render/apply; not deployed |
 | E — notifications/security hardening | Planned after D.3 | master issue #1 | Outbound alerts, management-VPN guidance, final attack-surface hardening |
 
@@ -91,7 +91,7 @@ Safe export excludes secrets by default; secret-bearing export is explicit and e
 
 Pre-adoption compatibility is explicit: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit and unknown/manual drift fails closed.
 
-## D.2 / Issue #4 — active; beta.2 admission PASS; exact beta install authorization next
+## D.2 / Issue #4 — active; trial beta.2 VERIFIED BETA; Gate 3 authorized/next
 
 Phase A merged via PR #23 to `main` `bda9dd0cc7bb142a4cb1468811fff9b5146b1e8e`; source main gained the bounded read-only component inventory and authenticated `GET /api/v1/components` for panel, XKeen, Xray, geodata, KeeneticOS and Entware.
 
@@ -123,15 +123,17 @@ PR #48 then refreshed the one immutable qualified XKeen catalog entry to the Sep
 
 Issue #60 / PR #61 then repaired the Q1 scheduler-provenance contract for implicit `crond` defaults without changing runtime behavior. The corrected live writer-containment requalification passed, followed by a completely fresh beta.2 read-only install admission. Report `5683192737` proves stable identity/health, D.1 validate/verify, pending-state settlement, unchanged update policy, intentional `manual-override`, exact beta.2 Check, 20 bounded resource samples and final writer/stable re-check. No Apply/Rollback or other production mutation occurred.
 
-The current [Issue #4](https://github.com/popiposter/xkeen-control/issues/4) remains the Q1 scope/acceptance authority and `docs/OPERATIONS.md` remains the exact bounded operator protocol. Completed Q0 authority is PR #41 / review `5122799862`; completed F2 authority is PR #39 / review `5121493878`. Gate 1 authority is report `5584461861`; beta.2 Gate 2 host authority is report `5681478283`; beta.2 install-admission authority is report `5683192737`.
+The separately authorized exact beta.2 panel install then completed **VERIFIED BETA** in report `5693384881`: one Apply handoff was accepted with no replay, the exact signed beta generation is running and healthy, protected state and saved policy were preserved, post-install writer containment passed, and a fresh exact original `v0.2.0` panel rollback snapshot is retained. This is a trial-panel qualification state, not stable promotion.
+
+The current [Issue #4](https://github.com/popiposter/xkeen-control/issues/4) remains the Q1 scope/acceptance authority and `docs/OPERATIONS.md` remains the exact bounded operator protocol. Completed Q0 authority is PR #41 / review `5122799862`; completed F2 authority is PR #39 / review `5121493878`. Gate 1 authority is report `5584461861`; beta.2 Gate 2 host authority is report `5681478283`; beta.2 install-admission authority is report `5683192737`; verified beta-panel install authority is report `5693384881`.
 
 The simplicity decisions in [master issue #1](https://github.com/popiposter/xkeen-control/issues/1) remain in force: one Go process, embedded UI, distinct component gate → runtime Coordinator → authority lease boundaries, fixed trust adapters and bounded journals/rollback. Q1 adds no generic transaction/form/pipeline framework, job queue/history, database, metrics agent, new API or runtime dependencies. Existing F2 behavior is the subject of qualification, not a reason to expand the product.
 
-**Next is explicit authorization for one exact beta.2 panel install plus the eventual original stable panel return**, not another admission pass. Production remains signed stable `v0.2.0` until the exact Apply is separately authorized and independently verified.
+**Next is the separately authorized Gate 3 read-only Components / Updates smoke plus exact candidate proof**, not component mutation. The live router remains on trial `v0.3.0-beta.2`; production-qualified stable remains `v0.2.0` and its fresh rollback snapshot is retained.
 
-Before any authorized Apply, refresh settlement-consistent stable identity/resources/pending/writer state and repeat the exact beta.2 Check. Use the existing explicit-version signed update path and do not call `/update/policy`. HTTP 202 is handoff acceptance only: independently verify exact running `0.3.0-beta.2` version/source/channel, PID/executable path/hash and health, plus unchanged protected policy/appliance/node/auth/listener state. The trial rollback authority is the updater-created fresh snapshot of the then-current signed `v0.2.0` generation, not historical previous-panel contents. Unknown/lost outcome stops without replay or opportunistic rollback.
+Gate 3 permits one lazy inventory load and, at most once per class, `Check -> Preview update -> inspect -> Cancel` for Xray/stable, geodata/stable and XKeen/dev, followed by independent exact candidate proof and final D.1/protected-state/writer/pending re-check. No component Apply/Rollback or panel rollback is authorized by Gate 3. Gate 3 PASS means only `eligible to request a separate exact Xray update + explicit rollback pair`.
 
-After verified beta.2 installation, Gate 3 remains bounded read-only F2 smoke plus exact candidate proof. Later gates separately authorize Xray update/verified rollback → complete geodata update/verified rollback → XKeen update/verified rollback, restoring each component baseline before the next class and settling all component state before original-panel return.
+After Gate 3 PASS, later gates separately authorize Xray update/verified rollback → complete geodata update/verified rollback → XKeen update/verified rollback, restoring each component baseline before the next class and settling all component state before the already-authorized original stable panel return.
 
 Then refresh F3 bounded `off|notify|manual` check-only policy/scheduler and G supported Setup Mode installation against evidence and concrete need. F3/G remain planned, not canceled or deployed, and are not prerequisites for manual qualification. Issue #4 stays open until its explicitly retained scope is qualified and closed out; #5 and stable promotion require separate decisions.
 
