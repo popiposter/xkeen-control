@@ -174,6 +174,17 @@ func XrayCandidateReasonCode(err error) (string, bool) {
 	return string(rejection.ReasonCode), true
 }
 
+func xrayArtifactCandidateReason(err error) XrayCandidateReason {
+	switch {
+	case errors.Is(err, errXrayArtifactContent):
+		return XrayCandidateReasonArtifactIntegrity
+	case errors.Is(err, errXrayArtifactDestination):
+		return XrayCandidateReasonStagingIO
+	default:
+		return XrayCandidateReasonArtifactDownload
+	}
+}
+
 // XrayAuthoritySnapshot contains typed D.1 authorities plus a digest of the
 // complete adopted/coherent generation. Registry credentials may exist only
 // in this internal in-memory value; Generation is the only value retained for
@@ -768,7 +779,7 @@ func (s *XrayService) prepare(ctx context.Context, intended XrayReleaseIdentity)
 	syncErr := archive.Sync()
 	closeErr := archive.Close()
 	if downloadErr != nil {
-		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonArtifactDownload)
+		return preparedXray{}, newXrayCandidateRejected(xrayArtifactCandidateReason(downloadErr))
 	}
 	if syncErr != nil || closeErr != nil {
 		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonStagingIO)
