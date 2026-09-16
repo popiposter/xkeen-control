@@ -222,9 +222,13 @@ The authenticated status projection now includes Coordinator-observed
 `lifecycle.maintenance` and `lifecycle.applying` hints. They add no new owner,
 journal or persistence, and an unavailable projection fails closed in the UI.
 Component errors expose a stable allowlisted `code` alongside the existing safe
-message without changing their HTTP statuses. F2 adds no policy, scheduler,
-automatic install, operation-history endpoint, production deployment or live
-qualification.
+message without changing their HTTP statuses. An Xray `candidate-rejected`
+error may additionally carry one closed sanitized `reasonCode` for the
+pre-commit class (`artifact-download`, `artifact-integrity`, `archive-extract`,
+`binary-probe`, `candidate-render`, `candidate-config-validation`, `staging-io`
+or `candidate-validation`); raw errors and candidate details never cross the
+HTTP/UI boundary. F2 adds no policy, scheduler, automatic install,
+operation-history endpoint, production deployment or live qualification.
 
 ## Planned later capabilities
 

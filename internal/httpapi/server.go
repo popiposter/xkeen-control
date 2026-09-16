@@ -1345,7 +1345,8 @@ func writeComponentMutationError(w http.ResponseWriter, err error) {
 	case errors.Is(err, components.ErrMutationMetadataUnavailable):
 		writeCodedError(w, http.StatusBadGateway, "metadata-unavailable", "component metadata unavailable")
 	case errors.Is(err, components.ErrMutationCandidateRejected):
-		writeCodedError(w, http.StatusBadGateway, "candidate-rejected", "component candidate rejected")
+		reasonCode, _ := components.MutationCandidateRejectionReason(err)
+		writeCodedErrorWithReason(w, http.StatusBadGateway, "candidate-rejected", "component candidate rejected", reasonCode)
 	case errors.Is(err, components.ErrMutationTransactionFailed):
 		writeCodedError(w, http.StatusInternalServerError, "transaction-restored", "component transaction failed; previous generation restored")
 	case errors.Is(err, components.ErrMutationTransactionUnproven):
@@ -1441,6 +1442,14 @@ func writeCodedError(w http.ResponseWriter, status int, code, message string) {
 		Code  string `json:"code"`
 		Error string `json:"error"`
 	}{Code: code, Error: message})
+}
+
+func writeCodedErrorWithReason(w http.ResponseWriter, status int, code, message, reasonCode string) {
+	writeJSON(w, status, struct {
+		Code       string `json:"code"`
+		Error      string `json:"error"`
+		ReasonCode string `json:"reasonCode,omitempty"`
+	}{Code: code, Error: message, ReasonCode: reasonCode})
 }
 
 func methodNotAllowed(w http.ResponseWriter, method string) {

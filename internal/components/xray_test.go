@@ -122,6 +122,130 @@ func TestXrayApplyRejectsArtifactHashSizeAndFreeSpaceBeforeActivation(t *testing
 	}
 }
 
+func TestXrayApplyReportsSanitizedPreCommitRejectionReasons(t *testing.T) {
+	tests := []struct {
+		name     string
+		reason   XrayCandidateReason
+		identity func(*xrayFixture) XrayReleaseIdentity
+		setup    func(*xrayFixture)
+	}{
+		{
+			name:   "artifact download",
+			reason: XrayCandidateReasonArtifactDownload,
+			setup: func(fixture *xrayFixture) {
+				fixture.downloader.err = errors.New("synthetic upstream transport detail")
+			},
+		},
+		{
+			name:   "artifact integrity",
+			reason: XrayCandidateReasonArtifactIntegrity,
+			setup: func(fixture *xrayFixture) {
+				fixture.identity.SHA256 = strings.Repeat("b", 64)
+				fixture.resolver.identity = fixture.identity
+			},
+		},
+		{
+			name:   "archive extract",
+			reason: XrayCandidateReasonArchiveExtract,
+			setup: func(fixture *xrayFixture) {
+				archive := []byte("synthetic archive rejection")
+				digest := sha256.Sum256(archive)
+				fixture.identity.SizeBytes = int64(len(archive))
+				fixture.identity.SHA256 = fmt.Sprintf("%x", digest[:])
+				fixture.resolver.identity = fixture.identity
+				fixture.downloader.archive = archive
+			},
+		},
+		{
+			name:   "binary probe",
+			reason: XrayCandidateReasonBinaryProbe,
+			setup: func(fixture *xrayFixture) {
+				fixture.probe.newVersion = "1.2.4"
+			},
+		},
+		{
+			name:   "candidate render",
+			reason: XrayCandidateReasonCandidateRender,
+			setup: func(fixture *xrayFixture) {
+				fixture.service.config.InjectFailure = func(stage XrayStage) error {
+					if stage == XrayStageCandidateRender {
+						return errors.New("synthetic candidate render detail")
+					}
+					return nil
+				}
+			},
+		},
+		{
+			name:   "candidate config validation",
+			reason: XrayCandidateReasonCandidateConfig,
+			setup: func(fixture *xrayFixture) {
+				fixture.validator.err = errors.New("synthetic config validation detail")
+			},
+		},
+		{
+			name:   "staging io",
+			reason: XrayCandidateReasonStagingIO,
+			setup: func(fixture *xrayFixture) {
+				fixture.service.config.InjectFailure = func(stage XrayStage) error {
+					if stage == XrayStageCandidateWrite {
+						return errors.New("synthetic staging detail")
+					}
+					return nil
+				}
+			},
+		},
+		{
+			name:   "generic candidate validation fallback",
+			reason: XrayCandidateReasonCandidateValidation,
+			identity: func(fixture *xrayFixture) XrayReleaseIdentity {
+				return XrayReleaseIdentity{Tag: fixture.identity.Tag}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newXrayFixture(t)
+			if test.setup != nil {
+				test.setup(fixture)
+			}
+			identity := fixture.identity
+			if test.identity != nil {
+				identity = test.identity(fixture)
+			}
+			err := fixture.service.Apply(context.Background(), identity)
+			if !errors.Is(err, ErrXrayCandidateRejected) {
+				t.Fatalf("apply error = %v, want candidate rejection", err)
+			}
+			reason, ok := XrayCandidateReasonCode(err)
+			if !ok || reason != string(test.reason) {
+				t.Fatalf("reason code = %q, present=%v, want %q", reason, ok, test.reason)
+			}
+			if strings.Contains(err.Error(), "synthetic") || strings.Contains(err.Error(), string(test.reason)) {
+				t.Fatalf("candidate detail leaked through error text: %q", err)
+			}
+			if got := string(readFixtureFile(t, fixture.activePath)); got != "old-xray-binary" {
+				t.Fatalf("rejected candidate changed active binary: %q", got)
+			}
+			for _, path := range []string{fixture.journalPath, fixture.previousDir, fixture.previousDir + xrayPreviousStagingSuffix, fixture.previousDir + xrayPreviousOldSuffix} {
+				if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) {
+					t.Fatalf("pre-commit rejection left persistent path %q: %v", path, statErr)
+				}
+			}
+			entries, readErr := os.ReadDir(fixture.stagingDir)
+			if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+				t.Fatalf("read staging root: %v", readErr)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("pre-commit rejection left staging entries: %v", entries)
+			}
+			if fixture.runtime.validateCalls != 0 || fixture.runtime.restartCalls != 0 || fixture.runtime.readyCalls != 0 || fixture.runtime.verifyCalls != 0 {
+				t.Fatalf("pre-commit rejection reached runtime: validate=%d restart=%d ready=%d verify=%d", fixture.runtime.validateCalls, fixture.runtime.restartCalls, fixture.runtime.readyCalls, fixture.runtime.verifyCalls)
+			}
+		})
+	}
+}
+
 func TestXrayApplyStagesCompleteCandidateAndCommitsOnePreviousGeneration(t *testing.T) {
 	fixture := newXrayFixture(t)
 	if err := fixture.service.Apply(context.Background(), fixture.identity); err != nil {

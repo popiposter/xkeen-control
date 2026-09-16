@@ -432,6 +432,44 @@ func TestMutationErrorMappingRequiresVerifiedCoreRestore(t *testing.T) {
 	}
 }
 
+func TestMutationServicePreservesSanitizedXrayCandidateReason(t *testing.T) {
+	backend := &f1XrayBackend{applyErr: newXrayCandidateRejected(XrayCandidateReasonBinaryProbe)}
+	service := NewMutationService(MutationConfig{
+		XrayResolver: &f1XrayResolver{identity: f1XrayIdentity()},
+		Xray:         backend,
+	})
+	preview, err := service.Preview(context.Background(), "session-a", MutationRequest{Component: KindXray, Operation: MutationOperationUpdate, Channel: MutationChannelStable})
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	_, err = service.Apply(context.Background(), "session-a", preview.PreviewToken)
+	if !errors.Is(err, ErrMutationCandidateRejected) {
+		t.Fatalf("apply error = %v, want candidate rejection", err)
+	}
+	reason, ok := MutationCandidateRejectionReason(err)
+	if !ok || reason != string(XrayCandidateReasonBinaryProbe) {
+		t.Fatalf("reason code = %q, present=%v", reason, ok)
+	}
+	if err.Error() != ErrMutationCandidateRejected.Error() || strings.Contains(err.Error(), "binary-probe") {
+		t.Fatalf("candidate detail leaked through broker error: %q", err)
+	}
+}
+
+func TestMutationPreviewProjectsInvalidXrayIdentityReason(t *testing.T) {
+	service := NewMutationService(MutationConfig{
+		XrayResolver: &f1XrayResolver{identity: XrayReleaseIdentity{Tag: "invalid"}},
+		Xray:         &f1XrayBackend{},
+	})
+	_, err := service.Preview(context.Background(), "session-a", MutationRequest{Component: KindXray, Operation: MutationOperationUpdate, Channel: MutationChannelStable})
+	if !errors.Is(err, ErrMutationCandidateRejected) {
+		t.Fatalf("preview error = %v, want candidate rejection", err)
+	}
+	reason, ok := MutationCandidateRejectionReason(err)
+	if !ok || reason != string(XrayCandidateReasonCandidateValidation) {
+		t.Fatalf("preview reason code = %q, present=%v", reason, ok)
+	}
+}
+
 func TestMutationServiceDispatchesGeodataAndXKeenTypedIdentities(t *testing.T) {
 	set := f1GeodataSet()
 	geodataBackend := &f1GeodataBackend{previous: GeodataPreviousGeneration{Generation: "previous", Items: []GeodataPreviousItem{{ID: "geosite-refilter", Name: "geosite_refilter.dat", SizeBytes: 1, Mode: 0o600, SHA256: strings.Repeat("b", 64)}}}}

@@ -91,6 +91,89 @@ var (
 	errXrayRedirectRejected       = errors.New("xray artifact redirect rejected")
 )
 
+// XrayCandidateReason is the closed, sanitized classification of a
+// pre-commit candidate rejection. It is safe to expose to the authenticated
+// operator because it contains no paths, URLs, command output or raw errors.
+type XrayCandidateReason string
+
+const (
+	XrayCandidateReasonArtifactDownload    XrayCandidateReason = "artifact-download"
+	XrayCandidateReasonArtifactIntegrity   XrayCandidateReason = "artifact-integrity"
+	XrayCandidateReasonArchiveExtract      XrayCandidateReason = "archive-extract"
+	XrayCandidateReasonBinaryProbe         XrayCandidateReason = "binary-probe"
+	XrayCandidateReasonCandidateRender     XrayCandidateReason = "candidate-render"
+	XrayCandidateReasonCandidateConfig     XrayCandidateReason = "candidate-config-validation"
+	XrayCandidateReasonStagingIO           XrayCandidateReason = "staging-io"
+	XrayCandidateReasonCandidateValidation XrayCandidateReason = "candidate-validation"
+)
+
+func (reason XrayCandidateReason) valid() bool {
+	switch reason {
+	case XrayCandidateReasonArtifactDownload,
+		XrayCandidateReasonArtifactIntegrity,
+		XrayCandidateReasonArchiveExtract,
+		XrayCandidateReasonBinaryProbe,
+		XrayCandidateReasonCandidateRender,
+		XrayCandidateReasonCandidateConfig,
+		XrayCandidateReasonStagingIO,
+		XrayCandidateReasonCandidateValidation:
+		return true
+	default:
+		return false
+	}
+}
+
+// XrayCandidateRejectedError carries only the closed reason code. The
+// optional cause is limited to a stable package sentinel so callers retain
+// the existing errors.Is contract without retaining raw implementation
+// detail.
+type XrayCandidateRejectedError struct {
+	ReasonCode XrayCandidateReason
+	cause      error
+}
+
+func (err *XrayCandidateRejectedError) Error() string { return ErrXrayCandidateRejected.Error() }
+
+func (err *XrayCandidateRejectedError) Unwrap() error {
+	if err == nil {
+		return nil
+	}
+	return err.cause
+}
+
+func (err *XrayCandidateRejectedError) Is(target error) bool {
+	if target == ErrXrayCandidateRejected {
+		return true
+	}
+	return err != nil && err.cause != nil && errors.Is(err.cause, target)
+}
+
+func newXrayCandidateRejected(reason XrayCandidateReason) error {
+	return newXrayCandidateRejectedWithCause(reason, nil)
+}
+
+func newXrayCandidateRejectedWithCause(reason XrayCandidateReason, cause error) error {
+	if !reason.valid() {
+		reason = XrayCandidateReasonCandidateValidation
+	}
+	return &XrayCandidateRejectedError{ReasonCode: reason, cause: cause}
+}
+
+func newXrayArtifactRejected() error {
+	return newXrayCandidateRejectedWithCause(XrayCandidateReasonArtifactIntegrity, ErrXrayArtifactRejected)
+}
+
+// XrayCandidateReasonCode returns a reason only for the typed rejection
+// produced by Xray preparation. A plain sentinel remains intentionally
+// reasonless and is projected as the existing generic candidate rejection.
+func XrayCandidateReasonCode(err error) (string, bool) {
+	var rejection *XrayCandidateRejectedError
+	if !errors.As(err, &rejection) || rejection == nil || !rejection.ReasonCode.valid() {
+		return "", false
+	}
+	return string(rejection.ReasonCode), true
+}
+
 // XrayAuthoritySnapshot contains typed D.1 authorities plus a digest of the
 // complete adopted/coherent generation. Registry credentials may exist only
 // in this internal in-memory value; Generation is the only value retained for
@@ -160,13 +243,20 @@ type XrayMaintenanceGate interface {
 type XrayStage string
 
 const (
-	XrayStagePreviousStaging XrayStage = "previous-staging"
-	XrayStagePreviousSaved   XrayStage = "previous-saved"
-	XrayStageJournalPrepared XrayStage = "journal-prepared"
-	XrayStageBinaryCommitted XrayStage = "binary-committed"
-	XrayStagePreviousSettled XrayStage = "previous-settled"
-	XrayStageRuntimeVerified XrayStage = "runtime-verified"
-	XrayStageJournalCleared  XrayStage = "journal-cleared"
+	XrayStageCandidateStaging  XrayStage = "candidate-staging"
+	XrayStageArtifactDownload  XrayStage = "artifact-download"
+	XrayStageArchiveExtract    XrayStage = "archive-extract"
+	XrayStageBinaryProbe       XrayStage = "binary-probe"
+	XrayStageCandidateRender   XrayStage = "candidate-render"
+	XrayStageCandidateWrite    XrayStage = "candidate-write"
+	XrayStageCandidateValidate XrayStage = "candidate-config-validation"
+	XrayStagePreviousStaging   XrayStage = "previous-staging"
+	XrayStagePreviousSaved     XrayStage = "previous-saved"
+	XrayStageJournalPrepared   XrayStage = "journal-prepared"
+	XrayStageBinaryCommitted   XrayStage = "binary-committed"
+	XrayStagePreviousSettled   XrayStage = "previous-settled"
+	XrayStageRuntimeVerified   XrayStage = "runtime-verified"
+	XrayStageJournalCleared    XrayStage = "journal-cleared"
 )
 
 type XrayConfig struct {
@@ -456,7 +546,7 @@ func (s *XrayService) rollback(ctx context.Context, expected *XrayPreviousGenera
 		return ErrXrayCandidateStale
 	}
 	if err := s.validateLocalCandidate(transactionContext, previous.path, base.authority); err != nil {
-		return ErrXrayCandidateRejected
+		return err
 	}
 	return s.runCommitted(transactionContext, xrayOperationRollback, base, previous.path, previous.meta, true)
 }
@@ -634,7 +724,7 @@ func (s *XrayService) reconcilePreJournalStaging(ctx context.Context) error {
 
 func (s *XrayService) prepare(ctx context.Context, intended XrayReleaseIdentity) (preparedXray, error) {
 	if !validXrayIdentity(intended) {
-		return preparedXray{}, ErrXrayCandidateRejected
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonCandidateValidation)
 	}
 	base, err := s.captureBase(ctx)
 	if err != nil {
@@ -650,9 +740,12 @@ func (s *XrayService) prepare(ctx context.Context, intended XrayReleaseIdentity)
 	if err := s.checkFreeSpace(intended.SizeBytes); err != nil {
 		return preparedXray{}, err
 	}
+	if err := s.inject(XrayStageCandidateStaging); err != nil {
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonStagingIO)
+	}
 	stageDir, err := s.newStagingDir()
 	if err != nil {
-		return preparedXray{}, ErrXrayCandidateRejected
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonStagingIO)
 	}
 	cleanup := true
 	defer func() {
@@ -664,43 +757,65 @@ func (s *XrayService) prepare(ctx context.Context, intended XrayReleaseIdentity)
 	archivePath := filepath.Join(stageDir, "candidate.zip")
 	archive, err := os.OpenFile(archivePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return preparedXray{}, ErrXrayCandidateRejected
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonStagingIO)
 	}
 	writer := &xrayArtifactWriter{destination: archive, hash: hashWriter{Hash: sha256.New()}, limit: intended.SizeBytes}
+	if err := s.inject(XrayStageArtifactDownload); err != nil {
+		_ = archive.Close()
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonArtifactDownload)
+	}
 	downloadErr := s.config.Downloader.DownloadXray(ctx, intended, writer)
 	syncErr := archive.Sync()
 	closeErr := archive.Close()
-	if downloadErr != nil || syncErr != nil || closeErr != nil {
-		return preparedXray{}, ErrXrayCandidateRejected
+	if downloadErr != nil {
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonArtifactDownload)
+	}
+	if syncErr != nil || closeErr != nil {
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonStagingIO)
 	}
 	if writer.count != intended.SizeBytes {
-		return preparedXray{}, ErrXrayArtifactRejected
+		return preparedXray{}, newXrayArtifactRejected()
 	}
 	if !strings.EqualFold(hex.EncodeToString(writer.hash.Sum(nil)), intended.SHA256) {
-		return preparedXray{}, ErrXrayArtifactRejected
+		return preparedXray{}, newXrayArtifactRejected()
 	}
 
 	candidatePath := filepath.Join(stageDir, "candidate-xray")
+	if err := s.inject(XrayStageArchiveExtract); err != nil {
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonArchiveExtract)
+	}
 	if err := extractXrayBinary(ctx, archivePath, candidatePath); err != nil {
-		return preparedXray{}, ErrXrayCandidateRejected
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonArchiveExtract)
+	}
+	if err := s.inject(XrayStageBinaryProbe); err != nil {
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonBinaryProbe)
 	}
 	if err := s.validateCandidateBinary(ctx, candidatePath, intended); err != nil {
-		return preparedXray{}, ErrXrayCandidateRejected
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonBinaryProbe)
+	}
+	if err := s.inject(XrayStageCandidateRender); err != nil {
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonCandidateRender)
 	}
 	files, err := appliance.RenderCandidateFiles(base.authority.Appliance, base.authority.Registry)
 	if err != nil {
-		return preparedXray{}, ErrXrayCandidateRejected
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonCandidateRender)
 	}
 	configDir := filepath.Join(stageDir, "config")
+	if err := s.inject(XrayStageCandidateWrite); err != nil {
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonStagingIO)
+	}
 	if err := writeXrayCandidateTree(configDir, files, s.config.SyncDirectory); err != nil {
-		return preparedXray{}, ErrXrayCandidateRejected
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonStagingIO)
+	}
+	if err := s.inject(XrayStageCandidateValidate); err != nil {
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonCandidateConfig)
 	}
 	if err := s.config.CandidateValidator.ValidateXrayCandidate(ctx, candidatePath, filepath.Join(configDir, "xray"), s.config.AssetDir); err != nil {
-		return preparedXray{}, ErrXrayCandidateRejected
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonCandidateConfig)
 	}
 	candidateMeta, err := binaryMetadata(candidatePath, intended.Version, s.config.CandidateProbe, ctx)
 	if err != nil {
-		return preparedXray{}, ErrXrayCandidateRejected
+		return preparedXray{}, newXrayCandidateRejected(XrayCandidateReasonBinaryProbe)
 	}
 	cleanup = false
 	return preparedXray{identity: intended, base: base, stageDir: stageDir, candidatePath: candidatePath, candidateMeta: candidateMeta}, nil
@@ -812,18 +927,21 @@ func expectedOutboundTags(registry nodes.Registry) []string {
 func (s *XrayService) validateLocalCandidate(ctx context.Context, candidatePath string, authoritySnapshot XrayAuthoritySnapshot) error {
 	files, err := appliance.RenderCandidateFiles(authoritySnapshot.Appliance, authoritySnapshot.Registry)
 	if err != nil {
-		return err
+		return newXrayCandidateRejected(XrayCandidateReasonCandidateRender)
 	}
 	stage, err := s.newStagingDir()
 	if err != nil {
-		return err
+		return newXrayCandidateRejected(XrayCandidateReasonStagingIO)
 	}
 	defer s.removeOwned(stage)
 	configDir := filepath.Join(stage, "config")
 	if err := writeXrayCandidateTree(configDir, files, s.config.SyncDirectory); err != nil {
-		return err
+		return newXrayCandidateRejected(XrayCandidateReasonStagingIO)
 	}
-	return s.config.CandidateValidator.ValidateXrayCandidate(ctx, candidatePath, filepath.Join(configDir, "xray"), s.config.AssetDir)
+	if err := s.config.CandidateValidator.ValidateXrayCandidate(ctx, candidatePath, filepath.Join(configDir, "xray"), s.config.AssetDir); err != nil {
+		return newXrayCandidateRejected(XrayCandidateReasonCandidateConfig)
+	}
+	return nil
 }
 
 func (s *XrayService) verifyRuntime(ctx context.Context, expected xrayBinaryMetadata, authoritySnapshot XrayAuthoritySnapshot) error {
@@ -862,11 +980,11 @@ func (s *XrayService) runCommitted(ctx context.Context, operation string, base x
 		return ErrXrayTransactionUnavailable
 	}
 	if !validXrayBinaryMetadata(candidate, true) {
-		return ErrXrayCandidateRejected
+		return newXrayCandidateRejected(XrayCandidateReasonCandidateValidation)
 	}
 	if !candidateValidated {
 		if err := s.validateLocalCandidate(ctx, candidatePath, base.authority); err != nil {
-			return ErrXrayCandidateRejected
+			return err
 		}
 	}
 	stagePath, err := s.savePreviousGeneration(base.active)

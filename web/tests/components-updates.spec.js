@@ -268,6 +268,41 @@ for (const [code, status, expected] of codedCases) {
   })
 }
 
+test('shows the closed Xray candidate rejection reason without replay', async ({ page }) => {
+  const scenario = await mockApplication(page, {
+    handle: async ({ route, path }) => {
+      if (path !== '/api/v1/components/apply') return false
+      await jsonResponse(route, { code: 'candidate-rejected', error: 'component candidate rejected', reasonCode: 'binary-probe' }, 502)
+      return true
+    },
+  })
+  await openComponents(page)
+  await page.locator('[data-component="xray"]').getByRole('button', { name: 'Preview update' }).click()
+  await page.getByRole('button', { name: 'Confirm update' }).click()
+  await expect(page.getByText('Candidate rejected', { exact: true })).toBeVisible()
+  await expect(page.locator('.operation-result')).toContainText('The candidate binary failed the fixed version or architecture probe.')
+  await expect(page.locator('.operation-result')).toContainText('Reason code: binary-probe')
+  expect(scenario.counts['/api/v1/components/apply']).toBe(1)
+})
+
+test('ignores an unrecognized candidate rejection reason in the UI', async ({ page }) => {
+  const scenario = await mockApplication(page, {
+    handle: async ({ route, path }) => {
+      if (path !== '/api/v1/components/apply') return false
+      await jsonResponse(route, { code: 'candidate-rejected', error: 'component candidate rejected', reasonCode: 'https://router.example/private-config' }, 502)
+      return true
+    },
+  })
+  await openComponents(page)
+  await page.locator('[data-component="xray"]').getByRole('button', { name: 'Preview update' }).click()
+  await page.getByRole('button', { name: 'Confirm update' }).click()
+  await expect(page.getByText('Candidate rejected', { exact: true })).toBeVisible()
+  await expect(page.locator('.operation-result')).toContainText('The fixed candidate did not pass the server trust boundary.')
+  await expect(page.locator('.operation-result code')).toHaveCount(0)
+  await expect(page.locator('.operation-result')).not.toContainText('router.example')
+  expect(scenario.counts['/api/v1/components/apply']).toBe(1)
+})
+
 test('treats network loss and malformed 2xx as unknown rather than success', async ({ page }) => {
   let mode = 'network'
   const scenario = await mockApplication(page, {

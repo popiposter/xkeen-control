@@ -56,6 +56,38 @@ var (
 	ErrMutationRollbackUnproven    = errors.New("component rollback or recovery is not proven")
 )
 
+// MutationCandidateRejectedError carries a closed candidate reason across the
+// F1 broker boundary. Its error text remains the existing stable generic
+// message; only a validated reason code may be projected by HTTP.
+type MutationCandidateRejectedError struct {
+	ReasonCode string
+}
+
+func (err *MutationCandidateRejectedError) Error() string {
+	return ErrMutationCandidateRejected.Error()
+}
+
+func (err *MutationCandidateRejectedError) Unwrap() error { return ErrMutationCandidateRejected }
+
+// MutationCandidateRejectionReason returns only the closed Xray reason set.
+// Plain candidate-rejected errors intentionally remain reasonless.
+func MutationCandidateRejectionReason(err error) (string, bool) {
+	var rejection *MutationCandidateRejectedError
+	if !errors.As(err, &rejection) || rejection == nil || !XrayCandidateReason(rejection.ReasonCode).valid() {
+		return "", false
+	}
+	return rejection.ReasonCode, true
+}
+
+func mutationCandidateRejected(component ComponentKind, err error) error {
+	if component == KindXray {
+		if reason, ok := XrayCandidateReasonCode(err); ok {
+			return &MutationCandidateRejectedError{ReasonCode: reason}
+		}
+	}
+	return ErrMutationCandidateRejected
+}
+
 // MutationRequest is the closed F1 intent shape. A rollback request omits
 // channel; the unexported presence bit lets strict JSON decoding reject an
 // explicitly supplied rollback channel while still allowing internal typed
@@ -624,7 +656,7 @@ func (s *MutationService) resolveUpdate(ctx context.Context, request MutationReq
 			return classifyResolverError(err, KindXray)
 		}
 		if !validXrayIdentity(candidate) {
-			return ErrMutationCandidateRejected
+			return &MutationCandidateRejectedError{ReasonCode: string(XrayCandidateReasonCandidateValidation)}
 		}
 		copy := candidate
 		entry.XrayCandidate = &copy
@@ -690,7 +722,7 @@ func classifyResolverError(err error, component ComponentKind) error {
 	switch component {
 	case KindXray:
 		if errors.Is(err, ErrXrayCandidateRejected) {
-			return ErrMutationCandidateRejected
+			return mutationCandidateRejected(KindXray, err)
 		}
 	case KindGeodata:
 		if errors.Is(err, ErrGeodataCandidateRejected) {
@@ -746,7 +778,7 @@ func classifyMutationError(component ComponentKind, operation string, err error)
 		case errors.Is(err, ErrXrayResolutionUnavailable):
 			return ErrMutationMetadataUnavailable
 		case errors.Is(err, ErrXrayCandidateRejected), errors.Is(err, ErrXrayArtifactRejected):
-			return ErrMutationCandidateRejected
+			return mutationCandidateRejected(KindXray, err)
 		case errors.Is(err, ErrXrayRollbackFailed):
 			return ErrMutationRollbackUnproven
 		case errors.Is(err, ErrXrayApplyRestored):
