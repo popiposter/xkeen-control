@@ -15,16 +15,20 @@ import (
 )
 
 type policyCheckStub struct {
-	mu       sync.Mutex
-	requests []CheckRequest
-	result   CheckResult
-	err      error
+	mu        sync.Mutex
+	requests  []CheckRequest
+	result    CheckResult
+	resultFor func(CheckRequest) CheckResult
+	err       error
 }
 
 func (stub *policyCheckStub) Check(_ context.Context, request CheckRequest) (CheckResult, error) {
 	stub.mu.Lock()
 	stub.requests = append(stub.requests, request)
 	result, err := stub.result, stub.err
+	if stub.resultFor != nil {
+		result = stub.resultFor(request)
+	}
 	stub.mu.Unlock()
 	if err != nil {
 		return CheckResult{}, err
@@ -48,6 +52,52 @@ func writePrivatePolicy(t *testing.T, path, contents string, mode os.FileMode) {
 	if err := os.Chmod(path, mode); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func validPolicyScheduledResult(request CheckRequest, checkedAt time.Time, installedState string) CheckResult {
+	result := CheckResult{
+		SchemaVersion:  CheckSchemaVersion,
+		Component:      request.Component,
+		Channel:        request.Channel,
+		CheckedAt:      checkedAt,
+		InstalledState: installedState,
+		Eligible:       true,
+	}
+	switch request.Component {
+	case KindXray:
+		result.Candidate = &CheckCandidate{
+			Version:   "2.0.0",
+			AssetName: xrayCandidateAsset,
+			SizeBytes: 1,
+			SHA256:    strings.Repeat("a", 64),
+		}
+	case KindXKeen:
+		result.Candidate = &CheckCandidate{
+			Version:         "2.0.1",
+			Generation:      strings.Repeat("b", 64),
+			AssetName:       xkeenDevArtifactPath,
+			SizeBytes:       1,
+			SHA256:          strings.Repeat("a", 64),
+			BuildCommitSHA:  strings.Repeat("c", 40),
+			SourceCommitSHA: strings.Repeat("d", 40),
+			BlobSHA:         strings.Repeat("e", 40),
+		}
+	case KindGeodata:
+		result.Items = make([]CheckItem, len(productGeodataCatalog))
+		for index, entry := range productGeodataCatalog {
+			result.Items[index] = CheckItem{
+				ID:             entry.ID,
+				SourceID:       "github/" + entry.Repository,
+				Generation:     "2026-09-03",
+				AssetName:      entry.Asset,
+				SizeBytes:      int64(index + 1),
+				SHA256:         strings.Repeat(string(rune('a'+index)), 64),
+				InstalledState: "current",
+				Eligible:       true,
+			}
+		}
+	}
+	return result
 }
 
 func TestComponentPolicyDefaultsAndFailClosedFiles(t *testing.T) {
@@ -231,7 +281,9 @@ func TestCheckSchedulerUsesFixedSequentialTuplesAndRAMNotificationDedupe(t *test
 		t.Fatal(err)
 	}
 	now := time.Date(2026, time.September, 16, 12, 0, 0, 0, time.UTC)
-	checks := &policyCheckStub{result: CheckResult{SchemaVersion: CheckSchemaVersion, CheckedAt: now, Candidate: &CheckCandidate{Version: "2.0.0"}, InstalledState: "update-available", Eligible: true}}
+	checks := &policyCheckStub{resultFor: func(request CheckRequest) CheckResult {
+		return validPolicyScheduledResult(request, now, "update-available")
+	}}
 	var events []NotificationEvent
 	scheduler := NewCheckScheduler(CheckSchedulerConfig{
 		Policy:    manager,
@@ -287,8 +339,10 @@ func TestCheckSchedulerBoundsNotificationHook(t *testing.T) {
 	}
 	release := make(chan struct{})
 	scheduler := NewCheckScheduler(CheckSchedulerConfig{
-		Policy:    manager,
-		Checks:    &policyCheckStub{result: CheckResult{SchemaVersion: CheckSchemaVersion, CheckedAt: now, Candidate: &CheckCandidate{Version: "2.0.0"}, InstalledState: "update-available", Eligible: true}},
+		Policy: manager,
+		Checks: &policyCheckStub{resultFor: func(request CheckRequest) CheckResult {
+			return validPolicyScheduledResult(request, now, "update-available")
+		}},
 		Lifecycle: func() (LifecycleProjection, bool) { return LifecycleProjection{}, true },
 		Notification: NotificationHookFunc(func(context.Context, NotificationEvent) error {
 			<-release
@@ -308,6 +362,88 @@ func TestCheckSchedulerBoundsNotificationHook(t *testing.T) {
 		t.Fatalf("timed out notification status = %+v", status)
 	}
 	close(release)
+}
+
+func TestCheckSchedulerNotificationIdentityTracksExactCandidates(t *testing.T) {
+	now := time.Date(2026, time.September, 16, 12, 0, 0, 0, time.UTC)
+	manager := newPolicyManager(filepath.Join(t.TempDir(), "component-policy.json"))
+	if _, err := manager.SetPolicy(ComponentPolicy{SchemaVersion: ComponentPolicySchemaVersion, Mode: ComponentPolicyModeNotify, CheckCadenceMinutes: 60}); err != nil {
+		t.Fatal(err)
+	}
+	var events []NotificationEvent
+	scheduler := NewCheckScheduler(CheckSchedulerConfig{
+		Policy: manager,
+		Notification: NotificationHookFunc(func(_ context.Context, event NotificationEvent) error {
+			events = append(events, event)
+			return nil
+		}),
+		Now: func() time.Time { return now },
+	})
+
+	xray := validPolicyScheduledResult(componentCheckTuples[0], now, "update-available")
+	xrayChanged := validPolicyScheduledResult(componentCheckTuples[0], now, "update-available")
+	xrayChanged.Candidate.SHA256 = strings.Repeat("b", 64)
+	scheduler.notifyCandidate(context.Background(), componentCheckTuples[0], xray)
+	scheduler.notifyCandidate(context.Background(), componentCheckTuples[0], xrayChanged)
+
+	xkeen := validPolicyScheduledResult(componentCheckTuples[2], now, "changed")
+	xkeenChanged := validPolicyScheduledResult(componentCheckTuples[2], now, "changed")
+	xkeenChanged.Candidate.SHA256 = strings.Repeat("b", 64)
+	scheduler.notifyCandidate(context.Background(), componentCheckTuples[2], xkeen)
+	scheduler.notifyCandidate(context.Background(), componentCheckTuples[2], xkeenChanged)
+
+	geodata := validPolicyScheduledResult(componentCheckTuples[1], now, "changed")
+	geodataChanged := validPolicyScheduledResult(componentCheckTuples[1], now, "changed")
+	geodataChanged.Items = append([]CheckItem(nil), geodata.Items...)
+	geodataChanged.Items[4].SHA256 = strings.Repeat("f", 64)
+	scheduler.notifyCandidate(context.Background(), componentCheckTuples[1], geodata)
+	scheduler.notifyCandidate(context.Background(), componentCheckTuples[1], geodataChanged)
+
+	if len(events) != 6 {
+		t.Fatalf("exact candidate notification count = %d, want 6", len(events))
+	}
+	for index, event := range events {
+		if !isHexSHA256(event.CandidateIdentity) {
+			t.Fatalf("event %d identity = %q", index, event.CandidateIdentity)
+		}
+	}
+	for _, pair := range [][2]int{{0, 1}, {2, 3}, {4, 5}} {
+		if events[pair[0]].CandidateIdentity == events[pair[1]].CandidateIdentity {
+			t.Fatalf("candidate identity did not change for events %d/%d: %q", pair[0], pair[1], events[pair[0]].CandidateIdentity)
+		}
+	}
+	if status := scheduledCheckStatus(geodataChanged); status.CandidateIdentity != events[5].CandidateIdentity {
+		t.Fatalf("status identity = %q, notification identity = %q", status.CandidateIdentity, events[5].CandidateIdentity)
+	}
+}
+
+func TestCheckSchedulerSuppressesUnknownInstalledState(t *testing.T) {
+	now := time.Date(2026, time.September, 16, 12, 0, 0, 0, time.UTC)
+	manager := newPolicyManager(filepath.Join(t.TempDir(), "component-policy.json"))
+	if _, err := manager.SetPolicy(ComponentPolicy{SchemaVersion: ComponentPolicySchemaVersion, Mode: ComponentPolicyModeNotify, CheckCadenceMinutes: 60}); err != nil {
+		t.Fatal(err)
+	}
+	var events []NotificationEvent
+	scheduler := NewCheckScheduler(CheckSchedulerConfig{
+		Policy: manager,
+		Notification: NotificationHookFunc(func(_ context.Context, event NotificationEvent) error {
+			events = append(events, event)
+			return nil
+		}),
+		Now: func() time.Time { return now },
+	})
+	request := componentCheckTuples[0]
+	unknown := validPolicyScheduledResult(request, now, "unknown")
+	scheduler.notifyCandidate(context.Background(), request, unknown)
+	if len(events) != 0 {
+		t.Fatalf("unknown installed state emitted %d notifications", len(events))
+	}
+
+	knownAbsent := validPolicyScheduledResult(request, now, "not-installed")
+	scheduler.notifyCandidate(context.Background(), request, knownAbsent)
+	if len(events) != 1 || events[0].InstalledState != "not-installed" {
+		t.Fatalf("known absent installed state events = %+v", events)
+	}
 }
 
 func TestCheckSchedulerDoesNotCheckBeforeFullCadence(t *testing.T) {

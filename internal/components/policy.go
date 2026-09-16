@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -863,23 +864,94 @@ func safeInstalledState(value string) string {
 }
 
 func safeCandidateIdentity(result CheckResult) string {
-	if result.Candidate != nil {
-		for _, value := range []string{result.Candidate.Version, result.Candidate.Generation} {
-			if len(value) == 0 || len(value) > MaxMetadataStringBytes || !metadataGenerationPattern.MatchString(value) {
-				continue
-			}
-			return value
+	if result.Candidate == nil {
+		if result.Component != KindGeodata {
+			return ""
+		}
+		return safeGeodataCandidateIdentity(result.Items)
+	}
+
+	identity := scheduledCandidateIdentity{
+		Component:       result.Component,
+		Version:         result.Candidate.Version,
+		Generation:      result.Candidate.Generation,
+		AssetName:       result.Candidate.AssetName,
+		SizeBytes:       result.Candidate.SizeBytes,
+		SHA256:          result.Candidate.SHA256,
+		BuildCommitSHA:  result.Candidate.BuildCommitSHA,
+		SourceCommitSHA: result.Candidate.SourceCommitSHA,
+		BlobSHA:         result.Candidate.BlobSHA,
+	}
+	switch result.Component {
+	case KindXray:
+		version, ok := parseStrictVersion(identity.Version)
+		if !ok || identity.AssetName != xrayCandidateAsset || identity.SizeBytes <= 0 || identity.SizeBytes > MaxCandidateAssetBytes || !isHexSHA256(identity.SHA256) {
+			return ""
+		}
+		identity.Version = version.String()
+		identity.Generation = ""
+		identity.BuildCommitSHA = ""
+		identity.SourceCommitSHA = ""
+		identity.BlobSHA = ""
+	case KindXKeen:
+		version, ok := parseStrictVersion(identity.Version)
+		if !ok || identity.AssetName != xkeenDevArtifactPath || identity.SizeBytes <= 0 || identity.SizeBytes > MaxXKeenDevArtifactBytes || !isHexSHA256(identity.Generation) || !isHexSHA256(identity.SHA256) || !isGitSHA1(identity.BuildCommitSHA) || !isGitSHA1(identity.SourceCommitSHA) || !isGitSHA1(identity.BlobSHA) {
+			return ""
+		}
+		identity.Version = version.String()
+		identity.Generation = strings.ToLower(identity.Generation)
+		identity.SHA256 = strings.ToLower(identity.SHA256)
+		identity.BuildCommitSHA = strings.ToLower(identity.BuildCommitSHA)
+		identity.SourceCommitSHA = strings.ToLower(identity.SourceCommitSHA)
+		identity.BlobSHA = strings.ToLower(identity.BlobSHA)
+	default:
+		return ""
+	}
+	return hashScheduledCandidateIdentity(identity)
+}
+
+type scheduledCandidateIdentity struct {
+	Component       ComponentKind `json:"component"`
+	Version         string        `json:"version"`
+	Generation      string        `json:"generation,omitempty"`
+	AssetName       string        `json:"assetName"`
+	SizeBytes       int64         `json:"sizeBytes"`
+	SHA256          string        `json:"sha256"`
+	BuildCommitSHA  string        `json:"buildCommitSha,omitempty"`
+	SourceCommitSHA string        `json:"sourceCommitSha,omitempty"`
+	BlobSHA         string        `json:"blobSha,omitempty"`
+}
+
+func safeGeodataCandidateIdentity(items []CheckItem) string {
+	if len(items) != len(productGeodataCatalog) {
+		return ""
+	}
+	identities := make([]GeodataReleaseIdentity, len(productGeodataCatalog))
+	for index, entry := range productGeodataCatalog {
+		item := items[index]
+		if item.ID != entry.ID || item.SourceID != "github/"+entry.Repository || item.AssetName != entry.Asset || !item.Eligible || len(item.Generation) == 0 || len(item.Generation) > MaxMetadataStringBytes || !metadataGenerationPattern.MatchString(item.Generation) || item.SizeBytes <= 0 || item.SizeBytes > MaxCandidateAssetBytes || !isHexSHA256(item.SHA256) {
+			return ""
+		}
+		identities[index] = GeodataReleaseIdentity{
+			ID:         entry.ID,
+			Repository: entry.Repository,
+			Tag:        item.Generation,
+			AssetName:  entry.Asset,
+			ActiveName: entry.Name,
+			SizeBytes:  item.SizeBytes,
+			SHA256:     strings.ToLower(item.SHA256),
 		}
 	}
-	// Geodata deliberately uses the existing item projection rather than a
-	// synthetic top-level candidate. The fixed catalog order makes the first
-	// safe generation a deterministic bounded identity for the complete set.
-	for _, item := range result.Items {
-		if len(item.Generation) > 0 && len(item.Generation) <= MaxMetadataStringBytes && metadataGenerationPattern.MatchString(item.Generation) {
-			return item.Generation
-		}
+	return geodataIdentityGeneration(identities)
+}
+
+func hashScheduledCandidateIdentity(identity scheduledCandidateIdentity) string {
+	encoded, err := json.Marshal(identity)
+	if err != nil {
+		return ""
 	}
-	return ""
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
 }
 
 func safeSchedulerReason(value string) string {
@@ -914,7 +986,7 @@ func schedulerErrorCode(err error) string {
 func (scheduler *CheckScheduler) notifyCandidate(ctx context.Context, request CheckRequest, result CheckResult) {
 	identity := safeCandidateIdentity(result)
 	installedState := safeInstalledState(result.InstalledState)
-	if !result.Eligible || identity == "" || installedState == "current" || installedState == "candidate-older" {
+	if !result.Eligible || identity == "" || !actionableInstalledState(installedState) {
 		return
 	}
 	fingerprint := string(request.Component) + "\x00" + request.Channel + "\x00" + identity + "\x00" + installedState
@@ -983,6 +1055,15 @@ func stopTimer(timer *time.Timer) {
 	select {
 	case <-timer.C:
 	default:
+	}
+}
+
+func actionableInstalledState(value string) bool {
+	switch value {
+	case "update-available", "changed", "not-installed":
+		return true
+	default:
+		return false
 	}
 }
 
