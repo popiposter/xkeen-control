@@ -45,6 +45,9 @@ func writePrivatePolicy(t *testing.T, path, contents string, mode os.FileMode) {
 	if err := os.WriteFile(path, []byte(contents), mode); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestComponentPolicyDefaultsAndFailClosedFiles(t *testing.T) {
