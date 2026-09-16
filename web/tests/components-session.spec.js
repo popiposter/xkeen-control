@@ -48,6 +48,12 @@ async function prepare(page) {
       schemaVersion: 1,
       ...Object.fromEntries(kinds.map((kind) => [kind, { kind, state: 'present', present: true, version: '1.0.0', versionUnknown: false, capability: ['xkeen', 'xray', 'geodata'].includes(kind) ? 'supported' : 'informational', ...(kind === 'geodata' ? { items: [] } : {}) }])),
     },
+    policy: {
+      schemaVersion: 1,
+      mode: 'manual',
+      checkCadenceMinutes: 1440,
+      scheduler: { enabled: false, state: 'disabled', notificationState: 'idle' },
+    },
   }
   let previewNumber = 0
   await page.route('**/*', async (route) => {
@@ -71,6 +77,7 @@ async function prepare(page) {
       case '/api/v1/performance': return json(route, { nodes: [] })
       case '/api/v1/config-summary': return json(route, { routing: {}, dns: {}, observatory: {} })
       case '/api/v1/update': return json(route, { channel: 'stable', installed: { version: '0.2.0' } })
+      case '/api/v1/components/policy': return json(route, state.policy)
       case '/api/v1/components': return json(route, state.inventory)
       case '/api/v1/components/preview': {
         const { component, operation, channel } = entry.body

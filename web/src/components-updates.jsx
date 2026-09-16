@@ -10,6 +10,12 @@ const COMPONENTS = [
 ]
 
 const COMPONENT_BY_KIND = new Map(COMPONENTS.map((component) => [component.kind, component]))
+const POLICY_MODES = Object.freeze(['manual', 'notify', 'off'])
+const POLICY_MODE_LABELS = Object.freeze({ manual: 'Manual', notify: 'Notify', off: 'Off' })
+const MIN_POLICY_CADENCE_MINUTES = 60
+const MAX_POLICY_CADENCE_MINUTES = 7 * 24 * 60
+const SAFE_POLICY_CODE = /^[a-z0-9][a-z0-9_-]{0,63}$/
+const SAFE_CANDIDATE_IDENTITY = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/
 
 class ComponentRequestError extends Error {
   constructor(message, { status = 0, code = '', reasonCode = '', kind = 'response' } = {}) {
@@ -74,6 +80,26 @@ const postJSON = (path, csrfToken, body) => requestJSON(path, {
 const validInventory = (value) => value?.schemaVersion === 1
   && COMPONENTS.every(({ kind }) => value?.[kind]?.kind === kind)
 
+const validPolicyCode = (value) => typeof value === 'string' && SAFE_POLICY_CODE.test(value)
+const validScheduledResult = (value) => value && typeof value === 'object'
+  && validPolicyCode(value.state)
+  && validPolicyCode(value.installedState)
+  && (!value.reasonCode || validPolicyCode(value.reasonCode))
+  && (!value.candidateIdentity || SAFE_CANDIDATE_IDENTITY.test(value.candidateIdentity))
+
+const validPolicy = (value) => value?.schemaVersion === 1
+  && POLICY_MODES.includes(value.mode)
+  && Number.isInteger(value.checkCadenceMinutes)
+  && value.checkCadenceMinutes >= MIN_POLICY_CADENCE_MINUTES
+  && value.checkCadenceMinutes <= MAX_POLICY_CADENCE_MINUTES
+  && value.scheduler && !Array.isArray(value.scheduler)
+  && typeof value.scheduler.enabled === 'boolean'
+  && validPolicyCode(value.scheduler.state)
+  && validPolicyCode(value.scheduler.notificationState)
+  && (!value.reasonCode || validPolicyCode(value.reasonCode))
+  && (!value.scheduler.lastSkipReason || validPolicyCode(value.scheduler.lastSkipReason))
+  && (!value.scheduler.results || typeof value.scheduler.results === 'object' && !Array.isArray(value.scheduler.results) && Object.values(value.scheduler.results).every(validScheduledResult))
+
 const validCheck = (value, component, channel) => value?.schemaVersion === 1
   && value.component === component
   && value.channel === channel
@@ -110,6 +136,8 @@ const mutationErrorResult = (cause, pending) => {
       return { tone: 'error', title: `${label} outcome is not proven`, message: 'Do not infer completion from inventory or health alone. Verify the appliance deliberately before creating a new Preview.', outcome: 'unknown' }
     case 'maintenance':
       return { tone: 'error', title: 'Lifecycle maintenance is active', message: 'The request did not produce a proven normal result. Read-only state remains available; do not replay automatically.', outcome: 'maintenance' }
+    case 'policy-disabled':
+      return { tone: 'warning', title: 'Component updates are disabled', message: 'The effective component policy is Off. Check and update are disabled; rollback remains available. Create a fresh Preview after re-enabling updates.', outcome: 'rejected' }
     case 'preview-expired':
       return { tone: 'warning', title: 'Preview expired', message: 'The one-shot intent is no longer usable. Run a fresh Preview.', outcome: 'rejected' }
     case 'preview-stale':
@@ -146,6 +174,8 @@ const restoreFocus = (target, isCurrent = () => true) => {
 
 export function useComponentsController({ csrfToken, lifecycle, onUnauthorized }) {
   const [inventory, setInventory] = useState({ value: null, observedAt: '', loading: false, error: '' })
+  const [policy, setPolicy] = useState({ value: null, loading: false, saving: false, error: '' })
+  const [policyDraft, setPolicyDraft] = useState({ mode: 'manual', checkCadenceMinutes: 1440 })
   const [checks, setChecks] = useState({})
   const [requestState, setRequestState] = useState(null)
   const [preview, setPreview] = useState(null)
@@ -153,11 +183,13 @@ export function useComponentsController({ csrfToken, lifecycle, onUnauthorized }
   const [result, setResult] = useState(null)
   const [refreshError, setRefreshError] = useState('')
   const inventoryGate = useRef(false)
+  const policyGate = useRef(false)
   const metadataGate = useRef(false)
   const submitGuard = useRef(false)
   const requestSequence = useRef(0)
   const sessionEpoch = useRef(0)
   const hasLoadedInventory = useRef(false)
+  const hasLoadedPolicy = useRef(false)
   const previewRef = useRef(null)
   const csrfRef = useRef(csrfToken)
   const sessionCSRFRef = useRef(csrfToken)
@@ -192,6 +224,59 @@ export function useComponentsController({ csrfToken, lifecycle, onUnauthorized }
     }
   }, [onUnauthorized])
 
+  const loadPolicy = useCallback(async ({ force = false } = {}) => {
+    if (policyGate.current || (!force && hasLoadedPolicy.current)) return false
+    policyGate.current = true
+    const epoch = sessionEpoch.current
+    setPolicy((current) => ({ ...current, loading: true, error: '' }))
+    try {
+      const value = await requestJSON('/api/v1/components/policy')
+      if (!validPolicy(value)) throw new ComponentRequestError('Component policy response is invalid.', { kind: 'malformed' })
+      if (epoch !== sessionEpoch.current) return false
+      hasLoadedPolicy.current = true
+      setPolicy({ value, loading: false, saving: false, error: '' })
+      setPolicyDraft({ mode: value.mode, checkCadenceMinutes: value.checkCadenceMinutes })
+      return true
+    } catch (cause) {
+      if (epoch !== sessionEpoch.current) return false
+      if (cause.status === 401) onUnauthorized()
+      hasLoadedPolicy.current = false
+      setPolicy((current) => ({ ...current, value: null, loading: false, saving: false, error: cause.message || 'Component policy is unavailable.' }))
+      return false
+    } finally {
+      policyGate.current = false
+    }
+  }, [onUnauthorized])
+
+  const savePolicy = useCallback(async () => {
+    if (!policy.value || policy.saving) return false
+    const cadence = Number(policyDraft.checkCadenceMinutes)
+    if (!POLICY_MODES.includes(policyDraft.mode) || !Number.isInteger(cadence) || cadence < MIN_POLICY_CADENCE_MINUTES || cadence > MAX_POLICY_CADENCE_MINUTES) {
+      setPolicy((current) => ({ ...current, error: `Check cadence must be an integer from ${MIN_POLICY_CADENCE_MINUTES} to ${MAX_POLICY_CADENCE_MINUTES} minutes.` }))
+      return false
+    }
+    const epoch = sessionEpoch.current
+    setPolicy((current) => ({ ...current, saving: true, error: '' }))
+    try {
+      const value = await postJSON('/api/v1/components/policy', csrfToken, { schemaVersion: 1, mode: policyDraft.mode, checkCadenceMinutes: cadence })
+      if (epoch !== sessionEpoch.current) return false
+      if (!validPolicy(value)) throw new ComponentRequestError('Component policy response is invalid.', { kind: 'malformed' })
+      setPolicy({ value, loading: false, saving: false, error: '' })
+      setPolicyDraft({ mode: value.mode, checkCadenceMinutes: value.checkCadenceMinutes })
+      hasLoadedPolicy.current = true
+      return true
+    } catch (cause) {
+      if (epoch !== sessionEpoch.current) return false
+      if (cause.status === 401) onUnauthorized()
+      setPolicy((current) => ({ ...current, saving: false, error: cause.message || 'Component policy was not saved.' }))
+      return false
+    }
+  }, [csrfToken, onUnauthorized, policy.saving, policy.value, policyDraft])
+
+  const policyKnown = Boolean(policy.value)
+  const policyOff = policy.value?.mode === 'off'
+  const policyDiscoveryBlocked = !policyKnown || policyOff
+
   const finishMetadataRequest = useCallback((id) => {
     metadataGate.current = false
     setRequestState((current) => current?.id === id ? null : current)
@@ -199,6 +284,10 @@ export function useComponentsController({ csrfToken, lifecycle, onUnauthorized }
 
   const checkComponent = useCallback(async (component, channel, trigger) => {
     if (metadataGate.current || pending || preview) return
+    if (policyDiscoveryBlocked) {
+      setResult({ tone: 'warning', title: policyOff ? 'Component checks are disabled' : 'Component policy unavailable', message: policyOff ? 'The effective component policy is Off. Re-enable component checks to inspect upstream metadata.' : 'The component policy could not be validated. Check is disabled until policy status is available.', outcome: 'check' })
+      return
+    }
     metadataGate.current = true
     focusRef.current = trigger || null
     const id = ++requestSequence.current
@@ -218,10 +307,14 @@ export function useComponentsController({ csrfToken, lifecycle, onUnauthorized }
       finishMetadataRequest(id)
       restoreFocus(focusRef.current)
     }
-  }, [csrfToken, finishMetadataRequest, onUnauthorized, pending, preview])
+  }, [csrfToken, finishMetadataRequest, onUnauthorized, pending, policyDiscoveryBlocked, policyOff, preview])
 
   const previewAction = useCallback(async (component, operation, channel, trigger) => {
     if (metadataGate.current || pending || preview || lifecycleUnavailable || lifecycle.maintenance || lifecycle.applying) return
+    if (operation === 'update' && policyDiscoveryBlocked) {
+      setResult({ tone: 'warning', title: policyOff ? 'Component updates are disabled' : 'Component policy unavailable', message: policyOff ? 'The effective component policy is Off. Check and update are disabled; rollback remains available.' : 'The component policy could not be validated. Update Preview is disabled until policy status is available.', outcome: 'rejected' })
+      return
+    }
     metadataGate.current = true
     focusRef.current = trigger || null
     const id = ++requestSequence.current
@@ -251,7 +344,7 @@ export function useComponentsController({ csrfToken, lifecycle, onUnauthorized }
     } finally {
       finishMetadataRequest(id)
     }
-  }, [csrfToken, finishMetadataRequest, lifecycle, lifecycleUnavailable, onUnauthorized, pending, preview])
+  }, [csrfToken, finishMetadataRequest, lifecycle, lifecycleUnavailable, onUnauthorized, pending, policyDiscoveryBlocked, policyOff, preview])
 
   const cancelPreview = useCallback((reason = 'canceled') => {
     requestSequence.current++
@@ -348,6 +441,8 @@ export function useComponentsController({ csrfToken, lifecycle, onUnauthorized }
 
   return useMemo(() => ({
     inventory,
+    policy,
+    policyDraft,
     checks,
     requestState,
     preview,
@@ -358,12 +453,15 @@ export function useComponentsController({ csrfToken, lifecycle, onUnauthorized }
     lifecycleUnavailable,
     lifecycleMutationBlocked,
     loadInventory,
+    loadPolicy,
+    savePolicy,
+    setPolicyDraft,
     checkComponent,
     previewAction,
     cancelPreview,
     submitPreview,
     clearResult: () => { setResult(null); setRefreshError('') },
-  }), [cancelPreview, checkComponent, checks, inventory, lifecycleKnown, lifecycleMutationBlocked, lifecycleUnavailable, loadInventory, pending, preview, previewAction, refreshError, requestState, result, submitPreview])
+  }), [cancelPreview, checkComponent, checks, inventory, lifecycleKnown, lifecycleMutationBlocked, lifecycleUnavailable, loadInventory, loadPolicy, pending, policy, policyDraft, preview, previewAction, refreshError, requestState, result, savePolicy, submitPreview])
 }
 
 const formatTime = (value) => value ? new Date(value).toLocaleString() : '—'
@@ -389,15 +487,22 @@ export function ComponentLifecycleNotices({ controller, lifecycle, onOpenCompone
 }
 
 export function ComponentsUpdatesSection({ controller, lifecycle, onOpenSystem }) {
-  const { inventory, checks, requestState, preview, pending, result, refreshError } = controller
+  const { inventory, policy, checks, requestState, preview, pending, result, refreshError } = controller
   const values = inventory.value
   const metadataBusy = Boolean(requestState)
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void controller.loadPolicy() }, 0)
+    return () => window.clearTimeout(timer)
+  }, [controller.loadPolicy])
 
   return <div className="section-stack components-section">
     <section className="panel components-heading">
       <div><span className="panel-label">Components / Updates</span><h2>Manual, one component at a time</h2><p>Inventory is read only. Check inspects fixed metadata; Preview creates the exact short-lived intent used by Apply or one-step rollback.</p></div>
       <div className="components-heading-actions"><small>{inventory.observedAt ? `Observed ${formatTime(inventory.observedAt)}` : 'Not loaded this session'}</small><button type="button" className="ghost" onClick={() => controller.loadInventory({ force: true })} disabled={inventory.loading}>{inventory.loading ? 'Reading…' : 'Refresh inventory'}</button></div>
     </section>
+
+    <ComponentPolicyPanel controller={controller} />
 
     {inventory.error && <div className="notice" role="status">{inventory.error}</div>}
     {result && <OperationResult result={result} refreshError={refreshError} onDismiss={controller.clearResult} />}
@@ -415,6 +520,7 @@ export function ComponentsUpdatesSection({ controller, lifecycle, onOpenSystem }
         metadataBusy={metadataBusy}
         lifecycle={lifecycle}
         lifecycleUnavailable={controller.lifecycleUnavailable}
+        policyDiscoveryBlocked={!policy.value || policy.value.mode === 'off'}
         pending={Boolean(pending)}
         previewOpen={Boolean(preview)}
         onCheck={controller.checkComponent}
@@ -427,8 +533,45 @@ export function ComponentsUpdatesSection({ controller, lifecycle, onOpenSystem }
   </div>
 }
 
-function ComponentCard({ definition, component, check, metadataBusy, lifecycle, lifecycleUnavailable, pending, previewOpen, onCheck, onPreview, onOpenSystem }) {
+function ComponentPolicyPanel({ controller }) {
+  const { policy, policyDraft } = controller
+  const value = policy.value
+  const scheduler = value?.scheduler
+  const updateBlocked = !value || value.mode === 'off'
+  const saveDisabled = !value || policy.saving || policy.loading
+    || !policyDraft
+    || policyDraft.mode === value?.mode && Number(policyDraft.checkCadenceMinutes) === value?.checkCadenceMinutes
+  const schedulerResults = scheduler?.results || {}
+  return <section className="panel component-policy" aria-label="Component policy">
+    <div className="component-policy-heading"><div><span className="panel-label">Background policy</span><h2>Component discovery stays bounded</h2><p>Policy and scheduler status are read only until this page is opened. The scheduler performs Check-only metadata reads; it never previews, applies, or rolls back.</p></div><div className="component-policy-actions"><small>{policy.loading ? 'Reading…' : value ? `Effective: ${POLICY_MODE_LABELS[value.mode]}` : 'Status unavailable'}</small><button type="button" className="ghost" onClick={() => controller.loadPolicy({ force: true })} disabled={policy.loading || policy.saving}>{policy.loading ? 'Reading…' : 'Refresh policy'}</button></div></div>
+    {policy.error && <div className="notice" role="alert">{policy.error}</div>}
+    {!value && !policy.loading && !policy.error && <div className="loading">Reading component policy…</div>}
+    {value && <>
+      <div className="component-policy-form">
+        <label>Mode<select aria-label="Component policy mode" value={policyDraft.mode} disabled={policy.saving || policy.loading} onChange={(event) => controller.setPolicyDraft((current) => ({ ...current, mode: event.target.value }))}>{POLICY_MODES.map((mode) => <option key={mode} value={mode}>{POLICY_MODE_LABELS[mode]}</option>)}</select></label>
+        <label>Check cadence (minutes)<input aria-label="Component check cadence" type="number" min={MIN_POLICY_CADENCE_MINUTES} max={MAX_POLICY_CADENCE_MINUTES} step="1" value={policyDraft.checkCadenceMinutes} disabled={policy.saving || policy.loading} onChange={(event) => controller.setPolicyDraft((current) => ({ ...current, checkCadenceMinutes: event.target.value }))} /></label>
+        <button type="button" onClick={controller.savePolicy} disabled={saveDisabled}>{policy.saving ? 'Saving…' : 'Save policy'}</button>
+      </div>
+      <p className="component-policy-note">Notify checks only; updates remain manual.</p>
+      {value.reasonCode && <div className="notice neutral" role="status">The persisted policy was rejected safely; the effective mode is Off. Reason code: <code>{value.reasonCode}</code> Save a valid policy to re-enable component discovery.</div>}
+      <div className="component-policy-status">
+        <div><span>Scheduler</span><strong>{scheduler?.enabled ? scheduler.state : value.mode === 'notify' ? 'unavailable' : 'disabled'}</strong></div>
+        <div><span>Last cycle</span><strong>{formatTime(scheduler?.lastCycleAt)}</strong></div>
+        <div><span>Next due</span><strong>{formatTime(scheduler?.nextDueAt)}</strong></div>
+        <div><span>Notifications</span><strong>{scheduler?.notificationState || 'idle'}</strong></div>
+      </div>
+      {scheduler?.lastSkipReason && <small className="component-policy-skip">Last cycle status: {scheduler.lastSkipReason}</small>}
+      {value.mode === 'off' && <p className="component-policy-disabled">Check and update are disabled by policy. Inventory and rollback Preview/Rollback/Cancel remain available.</p>}
+      {value.mode === 'notify' && <div className="component-scheduler-results" aria-label="Scheduled check results"><span className="panel-label">Latest scheduled checks</span>{['xray', 'geodata', 'xkeen'].map((kind) => { const item = schedulerResults[kind]; return <div key={kind}><span>{COMPONENT_BY_KIND.get(kind)?.label}</span><strong>{item?.state || 'not run'}</strong><small>{item?.candidateIdentity || item?.reasonCode || '—'}</small></div> })}</div>}
+      <small className="component-policy-guard">{updateBlocked ? 'Rollback remains available while updates are disabled.' : 'Updates still require a fresh explicit Preview and confirmation.'}</small>
+    </>}
+  </section>
+}
+
+function ComponentCard({ definition, component, check, metadataBusy, lifecycle, lifecycleUnavailable, policyDiscoveryBlocked, pending, previewOpen, onCheck, onPreview, onOpenSystem }) {
   const blocked = lifecycleUnavailable || lifecycle?.maintenance || lifecycle?.applying || pending || previewOpen
+  const updateBlocked = blocked || policyDiscoveryBlocked
+  const checkBlocked = metadataBusy || pending || previewOpen || policyDiscoveryBlocked
   const state = componentState(component)
   return <article className={`panel component-card state-${state}`} data-component={definition.kind}>
     <div className="component-card-heading"><div><span className="panel-label">{definition.description}</span><h2>{definition.label}</h2></div><span className={`chip ${state === 'present' ? 'green' : state === 'missing' ? 'amber' : 'neutral'}`}>{state}</span></div>
@@ -444,8 +587,8 @@ function ComponentCard({ definition, component, check, metadataBusy, lifecycle, 
     <div className="component-actions">
       {definition.kind === 'panel' && <button type="button" className="ghost" onClick={onOpenSystem}>Open System release</button>}
       {!definition.informational && <>
-        <button type="button" className="ghost" disabled={metadataBusy || pending || previewOpen} onClick={(event) => onCheck(definition.kind, definition.channel, event.currentTarget)}>{metadataBusy ? 'Please wait…' : `Check ${definition.channel}`}</button>
-        <button type="button" disabled={metadataBusy || blocked} onClick={(event) => onPreview(definition.kind, 'update', definition.channel, event.currentTarget)}>Preview update</button>
+        <button type="button" className="ghost" disabled={checkBlocked} onClick={(event) => onCheck(definition.kind, definition.channel, event.currentTarget)}>{metadataBusy ? 'Please wait…' : `Check ${definition.channel}`}</button>
+        <button type="button" disabled={metadataBusy || updateBlocked} onClick={(event) => onPreview(definition.kind, 'update', definition.channel, event.currentTarget)}>Preview update</button>
         <button type="button" className="ghost" disabled={metadataBusy || blocked} onClick={(event) => onPreview(definition.kind, 'rollback', '', event.currentTarget)}>Preview rollback</button>
       </>}
     </div>

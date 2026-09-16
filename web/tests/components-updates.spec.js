@@ -59,6 +59,14 @@ const statusFixture = () => ({
   lifecycle: { maintenance: false, applying: false },
 })
 
+const policyFixture = (overrides = {}) => ({
+  schemaVersion: 1,
+  mode: 'manual',
+  checkCadenceMinutes: 1440,
+  scheduler: { enabled: false, state: 'disabled', notificationState: 'idle' },
+  ...overrides,
+})
+
 const jsonResponse = (route, body, status = 200) => route.fulfill({
   status,
   contentType: 'application/json',
@@ -69,6 +77,7 @@ async function mockApplication(page, options = {}) {
   const scenario = {
     status: statusFixture(),
     inventory: inventoryFixture(),
+    policy: policyFixture(),
     requests: [],
     counts: {},
     previewDelay: 0,
@@ -98,6 +107,11 @@ async function mockApplication(page, options = {}) {
       case '/api/v1/performance': return jsonResponse(route, { nodes: [] })
       case '/api/v1/config-summary': return jsonResponse(route, { routing: {}, dns: {}, observatory: {} })
       case '/api/v1/update': return jsonResponse(route, { channel: 'stable', installed: { version: '0.2.0' } })
+      case '/api/v1/components/policy':
+        if (request.method() === 'POST') {
+          scenario.policy = { ...requestBody, scheduler: scenario.policy.scheduler }
+        }
+        return jsonResponse(route, scenario.policy)
       case '/api/v1/components':
         if (scenario.inventoryRefreshFailure && scenario.counts[path] > 1) return jsonResponse(route, { error: 'component inventory unavailable' }, 503)
         return jsonResponse(route, scenario.inventory)
@@ -146,6 +160,7 @@ test('loads all six classes lazily and never adds inventory to dashboard polling
 
   await page.getByRole('button', { name: 'Components / Updates' }).click()
   await expect(page.locator('[data-component]')).toHaveCount(6)
+  await expect(page.getByRole('combobox', { name: 'Component policy mode' })).toHaveValue('manual')
   await expect(page.locator('[data-component="xray"]')).toContainText('25.9.1')
   await expect(page.locator('[data-component="xkeen"]')).toContainText('Present · version unknown')
   await expect(page.locator('[data-component="keeneticos"]')).toContainText('Unknown')
@@ -159,11 +174,39 @@ test('loads all six classes lazily and never adds inventory to dashboard polling
 
   await page.waitForTimeout(5_200)
   expect(scenario.counts['/api/v1/components']).toBe(1)
+  expect(scenario.counts['/api/v1/components/policy']).toBe(1)
   expect(scenario.counts['/api/v1/status']).toBeGreaterThan(1)
   for (const path of ['/api/v1/components/check', '/api/v1/components/preview', '/api/v1/components/apply', '/api/v1/components/rollback', '/api/v1/components/cancel']) {
     expect(scenario.counts[path] || 0).toBe(0)
   }
   await page.screenshot({ path: testInfo.outputPath('components-desktop.png'), fullPage: true })
+})
+
+test('saves the typed policy and keeps Notify explicitly check-only', async ({ page }) => {
+  const scenario = await mockApplication(page)
+  await openComponents(page)
+  await page.getByRole('combobox', { name: 'Component policy mode' }).selectOption('notify')
+  await page.getByRole('spinbutton', { name: 'Component check cadence' }).fill('120')
+  await page.getByRole('button', { name: 'Save policy' }).click()
+  await expect(page.getByText('Effective: Notify')).toBeVisible()
+  await expect(page.getByText('Notify checks only; updates remain manual.', { exact: true })).toBeVisible()
+  const request = scenario.requests.find((item) => item.path === '/api/v1/components/policy' && item.method === 'POST')
+  expect(request.body).toEqual({ schemaVersion: 1, mode: 'notify', checkCadenceMinutes: 120 })
+  expect(scenario.counts['/api/v1/components/check'] || 0).toBe(0)
+  expect(scenario.counts['/api/v1/components/preview'] || 0).toBe(0)
+})
+
+test('fails closed for Off while retaining rollback Preview', async ({ page }) => {
+  const scenario = await mockApplication(page, { policy: policyFixture({ mode: 'off' }) })
+  await openComponents(page)
+  const xray = page.locator('[data-component="xray"]')
+  await expect(xray.getByRole('button', { name: 'Check stable' })).toBeDisabled()
+  await expect(xray.getByRole('button', { name: 'Preview update' })).toBeDisabled()
+  await expect(xray.getByRole('button', { name: 'Preview rollback' })).toBeEnabled()
+  await xray.getByRole('button', { name: 'Preview rollback' }).click()
+  await expect(page.getByLabel('Component operation confirmation')).toBeVisible()
+  expect(scenario.counts['/api/v1/components/check'] || 0).toBe(0)
+  expect(scenario.requests.find((item) => item.path === '/api/v1/components/preview')?.body).toEqual({ component: 'xray', operation: 'rollback' })
 })
 
 test('uses exact CSRF-bound bodies, shows fresh Preview, and rolls back without Check', async ({ page }) => {

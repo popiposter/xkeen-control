@@ -175,6 +175,27 @@ td { color: #c8d3df; }
 .components-heading p { max-width: 760px; margin: 5px 0 0; color: #91a0b2; font-size: 11px; line-height: 1.45; }
 .components-heading-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .components-heading-actions small { white-space: nowrap; font-size: 10px; }
+.component-policy { display: grid; gap: 10px; }
+.component-policy-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.component-policy-heading h2 { margin-top: 3px; }
+.component-policy-heading p { max-width: 760px; margin: 5px 0 0; color: #91a0b2; font-size: 11px; line-height: 1.45; }
+.component-policy-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.component-policy-actions small { white-space: nowrap; font-size: 10px; }
+.component-policy-form { display: grid; grid-template-columns: minmax(150px, .8fr) minmax(180px, 1fr) auto; align-items: end; gap: 8px; padding-top: 10px; border-top: 1px solid #223144; }
+.component-policy-form label { display: grid; gap: 4px; color: #91a0b2; font-size: 10px; }
+.component-policy-form input, .component-policy-form select { width: 100%; }
+.component-policy-note, .component-policy-disabled, .component-policy-guard, .component-policy-skip { margin: 0; color: #a9bac9; font-size: 10px; line-height: 1.4; }
+.component-policy-disabled { color: #ffd890; }
+.component-policy-guard { padding-top: 8px; border-top: 1px solid #223144; }
+.component-policy-status { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.component-policy-status > div { display: grid; gap: 3px; padding: 8px; background: #0c141f; border: 1px solid #26384d; border-radius: 5px; }
+.component-policy-status span, .component-scheduler-results > span { color: #7f9ab5; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; }
+.component-policy-status strong { color: #e6edf5; font-size: 11px; overflow-wrap: anywhere; }
+.component-scheduler-results { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; padding-top: 8px; border-top: 1px solid #223144; }
+.component-scheduler-results > span { grid-column: 1 / -1; }
+.component-scheduler-results > div { display: grid; gap: 3px; padding: 7px; background: #0c141f; border: 1px solid #26384d; border-radius: 5px; }
+.component-scheduler-results strong { font-size: 10px; }
+.component-scheduler-results small { color: #a9bac9; font-size: 9px; overflow-wrap: anywhere; }
 .component-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .component-card { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 .component-card.state-missing { border-color: #6e5932; }
@@ -264,9 +285,13 @@ td { color: #c8d3df; }
   .filter-select { justify-content: space-between; }
   .filter-select select { flex: 1; }
   .diff-row { align-items: flex-start; flex-direction: column; gap: 3px; }
-  .lifecycle-banner, .components-heading, .operation-result { align-items: stretch; flex-direction: column; }
+  .lifecycle-banner, .components-heading, .component-policy-heading, .operation-result { align-items: stretch; flex-direction: column; }
   .components-heading-actions { align-items: stretch; flex-direction: column; }
   .components-heading-actions small { white-space: normal; }
+  .component-policy-actions { align-items: stretch; flex-direction: column; }
+  .component-policy-actions small { white-space: normal; }
+  .component-policy-form, .component-policy-status, .component-scheduler-results { grid-template-columns: 1fr; }
+  .component-scheduler-results > span { grid-column: auto; }
   .component-grid { grid-template-columns: 1fr; }
   .component-actions button { flex-basis: 100%; }
 }
