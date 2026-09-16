@@ -42,7 +42,7 @@ public source + signed GitHub Releases (#2, done)
         ↓
 local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
-managed XKeen / Xray / geodata lifecycle (#4, active; trial beta.2 VERIFIED BETA; Gate 3 complete; Xray pair blocked on #64)
+managed XKeen / Xray / geodata lifecycle (#4, active; trial beta.2 VERIFIED BETA; Gate 3 complete; #64 correction delivered; revised beta handoff next)
         ↓
 visual typed configuration + transactional render/apply (#5, planned)
 ```
@@ -58,7 +58,7 @@ visual typed configuration + transactional render/apply (#5, planned)
 | Pre-D — canonical Go module/import identity | Done | Issue #8 / PR #9 | Canonical `github.com/popiposter/xkeen-control` provenance; no runtime behavior change |
 | D — releases/bootstrap/panel self-update | Done | Issue #2 / `v0.1.1` | Public signed Releases, CI/release pipeline, one-command bootstrap, setup mode, transactional panel update/rollback |
 | D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
-| D.2 — component lifecycle | **Active — trial beta.2 VERIFIED BETA; Gate 3 complete; Xray pair blocked on #64** | Issue #4 / `v0.3.0-beta.2` | Live beta.2 trial and Gate 3 are complete; the Xray live update/rollback pair is blocked by deterministic pre-commit `candidate-rejected`; #64 source correction is next |
+| D.2 — component lifecycle | **Active — trial beta.2 VERIFIED BETA; Gate 3 complete; #64 correction delivered; revised beta handoff next** | Issue #4 / `v0.3.0-beta.2` | Live beta.2 trial and Gate 3 are complete; the prior Xray pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the #64 source correction, and Issue #4 owns the revised signed-beta publication/install handoff before any fresh Xray pair |
 | D.3 — visual configuration | Planned | Issue #5 | Planned typed routing/DNS/XKeen/Xray/panel/performance UI and deterministic render/apply; not deployed |
 | E — notifications/security hardening | Planned after D.3 | master issue #1 | Outbound alerts, management-VPN guidance, final attack-surface hardening |
 
@@ -91,7 +91,7 @@ Safe export excludes secrets by default; secret-bearing export is explicit and e
 
 Pre-adoption compatibility is explicit: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit and unknown/manual drift fails closed.
 
-## D.2 / Issue #4 — active; trial beta.2 VERIFIED BETA; Gate 3 complete; Xray pair blocked on #64
+## D.2 / Issue #4 — active; trial beta.2 VERIFIED BETA; Gate 3 complete; #64 correction delivered; revised beta handoff next
 
 Phase A merged via PR #23 to `main` `bda9dd0cc7bb142a4cb1468811fff9b5146b1e8e`; source main gained the bounded read-only component inventory and authenticated `GET /api/v1/components` for panel, XKeen, Xray, geodata, KeeneticOS and Entware.
 
@@ -129,11 +129,11 @@ The current [Issue #4](https://github.com/popiposter/xkeen-control/issues/4) rem
 
 The simplicity decisions in [master issue #1](https://github.com/popiposter/xkeen-control/issues/1) remain in force: one Go process, embedded UI, distinct component gate → runtime Coordinator → authority lease boundaries, fixed trust adapters and bounded journals/rollback. Q1 adds no generic transaction/form/pipeline framework, job queue/history, database, metrics agent, new API or runtime dependencies. Existing F2 behavior is the subject of qualification, not a reason to expand the product.
 
-**Gate 3 is complete.** The live router remains on trial `v0.3.0-beta.2`; production-qualified stable remains `v0.2.0` and its fresh rollback snapshot is retained. The separately authorized Xray update/verified-rollback pair is blocked by deterministic pre-commit `candidate-rejected`; Issue #64 is the compact source correction next and does not authorize another live Apply.
+**Gate 3 is complete.** The live router remains on trial `v0.3.0-beta.2`; production-qualified stable remains `v0.2.0` and its fresh rollback snapshot is retained. The separately authorized Xray update/verified-rollback pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the #64 source correction. The next prerequisite is Issue #4's exact revised signed-beta publication/verification/install handoff before any new fresh Xray pair. This does not claim that a revised beta is already published or installed and does not authorize another live Apply.
 
 Gate 3 covered one lazy inventory load and, at most once per class, `Check -> Preview update -> inspect -> Cancel` for Xray/stable, geodata/stable and XKeen/dev, followed by independent exact candidate proof and final D.1/protected-state/writer/pending re-check. It did not authorize component Apply/Rollback or panel rollback.
 
-After the revised beta is installed, Issue #4 may request a fresh Xray update/verified-rollback pair, then the remaining geodata and XKeen pairs, restoring each component baseline before the already-authorized original stable panel return.
+Only after the revised beta is published, independently verified and installed may Issue #4 request a fresh Xray update/verified-rollback pair, then the remaining geodata and XKeen pairs, restoring each component baseline before the already-authorized original stable panel return.
 
 Then refresh F3 bounded `off|notify|manual` check-only policy/scheduler and G supported Setup Mode installation against evidence and concrete need. F3/G remain planned, not canceled or deployed, and are not prerequisites for manual qualification. Issue #4 stays open until its explicitly retained scope is qualified and closed out; #5 and stable promotion require separate decisions.
 
