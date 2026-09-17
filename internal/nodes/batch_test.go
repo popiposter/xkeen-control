@@ -142,6 +142,41 @@ func TestBatchNoopDoesNotInvokeTransaction(t *testing.T) {
 	}
 }
 
+func TestBatchApplyRejectsStaleBaseWithoutTransaction(t *testing.T) {
+	registry := batchRegistry(t)
+	manager, store, _ := testManager(t, &registry, nil)
+	activator := &batchCountingActivator{}
+	manager.tx.Activator = activator
+
+	preview, err := manager.PreviewBatchState("csrf", []string{"node-11111111"}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intervening := registry
+	intervening.Nodes[1].Name = "Intervening node update"
+	intervening.Subscriptions[0].Name = "Intervening subscription update"
+	if err := store.Save(intervening); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); !errors.Is(err, ErrPreviewStale) {
+		t.Fatalf("stale batch apply = %v", err)
+	}
+	if activator.validations != 0 || activator.restarts != 0 {
+		t.Fatalf("stale batch apply invoked transaction: %+v", activator)
+	}
+	if len(manager.previews) != 0 {
+		t.Fatalf("stale batch preview remained available: %d", len(manager.previews))
+	}
+	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); !errors.Is(err, ErrPreviewExpired) {
+		t.Fatalf("stale batch token remained usable: %v", err)
+	}
+	updated, err := store.Load()
+	if err != nil || !sameRegistry(updated, intervening) {
+		t.Fatalf("stale batch apply changed committed registry: %+v, %v", updated, err)
+	}
+}
+
 func TestBatchRemoveKeepsSubscriptionsAndIsOrderIndependent(t *testing.T) {
 	registry := batchRegistry(t)
 	left, leftStore, _ := testManager(t, &registry, nil)

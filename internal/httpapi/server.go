@@ -845,17 +845,21 @@ func (s *Server) previewReplace(w http.ResponseWriter, r *http.Request) {
 func (s *Server) previewBatchState(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		NodeIDs []string `json:"nodeIds"`
-		Enabled bool     `json:"enabled"`
+		Enabled *bool    `json:"enabled"`
 	}
 	if !s.decodeMutation(w, r, &request) {
 		return
 	}
 	s.withMutationSession(w, r, func(session auth.Session) {
+		if request.Enabled == nil {
+			writeError(w, http.StatusBadRequest, "invalid request")
+			return
+		}
 		if s.nodes == nil {
 			writeError(w, http.StatusServiceUnavailable, "node operations unavailable")
 			return
 		}
-		preview, err := s.nodes.PreviewBatchState(session.CSRFToken, request.NodeIDs, request.Enabled)
+		preview, err := s.nodes.PreviewBatchState(session.CSRFToken, request.NodeIDs, *request.Enabled)
 		s.writeNodeOperationResult(w, preview, err)
 	})
 }

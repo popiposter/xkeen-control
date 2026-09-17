@@ -107,6 +107,17 @@ func TestBatchMutationRoutesAreStrictAtomicAndKeepSubscriptionRecords(t *testing
 	}
 	withoutCSRF.Body.Close()
 
+	for _, body := range []string{
+		`{"nodeIds":["node-11111111"]}`,
+		`{"nodeIds":["node-11111111"],"enabled":null}`,
+	} {
+		missingEnabled := postRawJSON(t, client, server.URL+"/api/v1/nodes/batch/state/preview", body, session.CSRFToken)
+		missingEnabledBody := readBody(missingEnabled)
+		if missingEnabled.StatusCode != http.StatusBadRequest || missingEnabledBody != `{"error":"invalid request"}`+"\n" {
+			t.Fatalf("batch missing/null enabled = %d %s", missingEnabled.StatusCode, missingEnabledBody)
+		}
+	}
+
 	unknownField := postRawJSON(t, client, server.URL+"/api/v1/nodes/batch/state/preview", `{"nodeIds":["node-11111111"],"enabled":false,"extra":true}`, session.CSRFToken)
 	if unknownField.StatusCode != http.StatusBadRequest || strings.Contains(readBody(unknownField), "edge.example.com") {
 		t.Fatalf("batch unknown field = %d", unknownField.StatusCode)
@@ -164,6 +175,68 @@ func TestBatchMutationRoutesAreStrictAtomicAndKeepSubscriptionRecords(t *testing
 	}
 }
 
+func TestBatchMutationRoutesEnforceBoundaryGuards(t *testing.T) {
+	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
+	if err := auth.SetPassword(passwordPath, []byte("synthetic-panel-password")); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(New(Config{Auth: auth.NewManager(auth.Config{HashPath: passwordPath})}))
+	defer server.Close()
+	authenticated := &http.Client{Jar: mustCookieJar(t)}
+	unauthenticated := &http.Client{Jar: mustCookieJar(t)}
+	login := postJSON(t, authenticated, server.URL+"/api/v1/session/login", map[string]string{"password": "synthetic-panel-password"}, "")
+	var session struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	decodeResponse(t, login, &session)
+	if session.CSRFToken == "" {
+		t.Fatal("missing CSRF token")
+	}
+
+	routes := []struct {
+		path string
+		body string
+	}{
+		{path: "/api/v1/nodes/batch/state/preview", body: `{"nodeIds":["node-11111111"],"enabled":false}`},
+		{path: "/api/v1/nodes/batch/remove/preview", body: `{"nodeIds":["node-11111111"]}`},
+	}
+	for _, route := range routes {
+		response := postRawJSON(t, unauthenticated, server.URL+route.path, route.body, "")
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("unauthenticated %s = %d %s", route.path, response.StatusCode, readBody(response))
+		}
+		response.Body.Close()
+
+		response = postRawJSON(t, authenticated, server.URL+route.path, route.body, "")
+		if response.StatusCode != http.StatusForbidden {
+			t.Fatalf("missing csrf %s = %d %s", route.path, response.StatusCode, readBody(response))
+		}
+		response.Body.Close()
+
+		response = requestRawJSON(t, authenticated, http.MethodPost, server.URL+route.path, route.body, session.CSRFToken, "http://evil.example")
+		if response.StatusCode != http.StatusForbidden {
+			t.Fatalf("cross-origin %s = %d %s", route.path, response.StatusCode, readBody(response))
+		}
+		response.Body.Close()
+
+		response = requestRawJSON(t, authenticated, http.MethodGet, server.URL+route.path, route.body, session.CSRFToken, "")
+		if response.StatusCode != http.StatusMethodNotAllowed {
+			t.Fatalf("wrong method %s = %d %s", route.path, response.StatusCode, readBody(response))
+		}
+		response.Body.Close()
+
+		oversized := `{"nodeIds":["` + strings.Repeat("x", maxMutationBody) + `"]}`
+		if strings.Contains(route.path, "/state/") {
+			oversized = `{"nodeIds":["` + strings.Repeat("x", maxMutationBody) + `"],"enabled":false}`
+		}
+		response = postRawJSON(t, authenticated, server.URL+route.path, oversized, session.CSRFToken)
+		if response.StatusCode != http.StatusRequestEntityTooLarge {
+			t.Fatalf("oversized %s = %d %s", route.path, response.StatusCode, readBody(response))
+		}
+		response.Body.Close()
+	}
+}
+
 func syntheticBatchHTTPRegistry(t *testing.T) nodes.Registry {
 	t.Helper()
 	parsed, err := nodes.ParseProfile(syntheticHTTPProfile)
@@ -191,14 +264,21 @@ func syntheticBatchHTTPRegistry(t *testing.T) nodes.Registry {
 }
 
 func postRawJSON(t *testing.T, client *http.Client, target, body, csrf string) *http.Response {
+	return requestRawJSON(t, client, http.MethodPost, target, body, csrf, "")
+}
+
+func requestRawJSON(t *testing.T, client *http.Client, method, target, body, csrf, origin string) *http.Response {
 	t.Helper()
-	request, err := http.NewRequest(http.MethodPost, target, strings.NewReader(body))
+	request, err := http.NewRequest(method, target, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	if csrf != "" {
 		request.Header.Set(auth.CSRFHeader, csrf)
+	}
+	if origin != "" {
+		request.Header.Set("Origin", origin)
 	}
 	response, err := client.Do(request)
 	if err != nil {
