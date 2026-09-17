@@ -57,6 +57,7 @@ type Coordinator struct {
 	policy         Policy
 	supervisor     *Supervisor
 	runner         *BenchmarkRunner
+	manualRunner   *ManualNodeRunner
 	nodes          NodeReader
 	lifecycle      chan struct{}
 	supervisorWake chan struct{}
@@ -67,6 +68,7 @@ type Coordinator struct {
 	supervisorCancel context.CancelFunc
 	supervisorDone   chan struct{}
 	benchmark        BenchmarkStatus
+	manual           ManualPerformanceStatus
 	applyWaiters     int
 	applyActive      bool
 	// maintenance is set when an interrupted appliance import cannot yet prove
@@ -86,6 +88,7 @@ func NewCoordinator(policy Policy, supervisor *Supervisor, runner *BenchmarkRunn
 	c := &Coordinator{policy: policy, supervisor: supervisor, runner: runner, nodes: nodes, lifecycle: make(chan struct{}, 1), supervisorWake: make(chan struct{}, 1)}
 	c.lifecycle <- struct{}{}
 	c.benchmark = BenchmarkStatus{Enabled: policy.Enabled, State: "idle", Schedule: policy.Schedule, TotalBudgetBytes: policy.TotalBudgetBytes, MinimumPayloadBytes: policy.MinimumPayloadBytes, PerNodeTimeoutMS: policy.PerNodeTimeout.Milliseconds(), Samples: make(map[string]ThroughputStatus)}
+	c.manual = idleManualPerformanceStatus()
 	if runner != nil && runner.Store.Path != "" {
 		if snapshot, err := runner.Store.Load(); err == nil && snapshot.ResultClass != "" {
 			c.benchmark.LastResult = snapshot.ResultClass
@@ -102,6 +105,18 @@ func NewCoordinator(policy Policy, supervisor *Supervisor, runner *BenchmarkRunn
 		}
 	}
 	return c
+}
+
+// SetManualRunner installs the fixed one-node diagnostic implementation. It
+// is called during process wiring; the Coordinator remains the sole owner of
+// admission, cancellation, progress and completion state.
+func (c *Coordinator) SetManualRunner(runner *ManualNodeRunner) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.manualRunner = runner
+	c.mu.Unlock()
 }
 
 func (c *Coordinator) Start(parent context.Context) {
@@ -193,6 +208,129 @@ func (c *Coordinator) TriggerBenchmark() error {
 	return nil
 }
 
+// TriggerManualNode admits one safe node ID into the same performance
+// single-flight used by the legacy full benchmark. Target resolution happens
+// after that shared ownership is acquired, so an Apply cannot mutate the
+// authoritative registry between selection validation and the diagnostic.
+func (c *Coordinator) TriggerManualNode(nodeID string) error {
+	if c == nil {
+		return ErrManualUnavailable
+	}
+	if !validManualNodeID(nodeID) {
+		return ErrManualInvalidTarget
+	}
+	c.mu.Lock()
+	runner := c.manualRunner
+	if runner == nil || !c.policy.Enabled {
+		c.mu.Unlock()
+		return ErrManualUnavailable
+	}
+	if runner.Probe == nil {
+		c.mu.Unlock()
+		return ErrManualUnavailable
+	}
+	if runner.Probe.Blocked() {
+		c.mu.Unlock()
+		return ErrManualCleanupPending
+	}
+	if c.maintenance || c.applyWaiters > 0 || c.applyActive || c.benchmarkCancel != nil {
+		c.mu.Unlock()
+		return ErrManualBusy
+	}
+	select {
+	case token := <-c.lifecycle:
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		started := time.Now().UTC()
+		c.benchmarkCancel, c.benchmarkDone = cancel, done
+		c.manual = ManualPerformanceStatus{
+			Mode:          ManualMode,
+			State:         "running",
+			Phase:         "latency",
+			TargetNodeID:  nodeID,
+			StartedAt:     started,
+			PlannedStages: ManualPlannedStages,
+			BytesPlanned:  ManualMaxDownloadBytes + ManualMaxUploadBytes,
+		}
+		c.mu.Unlock()
+
+		node, ok := c.resolveManualNode(context.Background(), nodeID)
+		if !ok {
+			c.finishManualAdmission(cancel, done, token, ManualPerformanceStatus{
+				Mode:          ManualMode,
+				State:         "failed",
+				Phase:         "done",
+				TargetNodeID:  nodeID,
+				StartedAt:     started,
+				ElapsedMS:     elapsedMilliseconds(started, time.Now().UTC()),
+				PlannedStages: ManualPlannedStages,
+				BytesPlanned:  ManualMaxDownloadBytes + ManualMaxUploadBytes,
+				ErrorCode:     "invalid-target",
+			})
+			return ErrManualInvalidTarget
+		}
+
+		c.mu.Lock()
+		c.manual.TargetTag = node.Tag
+		c.mu.Unlock()
+		go c.runManual(ctx, done, token, runner, node)
+		return nil
+	default:
+		c.mu.Unlock()
+		return ErrManualBusy
+	}
+}
+
+func (c *Coordinator) resolveManualNode(ctx context.Context, nodeID string) (NodeState, bool) {
+	if c == nil || c.nodes == nil {
+		return NodeState{}, false
+	}
+	var result NodeState
+	found := 0
+	for _, node := range c.nodes(ctx) {
+		if node.ID != nodeID {
+			continue
+		}
+		found++
+		result = node
+	}
+	return result, found == 1 && validManualNode(result)
+}
+
+func (c *Coordinator) runManual(ctx context.Context, done chan struct{}, token struct{}, runner *ManualNodeRunner, node NodeState) {
+	defer func() {
+		c.mu.Lock()
+		if c.benchmarkDone == done {
+			c.benchmarkCancel = nil
+			c.benchmarkDone = nil
+		}
+		c.mu.Unlock()
+		close(done)
+		c.lifecycle <- token
+	}()
+	status := runner.Run(ctx, node, func(progress ManualPerformanceStatus) {
+		c.mu.Lock()
+		c.manual = progress
+		c.mu.Unlock()
+	})
+	c.mu.Lock()
+	c.manual = status
+	c.mu.Unlock()
+}
+
+func (c *Coordinator) finishManualAdmission(cancel context.CancelFunc, done chan struct{}, token struct{}, status ManualPerformanceStatus) {
+	c.mu.Lock()
+	c.manual = status
+	if c.benchmarkDone == done {
+		c.benchmarkCancel = nil
+		c.benchmarkDone = nil
+	}
+	c.mu.Unlock()
+	cancel()
+	close(done)
+	c.lifecycle <- token
+}
+
 func (c *Coordinator) runBenchmark(ctx context.Context, done chan struct{}) {
 	defer func() {
 		c.mu.Lock()
@@ -243,9 +381,10 @@ func throughputStatuses(samples map[string]ThroughputSample) map[string]Throughp
 }
 
 // BeginApply gives an explicit operator mutation priority over managed runtime
-// work. It prevents new benchmark/supervisor work from starting, cancels and
-// drains any active benchmark and active supervisor operation (including probe
-// cleanup), then holds the lifecycle token across the node transaction.
+// work. It prevents new performance/supervisor work from starting, cancels and
+// drains any active benchmark or manual diagnostic and active supervisor
+// operation (including probe cleanup), then holds the lifecycle token across
+// the node transaction.
 func (c *Coordinator) BeginApply(ctx context.Context) (func(), error) {
 	return c.beginApply(ctx, false)
 }
@@ -441,10 +580,11 @@ func (c *Coordinator) SetManualOverride(ctx context.Context, target string) erro
 }
 
 // runSupervisorOperation registers one cancellable supervisor operation under
-// the coordinator. Benchmarks deliberately do not block admission here: the
-// supervisor may interleave liveness probes between benchmark samples through
-// ProbeRouter's lease. Apply admission, however, blocks new operations and can
-// cancel/drain the current one before Xray restart/rollback begins.
+// the coordinator. Performance work deliberately does not block admission
+// here: the supervisor may interleave liveness probes between legacy benchmark
+// samples, while a manual diagnostic holds the ProbeRouter lease for its fixed
+// bounded run. Apply admission blocks new operations and can cancel/drain the
+// current one before Xray restart/rollback begins.
 func (c *Coordinator) runSupervisorOperation(parent context.Context, operation func(context.Context) error) error {
 	if c == nil || operation == nil {
 		return nil
@@ -528,6 +668,22 @@ func (c *Coordinator) Snapshot() Status {
 		return Status{Selection: c.supervisor.Snapshot(), Benchmark: benchmark, Lifecycle: lifecycle}
 	}
 	return Status{Benchmark: benchmark, Lifecycle: lifecycle}
+}
+
+// ManualSnapshot returns the current or last manual diagnostic without reading
+// Xray, XKeen or any persistent state. It is the cheap overlay used by the
+// performance status route while a diagnostic is active.
+func (c *Coordinator) ManualSnapshot() ManualPerformanceStatus {
+	if c == nil {
+		return idleManualPerformanceStatus()
+	}
+	c.mu.Lock()
+	result := c.manual
+	if result.State == "running" {
+		result.ElapsedMS = elapsedMilliseconds(result.StartedAt, time.Now().UTC())
+	}
+	c.mu.Unlock()
+	return result
 }
 
 func (c *Coordinator) schedule(ctx context.Context) {

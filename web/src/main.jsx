@@ -132,6 +132,38 @@ const autoRefreshSummary = (status) => {
   return parts.join(' · ') || 'No attempt yet'
 }
 
+const manualStateLabels = {
+  idle: 'Ready',
+  running: 'Running',
+  completed: 'Completed',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+  'cleanup-pending': 'Cleanup pending',
+}
+const manualPhaseLabels = {
+  latency: 'Latency',
+  download: 'Download',
+  upload: 'Upload',
+  cleanup: 'Cleanup',
+  done: 'Done',
+}
+const manualErrorLabels = {
+  'invalid-target': 'The selected node is no longer enabled or available.',
+  'runtime-busy': 'The runtime is busy with another operation.',
+  'probe-unavailable': 'The diagnostic probe is unavailable.',
+  'probe-cleanup': 'Probe cleanup is pending; another diagnostic is blocked.',
+  'latency-failed': 'Fewer than two latency samples completed.',
+  'download-failed': 'No complete download stage completed.',
+  'upload-failed': 'No complete upload stage completed.',
+  timeout: 'The diagnostic reached its time limit.',
+  cancelled: 'The diagnostic was cancelled by a lifecycle operation.',
+  'transport-failure': 'The fixed measurement transport failed.',
+}
+const manualStatusLabel = (state) => manualStateLabels[state] || 'Unavailable'
+const manualPhaseLabel = (phase) => manualPhaseLabels[phase] || 'Unavailable'
+const formatManualBytes = (value) => `${((Number(value) || 0) / (1024 * 1024)).toFixed(2)} MiB`
+const formatManualRate = (value) => value == null ? '—' : `${((Number(value) * 8) / 1000000).toFixed(1)} Mbps`
+
 const sortNodes = (nodes, key, direction) => {
   const multiplier = direction === 'desc' ? -1 : 1
   const stringValue = (value) => String(value || '').toLocaleLowerCase()
@@ -194,6 +226,20 @@ function App() {
       setError(cause.message)
     } finally {
       setLoading(false)
+    }
+  }, [])
+
+  const loadPerformance = useCallback(async () => {
+    try {
+      const performance = await api('/api/v1/performance')
+      setDashboard((current) => current ? { ...current, performance } : current)
+      setError('')
+    } catch (cause) {
+      if (cause.status === 401) {
+        setDashboard(null)
+        setSession(null)
+      }
+      setError(cause.message)
     }
   }, [])
 
@@ -279,7 +325,7 @@ function App() {
   if (loading && !dashboard) return <Shell><div className="loading">Reading current router state…</div></Shell>
   if (!dashboard) return <Shell><Notice message={error || 'Runtime state is unavailable.'} /></Shell>
 
-  return <Dashboard dashboard={dashboard} session={session} error={error} onRefresh={loadDashboard} onLogout={logout} onRunBenchmark={runBenchmark} onCheckUpdate={checkUpdate} onUnauthorized={invalidateSession} />
+  return <Dashboard dashboard={dashboard} session={session} error={error} onRefresh={loadDashboard} onPerformanceRefresh={loadPerformance} onLogout={logout} onRunBenchmark={runBenchmark} onCheckUpdate={checkUpdate} onUnauthorized={invalidateSession} />
 }
 
 function Login({ error, password, setPassword, onSubmit }) {
@@ -296,8 +342,8 @@ function Login({ error, password, setPassword, onSubmit }) {
   </main>
 }
 
-function Dashboard({ dashboard, session, error, onRefresh, onLogout, onRunBenchmark, onCheckUpdate, onUnauthorized }) {
-  const { status, nodes, config, update } = dashboard
+function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh, onLogout, onRunBenchmark, onCheckUpdate, onUnauthorized }) {
+  const { status, nodes, performance, config, update } = dashboard
   const [section, setSection] = useState('overview')
   const [nodeView, setNodeView] = useState(createNodeViewState)
   const [restoreState, setRestoreState] = useState({ preview: null })
@@ -309,6 +355,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onLogout, onRunBenchm
     void componentController.loadInventory()
   }, [componentController.loadInventory])
   const lifecycleBlocked = componentController.lifecycleMutationBlocked
+  const manualLifecycleBlocked = !status.lifecycle || status.lifecycle.maintenance || status.lifecycle.applying
 
   return <Shell>
     <header className="topbar">
@@ -328,7 +375,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onLogout, onRunBenchm
     <ComponentLifecycleNotices controller={componentController} lifecycle={status.lifecycle} onOpenComponents={openComponents} />
     {error && <Notice message={error} />}
     {section === 'overview' && <Overview status={status} nodeTotal={nodes.total || 0} nodesByTag={nodesByTag} onRunBenchmark={onRunBenchmark} lifecycleBlocked={lifecycleBlocked} />}
-    {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} manualOverride={status.selection?.manualOverride || ''} csrf={session.csrfToken} onRefresh={onRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} />}
+    {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} performance={performance} manualOverride={status.selection?.manualOverride || ''} benchmarkRunning={Boolean(status.benchmark?.controlPlane?.running)} csrf={session.csrfToken} onRefresh={onRefresh} onPerformanceRefresh={onPerformanceRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} manualLifecycleBlocked={manualLifecycleBlocked} />}
     {section === 'components' && <ComponentsUpdatesSection controller={componentController} lifecycle={status.lifecycle} onOpenSystem={() => setSection('system')} />}
     {section === 'system' && <SystemSection status={status} config={config} nodesByTag={nodesByTag} update={update} onCheckUpdate={onCheckUpdate} />}
     {section === 'backup' && <BackupRestoreSection csrf={session.csrfToken} restoreState={restoreState} setRestoreState={setRestoreState} onRefresh={onRefresh} onUnauthorized={onUnauthorized} lifecycleBlocked={lifecycleBlocked} />}
@@ -356,7 +403,7 @@ function Overview({ status, nodeTotal, nodesByTag, onRunBenchmark, lifecycleBloc
   </div>
 }
 
-function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, viewState, onViewStateChange, lifecycleBlocked }) {
+function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benchmarkRunning, csrf, onRefresh, onPerformanceRefresh, viewState, onViewStateChange, lifecycleBlocked, manualLifecycleBlocked }) {
   const [profiles, setProfiles] = useState('')
   const [subscriptionUrl, setSubscriptionUrl] = useState('')
   const [subscriptionName, setSubscriptionName] = useState('')
@@ -368,6 +415,9 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
   const [preview, setPreview] = useState(null)
   const [notice, setNotice] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [manualRequestBusy, setManualRequestBusy] = useState(false)
+  const manualStatus = performance?.manual || { state: 'idle', phase: 'done', plannedStages: 11, bytesPlanned: 48 * 1024 * 1024, completedStages: 0, bytesTransferred: 0 }
+  const manualRunning = manualStatus.state === 'running'
   const { query, statusFilter, roleFilter, sourceFilter, countryFilter, sort, page } = viewState
 
   const filtered = useMemo(() => {
@@ -427,6 +477,18 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
       setReplacement('')
     }
   }, [editingID, selectedNode])
+
+  useEffect(() => {
+    if (!manualRunning || !onPerformanceRefresh) return undefined
+    let active = true
+    const timer = window.setInterval(() => {
+      if (active) void onPerformanceRefresh()
+    }, 1000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [manualRunning, onPerformanceRefresh])
 
   const chooseFilter = (key, value) => {
     onViewStateChange((current) => ({ ...current, [key]: value, page: 1 }))
@@ -556,6 +618,24 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
     }
   }
 
+  const runManualNode = async () => {
+    if (!selectedNode || selectedNodes.length !== 1 || !selectedNode.enabled || manualLifecycleBlocked || benchmarkRunning || manualRunning || manualRequestBusy) return
+    setManualRequestBusy(true)
+    setNotice(null)
+    try {
+      await api('/api/v1/performance/manual-node', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
+        body: JSON.stringify({ nodeId: selectedNode.id }),
+      })
+      if (onPerformanceRefresh) await onPerformanceRefresh()
+    } catch (cause) {
+      setNotice({ tone: 'error', message: cause.message })
+    } finally {
+      setManualRequestBusy(false)
+    }
+  }
+
   return <section className="panel nodes-workspace">
     <div className="workspace-heading">
       <h2>Nodes <span className="count">{nodes.length}</span></h2>
@@ -617,12 +697,15 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
       <div className="selection-summary"><strong data-testid="selected-count">{selectedIDs.size} selected</strong><button className="clear-filters" type="button" onClick={toggleAllFiltered} disabled={busy || lifecycleBlocked || !filtered.length || allFilteredSelected}>Select all {filtered.length} filtered</button><button className="clear-filters" type="button" onClick={clearSelection} disabled={busy || lifecycleBlocked || !selectedIDs.size}>Clear selection</button></div>
       <div className="selection-actions">
         <button type="button" onClick={() => setManualOverride(selectedManual ? '' : (selectedNode.outboundTag || selectedNode.tag))} disabled={busy || lifecycleBlocked || !selectedNode || (!selectedManual && !selectedNode.enabled)}>{selectedManual ? 'Clear manual override' : 'Set manual override'}</button>
+        <button type="button" onClick={runManualNode} disabled={busy || manualRequestBusy || manualLifecycleBlocked || benchmarkRunning || manualRunning || selectedNodes.length !== 1 || !selectedNode?.enabled}>{manualRequestBusy ? 'Starting speed test…' : 'Full speed test'}</button>
         <button type="button" onClick={openEditor} disabled={busy || lifecycleBlocked || selectedNodes.length !== 1}>Edit / replace profile</button>
         <button type="button" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: true })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => node.enabled)}>Enable</button>
         <button type="button" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: false })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => !node.enabled)}>Disable</button>
         <button type="button" className="danger-action" onClick={() => requestPreview('/api/v1/nodes/batch/remove/preview', { nodeIds: selectedNodeIDs })} disabled={busy || lifecycleBlocked || !selectedNodes.length}>Delete</button>
       </div>
     </div>
+
+    {manualStatus.state !== 'idle' && <ManualPerformanceCard status={manualStatus} node={nodes.find((node) => node.id === manualStatus.targetNodeId)} />}
 
     {selectedNode && editingID === selectedNode.id && <div className="selection-editor">
       <div><span className="panel-label">Replace profile</span><NodeName node={selectedNode} /><small>Stable tag: <code>{selectedNode.outboundTag || selectedNode.tag}</code></small></div>
@@ -637,6 +720,26 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
 
     <Pagination page={page} totalPages={totalPages} onPage={(value) => onViewStateChange((current) => ({ ...current, page: value }))} />
     {preview && <PreviewDialog preview={preview} nodes={nodes} manualOverride={manualOverride} busy={busy || lifecycleBlocked} onCancel={cancelPreview} onApply={applyPreview} />}
+  </section>
+}
+
+function ManualPerformanceCard({ status, node }) {
+  const error = status.errorCode ? manualErrorLabels[status.errorCode] || 'The diagnostic ended with a safe error.' : ''
+  return <section className={`manual-performance ${status.state}`} data-testid="manual-performance" aria-live="polite">
+    <div className="manual-performance-heading">
+      <div><span className="panel-label">Full speed test</span><h3>{manualStatusLabel(status.state)} · {manualPhaseLabel(status.phase)}</h3></div>
+      {status.elapsedMs != null && <span className="chip neutral">{(Number(status.elapsedMs || 0) / 1000).toFixed(1)}s</span>}
+    </div>
+    <div className="manual-performance-target"><span>Target</span><strong>{visibleNodeName(node) || 'Unavailable'}</strong>{status.targetNodeId && <code>{status.targetNodeId}</code>}{status.targetTag && <code>{status.targetTag}</code>}</div>
+    <div className="manual-progress-grid">
+      <div><span>Stages</span><strong>{status.completedStages || 0} / {status.plannedStages || 0}</strong></div>
+      <div><span>Bytes</span><strong>{formatManualBytes(status.bytesTransferred)} / {formatManualBytes(status.bytesPlanned)}</strong></div>
+      <div><span>Latency</span><strong>{status.latencyMs == null ? '—' : `${status.latencyMs} ms`}</strong></div>
+      <div><span>Download</span><strong>{formatManualRate(status.downloadBps)}</strong></div>
+      <div><span>Upload</span><strong>{formatManualRate(status.uploadBps)}</strong></div>
+    </div>
+    {status.currentStage && <small className="manual-current-stage">Stage: {status.currentStage}</small>}
+    {error && <p className="warning">{error}</p>}
   </section>
 }
 

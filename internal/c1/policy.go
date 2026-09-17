@@ -193,6 +193,7 @@ func (p Policy) Plan(eligibleNodes int) (BenchmarkPlan, error) {
 }
 
 type NodeState struct {
+	ID      string
 	Tag     string
 	Enabled bool
 }

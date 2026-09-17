@@ -159,6 +159,19 @@ no cadence setting, scheduler-run endpoint or extra polling loop. Slice C is
 source/CI-only and does not imply release, router access, provider access or
 production qualification.
 
+Source-main Slice D / Issue #74 (PR #75) adds one fixed `manual-node`
+diagnostic for exactly one current enabled canonical node. The existing
+Coordinator performance owner and ProbeRouter lease run three zero-byte
+latency requests, then sequential 1/3/8/20 MiB download and 1/3/4/8 MiB
+upload stages through the fixed loopback probe transport, with 32 MiB down,
+16 MiB up and 45-second whole-run ceilings. Progress and the last result stay
+RAM-only; the existing authenticated performance response overlays that
+projection on cached historical data so active polling does not force heavy
+Xray/XKeen/config reads. The browser posts only a safe node ID, and the
+server resolves the current canonical tag. Manual diagnostics never change
+selection, manual override or the persisted legacy benchmark. Slice D is
+source/CI-only and is not deployed or production-qualified.
+
 Current panel lifecycle endpoints are:
 
 ```text
