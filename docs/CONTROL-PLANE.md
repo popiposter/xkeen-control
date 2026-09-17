@@ -172,6 +172,26 @@ server resolves the current canonical tag. Manual diagnostics never change
 selection, manual override or the persisted legacy benchmark. Slice D is
 source/CI-only and is not deployed or production-qualified.
 
+Source-main Slice E / Issue #76 adds the only healthy automatic quality-switch
+path: a fixed three-hour, process-local adaptive generation fed by the existing
+Supervisor/PolicyEngine Observatory RTT evidence. It freezes the current
+managed target plus the lowest-five fresh eligible RTT candidates (appending
+the current target when needed, hard maximum six), then reuses Slice D's fixed
+loopback-proxy down/up transport with 16 MiB download, 8 MiB upload, 30-second
+per-candidate and 180-second/144 MiB generation ceilings. The deterministic
+same-generation score, RTT guard, 30-minute dwell and 10% hysteresis are
+applied through the existing selection transaction; only a real target change
+writes `selection.json`. The Coordinator remains the sole performance owner
+for `adaptive`, `manual-node` and explicit `legacy-full` modes, and ProbeRouter
+cleanup remains gating. Healthy Tick retains RTT evidence but no longer
+switches on latency alone; active liveness, manual override and native
+`leastPing` fallback remain independent. Legacy `04:17` scheduling is no
+longer automatic and explicit `/api/v1/benchmark/run` remains a snapshot-only
+compatibility diagnostic. Adaptive status is bounded/RAM-only on the existing
+authenticated performance response; there is no new URL, configuration or
+run-now surface. Slice E is source/CI-only and is not deployed or
+production-qualified.
+
 Current panel lifecycle endpoints are:
 
 ```text
@@ -212,9 +232,13 @@ Node activation does not regenerate routing, DNS or Observatory policy.
 
 C.1 makes the stable runtime override the normal managed selection policy; native `leastPing` remains emergency fallback.
 
-The supervisor separates 60-second active liveness failover, bounded Observatory RTT quality decisions and once/day sustained throughput evidence.
+Source-main E separates 60-second active liveness/recovery, existing
+Observatory RTT evidence and the single adaptive quality generation. Healthy
+automatic switching is owned only by that adaptive generation; explicit
+legacy throughput remains a compatibility diagnostic and no longer selects a
+healthy target. Native Xray `leastPing` remains the emergency fallback.
 
-Temporary targeted probes use typed append-only RoutingService rules on the dedicated loopback `probe` inbound. Probe cleanup is gating: cleanup failure prevents a benchmark-driven switch and further unsafe probe reuse.
+Temporary targeted probes use typed append-only RoutingService rules on the dedicated loopback `probe` inbound. Probe cleanup is gating: cleanup failure prevents a quality-driven switch and further unsafe probe reuse.
 
 Benchmark working state stays in RAM/`/tmp`; one compact completed-run snapshot may persist. Legacy XKeen Speed Balancer and watchdog writers are disabled.
 
@@ -240,7 +264,7 @@ Panel install/update does not install or repair XKeen/Xray and does not rewrite 
 
 Normal polling, update checks and runtime telemetry cause no persistent writes unless the operator deliberately changes policy or applies a release/state mutation.
 
-Persistent writes are purpose-specific and bounded, including auth/listener changes, explicit typed `appliance.json` adoption/restore changes, explicit `nodes.json` mutations plus generated active outbounds, the authenticated component policy at `/opt/etc/xkeen-control/state/component-policy.json`, real stable-selection changes, one compact completed benchmark snapshot, compact panel release/update markers and bounded rollback generations. Component scheduler timestamps, status, notification dedupe and failures remain in RAM.
+Persistent writes are purpose-specific and bounded, including auth/listener changes, explicit typed `appliance.json` adoption/restore changes, explicit `nodes.json` mutations plus generated active outbounds, the authenticated component policy at `/opt/etc/xkeen-control/state/component-policy.json`, real stable-selection changes, one compact completed legacy benchmark snapshot, compact panel release/update markers and bounded rollback generations. Adaptive generations, manual progress/results and component scheduler timestamps, status, notification dedupe and failures remain in RAM.
 
 No SQLite/Redis/Prometheus/Grafana/growing revision history belongs on the router.
 

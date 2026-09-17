@@ -143,6 +143,21 @@ func (e *PolicyEngine) RollingMedian(tag string) (int64, bool) {
 	return delays[len(delays)/2], true
 }
 
+// LatestSampleAt returns the timestamp of the newest unique Observatory
+// sample retained for tag. Adaptive quality uses this to enforce the same
+// bounded freshness window as the existing RTT policy without creating a
+// second poller or evidence store.
+func (e *PolicyEngine) LatestSampleAt(tag string) (time.Time, bool) {
+	if e == nil {
+		return time.Time{}, false
+	}
+	values := e.samples[tag]
+	if len(values) == 0 {
+		return time.Time{}, false
+	}
+	return values[len(values)-1].at, true
+}
+
 func (e *PolicyEngine) LatencyDecision(now time.Time, current string, evidence map[string]Evidence, observationsChanged map[string]bool, stableSince time.Time) Decision {
 	if e == nil {
 		return Decision{}
