@@ -131,6 +131,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/backup/export", "/api/v1/backup/export-secret",
 		"/api/v1/backup/import/preview", "/api/v1/backup/import/apply", "/api/v1/backup/import/cancel",
 		"/api/v1/nodes/import/preview", "/api/v1/nodes/replace/preview",
+		"/api/v1/nodes/batch/state/preview", "/api/v1/nodes/batch/remove/preview",
 		"/api/v1/subscriptions/refresh/preview", "/api/v1/subscriptions/state/preview", "/api/v1/subscriptions/remove/preview",
 		"/api/v1/selection/override",
 		"/api/v1/node-changes/apply", "/api/v1/node-changes/cancel":
@@ -304,6 +305,18 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.previewReplace(w, r)
+	case "/api/v1/nodes/batch/state/preview":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.previewBatchState(w, r)
+	case "/api/v1/nodes/batch/remove/preview":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.previewBatchRemove(w, r)
 	case "/api/v1/subscriptions/refresh/preview":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -829,6 +842,45 @@ func (s *Server) previewReplace(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) previewBatchState(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		NodeIDs []string `json:"nodeIds"`
+		Enabled *bool    `json:"enabled"`
+	}
+	if !s.decodeMutation(w, r, &request) {
+		return
+	}
+	s.withMutationSession(w, r, func(session auth.Session) {
+		if request.Enabled == nil {
+			writeError(w, http.StatusBadRequest, "invalid request")
+			return
+		}
+		if s.nodes == nil {
+			writeError(w, http.StatusServiceUnavailable, "node operations unavailable")
+			return
+		}
+		preview, err := s.nodes.PreviewBatchState(session.CSRFToken, request.NodeIDs, *request.Enabled)
+		s.writeNodeOperationResult(w, preview, err)
+	})
+}
+
+func (s *Server) previewBatchRemove(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		NodeIDs []string `json:"nodeIds"`
+	}
+	if !s.decodeMutation(w, r, &request) {
+		return
+	}
+	s.withMutationSession(w, r, func(session auth.Session) {
+		if s.nodes == nil {
+			writeError(w, http.StatusServiceUnavailable, "node operations unavailable")
+			return
+		}
+		preview, err := s.nodes.PreviewBatchRemove(session.CSRFToken, request.NodeIDs)
+		s.writeNodeOperationResult(w, preview, err)
+	})
+}
+
 func (s *Server) previewSubscription(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		SubscriptionID string `json:"subscriptionId"`
@@ -1018,7 +1070,22 @@ func (s *Server) decodeMutation(w http.ResponseWriter, r *http.Request, value an
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request")
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request too large")
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid request")
+		}
+		return false
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request too large")
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid request")
+		}
 		return false
 	}
 	return true
@@ -1161,6 +1228,8 @@ func (s *Server) writeNodeOperationError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, nodes.ErrNodeNotFound):
 		status = http.StatusNotFound
+	case errors.Is(err, nodes.ErrBatchInvalid):
+		message = "node batch rejected"
 	case errors.Is(err, nodes.ErrSubscriptionNotFound):
 		status = http.StatusNotFound
 	case errors.Is(err, nodes.ErrSubscriptionDisabled):
