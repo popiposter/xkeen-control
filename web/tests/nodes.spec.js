@@ -55,6 +55,7 @@ async function prepare(page) {
     requests: [],
     pending: new Map(),
     previewNumber: 0,
+    subscriptionEnabled: true,
     missingNextRefresh: false,
     exactRefreshRemovalIDs: [nodeID(3)],
   }
@@ -83,7 +84,10 @@ async function prepare(page) {
       case '/api/v1/nodes': {
         const nodes = state.missingNextRefresh ? state.nodes.filter((node) => node.id !== nodeID(1)) : state.nodes
         state.missingNextRefresh = false
-        return json(route, { total: nodes.length, nodes, subscriptions: [{ id: 'sub-12345678', name: 'Provider', enabled: true, nodeCount: nodes.filter((node) => node.sourceType === 'subscription').length, staleCount: 0 }] })
+        const autoRefresh = state.subscriptionEnabled
+          ? { state: 'deferred', nextRunAt: new Date(Date.now() + 300000).toISOString(), lastSuccessAt: new Date(Date.now() - 60000).toISOString(), lastResult: 'noop', errorCode: 'authority-busy' }
+          : { state: 'disabled' }
+        return json(route, { total: nodes.length, nodes, subscriptions: [{ id: 'sub-12345678', name: 'Provider', enabled: state.subscriptionEnabled, nodeCount: nodes.filter((node) => node.sourceType === 'subscription').length, staleCount: 0, autoRefresh }] })
       }
       case '/api/v1/performance': return json(route, { nodes: [] })
       case '/api/v1/config-summary': return json(route, { routing: {}, dns: {}, observatory: {} })
@@ -128,6 +132,11 @@ async function prepare(page) {
         state.pending.set(previewToken, { refresh: true, ids: [...state.exactRefreshRemovalIDs] })
         return json(route, { previewToken, operation: 'subscription-refresh', expiresAt: new Date(Date.now() + 300_000).toISOString(), changes, requiresAcceptance: false, noop: changes.length === 0 })
       }
+      case '/api/v1/subscriptions/state/preview': {
+        const previewToken = `synthetic-subscription-state-${++state.previewNumber}`
+        state.pending.set(previewToken, { subscriptionState: true, enabled: body.enabled })
+        return json(route, { previewToken, operation: 'subscription-enable-disable', expiresAt: new Date(Date.now() + 300_000).toISOString(), changes: [{ action: 'subscription-enable-disable', id: 'sub-12345678', name: 'Provider', outboundTag: '', sourceType: 'subscription', before: state.subscriptionEnabled ? 'enabled' : 'disabled', after: body.enabled ? 'enabled' : 'disabled' }], requiresAcceptance: false, noop: state.subscriptionEnabled === body.enabled })
+      }
       case '/api/v1/nodes/replace/preview': {
         const previewToken = `synthetic-replace-${++state.previewNumber}`
         return json(route, { previewToken, operation: 'replace', expiresAt: new Date(Date.now() + 300_000).toISOString(), changes: [{ action: 'replace', id: body.id, name: 'Node 001', outboundTag: `proxy-${body.id}`, sourceType: 'manual', before: 'enabled', after: 'enabled' }], requiresAcceptance: false, noop: false })
@@ -137,10 +146,11 @@ async function prepare(page) {
         if (pending) {
           if (pending.remove) state.nodes = state.nodes.filter((node) => !pending.ids.includes(node.id))
           else if (pending.refresh) state.nodes = state.nodes.filter((node) => !pending.ids.includes(node.id))
+          else if (pending.subscriptionState) state.subscriptionEnabled = pending.enabled
           else state.nodes = state.nodes.map((node) => pending.ids.includes(node.id) ? { ...node, enabled: pending.enabled } : node)
           state.pending.delete(body.previewToken)
         }
-        return json(route, { operation: pending?.refresh ? 'subscription-refresh' : pending?.remove ? 'batch-remove' : 'batch-state', nodes: state.nodes, changes: [] })
+        return json(route, { operation: pending?.refresh ? 'subscription-refresh' : pending?.subscriptionState ? 'subscription-enable-disable' : pending?.remove ? 'batch-remove' : 'batch-state', nodes: state.nodes, changes: [] })
       }
       case '/api/v1/node-changes/cancel': return json(route, { canceled: true })
       default: return json(route, { error: `unexpected synthetic route: ${path}` }, 404)
@@ -159,6 +169,39 @@ async function openNodes(page) {
 test.afterEach(async ({ page }) => {
   const issues = page.__nodesIssues
   if (issues) expect(issues).toEqual([])
+})
+
+test('shows bounded automatic subscription status without scheduler controls', async ({ page }) => {
+  const prepared = await prepare(page)
+  page.__nodesIssues = prepared.issues
+  await openNodes(page)
+
+  const status = page.getByTestId('subscription-auto-refresh-sub-12345678')
+  await expect(status).toContainText('Refresh deferred')
+  await expect(status).toContainText('Authority busy')
+  await expect(status).toContainText('Last: No change')
+  await expect(status).toContainText('Next:')
+  await expect(page.getByText(/cadence/i)).toHaveCount(0)
+})
+
+test('projects disabled subscription as non-participating before scheduler rescan', async ({ page }) => {
+  const prepared = await prepare(page)
+  page.__nodesIssues = prepared.issues
+  await openNodes(page)
+
+  await page.getByRole('button', { name: 'Disable Provider', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Preview node change' })).toBeVisible()
+  expect(prepared.state.requests.filter((request) => request.path === '/api/v1/subscriptions/state/preview')).toEqual([
+    { path: '/api/v1/subscriptions/state/preview', method: 'POST', body: { subscriptionId: 'sub-12345678', enabled: false } },
+  ])
+  await page.getByRole('button', { name: 'Apply and validate', exact: true }).click()
+
+  const status = page.getByTestId('subscription-auto-refresh-sub-12345678')
+  await expect(status).toContainText('Automatic refresh disabled')
+  await expect(status).toContainText('Disabled subscriptions do not participate')
+  await expect(status).not.toContainText('Next:')
+  await expect(status).not.toContainText('Refresh deferred')
+  await expect(page.locator('.subscription-card.disabled')).toContainText('Disabled')
 })
 
 test('selects one, many and all filtered nodes across pages and reconciles selection', async ({ page }) => {

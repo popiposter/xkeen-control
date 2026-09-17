@@ -157,6 +157,8 @@ func main() {
 	componentGate := components.NewComponentMutationGate()
 	componentMaintenance := components.NewComponentMaintenance(coordinator, authorityLease)
 	nodeManager = newNodeManager(coordinator, authorityLease)
+	subscriptionRefresher := nodes.NewSubscriptionRefresher(nodeManager)
+	nodeManager.SetAutoRefreshStatusProvider(subscriptionRefresher.AutoRefreshStatuses)
 	applianceService := newApplianceService(authorityLease)
 	restoreService := newRestoreService(coordinator, authorityLease)
 	componentXrayService := newXrayService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
@@ -339,6 +341,7 @@ func main() {
 	go func() {
 		<-shutdown
 		cancelRuntime()
+		subscriptionRefresher.Stop()
 		componentScheduler.Stop()
 		coordinator.Stop()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -346,6 +349,10 @@ func main() {
 		_ = server.Shutdown(ctx)
 	}()
 	coordinator.Start(runtimeContext)
+	// Startup recovery above must settle before any scheduler is started. The
+	// subscription refresher then owns only its bounded RAM schedule and uses
+	// the coordinator's non-preemptive background admission for commits.
+	subscriptionRefresher.Start(runtimeContext)
 	componentScheduler.Start(runtimeContext)
 
 	log.Printf("xkeen-control %s listening on %s", buildinfo.Current().Version, listenAddress)

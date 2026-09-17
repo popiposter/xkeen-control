@@ -128,6 +128,37 @@ UI, while the manual-delete reappearance warning remains limited to explicit
 manual node deletion. Slice B is source/CI behavior; it is not deployed or
 production-qualified.
 
+Source-main Slice C / Issue #72 adds one purpose-built, in-process refresher
+for enabled saved subscriptions. It uses a fixed six-hour cadence, a
+five-minute startup wait plus deterministic safe-ID jitter, no catch-up or
+persistent scheduler state, one attempt at a time, and a bounded five-minute
+read-only registry rescan. New subscriptions discovered after startup use the
+normal cadence; a tracked disabled-to-enabled subscription receives the fresh
+startup delay. Disabled or removed subscriptions have no automatic due state,
+and the attempt path re-reads the authoritative registry before fetching and
+before committing.
+
+Provider fetch and Slice B candidate construction happen outside lifecycle and
+authority ownership. A changed candidate first takes the Coordinator's
+non-preemptive `TryBeginManagedApply` admission and then the shared authority
+lease's immediate `TryAcquire`; either busy result defers without waiting or
+cancelling benchmark/supervisor work. Under both admissions the exact base
+digest is rechecked before one existing full-registry node transaction. Manual
+Preview tokens are untouched. Busy/stale work retries only at 5, 15 and 30
+minutes before returning to the normal cadence; content and activation failures
+also retain the committed generation and schedule the normal cadence.
+
+The existing authenticated `GET /api/v1/nodes` response carries only bounded
+RAM status (`waiting`, `running`, `deferred`, `failed` or `disabled`) with safe
+timestamps, `updated`/`noop` result and an allowlisted error code, including
+`operator-preview` when an operator's live node Preview defers a changed
+automatic commit. Authoritative `enabled: false` projects `disabled` immediately
+even if the refresher's bounded rescan has not observed the change. The UI is
+status-only: explicit Refresh/Edit/Enable/Disable/Remove controls remain, with
+no cadence setting, scheduler-run endpoint or extra polling loop. Slice C is
+source/CI-only and does not imply release, router access, provider access or
+production qualification.
+
 Current panel lifecycle endpoints are:
 
 ```text

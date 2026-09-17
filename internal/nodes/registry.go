@@ -125,11 +125,12 @@ type PublicNode struct {
 }
 
 type PublicSubscription struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Enabled    bool   `json:"enabled"`
-	NodeCount  int    `json:"nodeCount"`
-	StaleCount int    `json:"staleCount"`
+	ID          string             `json:"id"`
+	Name        string             `json:"name"`
+	Enabled     bool               `json:"enabled"`
+	NodeCount   int                `json:"nodeCount"`
+	StaleCount  int                `json:"staleCount"`
+	AutoRefresh *AutoRefreshStatus `json:"autoRefresh,omitempty"`
 }
 
 func NewRegistry() Registry {

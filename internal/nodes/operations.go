@@ -67,10 +67,19 @@ type Manager struct {
 	coordinator interface {
 		BeginApply(context.Context) (func(), error)
 	}
+	managedCoordinator interface {
+		TryBeginManagedApply() (func(), error)
+	}
 
-	mu        sync.Mutex
-	authority *authority.Lease
-	previews  map[string]previewEntry
+	mu                    sync.Mutex
+	authority             *authority.Lease
+	previews              map[string]previewEntry
+	automaticCommitIntent bool
+	autoRefreshStatusFunc func() map[string]AutoRefreshStatus
+
+	// beforeAutomaticCommitAdmission is a deterministic test seam for the
+	// Preview-store/admission interleaving. It is never set by production code.
+	beforeAutomaticCommitAdmission func()
 }
 
 type previewEntry struct {
@@ -133,12 +142,18 @@ func NewManager(config Config) *Manager {
 	if lease == nil {
 		lease = authority.NewLease()
 	}
-	return &Manager{
+	manager := &Manager{
 		store: config.Store, legacyPath: config.LegacyPath, tx: config.Transaction,
 		fetcher: config.Fetcher, ttl: config.PreviewTTL, maxPreviews: config.MaxPreviews, now: config.Now,
 		gateTimeout: DefaultApplyGateWaitTimeout,
 		coordinator: config.Coordinator, authority: lease, previews: make(map[string]previewEntry),
 	}
+	if managed, ok := config.Coordinator.(interface {
+		TryBeginManagedApply() (func(), error)
+	}); ok {
+		manager.managedCoordinator = managed
+	}
+	return manager
 }
 
 func (m *Manager) List() ([]PublicNode, error) {
@@ -154,7 +169,75 @@ func (m *Manager) ListSubscriptions() ([]PublicSubscription, error) {
 	if err != nil {
 		return nil, err
 	}
-	return registry.PublicSubscriptions(), nil
+	result := registry.PublicSubscriptions()
+	m.mu.Lock()
+	statusFunc := m.autoRefreshStatusFunc
+	m.mu.Unlock()
+	var statuses map[string]AutoRefreshStatus
+	if statusFunc != nil {
+		statuses = statusFunc()
+	}
+	for index := range result {
+		if !result[index].Enabled {
+			// The registry is authoritative for participation. Do not let a
+			// stale RAM scheduler entry make an explicitly disabled subscription
+			// look scheduled until the next refresher rescan.
+			result[index].AutoRefresh = &AutoRefreshStatus{State: autoRefreshDisabled}
+			continue
+		}
+		if status, ok := statuses[result[index].ID]; ok {
+			copy := status
+			result[index].AutoRefresh = &copy
+		}
+	}
+	return result, nil
+}
+
+// SetAutoRefreshStatusProvider connects the RAM-only refresher projection to
+// the existing safe subscription list. The provider is read-only from the
+// Manager's perspective and must never return registry or provider secrets.
+func (m *Manager) SetAutoRefreshStatusProvider(provider func() map[string]AutoRefreshStatus) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.autoRefreshStatusFunc = provider
+	m.mu.Unlock()
+}
+
+// tryBeginAutomaticCommit claims the small Manager-local commit-intent phase
+// for one changed automatic candidate. It is synchronized with Preview
+// storage, so either an operator Preview is stored first or the automatic
+// commit intent is claimed first; there is no observation-to-admission gap.
+// The returned release only holds Manager.mu while clearing the claim.
+func (m *Manager) tryBeginAutomaticCommit() (func(), error) {
+	if m == nil {
+		return nil, ErrOperationUnavailable
+	}
+	now := time.Now().UTC()
+	if m.now != nil {
+		now = m.now()
+		if now.IsZero() {
+			now = time.Now().UTC()
+		}
+	}
+	m.mu.Lock()
+	m.purgeExpiredLocked(now)
+	if m.automaticCommitIntent || len(m.previews) > 0 {
+		m.mu.Unlock()
+		return nil, ErrOperationUnavailable
+	}
+	m.automaticCommitIntent = true
+	m.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			m.mu.Lock()
+			m.automaticCommitIntent = false
+			m.mu.Unlock()
+		})
+	}, nil
 }
 
 // Snapshot returns a validated copy of the committed registry. It takes the
@@ -752,6 +835,10 @@ func (m *Manager) createPreview(binding string, before, registry Registry, opera
 	entry := previewEntry{Binding: binding, Registry: registry, BaseDigest: registryDigest(before), Operation: operation, Changes: changes, RequiresAcceptance: requiresAcceptance, Noop: noop, CreatedAt: created, ExpiresAt: expires}
 	m.mu.Lock()
 	m.purgeExpiredLocked(created)
+	if m.automaticCommitIntent {
+		m.mu.Unlock()
+		return Preview{}, ErrOperationUnavailable
+	}
 	for oldToken, old := range m.previews {
 		if old.Binding == binding {
 			delete(m.previews, oldToken)

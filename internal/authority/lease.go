@@ -10,7 +10,10 @@ import (
 	"time"
 )
 
-var ErrBlocked = errors.New("authority lease is blocked for recovery")
+var (
+	ErrBlocked = errors.New("authority lease is blocked for recovery")
+	ErrBusy    = errors.New("authority lease is busy")
+)
 
 // Lease is a one-slot, context-aware authority lock.
 type Lease struct {
@@ -53,6 +56,32 @@ func (l *Lease) Acquire(ctx context.Context, timeout time.Duration) (func(), err
 		return func() { once.Do(func() { <-l.gate }) }, nil
 	case <-waitContext.Done():
 		return nil, waitContext.Err()
+	}
+}
+
+// TryAcquire reserves the normal authority lease only when it is immediately
+// available. It never waits, so a background caller can defer without holding
+// another lifecycle ownership boundary while an unrelated operation finishes.
+// A recovery block is checked both before and after the one-slot admission;
+// an operation that already owns the lease remains valid when Block is called,
+// matching the ordinary Acquire semantics.
+func (l *Lease) TryAcquire() (func(), error) {
+	if l == nil {
+		return func() {}, nil
+	}
+	if l.isBlocked() {
+		return nil, ErrBlocked
+	}
+	select {
+	case l.gate <- struct{}{}:
+		if l.isBlocked() {
+			<-l.gate
+			return nil, ErrBlocked
+		}
+		var once sync.Once
+		return func() { once.Do(func() { <-l.gate }) }, nil
+	default:
+		return nil, ErrBusy
 	}
 }
 

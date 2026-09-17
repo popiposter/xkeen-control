@@ -98,8 +98,16 @@ button:hover:not(:disabled) { filter: brightness(1.08); }
 .subscription-strip { display: flex; gap: 7px; overflow-x: auto; padding: 7px 10px; border-bottom: 1px solid #223144; }
 .subscription-card { min-width: 210px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 8px; background: #0c141f; border: 1px solid #2b3c50; border-radius: 6px; }
 .subscription-card.disabled { border-style: dashed; opacity: .72; }
+.subscription-card > div:first-child { min-width: 0; }
 .subscription-card strong, .subscription-card small { display: block; font-size: 11px; }
 .subscription-card small { margin-top: 1px; font-size: 9px; }
+.subscription-auto-refresh { margin-top: 5px; max-width: 250px; color: #9bb6c9; }
+.subscription-auto-refresh > span { display: block; color: #d2e8f5; font-size: 9px; font-weight: 600; }
+.subscription-auto-refresh small { color: #8299aa; line-height: 1.35; white-space: normal; }
+.subscription-auto-refresh.running > span { color: #83d9ff; }
+.subscription-auto-refresh.deferred > span { color: #ffd890; }
+.subscription-auto-refresh.failed > span { color: #ff9b9b; }
+.subscription-auto-refresh.disabled > span { color: #9ba9b4; }
 .subscription-actions { display: flex; flex: 0 0 auto; gap: 3px; }
 
 .node-toolbar { display: grid; gap: 6px; padding: 7px 10px; border-bottom: 1px solid #223144; }
