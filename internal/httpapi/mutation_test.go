@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -75,6 +76,158 @@ func TestMutationRoutesRequireCSRFAndReturnSanitizedPreview(t *testing.T) {
 		t.Fatalf("canceled preview apply = %d %s", canceledApply.StatusCode, readBody(canceledApply))
 	}
 	canceledApply.Body.Close()
+}
+
+type subscriptionHTTPFetcher struct {
+	body []byte
+	err  error
+}
+
+func (f *subscriptionHTTPFetcher) Fetch(context.Context, string) ([]byte, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return append([]byte(nil), f.body...), nil
+}
+
+func TestSubscriptionRefreshRouteReturnsExactSafeRemovalAndTokenOnlyApply(t *testing.T) {
+	dir := t.TempDir()
+	passwordPath := filepath.Join(dir, "password.bcrypt")
+	if err := auth.SetPassword(passwordPath, []byte("synthetic-panel-password")); err != nil {
+		t.Fatal(err)
+	}
+	registry := syntheticSubscriptionHTTPRegistry(t)
+	store := nodes.Store{Path: filepath.Join(dir, "secrets", "nodes.json")}
+	if err := store.Save(registry); err != nil {
+		t.Fatal(err)
+	}
+	fetcher := &subscriptionHTTPFetcher{body: []byte(syntheticHTTPProfile)}
+	manager := nodes.NewManager(nodes.Config{Store: store, Fetcher: fetcher, Transaction: nodes.Transaction{
+		Store: store, ActiveOutboundsPath: filepath.Join(dir, "xray", "04_outbounds.json"), PreviousDir: filepath.Join(dir, "previous"),
+	}})
+	server := httptest.NewServer(New(Config{Auth: auth.NewManager(auth.Config{HashPath: passwordPath}), Nodes: manager}))
+	defer server.Close()
+	client := &http.Client{Jar: mustCookieJar(t)}
+	login := postJSON(t, client, server.URL+"/api/v1/session/login", map[string]string{"password": "synthetic-panel-password"}, "")
+	var session struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	decodeResponse(t, login, &session)
+
+	requestBody := map[string]any{
+		"subscriptionId": "sub-12345678",
+		"name":           "Replacement provider",
+		"url":            "https://subscription.example/replacement-token",
+	}
+	withoutCSRF := postJSON(t, client, server.URL+"/api/v1/subscriptions/refresh/preview", requestBody, "")
+	if withoutCSRF.StatusCode != http.StatusForbidden {
+		t.Fatalf("subscription refresh without csrf = %d %s", withoutCSRF.StatusCode, readBody(withoutCSRF))
+	}
+	withoutCSRF.Body.Close()
+	crossOrigin := requestRawJSON(t, client, http.MethodPost, server.URL+"/api/v1/subscriptions/refresh/preview", `{"subscriptionId":"sub-12345678"}`, session.CSRFToken, "http://evil.example")
+	if crossOrigin.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin subscription refresh = %d %s", crossOrigin.StatusCode, readBody(crossOrigin))
+	}
+	crossOrigin.Body.Close()
+	wrongMethod := requestRawJSON(t, client, http.MethodGet, server.URL+"/api/v1/subscriptions/refresh/preview", `{}`, session.CSRFToken, "")
+	if wrongMethod.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("wrong subscription refresh method = %d %s", wrongMethod.StatusCode, readBody(wrongMethod))
+	}
+	wrongMethod.Body.Close()
+
+	previewResponse := postJSON(t, client, server.URL+"/api/v1/subscriptions/refresh/preview", requestBody, session.CSRFToken)
+	previewBody := readBody(previewResponse)
+	if previewResponse.StatusCode != http.StatusOK || strings.Contains(previewBody, "subscription.example") || strings.Contains(previewBody, "replacement-token") || strings.Contains(previewBody, "11111111-1111-4111-8111-111111111111") || strings.Contains(previewBody, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") {
+		t.Fatalf("subscription refresh preview = %d %s", previewResponse.StatusCode, previewBody)
+	}
+	var preview nodes.Preview
+	if err := json.Unmarshal([]byte(previewBody), &preview); err != nil || preview.Token == "" || preview.RequiresAcceptance || preview.Operation != "subscription-refresh" || len(preview.Changes) != 1 || preview.Changes[0].After != "removed" || preview.Changes[0].ID != "node-33333333" {
+		t.Fatalf("exact subscription preview = %d %+v, %v", previewResponse.StatusCode, preview, err)
+	}
+	unchanged, err := store.Load()
+	if err != nil || unchanged.Subscriptions[0].URL != "https://subscription.example/token" || len(unchanged.Nodes) != 2 {
+		t.Fatalf("subscription preview committed state: %+v, %v", unchanged, err)
+	}
+
+	apply := postJSON(t, client, server.URL+"/api/v1/node-changes/apply", map[string]any{"previewToken": preview.Token, "acceptMissing": false}, session.CSRFToken)
+	applyBody := readBody(apply)
+	if apply.StatusCode != http.StatusOK || strings.Contains(applyBody, "subscription.example") || strings.Contains(applyBody, "11111111-1111-4111-8111-111111111111") || strings.Contains(applyBody, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") {
+		t.Fatalf("exact subscription apply = %d %s", apply.StatusCode, applyBody)
+	}
+	updated, err := store.Load()
+	if err != nil || len(updated.Nodes) != 1 || updated.Nodes[0].ID != "node-11111111" || updated.Subscriptions[0].Name != "Replacement provider" || updated.Subscriptions[0].URL != "https://subscription.example/replacement-token" {
+		t.Fatalf("exact subscription apply committed state: %+v, %v", updated, err)
+	}
+}
+
+func TestSubscriptionRefreshRouteFailurePreservesSavedSubscription(t *testing.T) {
+	dir := t.TempDir()
+	passwordPath := filepath.Join(dir, "password.bcrypt")
+	if err := auth.SetPassword(passwordPath, []byte("synthetic-panel-password")); err != nil {
+		t.Fatal(err)
+	}
+	registry := syntheticSubscriptionHTTPRegistry(t)
+	store := nodes.Store{Path: filepath.Join(dir, "secrets", "nodes.json")}
+	if err := store.Save(registry); err != nil {
+		t.Fatal(err)
+	}
+	fetcher := &subscriptionHTTPFetcher{err: errors.New("synthetic upstream failure")}
+	manager := nodes.NewManager(nodes.Config{Store: store, Fetcher: fetcher, Transaction: nodes.Transaction{Store: store, ActiveOutboundsPath: filepath.Join(dir, "xray", "04_outbounds.json")}})
+	server := httptest.NewServer(New(Config{Auth: auth.NewManager(auth.Config{HashPath: passwordPath}), Nodes: manager}))
+	defer server.Close()
+	client := &http.Client{Jar: mustCookieJar(t)}
+	login := postJSON(t, client, server.URL+"/api/v1/session/login", map[string]string{"password": "synthetic-panel-password"}, "")
+	var session struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	decodeResponse(t, login, &session)
+	response := postJSON(t, client, server.URL+"/api/v1/subscriptions/refresh/preview", map[string]any{
+		"subscriptionId": "sub-12345678",
+		"name":           "Replacement provider",
+		"url":            "https://subscription.example/replacement-token",
+	}, session.CSRFToken)
+	body := readBody(response)
+	if response.StatusCode != http.StatusBadGateway || body != `{"error":"subscription fetch failed"}`+"\n" {
+		t.Fatalf("failed subscription refresh = %d %s", response.StatusCode, body)
+	}
+	unchanged, err := store.Load()
+	if err != nil || unchanged.Subscriptions[0].URL != "https://subscription.example/token" || unchanged.Subscriptions[0].Name != "Provider" || len(unchanged.Nodes) != 2 {
+		t.Fatalf("failed subscription refresh changed saved state: %+v, %v", unchanged, err)
+	}
+}
+
+func syntheticSubscriptionHTTPRegistry(t *testing.T) nodes.Registry {
+	t.Helper()
+	primary, err := nodes.ParseProfile(syntheticHTTPProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondaryRaw := strings.NewReplacer(
+		"11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222",
+		"edge.example.com", "edge-2.example.com",
+		"front.example.com", "front-2.example.com",
+		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+		"abcd", "beef",
+		"Synthetic", "Synthetic 2",
+	).Replace(syntheticHTTPProfile)
+	secondary, err := nodes.ParseProfile(secondaryRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	primaryNode, err := nodes.NewNodeWithID(primary.VLESS, primary.Name, nodes.Source{Type: "subscription", SubscriptionID: "sub-12345678"}, "node-11111111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondaryNode, err := nodes.NewNodeWithID(secondary.VLESS, secondary.Name, nodes.Source{Type: "subscription", SubscriptionID: "sub-12345678"}, "node-33333333")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondaryNode.Stale, secondaryNode.Missing = true, true
+	return nodes.Registry{
+		SchemaVersion: nodes.SchemaVersion,
+		Nodes:         []nodes.Node{primaryNode, secondaryNode},
+		Subscriptions: []nodes.Subscription{{ID: "sub-12345678", Name: "Provider", URL: "https://subscription.example/token", Enabled: true}},
+	}
 }
 
 func TestBatchMutationRoutesAreStrictAtomicAndKeepSubscriptionRecords(t *testing.T) {

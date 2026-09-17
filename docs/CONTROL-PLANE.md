@@ -112,6 +112,22 @@ session-bound Preview, BaseDigest, token-only Apply/Cancel, Coordinator,
 authority lease and full-registry transaction boundary. Slice A is source/CI
 behavior; it is not production-qualified or deployed.
 
+Source-main Slice B / Issue #70 makes the existing explicit subscription
+refresh an exact reconciliation of one complete parsed provider snapshot. A
+matched `subscriptionSourceKey` keeps its node ID and canonical tag while
+refreshing material and clearing legacy `stale/missing`; new members are
+appended deterministically; target members absent from the successful snapshot
+are removed in the same candidate. Manual nodes and other subscriptions keep
+their committed placement and state. Reordered equivalent snapshots are a
+no-op, and fetch/parse/identity/cardinality/candidate/activation failures keep
+the last committed generation. The existing refresh Preview, token-only
+Apply/Cancel, Coordinator, authority lease and full-registry transaction remain
+the only mutation boundary. The safe preview lists ordinary added/updated/
+removed changes; exact-refresh removals identify the provider snapshot in the
+UI, while the manual-delete reappearance warning remains limited to explicit
+manual node deletion. Slice B is source/CI behavior; it is not deployed or
+production-qualified.
+
 Current panel lifecycle endpoints are:
 
 ```text

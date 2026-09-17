@@ -64,6 +64,14 @@ func TestParseSubscriptionBodyRawAndBase64(t *testing.T) {
 	}
 }
 
+func TestParseSubscriptionBodyRejectsEmptySnapshot(t *testing.T) {
+	for _, body := range [][]byte{nil, []byte("\r\n \t")} {
+		if _, err := ParseSubscriptionBody(body); err == nil {
+			t.Fatalf("empty subscription snapshot was accepted: %q", body)
+		}
+	}
+}
+
 func TestMigrateLegacyCreatesNeutralStableNodes(t *testing.T) {
 	legacy := `{"outbounds":[
 {"tag":"direct","protocol":"freedom"},

@@ -476,7 +476,7 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
     setBusy(true)
     setNotice(null)
     try {
-      await api('/api/v1/node-changes/apply', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: JSON.stringify({ previewToken: preview.previewToken, acceptMissing: Boolean(preview.requiresAcceptance) }) })
+      await api('/api/v1/node-changes/apply', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: JSON.stringify({ previewToken: preview.previewToken, acceptMissing: preview.operation === 'subscription-refresh' ? false : Boolean(preview.requiresAcceptance) }) })
       setPreview(null)
       setReplacement('')
       setEditingID('')
@@ -630,7 +630,11 @@ function PreviewDialog({ preview, nodes, manualOverride, busy, onCancel, onApply
     const node = byID.get(change.id)
     return node && (node.isOverride || manualOverride === (node.outboundTag || node.tag))
   })
-  const subscriptionRemovals = changes.some((change) => change.action && change.after === 'removed' && change.sourceType === 'subscription')
+  const subscriptionRemovalCount = preview.operation === 'subscription-refresh'
+    ? changes.filter((change) => change.after === 'removed' && change.sourceType === 'subscription').length
+    : 0
+  const manualSubscriptionRemovals = ['remove', 'batch-remove'].includes(preview.operation)
+    && changes.some((change) => change.after === 'removed' && change.sourceType === 'subscription')
   return <div className="modal-backdrop" role="presentation">
     <div className="preview-dialog" role="dialog" aria-modal="true" aria-label="Preview node change">
       <div className="dialog-heading"><div><span className="panel-label">Preview · {preview.operation}</span><h3>{preview.noop ? 'No persistent change' : `${preview.changes?.length || 0} node changes`}</h3></div><IconButton icon="close" label="Close preview" onClick={onCancel} disabled={busy} /></div>
@@ -638,10 +642,10 @@ function PreviewDialog({ preview, nodes, manualOverride, busy, onCancel, onApply
         {changes.map((change) => <div className="diff-row" key={`${change.action}-${change.id}`}><strong>{change.name}</strong><span>{change.before} → {change.after}</span></div>)}
         {preview.noop && <p className="muted">The fetched or requested state matches the current registry.</p>}
       </div>
-      {preview.requiresAcceptance && <p className="warning">The provider response is missing existing nodes. Applying keeps them stale/missing; remove them separately through another explicit preview.</p>}
+      {subscriptionRemovalCount > 0 && <p className="warning" role="alert">Provider snapshot removes {subscriptionRemovalCount} {subscriptionRemovalCount === 1 ? 'node that is' : 'nodes that are'} no longer present upstream.</p>}
       {effectiveChanged && <p className="warning" role="alert">The currently effective node changes in this preview. Active proxy traffic will be reselected after Apply.</p>}
       {manualChanged && <p className="warning" role="alert">The current manual-override node changes in this preview. The supervisor owns subsequent reconciliation; this batch mutation does not write override state.</p>}
-      {subscriptionRemovals && <p className="warning" role="alert">A removed subscription-owned node may return on a later subscription refresh while it remains upstream.</p>}
+      {manualSubscriptionRemovals && <p className="warning" role="alert">A removed subscription-owned node may return on a later subscription refresh while it remains upstream.</p>}
       {preview.effectiveImpact && !effectiveChanged && <p className="warning" role="alert">This operation will {preview.effectiveImpact} the currently effective node. Active proxy traffic will be reselected after Apply.</p>}
       <div className="preview-actions"><button className="ghost" type="button" onClick={onCancel} disabled={busy}>Cancel</button><button type="button" onClick={onApply} disabled={busy}>{busy ? 'Applying…' : (preview.noop ? 'Confirm no-op' : 'Apply and validate')}</button></div>
     </div>

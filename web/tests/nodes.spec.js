@@ -56,6 +56,7 @@ async function prepare(page) {
     pending: new Map(),
     previewNumber: 0,
     missingNextRefresh: false,
+    exactRefreshRemovalIDs: [nodeID(3)],
   }
   state.status = statusFixture(state.nodes)
   const issues = []
@@ -112,6 +113,21 @@ async function prepare(page) {
         state.pending.set(previewToken, { remove, ids: [...body.nodeIds], enabled: body.enabled })
         return json(route, { previewToken, operation, expiresAt: new Date(Date.now() + 300_000).toISOString(), changes, requiresAcceptance: false, noop: changes.length === 0 })
       }
+      case '/api/v1/subscriptions/refresh/preview': {
+        const selected = state.nodes.filter((node) => state.exactRefreshRemovalIDs.includes(node.id))
+        const changes = selected.map((node) => ({
+          action: 'subscription-refresh',
+          id: node.id,
+          name: node.name,
+          outboundTag: node.outboundTag,
+          sourceType: node.sourceType,
+          before: node.enabled ? 'enabled' : 'disabled',
+          after: 'removed',
+        }))
+        const previewToken = `synthetic-subscription-${++state.previewNumber}`
+        state.pending.set(previewToken, { refresh: true, ids: [...state.exactRefreshRemovalIDs] })
+        return json(route, { previewToken, operation: 'subscription-refresh', expiresAt: new Date(Date.now() + 300_000).toISOString(), changes, requiresAcceptance: false, noop: changes.length === 0 })
+      }
       case '/api/v1/nodes/replace/preview': {
         const previewToken = `synthetic-replace-${++state.previewNumber}`
         return json(route, { previewToken, operation: 'replace', expiresAt: new Date(Date.now() + 300_000).toISOString(), changes: [{ action: 'replace', id: body.id, name: 'Node 001', outboundTag: `proxy-${body.id}`, sourceType: 'manual', before: 'enabled', after: 'enabled' }], requiresAcceptance: false, noop: false })
@@ -120,10 +136,11 @@ async function prepare(page) {
         const pending = state.pending.get(body.previewToken)
         if (pending) {
           if (pending.remove) state.nodes = state.nodes.filter((node) => !pending.ids.includes(node.id))
+          else if (pending.refresh) state.nodes = state.nodes.filter((node) => !pending.ids.includes(node.id))
           else state.nodes = state.nodes.map((node) => pending.ids.includes(node.id) ? { ...node, enabled: pending.enabled } : node)
           state.pending.delete(body.previewToken)
         }
-        return json(route, { operation: pending?.remove ? 'batch-remove' : 'batch-state', nodes: state.nodes, changes: [] })
+        return json(route, { operation: pending?.refresh ? 'subscription-refresh' : pending?.remove ? 'batch-remove' : 'batch-state', nodes: state.nodes, changes: [] })
       }
       case '/api/v1/node-changes/cancel': return json(route, { canceled: true })
       default: return json(route, { error: `unexpected synthetic route: ${path}` }, 404)
@@ -233,6 +250,50 @@ test('sends one batch remove preview, renders warnings, and reconciles after App
   expect(prepared.state.requests.filter((request) => request.path === '/api/v1/node-changes/apply')).toHaveLength(1)
   expect(prepared.state.requests.filter((request) => request.path === '/api/v1/nodes/batch/remove/preview')).toHaveLength(1)
   expect(prepared.state.nodes.some((node) => [nodeID(1), nodeID(2), nodeID(3)].includes(node.id))).toBe(false)
+})
+
+test('renders exact provider removals without stale or manual-reappearance warnings', async ({ page }) => {
+  const prepared = await prepare(page)
+  page.__nodesIssues = prepared.issues
+  await openNodes(page)
+
+  await page.getByRole('button', { name: 'Refresh Provider', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Preview node change' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('Provider snapshot removes 1 node that is no longer present upstream.')
+  await expect(dialog).not.toContainText('keeps them stale/missing')
+  await expect(dialog).not.toContainText('may return on a later subscription refresh')
+  await expect(page.locator('.diff-row')).toHaveCount(1)
+  expect(prepared.state.requests.filter((request) => request.path === '/api/v1/subscriptions/refresh/preview')).toEqual([
+    { path: '/api/v1/subscriptions/refresh/preview', method: 'POST', body: { subscriptionId: 'sub-12345678' } },
+  ])
+  expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 })
+  await expect(page.locator('body')).not.toContainText('subscription.example')
+
+  await page.getByRole('button', { name: 'Apply and validate' }).click()
+  await expect(page.getByTestId('selected-count')).toHaveText('0 selected')
+  await expect(page.getByLabel('Select Node 003')).toHaveCount(0)
+  const applies = prepared.state.requests.filter((request) => request.path === '/api/v1/node-changes/apply')
+  expect(applies).toHaveLength(1)
+  expect(applies[0].body).toEqual({ previewToken: 'synthetic-subscription-1', acceptMissing: false })
+})
+
+test('keeps effective and manual impact warnings for exact provider removals', async ({ page }) => {
+  const prepared = await prepare(page)
+  page.__nodesIssues = prepared.issues
+  for (const index of [0, 1]) {
+    prepared.state.nodes[index] = { ...prepared.state.nodes[index], sourceType: 'subscription', subscriptionName: 'Provider' }
+  }
+  prepared.state.exactRefreshRemovalIDs = [nodeID(1), nodeID(2), nodeID(3)]
+  await openNodes(page)
+
+  await page.getByRole('button', { name: 'Refresh Provider', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Preview node change' })
+  await expect(dialog).toContainText('Provider snapshot removes 3 nodes that are no longer present upstream.')
+  await expect(dialog).toContainText('The currently effective node changes in this preview.')
+  await expect(dialog).toContainText('The current manual-override node changes in this preview.')
+  await expect(dialog).not.toContainText('may return on a later subscription refresh')
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
 })
 
 test('keeps manual override and replacement as single-selection toolbar actions without exposing profile secrets', async ({ page }) => {

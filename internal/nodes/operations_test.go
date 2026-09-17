@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -14,10 +17,14 @@ import (
 type fakeFetcher struct {
 	body []byte
 	url  string
+	err  error
 }
 
 func (f *fakeFetcher) Fetch(_ context.Context, rawURL string) ([]byte, error) {
 	f.url = rawURL
+	if f.err != nil {
+		return nil, f.err
+	}
 	return append([]byte(nil), f.body...), nil
 }
 
@@ -170,48 +177,395 @@ func TestApplyGateWaitDoesNotConsumeRollbackBudget(t *testing.T) {
 	}
 }
 
-func TestSubscriptionRefreshPreservesIdentityAndRequiresMissingAcceptance(t *testing.T) {
-	parsed, err := ParseProfile(syntheticProfile)
+func TestSubscriptionRefreshReconcilesExactMembership(t *testing.T) {
+	primary, err := ParseProfile(syntheticProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const subscriptionID = "sub-11111111"
-	node, err := NewNodeWithID(parsed.VLESS, parsed.Name, Source{Type: "subscription", SubscriptionID: subscriptionID}, "node-88888888")
+	secondary, err := ParseProfile(syntheticProfileTwo)
 	if err != nil {
 		t.Fatal(err)
 	}
+	otherProfile, err := ParseProfile(syntheticXHTTPFinalMaskProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newProfile := strings.NewReplacer(
+		"22222222-2222-4222-8222-222222222222", "44444444-4444-4444-8444-444444444444",
+		"edge-2.example.com", "edge-4.example.com",
+		"front-2.example.com", "front-4.example.com",
+		"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+		"beef", "d0d0",
+		"Secondary", "Tertiary",
+	).Replace(syntheticProfileTwo)
+	const targetID = "sub-11111111"
+	const otherSubscriptionID = "sub-22222222"
+	matched, err := NewNodeWithID(primary.VLESS, primary.Name, Source{Type: "subscription", SubscriptionID: targetID}, "node-88888888")
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing, err := NewNodeWithID(secondary.VLESS, secondary.Name, Source{Type: "subscription", SubscriptionID: targetID}, "node-99999999")
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing.Stale, missing.Missing = true, true
+	other, err := NewNodeWithID(otherProfile.VLESS, otherProfile.Name, Source{Type: "subscription", SubscriptionID: otherSubscriptionID}, "node-77777777")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other.Stale, other.Missing = true, true
+	manual := testNode(t, syntheticProfile, "node-66666666", true)
 	registry := NewRegistry()
-	registry.Subscriptions = []Subscription{{ID: subscriptionID, Name: "Provider", URL: "https://subscription.example/token", Enabled: true}}
-	registry.Nodes = []Node{node}
-	fetcher := &fakeFetcher{body: []byte(syntheticProfileTwo)}
+	registry.Subscriptions = []Subscription{
+		{ID: targetID, Name: "Provider", URL: "https://subscription.example/token", Enabled: true},
+		{ID: otherSubscriptionID, Name: "Other", URL: "https://other.example/token", Enabled: true},
+	}
+	registry.Nodes = []Node{manual, matched, other, missing}
+	if err := registry.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	fetcher := &fakeFetcher{body: []byte(strings.Join([]string{
+		strings.Replace(syntheticProfile, "11111111-1111-4111-8111-111111111111", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", 1),
+		newProfile,
+	}, "\n"))}
 	manager, store, _ := testManager(t, &registry, fetcher)
-	preview, err := manager.PreviewRefresh(context.Background(), "csrf", subscriptionID, "Provider", "https://subscription.example/new-token")
+	activator := &batchCountingActivator{}
+	manager.tx.Activator = activator
+	preview, err := manager.PreviewRefresh(context.Background(), "csrf", targetID, "Provider renamed", "https://subscription.example/new-token")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !preview.RequiresAcceptance {
-		t.Fatal("missing provider node did not require explicit acceptance")
+	if preview.RequiresAcceptance || preview.Noop || len(preview.Changes) != 3 {
+		t.Fatalf("exact refresh preview = %+v", preview)
 	}
-	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); !errors.Is(err, ErrMissingAcceptance) {
-		t.Fatalf("missing acceptance = %v", err)
+	removed := 0
+	for _, change := range preview.Changes {
+		if change.After == "removed" {
+			removed++
+			if change.ID != missing.ID || change.SourceType != "subscription" {
+				t.Fatalf("unexpected removed change: %+v", change)
+			}
+		}
 	}
-	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, true); err != nil {
+	if removed != 1 {
+		t.Fatalf("exact refresh removal count = %d", removed)
+	}
+	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); err != nil {
 		t.Fatal(err)
 	}
 	updated, err := store.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(updated.Nodes) != 2 || !updated.Nodes[0].Missing {
-		t.Fatalf("stale node was not preserved: %+v", updated.Nodes)
+	if len(updated.Nodes) != 4 || updated.Subscriptions[0].Name != "Provider renamed" || updated.Subscriptions[0].URL != "https://subscription.example/new-token" {
+		t.Fatalf("exact refresh committed state = %+v", updated)
 	}
-	if updated.Subscriptions[0].URL != "https://subscription.example/new-token" {
-		t.Fatal("subscription source was not updated in local registry")
+	if !reflect.DeepEqual(updated.Nodes[0], manual) || updated.Nodes[1].ID != matched.ID || updated.Nodes[1].OutboundTag != matched.OutboundTag {
+		t.Fatalf("unrelated or matched node placement changed: before=%+v after=%+v", registry.Nodes, updated.Nodes)
 	}
-	public := updated.PublicNodes()
+	if updated.Nodes[1].VLESS.UUID != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" || updated.Nodes[1].Stale || updated.Nodes[1].Missing || !updated.Nodes[1].Enabled {
+		t.Fatalf("matched node was not refreshed in place: %+v", updated.Nodes[1])
+	}
+	if !reflect.DeepEqual(updated.Nodes[2], other) || !updated.Nodes[2].Stale || !updated.Nodes[2].Missing {
+		t.Fatalf("other subscription drifted: %+v", updated.Nodes[2])
+	}
+	if updated.Nodes[3].Source.SubscriptionID != targetID || !updated.Nodes[3].Enabled || updated.Nodes[3].Stale || updated.Nodes[3].Missing || updated.Nodes[3].VLESS.Host != "edge-4.example.com" {
+		t.Fatalf("new target member = %+v", updated.Nodes[3])
+	}
+	if activator.validations != 1 || activator.restarts != 1 {
+		t.Fatalf("exact refresh did not use one transaction boundary: %+v", activator)
+	}
+	public, err := manager.ListSubscriptions()
+	if err != nil {
+		t.Fatal(err)
+	}
 	serialized, _ := json.Marshal(public)
-	if strings.Contains(string(serialized), "new-token") {
+	if strings.Contains(string(serialized), "new-token") || strings.Contains(string(serialized), "subscription.example") {
 		t.Fatal("subscription URL reached safe projection")
+	}
+}
+
+func TestSubscriptionRefreshReorderedSnapshotIsNoop(t *testing.T) {
+	primary, err := ParseProfile(syntheticProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondary, err := ParseProfile(syntheticProfileTwo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const subscriptionID = "sub-12121212"
+	first, err := NewNodeWithID(primary.VLESS, primary.Name, Source{Type: "subscription", SubscriptionID: subscriptionID}, "node-12121212")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewNodeWithID(secondary.VLESS, secondary.Name, Source{Type: "subscription", SubscriptionID: subscriptionID}, "node-34343434")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := NewRegistry()
+	registry.Subscriptions = []Subscription{{ID: subscriptionID, Name: "Provider", URL: "https://subscription.example/token", Enabled: true}}
+	registry.Nodes = []Node{first, second}
+	manager, store, active := testManager(t, &registry, &fakeFetcher{body: []byte(syntheticProfileTwo + "\n" + syntheticProfile)})
+	activator := &batchCountingActivator{}
+	manager.tx.Activator = activator
+	preview, err := manager.PreviewRefresh(context.Background(), "csrf", subscriptionID, "Provider", "https://subscription.example/token")
+	if err != nil || !preview.Noop || len(preview.Changes) != 0 {
+		t.Fatalf("reordered exact refresh = %+v, %v", preview, err)
+	}
+	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.Load()
+	if err != nil || !sameRegistry(updated, registry) {
+		t.Fatalf("reordered snapshot changed committed registry: %+v, %v", updated, err)
+	}
+	if activator.validations != 0 || activator.restarts != 0 {
+		t.Fatalf("no-op exact refresh entered transaction: %+v", activator)
+	}
+	if _, err := os.Stat(active); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("no-op exact refresh wrote active outbounds: %v", err)
+	}
+}
+
+func TestSubscriptionRefreshConvergesLegacyStaleMembers(t *testing.T) {
+	primary, err := ParseProfile(syntheticProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondary, err := ParseProfile(syntheticProfileTwo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const subscriptionID = "sub-56565656"
+	present, err := NewNodeWithID(primary.VLESS, primary.Name, Source{Type: "subscription", SubscriptionID: subscriptionID}, "node-56565656")
+	if err != nil {
+		t.Fatal(err)
+	}
+	present.Stale, present.Missing = true, true
+	absent, err := NewNodeWithID(secondary.VLESS, secondary.Name, Source{Type: "subscription", SubscriptionID: subscriptionID}, "node-78787878")
+	if err != nil {
+		t.Fatal(err)
+	}
+	absent.Stale, absent.Missing = true, true
+	registry := NewRegistry()
+	registry.Subscriptions = []Subscription{{ID: subscriptionID, Name: "Provider", URL: "https://subscription.example/token", Enabled: true}}
+	registry.Nodes = []Node{present, absent}
+	manager, store, _ := testManager(t, &registry, &fakeFetcher{body: []byte(syntheticProfile)})
+	preview, err := manager.PreviewRefresh(context.Background(), "csrf", subscriptionID, "", "")
+	if err != nil || preview.RequiresAcceptance || preview.Noop {
+		t.Fatalf("legacy convergence preview = %+v, %v", preview, err)
+	}
+	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.Load()
+	if err != nil || len(updated.Nodes) != 1 || updated.Nodes[0].ID != present.ID || updated.Nodes[0].Stale || updated.Nodes[0].Missing {
+		t.Fatalf("legacy stale/missing convergence = %+v, %v", updated, err)
+	}
+}
+
+func TestDisabledSubscriptionRefreshKeepsResultingMembersDisabled(t *testing.T) {
+	primary, err := ParseProfile(syntheticProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const subscriptionID = "sub-90909090"
+	present, err := NewNodeWithID(primary.VLESS, primary.Name, Source{Type: "subscription", SubscriptionID: subscriptionID}, "node-90909090")
+	if err != nil {
+		t.Fatal(err)
+	}
+	present.Enabled = false
+	registry := NewRegistry()
+	registry.Subscriptions = []Subscription{{ID: subscriptionID, Name: "Disabled provider", URL: "https://subscription.example/token", Enabled: false}}
+	registry.Nodes = []Node{present}
+	newProfile := strings.Replace(strings.Replace(syntheticProfileTwo, "22222222-2222-4222-8222-222222222222", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", 1), "Secondary", "Disabled new", 1)
+	manager, store, _ := testManager(t, &registry, &fakeFetcher{body: []byte(syntheticProfile + "\n" + newProfile)})
+	preview, err := manager.PreviewRefresh(context.Background(), "csrf", subscriptionID, "", "")
+	if err != nil || preview.Noop {
+		t.Fatalf("disabled refresh preview = %+v, %v", preview, err)
+	}
+	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.Load()
+	if err != nil || len(updated.Nodes) != 2 || updated.Subscriptions[0].Enabled || updated.Nodes[0].Enabled || updated.Nodes[1].Enabled {
+		t.Fatalf("disabled subscription members were enabled: %+v, %v", updated, err)
+	}
+}
+
+func TestSubscriptionRefreshFailuresPreserveCommittedRegistry(t *testing.T) {
+	primary, err := ParseProfile(syntheticProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const subscriptionID = "sub-31313131"
+	node, err := NewNodeWithID(primary.VLESS, primary.Name, Source{Type: "subscription", SubscriptionID: subscriptionID}, "node-31313131")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := NewRegistry()
+	registry.Subscriptions = []Subscription{{ID: subscriptionID, Name: "Provider", URL: "https://subscription.example/token", Enabled: true}}
+	registry.Nodes = []Node{node}
+	fetcher := &fakeFetcher{}
+	manager, store, _ := testManager(t, &registry, fetcher)
+	cases := []struct {
+		name string
+		body []byte
+		err  error
+		want error
+	}{
+		{name: "fetch", err: errors.New("synthetic fetch failure"), want: ErrSubscriptionFetch},
+		{name: "empty", body: []byte("\n"), want: ErrSubscriptionContent},
+		{name: "unsupported", body: []byte("https://not-a-vless-profile.example"), want: ErrSubscriptionContent},
+		{name: "duplicate", body: []byte(syntheticProfile + "\n" + syntheticProfile), want: ErrSubscriptionDuplicate},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			fetcher.body, fetcher.err = test.body, test.err
+			_, gotErr := manager.PreviewRefresh(context.Background(), "csrf", subscriptionID, "Replacement name", "https://subscription.example/replacement-token")
+			if !errors.Is(gotErr, test.want) {
+				t.Fatalf("refresh error = %v, want %v", gotErr, test.want)
+			}
+			got, err := store.Load()
+			if err != nil || !sameRegistry(got, registry) {
+				t.Fatalf("failed refresh changed committed registry: %+v, %v", got, err)
+			}
+			if len(manager.previews) != 0 {
+				t.Fatalf("failed refresh created preview: %d", len(manager.previews))
+			}
+		})
+	}
+}
+
+func TestSubscriptionRefreshRejectsRegistryOverflowBeforePreview(t *testing.T) {
+	primary, err := ParseProfile(syntheticProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const subscriptionID = "sub-41414141"
+	subscriptionNode, err := NewNodeWithID(primary.VLESS, primary.Name, Source{Type: "subscription", SubscriptionID: subscriptionID}, "node-aaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := NewRegistry()
+	registry.Subscriptions = []Subscription{{ID: subscriptionID, Name: "Provider", URL: "https://subscription.example/token", Enabled: true}}
+	registry.Nodes = append(registry.Nodes, subscriptionNode)
+	for index := 0; index < MaxNodes-1; index++ {
+		registry.Nodes = append(registry.Nodes, testNode(t, syntheticProfile, fmt.Sprintf("node-%08x", index), true))
+	}
+	if err := registry.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	newProfile := strings.Replace(strings.Replace(syntheticProfileTwo, "22222222-2222-4222-8222-222222222222", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", 1), "Secondary", "New one", 1)
+	newProfileTwo := strings.Replace(strings.Replace(syntheticXHTTPFinalMaskProfile, "33333333-3333-4333-8333-333333333333", "ffffffff-ffff-4fff-8fff-ffffffffffff", 1), "Germany XHTTP", "New two", 1)
+	manager, store, _ := testManager(t, &registry, &fakeFetcher{body: []byte(newProfile + "\n" + newProfileTwo)})
+	if _, err := manager.PreviewRefresh(context.Background(), "csrf", subscriptionID, "", ""); !errors.Is(err, ErrPreviewCandidate) {
+		t.Fatalf("overflow refresh error = %v", err)
+	}
+	got, err := store.Load()
+	if err != nil || !sameRegistry(got, registry) {
+		t.Fatalf("overflow refresh changed committed registry: %+v, %v", got, err)
+	}
+	if len(manager.previews) != 0 {
+		t.Fatalf("overflow refresh created preview: %d", len(manager.previews))
+	}
+}
+
+func TestSubscriptionRefreshApplyValidationFailureConsumesTokenAndPreservesState(t *testing.T) {
+	primary, err := ParseProfile(syntheticProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const subscriptionID = "sub-51515151"
+	node, err := NewNodeWithID(primary.VLESS, primary.Name, Source{Type: "subscription", SubscriptionID: subscriptionID}, "node-51515151")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := NewRegistry()
+	registry.Subscriptions = []Subscription{{ID: subscriptionID, Name: "Provider", URL: "https://subscription.example/token", Enabled: true}}
+	registry.Nodes = []Node{node}
+	manager, store, active := testManager(t, &registry, &fakeFetcher{body: []byte(syntheticProfileTwo)})
+	manager.tx.Activator = &fakeActivator{validateErr: errors.New("synthetic candidate rejection")}
+	preview, err := manager.PreviewRefresh(context.Background(), "csrf", subscriptionID, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); err == nil || !strings.Contains(err.Error(), "candidate Xray validation failed") {
+		t.Fatalf("candidate validation failure = %v", err)
+	}
+	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); !errors.Is(err, ErrPreviewExpired) {
+		t.Fatalf("failed apply token remained usable: %v", err)
+	}
+	got, err := store.Load()
+	if err != nil || !sameRegistry(got, registry) {
+		t.Fatalf("candidate validation failure changed registry: %+v, %v", got, err)
+	}
+	if _, err := os.Stat(active); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("candidate validation failure wrote active outbounds: %v", err)
+	}
+}
+
+func TestSubscriptionRefreshApplyRejectsStaleBaseBeforeTransaction(t *testing.T) {
+	primary, err := ParseProfile(syntheticProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const subscriptionID = "sub-61616161"
+	node, err := NewNodeWithID(primary.VLESS, primary.Name, Source{Type: "subscription", SubscriptionID: subscriptionID}, "node-61616161")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := NewRegistry()
+	registry.Subscriptions = []Subscription{{ID: subscriptionID, Name: "Provider", URL: "https://subscription.example/token", Enabled: true}}
+	registry.Nodes = []Node{node}
+	manager, store, _ := testManager(t, &registry, &fakeFetcher{body: []byte(syntheticProfileTwo)})
+	activator := &batchCountingActivator{}
+	manager.tx.Activator = activator
+	preview, err := manager.PreviewRefresh(context.Background(), "csrf", subscriptionID, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	intervening := registry
+	intervening.Subscriptions[0].Name = "Intervening update"
+	if err := store.Save(intervening); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); !errors.Is(err, ErrPreviewStale) {
+		t.Fatalf("stale refresh apply = %v", err)
+	}
+	if activator.validations != 0 || activator.restarts != 0 {
+		t.Fatalf("stale refresh entered transaction: %+v", activator)
+	}
+	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); !errors.Is(err, ErrPreviewExpired) {
+		t.Fatalf("stale refresh token remained usable: %v", err)
+	}
+}
+
+func TestSubscriptionRefreshAppendsNewMembersBySourceKey(t *testing.T) {
+	firstProfile := strings.Replace(strings.Replace(syntheticProfileTwo, "22222222-2222-4222-8222-222222222222", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", 1), "Secondary", "Zulu", 1)
+	secondProfile := strings.Replace(strings.Replace(syntheticXHTTPFinalMaskProfile, "33333333-3333-4333-8333-333333333333", "ffffffff-ffff-4fff-8fff-ffffffffffff", 1), "Germany XHTTP", "Alpha", 1)
+	const subscriptionID = "sub-71717171"
+	registry := NewRegistry()
+	registry.Subscriptions = []Subscription{{ID: subscriptionID, Name: "Provider", URL: "https://subscription.example/token", Enabled: true}}
+	manager, store, _ := testManager(t, &registry, &fakeFetcher{body: []byte(secondProfile + "\n" + firstProfile)})
+	preview, err := manager.PreviewRefresh(context.Background(), "csrf", subscriptionID, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Changes) != 2 {
+		t.Fatalf("new-member preview = %+v", preview)
+	}
+	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.Load()
+	if err != nil || len(updated.Nodes) != 2 {
+		t.Fatalf("new-member registry = %+v, %v", updated, err)
+	}
+	keys := []string{updated.Nodes[0].SourceKey, updated.Nodes[1].SourceKey}
+	if !sort.StringsAreSorted(keys) {
+		t.Fatalf("new target members were not appended in source-key order: %v", keys)
 	}
 }
 

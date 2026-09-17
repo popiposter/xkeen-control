@@ -404,8 +404,8 @@ func (m *Manager) PreviewRemove(binding, id string) (Preview, error) {
 }
 
 // PreviewBatchRemove builds one candidate that removes exactly the selected
-// nodes. Subscription records are intentionally retained; exact upstream
-// reconciliation belongs to the later subscription slice.
+// nodes. Subscription records are intentionally retained; a later explicit
+// refresh may reconcile their membership from a complete provider snapshot.
 func (m *Manager) PreviewBatchRemove(binding string, nodeIDs []string) (Preview, error) {
 	registry, err := m.current()
 	if err != nil {
@@ -480,74 +480,121 @@ func (m *Manager) PreviewRefresh(ctx context.Context, binding, subscriptionID, n
 		return Preview{}, errors.New("invalid subscription identity")
 	}
 	name = safeName(name, "Subscription")
-	foundSubscription := false
+	target := Subscription{ID: subscriptionID, Name: name, URL: rawURL, Enabled: true}
 	for index := range registry.Subscriptions {
 		if registry.Subscriptions[index].ID == subscriptionID {
-			registry.Subscriptions[index].Name = name
-			registry.Subscriptions[index].URL = rawURL
-			foundSubscription = true
+			target.Enabled = registry.Subscriptions[index].Enabled
 			break
 		}
 	}
-	if !foundSubscription {
-		registry.Subscriptions = append(registry.Subscriptions, Subscription{ID: subscriptionID, Name: name, URL: rawURL, Enabled: true})
+	candidate, err := buildSubscriptionCandidate(before, target, parsed)
+	if err != nil {
+		return Preview{}, err
 	}
-	subscriptionEnabled := true
-	for _, subscription := range registry.Subscriptions {
-		if subscription.ID == subscriptionID {
-			subscriptionEnabled = subscription.Enabled
-			break
-		}
+	return m.createPreview(binding, before, candidate, "subscription-refresh", false)
+}
+
+// buildSubscriptionCandidate reconciles one complete parsed subscription
+// snapshot against a committed registry. It is deliberately package-local and
+// free of fetching, persistence, coordination, leases and goroutines so an
+// automatic refresher can reuse the same candidate boundary later.
+func buildSubscriptionCandidate(before Registry, target Subscription, parsed []ParsedProfile) (Registry, error) {
+	if !validSubscriptionID(target.ID) || !validDisplay(target.Name, MaxNameLength) || target.URL == "" {
+		return Registry{}, ErrPreviewCandidate
+	}
+	if len(parsed) == 0 || len(parsed) > MaxProfileCount {
+		return Registry{}, ErrSubscriptionContent
+	}
+	candidate, err := cloneRegistry(before)
+	if err != nil {
+		return Registry{}, err
+	}
+	if err := before.Validate(); err != nil {
+		return Registry{}, ErrPreviewCandidate
 	}
 
+	targetIndex := -1
+	for index := range candidate.Subscriptions {
+		if candidate.Subscriptions[index].ID == target.ID {
+			targetIndex = index
+			break
+		}
+	}
+	if targetIndex >= 0 {
+		candidate.Subscriptions[targetIndex] = target
+	} else {
+		candidate.Subscriptions = append(candidate.Subscriptions, target)
+	}
+
+	type incomingProfile struct {
+		profile ParsedProfile
+		key     string
+	}
+	incoming := make([]incomingProfile, 0, len(parsed))
+	seen := make(map[string]struct{}, len(parsed))
+	for _, profile := range parsed {
+		if err := profile.VLESS.Validate(); err != nil {
+			return Registry{}, ErrSubscriptionNode
+		}
+		name := safeName(profile.Name, "Imported node")
+		key := subscriptionSourceKey(profile.VLESS, name)
+		if _, exists := seen[key]; exists {
+			return Registry{}, ErrSubscriptionDuplicate
+		}
+		seen[key] = struct{}{}
+		incoming = append(incoming, incomingProfile{profile: ParsedProfile{VLESS: profile.VLESS, Name: name}, key: key})
+	}
+	sort.Slice(incoming, func(left, right int) bool { return incoming[left].key < incoming[right].key })
+
 	currentByKey := make(map[string][]int)
-	for index, node := range registry.Nodes {
-		if node.Source.Type == "subscription" && node.Source.SubscriptionID == subscriptionID {
+	for index, node := range before.Nodes {
+		if node.Source.Type == "subscription" && node.Source.SubscriptionID == target.ID {
 			currentByKey[node.SourceKey] = append(currentByKey[node.SourceKey], index)
 		}
 	}
-	seen := make(map[string]struct{}, len(parsed))
-	for _, profile := range parsed {
-		key := subscriptionSourceKey(profile.VLESS, profile.Name)
-		if _, exists := seen[key]; exists {
-			return Preview{}, ErrSubscriptionDuplicate
-		}
-		seen[key] = struct{}{}
-		matches := currentByKey[key]
+	updatedByKey := make(map[string]Node, len(incoming))
+	newNodes := make([]Node, 0, len(incoming))
+	for _, item := range incoming {
+		matches := currentByKey[item.key]
 		if len(matches) > 1 {
-			return Preview{}, ErrSubscriptionDuplicate
+			return Registry{}, ErrSubscriptionDuplicate
 		}
 		if len(matches) == 1 {
-			node := registry.Nodes[matches[0]]
-			node.VLESS = profile.VLESS
-			node.SourceKey = key
-			node.Enabled = subscriptionEnabled
+			node := before.Nodes[matches[0]]
+			node.VLESS = item.profile.VLESS
+			node.SourceKey = item.key
+			node.Enabled = target.Enabled
 			node.Stale, node.Missing = false, false
-			if profile.Name != "" && profile.Name != "Imported node" {
-				node.Name = profile.Name
+			if item.profile.Name != "Imported node" {
+				node.Name = item.profile.Name
 			}
-			registry.Nodes[matches[0]] = node
+			updatedByKey[item.key] = node
 			continue
 		}
-		node, err := NewNode(profile.VLESS, profile.Name, Source{Type: "subscription", SubscriptionID: subscriptionID})
+		node, err := NewNode(item.profile.VLESS, item.profile.Name, Source{Type: "subscription", SubscriptionID: target.ID})
 		if err != nil {
-			return Preview{}, ErrSubscriptionNode
+			return Registry{}, ErrSubscriptionNode
 		}
-		node.Enabled = subscriptionEnabled
-		registry.Nodes = append(registry.Nodes, node)
+		node.Enabled = target.Enabled
+		newNodes = append(newNodes, node)
 	}
-	requiresAcceptance := false
-	for index, node := range registry.Nodes {
-		if node.Source.Type != "subscription" || node.Source.SubscriptionID != subscriptionID {
+
+	filtered := make([]Node, 0, len(before.Nodes)+len(newNodes))
+	for _, node := range before.Nodes {
+		if node.Source.Type != "subscription" || node.Source.SubscriptionID != target.ID {
+			filtered = append(filtered, node)
 			continue
 		}
-		if _, exists := seen[node.SourceKey]; !exists {
-			registry.Nodes[index].Stale = true
-			registry.Nodes[index].Missing = true
-			requiresAcceptance = true
+		updated, exists := updatedByKey[node.SourceKey]
+		if exists {
+			filtered = append(filtered, updated)
 		}
 	}
-	return m.createPreview(binding, before, registry, "subscription-refresh", requiresAcceptance)
+	candidate.Nodes = append(filtered, newNodes...)
+	if err := candidate.Validate(); err != nil {
+		return Registry{}, ErrPreviewCandidate
+	}
+	return candidate, nil
 }
 
 func (m *Manager) Apply(ctx context.Context, binding, token string, acceptMissing bool) (ApplyResult, error) {
