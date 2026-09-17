@@ -83,7 +83,7 @@ async function prepare(page) {
       case '/api/v1/nodes': {
         const nodes = state.missingNextRefresh ? state.nodes.filter((node) => node.id !== nodeID(1)) : state.nodes
         state.missingNextRefresh = false
-        return json(route, { total: nodes.length, nodes, subscriptions: [{ id: 'sub-12345678', name: 'Provider', enabled: true, nodeCount: nodes.filter((node) => node.sourceType === 'subscription').length, staleCount: 0 }] })
+        return json(route, { total: nodes.length, nodes, subscriptions: [{ id: 'sub-12345678', name: 'Provider', enabled: true, nodeCount: nodes.filter((node) => node.sourceType === 'subscription').length, staleCount: 0, autoRefresh: { state: 'deferred', nextRunAt: new Date(Date.now() + 300000).toISOString(), lastSuccessAt: new Date(Date.now() - 60000).toISOString(), lastResult: 'noop', errorCode: 'authority-busy' } }] })
       }
       case '/api/v1/performance': return json(route, { nodes: [] })
       case '/api/v1/config-summary': return json(route, { routing: {}, dns: {}, observatory: {} })
@@ -159,6 +159,19 @@ async function openNodes(page) {
 test.afterEach(async ({ page }) => {
   const issues = page.__nodesIssues
   if (issues) expect(issues).toEqual([])
+})
+
+test('shows bounded automatic subscription status without scheduler controls', async ({ page }) => {
+  const prepared = await prepare(page)
+  page.__nodesIssues = prepared.issues
+  await openNodes(page)
+
+  const status = page.getByTestId('subscription-auto-refresh-sub-12345678')
+  await expect(status).toContainText('Refresh deferred')
+  await expect(status).toContainText('Authority busy')
+  await expect(status).toContainText('Last: No change')
+  await expect(status).toContainText('Next:')
+  await expect(page.getByText(/cadence/i)).toHaveCount(0)
 })
 
 test('selects one, many and all filtered nodes across pages and reconciles selection', async ({ page }) => {

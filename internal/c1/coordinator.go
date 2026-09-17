@@ -257,6 +257,44 @@ func (c *Coordinator) BeginRecovery(ctx context.Context) (func(), error) {
 	return c.beginApply(ctx, true)
 }
 
+// TryBeginManagedApply admits one bounded background mutation only when the
+// runtime is completely idle. Unlike BeginApply, this admission is
+// deliberately non-preemptive: it never marks an operator waiter, cancels
+// benchmark work or drains a supervisor operation. The returned release owns
+// the same lifecycle token as an explicit Apply until the caller finishes its
+// transaction or recovery.
+func (c *Coordinator) TryBeginManagedApply() (func(), error) {
+	if c == nil {
+		return nil, ErrLifecycleBusy
+	}
+	c.mu.Lock()
+	if c.maintenance || c.applyWaiters > 0 || c.applyActive || c.benchmarkCancel != nil || c.supervisorCancel != nil {
+		c.mu.Unlock()
+		return nil, ErrLifecycleBusy
+	}
+	select {
+	case token := <-c.lifecycle:
+		// Keep the state transition under the same mutex as all other lifecycle
+		// admissions. Once applyActive is visible, an operator may wait for
+		// this bounded transaction but no managed operation can start beside it.
+		c.applyActive = true
+		c.mu.Unlock()
+		var once sync.Once
+		return func() {
+			once.Do(func() {
+				c.mu.Lock()
+				c.applyActive = false
+				c.mu.Unlock()
+				c.lifecycle <- token
+				c.requestSupervisorReconcile()
+			})
+		}, nil
+	default:
+		c.mu.Unlock()
+		return nil, ErrLifecycleBusy
+	}
+}
+
 // EnterMaintenance makes the retained-journal boundary fail closed for every
 // normal lifecycle mutation until a recovery path proves the journal resolved.
 func (c *Coordinator) EnterMaintenance() {

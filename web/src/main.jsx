@@ -97,6 +97,39 @@ const matchesNodeRole = (node, role) => role === 'all'
   || (role === 'none' && !node.isNativeSelected && !node.isOverride && !node.isEffective)
 const healthRank = (node) => node.alive ? 0 : node.enabled ? 1 : 2
 const roleRank = (node) => ({ effective: 0, override: 1, native: 2, none: 3 })[nodeRole(node)]
+const autoRefreshStateLabels = {
+  waiting: 'Refresh scheduled',
+  running: 'Refreshing saved snapshot…',
+  deferred: 'Refresh deferred',
+  failed: 'Refresh failed',
+  disabled: 'Automatic refresh disabled',
+}
+const autoRefreshErrorLabels = {
+  'runtime-busy': 'Runtime busy',
+  'authority-busy': 'Authority busy',
+  stale: 'Registry changed; will retry',
+  'fetch-failed': 'Provider fetch failed',
+  'content-rejected': 'Provider content rejected',
+  duplicate: 'Duplicate provider node',
+  'node-rejected': 'Provider node rejected',
+  'candidate-invalid': 'Candidate rejected',
+  'activation-failed': 'Activation failed',
+  'registry-unavailable': 'Registry unavailable',
+}
+const autoRefreshResultLabels = { updated: 'Updated', noop: 'No change' }
+const autoRefreshState = (status) => autoRefreshStateLabels[status?.state] ? status.state : 'waiting'
+const autoRefreshSummary = (status) => {
+  if (!status) return ''
+  const state = autoRefreshState(status)
+  if (state === 'running') return 'Fetching the saved provider snapshot'
+  if (state === 'disabled') return 'Disabled subscriptions do not participate'
+  const parts = []
+  if (status.errorCode && autoRefreshErrorLabels[status.errorCode]) parts.push(autoRefreshErrorLabels[status.errorCode])
+  if (status.lastResult && autoRefreshResultLabels[status.lastResult]) parts.push(`Last: ${autoRefreshResultLabels[status.lastResult]}`)
+  if (status.lastSuccessAt) parts.push(`Success: ${formatTime(status.lastSuccessAt)}`)
+  if (status.nextRunAt) parts.push(`Next: ${formatTime(status.nextRunAt)}`)
+  return parts.join(' · ') || 'No attempt yet'
+}
 
 const sortNodes = (nodes, key, direction) => {
   const multiplier = direction === 'desc' ? -1 : 1
@@ -550,8 +583,8 @@ function NodeWorkspace({ nodes, subscriptions, manualOverride, csrf, onRefresh, 
     </form>}
 
     {!!subscriptions.length && <div className="subscription-strip">
-      {subscriptions.map((subscription) => { const enabled = subscription.enabled !== false; const name = subscription.name || 'Unnamed subscription'; return <div className={`subscription-card ${enabled ? '' : 'disabled'}`} key={subscription.id}>
-        <div><strong>{name}</strong><small>{enabled ? 'Enabled' : 'Disabled'} · {subscription.nodeCount} nodes{subscription.staleCount ? ` · ${subscription.staleCount} stale` : ''}</small></div>
+      {subscriptions.map((subscription) => { const enabled = subscription.enabled !== false; const name = subscription.name || 'Unnamed subscription'; const autoStatus = subscription.autoRefresh; const autoState = autoRefreshState(autoStatus); return <div className={`subscription-card ${enabled ? '' : 'disabled'}`} key={subscription.id}>
+        <div><strong>{name}</strong><small>{enabled ? 'Enabled' : 'Disabled'} · {subscription.nodeCount} nodes{subscription.staleCount ? ` · ${subscription.staleCount} stale` : ''}</small>{autoStatus && <div className={`subscription-auto-refresh ${autoState}`} data-testid={`subscription-auto-refresh-${subscription.id}`}><span>{autoRefreshStateLabels[autoState]}</span><small>{autoRefreshSummary(autoStatus)}</small></div>}</div>
         <div className="subscription-actions">
           <IconButton icon="refresh" label={`Refresh ${name}`} disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/refresh/preview', { subscriptionId: subscription.id })} />
           <IconButton icon="edit" label={`Edit ${name}`} disabled={busy} onClick={() => openSubscriptionEditor(subscription)} />
