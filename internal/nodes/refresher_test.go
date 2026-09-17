@@ -254,6 +254,67 @@ func TestAutomaticRefreshDefersForLivePreviewAndPreservesOperatorToken(t *testin
 	}
 }
 
+func TestAutomaticRefreshPreviewCreatedBeforeManagedAdmissionWins(t *testing.T) {
+	registry := refresherRegistry(t, true)
+	fetcher := &countingSubscriptionFetcher{body: []byte(syntheticProfileTwo)}
+	manager, store, active := testManager(t, &registry, fetcher)
+	coordinator := &managedRefreshCoordinator{}
+	manager.managedCoordinator = coordinator
+	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	refresher := newSubscriptionRefresher(manager, func() time.Time { return now })
+	if err := refresher.reconcile(now); err != nil {
+		t.Fatal(err)
+	}
+	refresher.entries["sub-12345678"].nextRunAt = now
+
+	admissionPaused := make(chan struct{})
+	releaseAdmission := make(chan struct{})
+	manager.beforeAutomaticCommitAdmission = func() {
+		close(admissionPaused)
+		<-releaseAdmission
+	}
+	attemptDone := make(chan struct{})
+	go func() {
+		refresher.runAttempt(context.Background(), "sub-12345678")
+		close(attemptDone)
+	}()
+	select {
+	case <-admissionPaused:
+	case <-time.After(time.Second):
+		t.Fatal("automatic refresh did not pause before managed admission")
+	}
+
+	preview, err := manager.PreviewRefresh(context.Background(), "operator-session", "sub-12345678", "", "")
+	if err != nil || preview.Noop {
+		t.Fatalf("interleaved operator preview = %+v, %v", preview, err)
+	}
+	close(releaseAdmission)
+	select {
+	case <-attemptDone:
+	case <-time.After(time.Second):
+		t.Fatal("automatic refresh did not finish after admission interleaving")
+	}
+
+	status := refresher.AutoRefreshStatuses()["sub-12345678"]
+	if status.State != autoRefreshDeferred || status.ErrorCode != autoRefreshPreview || coordinator.tryCalls != 0 {
+		t.Fatalf("interleaved automatic status = %+v admissions=%d", status, coordinator.tryCalls)
+	}
+	committed, err := store.Load()
+	if err != nil || !sameRegistry(committed, registry) {
+		t.Fatalf("automatic refresh committed around interleaved preview: %+v err=%v", committed, err)
+	}
+	if _, err := os.Stat(active); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("automatic refresh wrote active outbounds around interleaved preview: %v", err)
+	}
+	if _, err := manager.Apply(context.Background(), "operator-session", preview.Token, false); err != nil {
+		t.Fatalf("interleaved operator preview became unusable: %v", err)
+	}
+	committed, err = store.Load()
+	if err != nil || sameRegistry(committed, registry) {
+		t.Fatalf("interleaved operator preview did not commit: %+v", committed)
+	}
+}
+
 func TestAutomaticRefreshBusyBackoffIsFinite(t *testing.T) {
 	registry := refresherRegistry(t, true)
 	fetcher := &countingSubscriptionFetcher{body: []byte(syntheticProfileTwo)}

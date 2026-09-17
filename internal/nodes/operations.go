@@ -74,7 +74,12 @@ type Manager struct {
 	mu                    sync.Mutex
 	authority             *authority.Lease
 	previews              map[string]previewEntry
+	automaticCommitIntent bool
 	autoRefreshStatusFunc func() map[string]AutoRefreshStatus
+
+	// beforeAutomaticCommitAdmission is a deterministic test seam for the
+	// Preview-store/admission interleaving. It is never set by production code.
+	beforeAutomaticCommitAdmission func()
 }
 
 type previewEntry struct {
@@ -200,12 +205,14 @@ func (m *Manager) SetAutoRefreshStatusProvider(provider func() map[string]AutoRe
 	m.mu.Unlock()
 }
 
-// hasLivePreview reuses the existing bounded node Preview store as the
-// operator-intent boundary for automatic commits. Expired entries are removed
-// while holding the same Manager mutex used by Preview Apply/Cancel/create.
-func (m *Manager) hasLivePreview() bool {
+// tryBeginAutomaticCommit claims the small Manager-local commit-intent phase
+// for one changed automatic candidate. It is synchronized with Preview
+// storage, so either an operator Preview is stored first or the automatic
+// commit intent is claimed first; there is no observation-to-admission gap.
+// The returned release only holds Manager.mu while clearing the claim.
+func (m *Manager) tryBeginAutomaticCommit() (func(), error) {
 	if m == nil {
-		return false
+		return nil, ErrOperationUnavailable
 	}
 	now := time.Now().UTC()
 	if m.now != nil {
@@ -215,9 +222,22 @@ func (m *Manager) hasLivePreview() bool {
 		}
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.purgeExpiredLocked(now)
-	return len(m.previews) > 0
+	if m.automaticCommitIntent || len(m.previews) > 0 {
+		m.mu.Unlock()
+		return nil, ErrOperationUnavailable
+	}
+	m.automaticCommitIntent = true
+	m.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			m.mu.Lock()
+			m.automaticCommitIntent = false
+			m.mu.Unlock()
+		})
+	}, nil
 }
 
 // Snapshot returns a validated copy of the committed registry. It takes the
@@ -815,6 +835,10 @@ func (m *Manager) createPreview(binding string, before, registry Registry, opera
 	entry := previewEntry{Binding: binding, Registry: registry, BaseDigest: registryDigest(before), Operation: operation, Changes: changes, RequiresAcceptance: requiresAcceptance, Noop: noop, CreatedAt: created, ExpiresAt: expires}
 	m.mu.Lock()
 	m.purgeExpiredLocked(created)
+	if m.automaticCommitIntent {
+		m.mu.Unlock()
+		return Preview{}, ErrOperationUnavailable
+	}
 	for oldToken, old := range m.previews {
 		if old.Binding == binding {
 			delete(m.previews, oldToken)

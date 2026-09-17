@@ -489,9 +489,14 @@ func (m *Manager) refreshSavedSubscription(ctx context.Context, subscriptionID s
 	if sameRegistry(before, candidate) {
 		return automaticRefreshResult{LastResult: autoRefreshNoop}, nil
 	}
-	if m.hasLivePreview() {
+	if m.beforeAutomaticCommitAdmission != nil {
+		m.beforeAutomaticCommitAdmission()
+	}
+	releasePreviewIntent, err := m.tryBeginAutomaticCommit()
+	if err != nil {
 		return automaticRefreshResult{}, automaticError(autoRefreshPreview, true, false)
 	}
+	defer releasePreviewIntent()
 
 	if m.managedCoordinator == nil {
 		return automaticRefreshResult{}, automaticError(autoRefreshRuntime, true, false)
