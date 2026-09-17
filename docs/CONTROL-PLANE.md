@@ -150,7 +150,10 @@ also retain the committed generation and schedule the normal cadence.
 
 The existing authenticated `GET /api/v1/nodes` response carries only bounded
 RAM status (`waiting`, `running`, `deferred`, `failed` or `disabled`) with safe
-timestamps, `updated`/`noop` result and an allowlisted error code. The UI is
+timestamps, `updated`/`noop` result and an allowlisted error code, including
+`operator-preview` when an operator's live node Preview defers a changed
+automatic commit. Authoritative `enabled: false` projects `disabled` immediately
+even if the refresher's bounded rescan has not observed the change. The UI is
 status-only: explicit Refresh/Edit/Enable/Disable/Remove controls remain, with
 no cadence setting, scheduler-run endpoint or extra polling loop. Slice C is
 source/CI-only and does not imply release, router access, provider access or

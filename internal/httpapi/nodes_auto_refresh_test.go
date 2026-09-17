@@ -14,7 +14,7 @@ import (
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
 )
 
-func TestNodesEndpointProjectsBoundedAutomaticRefreshStatus(t *testing.T) {
+func TestNodesEndpointProjectsBoundedAutomaticRefreshStatusAndDisabledImmediately(t *testing.T) {
 	dir := t.TempDir()
 	passwordPath := filepath.Join(dir, "password.bcrypt")
 	if err := auth.SetPassword(passwordPath, []byte("synthetic-panel-password")); err != nil {
@@ -68,5 +68,31 @@ func TestNodesEndpointProjectsBoundedAutomaticRefreshStatus(t *testing.T) {
 	}
 	if strings.Contains(body, "subscription.example") || strings.Contains(body, "replacement-token") || strings.Contains(body, "11111111-1111-4111-8111-111111111111") {
 		t.Fatalf("nodes response leaked provider material: %s", body)
+	}
+
+	registry.Subscriptions[0].Enabled = false
+	if err := store.Save(registry); err != nil {
+		t.Fatal(err)
+	}
+	response, err = client.Get(server.URL + "/api/v1/nodes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readBody(response)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("disabled nodes status = %d %s", response.StatusCode, body)
+	}
+	payload = struct {
+		Subscriptions []nodes.PublicSubscription `json:"subscriptions"`
+	}{}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Subscriptions) != 1 || payload.Subscriptions[0].AutoRefresh == nil {
+		t.Fatalf("disabled automatic status projection = %+v", payload.Subscriptions)
+	}
+	status = payload.Subscriptions[0].AutoRefresh
+	if status.State != "disabled" || status.LastAttemptAt != "" || status.LastSuccessAt != "" || status.NextRunAt != "" || status.LastResult != "" || status.ErrorCode != "" {
+		t.Fatalf("disabled automatic status retained stale participation: %+v", status)
 	}
 }

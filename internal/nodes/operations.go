@@ -168,11 +168,18 @@ func (m *Manager) ListSubscriptions() ([]PublicSubscription, error) {
 	m.mu.Lock()
 	statusFunc := m.autoRefreshStatusFunc
 	m.mu.Unlock()
-	if statusFunc == nil {
-		return result, nil
+	var statuses map[string]AutoRefreshStatus
+	if statusFunc != nil {
+		statuses = statusFunc()
 	}
-	statuses := statusFunc()
 	for index := range result {
+		if !result[index].Enabled {
+			// The registry is authoritative for participation. Do not let a
+			// stale RAM scheduler entry make an explicitly disabled subscription
+			// look scheduled until the next refresher rescan.
+			result[index].AutoRefresh = &AutoRefreshStatus{State: autoRefreshDisabled}
+			continue
+		}
 		if status, ok := statuses[result[index].ID]; ok {
 			copy := status
 			result[index].AutoRefresh = &copy
@@ -191,6 +198,26 @@ func (m *Manager) SetAutoRefreshStatusProvider(provider func() map[string]AutoRe
 	m.mu.Lock()
 	m.autoRefreshStatusFunc = provider
 	m.mu.Unlock()
+}
+
+// hasLivePreview reuses the existing bounded node Preview store as the
+// operator-intent boundary for automatic commits. Expired entries are removed
+// while holding the same Manager mutex used by Preview Apply/Cancel/create.
+func (m *Manager) hasLivePreview() bool {
+	if m == nil {
+		return false
+	}
+	now := time.Now().UTC()
+	if m.now != nil {
+		now = m.now()
+		if now.IsZero() {
+			now = time.Now().UTC()
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.purgeExpiredLocked(now)
+	return len(m.previews) > 0
 }
 
 // Snapshot returns a validated copy of the committed registry. It takes the

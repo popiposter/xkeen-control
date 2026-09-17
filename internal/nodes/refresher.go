@@ -36,6 +36,7 @@ const (
 	autoRefreshNoop       = "noop"
 	autoRefreshRuntime    = "runtime-busy"
 	autoRefreshAuthority  = "authority-busy"
+	autoRefreshPreview    = "operator-preview"
 	autoRefreshStale      = "stale"
 	autoRefreshFetch      = "fetch-failed"
 	autoRefreshContent    = "content-rejected"
@@ -487,6 +488,9 @@ func (m *Manager) refreshSavedSubscription(ctx context.Context, subscriptionID s
 	}
 	if sameRegistry(before, candidate) {
 		return automaticRefreshResult{LastResult: autoRefreshNoop}, nil
+	}
+	if m.hasLivePreview() {
+		return automaticRefreshResult{}, automaticError(autoRefreshPreview, true, false)
 	}
 
 	if m.managedCoordinator == nil {

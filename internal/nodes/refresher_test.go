@@ -207,6 +207,53 @@ func TestAutomaticRefreshNoopDoesNotAdmitOrWrite(t *testing.T) {
 	}
 }
 
+func TestAutomaticRefreshDefersForLivePreviewAndPreservesOperatorToken(t *testing.T) {
+	registry := refresherRegistry(t, true)
+	fetcher := &countingSubscriptionFetcher{body: []byte(syntheticProfileTwo)}
+	manager, store, active := testManager(t, &registry, fetcher)
+	preview, err := manager.PreviewRefresh(context.Background(), "operator-session", "sub-12345678", "", "")
+	if err != nil || preview.Noop {
+		t.Fatalf("operator preview = %+v, %v", preview, err)
+	}
+	manager.mu.Lock()
+	manager.previews["expired-preview"] = previewEntry{ExpiresAt: time.Now().UTC().Add(-time.Second)}
+	manager.mu.Unlock()
+	coordinator := &managedRefreshCoordinator{}
+	manager.managedCoordinator = coordinator
+	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	refresher := newSubscriptionRefresher(manager, func() time.Time { return now })
+	if err := refresher.reconcile(now); err != nil {
+		t.Fatal(err)
+	}
+	refresher.entries["sub-12345678"].nextRunAt = now
+	refresher.runAttempt(context.Background(), "sub-12345678")
+	status := refresher.AutoRefreshStatuses()["sub-12345678"]
+	if status.State != autoRefreshDeferred || status.ErrorCode != autoRefreshPreview || coordinator.tryCalls != 0 {
+		t.Fatalf("live-preview automatic status = %+v admissions=%d", status, coordinator.tryCalls)
+	}
+	manager.mu.Lock()
+	_, tokenStillLive := manager.previews[preview.Token]
+	_, expiredStillLive := manager.previews["expired-preview"]
+	manager.mu.Unlock()
+	if !tokenStillLive || expiredStillLive {
+		t.Fatalf("preview store after automatic deferral: token=%v expired=%v", tokenStillLive, expiredStillLive)
+	}
+	committed, err := store.Load()
+	if err != nil || !sameRegistry(committed, registry) {
+		t.Fatalf("automatic refresh mutated around live preview: %+v err=%v", committed, err)
+	}
+	if _, err := os.Stat(active); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("automatic refresh wrote active outbounds around live preview: %v", err)
+	}
+	if _, err := manager.Apply(context.Background(), "operator-session", preview.Token, false); err != nil {
+		t.Fatalf("operator preview became unusable after automatic deferral: %v", err)
+	}
+	committed, err = store.Load()
+	if err != nil || sameRegistry(committed, registry) {
+		t.Fatalf("operator preview did not commit after automatic deferral: %+v err=%v", committed, err)
+	}
+}
+
 func TestAutomaticRefreshBusyBackoffIsFinite(t *testing.T) {
 	registry := refresherRegistry(t, true)
 	fetcher := &countingSubscriptionFetcher{body: []byte(syntheticProfileTwo)}

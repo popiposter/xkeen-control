@@ -107,6 +107,7 @@ const autoRefreshStateLabels = {
 const autoRefreshErrorLabels = {
   'runtime-busy': 'Runtime busy',
   'authority-busy': 'Authority busy',
+  'operator-preview': 'Operator preview active',
   stale: 'Registry changed; will retry',
   'fetch-failed': 'Provider fetch failed',
   'content-rejected': 'Provider content rejected',
