@@ -131,6 +131,19 @@ button:hover:not(:disabled) { filter: brightness(1.08); }
 .selection-summary strong { color: #e6edf5; font-size: 11px; }
 .selection-actions button { min-height: 27px; padding: 4px 8px; font-size: 10px; }
 .selection-actions .danger-action { color: #ffc1c5; border-color: #704449; background: rgba(142, 54, 60, .26); }
+.manual-performance { display: grid; gap: 7px; margin: 7px 10px; padding: 9px; background: #0b141f; border: 1px solid #36516e; border-radius: 6px; }
+.manual-performance.completed { border-color: #397957; }
+.manual-performance.failed, .manual-performance.cancelled, .manual-performance.cleanup-pending { border-color: #846b35; }
+.manual-performance-heading, .manual-performance-target { display: flex; align-items: center; justify-content: space-between; gap: 9px; }
+.manual-performance-heading h3 { margin: 2px 0 0; font-size: 13px; }
+.manual-performance-target { justify-content: flex-start; flex-wrap: wrap; color: #91a0b2; font-size: 10px; }
+.manual-performance-target strong { color: #e6edf5; }
+.manual-performance-target code { color: #aac5dc; }
+.manual-progress-grid { display: grid; grid-template-columns: repeat(5, minmax(90px, 1fr)); gap: 6px; }
+.manual-progress-grid > div { display: grid; gap: 2px; padding-top: 6px; border-top: 1px solid #223144; }
+.manual-progress-grid span { color: #758ba1; font-size: 9px; }
+.manual-progress-grid strong { color: #e6edf5; font-size: 11px; }
+.manual-current-stage { color: #83d9ff; }
 .selection-column { width: 30px; text-align: center; }
 .selection-column input { width: 15px; height: 15px; margin: 0; accent-color: #53a6ff; vertical-align: middle; }
 
@@ -187,6 +200,10 @@ td { color: #c8d3df; }
 .metric-value-list code { padding: 2px 5px; color: #c8e4fb; background: #0c141f; border: 1px solid #26384d; border-radius: 4px; font-size: 10px; }
 .good-text { color: #7ee7ad !important; }
 .empty, .loading { padding: 24px 12px; color: #91a0b2; text-align: center; }
+
+@media (max-width: 760px) {
+  .manual-progress-grid { grid-template-columns: repeat(2, minmax(110px, 1fr)); }
+}
 
 .components-section { max-width: 1320px; }
 .components-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }

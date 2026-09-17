@@ -58,6 +58,8 @@ async function prepare(page) {
     subscriptionEnabled: true,
     missingNextRefresh: false,
     exactRefreshRemovalIDs: [nodeID(3)],
+    manualPolls: 0,
+    manual: { mode: 'manual-node', state: 'idle', phase: 'done', plannedStages: 11, completedStages: 0, bytesPlanned: 48 * 1024 * 1024, bytesTransferred: 0 },
   }
   state.status = statusFixture(state.nodes)
   const issues = []
@@ -89,13 +91,24 @@ async function prepare(page) {
           : { state: 'disabled' }
         return json(route, { total: nodes.length, nodes, subscriptions: [{ id: 'sub-12345678', name: 'Provider', enabled: state.subscriptionEnabled, nodeCount: nodes.filter((node) => node.sourceType === 'subscription').length, staleCount: 0, autoRefresh }] })
       }
-      case '/api/v1/performance': return json(route, { nodes: [] })
+      case '/api/v1/performance': {
+        if (state.manual.state === 'running' && state.manualPolls > 0) {
+          state.manual = { ...state.manual, state: 'completed', phase: 'done', completedStages: 11, bytesTransferred: 48 * 1024 * 1024, latencyMs: 42, downloadBps: 10000000, uploadBps: 5000000 }
+        }
+        if (state.manual.state === 'running') state.manualPolls++
+        return json(route, { nodes: [], manual: state.manual })
+      }
       case '/api/v1/config-summary': return json(route, { routing: {}, dns: {}, observatory: {} })
       case '/api/v1/update': return json(route, { channel: 'stable', installed: { version: '0.2.0' } })
       case '/api/v1/selection/override': {
         state.status.selection.manualOverride = body.target
         for (const node of state.nodes) node.isOverride = Boolean(body.target) && node.outboundTag === body.target
         return json(route, { manualOverride: body.target })
+      }
+      case '/api/v1/performance/manual-node': {
+        state.manualPolls = 0
+        state.manual = { mode: 'manual-node', state: 'running', phase: 'latency', targetNodeId: body.nodeId, targetTag: `proxy-${body.nodeId}`, startedAt: new Date().toISOString(), elapsedMs: 0, plannedStages: 11, completedStages: 0, bytesPlanned: 48 * 1024 * 1024, bytesTransferred: 0 }
+        return json(route, { accepted: true, state: 'accepted' }, 202)
       }
       case '/api/v1/nodes/batch/state/preview':
       case '/api/v1/nodes/batch/remove/preview': {
@@ -268,6 +281,36 @@ test('gates toolbar actions and sends one exact batch state preview', async ({ p
   expect(prepared.state.requests.filter((request) => /^\/api\/v1\/nodes\/node-[^/]+\/state\/preview$/.test(request.path))).toHaveLength(0)
   await expect(page.getByRole('dialog')).toContainText('1 node changes')
   await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+})
+
+test('gates Full speed test to one enabled node and polls only while active', async ({ page }) => {
+  const prepared = await prepare(page)
+  page.__nodesIssues = prepared.issues
+  await openNodes(page)
+
+  const speedTest = page.getByRole('button', { name: 'Full speed test', exact: true })
+  await expect(speedTest).toBeDisabled()
+  await page.getByLabel('Select Node 001').check()
+  await expect(speedTest).toBeEnabled()
+  await speedTest.click()
+  expect(prepared.state.requests.filter((request) => request.path === '/api/v1/performance/manual-node')).toEqual([
+    { path: '/api/v1/performance/manual-node', method: 'POST', body: { nodeId: nodeID(1) } },
+  ])
+  expect(prepared.state.requests.filter((request) => request.path === '/api/v1/selection/override')).toHaveLength(0)
+  await expect(page.getByTestId('manual-performance')).toContainText('Running')
+  await expect(page.getByTestId('manual-performance')).toContainText('Target')
+  await expect(page.getByTestId('manual-performance')).toContainText('Node 001')
+  await expect(page.getByTestId('manual-performance')).toContainText('Completed')
+  await expect(page.getByTestId('manual-performance')).toContainText('10.0 Mbps')
+  const performanceRequestsAfterCompletion = prepared.state.requests.filter((request) => request.path === '/api/v1/performance').length
+  await page.waitForTimeout(1200)
+  expect(prepared.state.requests.filter((request) => request.path === '/api/v1/performance')).toHaveLength(performanceRequestsAfterCompletion)
+
+  await page.getByRole('button', { name: 'Clear selection', exact: true }).click()
+  await page.getByLabel('Select Node 002').check()
+  await expect(speedTest).toBeDisabled()
+  await page.getByLabel('Select Node 001').check()
+  await expect(speedTest).toBeDisabled()
 })
 
 test('sends one batch remove preview, renders warnings, and reconciles after Apply', async ({ page }) => {

@@ -25,6 +25,7 @@ import (
 const (
 	maxLoginBody             = 16 << 10
 	maxMutationBody          = 384 << 10
+	maxManualNodeBody        = 1 << 10
 	maxComponentCheckBody    = 4 << 10
 	maxComponentMutationBody = 4 << 10
 	maxComponentPolicyBody   = 4 << 10
@@ -68,6 +69,9 @@ type Server struct {
 	benchmark interface {
 		TriggerBenchmark() error
 	}
+	manual interface {
+		TriggerManualNode(string) error
+	}
 	selection interface {
 		SetManualOverride(context.Context, string) error
 	}
@@ -90,6 +94,9 @@ type Config struct {
 	Benchmark interface {
 		TriggerBenchmark() error
 	}
+	Manual interface {
+		TriggerManualNode(string) error
+	}
 	Selection interface {
 		SetManualOverride(context.Context, string) error
 	}
@@ -106,7 +113,7 @@ func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, updates: config.Updates, backup: config.Backup, restore: config.Restore, restorePreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, updates: config.Updates, backup: config.Backup, restore: config.Restore, restorePreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +134,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/components/preview", "/api/v1/components/apply", "/api/v1/components/rollback", "/api/v1/components/cancel",
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
 		"/api/v1/session/password",
-		"/api/v1/benchmark/run",
+		"/api/v1/benchmark/run", "/api/v1/performance/manual-node",
 		"/api/v1/backup/export", "/api/v1/backup/export-secret",
 		"/api/v1/backup/import/preview", "/api/v1/backup/import/apply", "/api/v1/backup/import/cancel",
 		"/api/v1/nodes/import/preview", "/api/v1/nodes/replace/preview",
@@ -205,7 +212,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			methodNotAllowed(w, http.MethodGet)
 			return
 		}
-		s.readOnly(w, r, func(view controlruntime.View) any { return view.Performance })
+		s.readPerformance(w, r)
 	case "/api/v1/config-summary":
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w, http.MethodGet)
@@ -263,6 +270,12 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.runBenchmark(w, r)
+	case "/api/v1/performance/manual-node":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.runManualNode(w, r)
 	case "/api/v1/backup/export":
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w, http.MethodGet)
@@ -420,6 +433,62 @@ func (s *Server) runBenchmark(w http.ResponseWriter, r *http.Request) {
 		Accepted bool   `json:"accepted"`
 		State    string `json:"state"`
 	}{Accepted: true, State: "accepted"})
+}
+
+func (s *Server) runManualNode(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	var request struct {
+		NodeID string `json:"nodeId"`
+	}
+	if !s.decodeManualNodeRequest(w, r, &request) {
+		return
+	}
+	if !c1.ValidManualNodeID(request.NodeID) {
+		writeManualError(w, c1.ErrManualInvalidTarget)
+		return
+	}
+	if s.manual == nil {
+		writeManualError(w, c1.ErrManualUnavailable)
+		return
+	}
+	if err := s.manual.TriggerManualNode(request.NodeID); err != nil {
+		writeManualError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, struct {
+		Accepted bool   `json:"accepted"`
+		State    string `json:"state"`
+	}{Accepted: true, State: "accepted"})
+}
+
+func writeManualError(w http.ResponseWriter, err error) {
+	status := http.StatusServiceUnavailable
+	state := "unavailable"
+	switch {
+	case errors.Is(err, c1.ErrManualInvalidTarget):
+		status = http.StatusBadRequest
+		state = "invalid-target"
+	case errors.Is(err, c1.ErrManualBusy):
+		status = http.StatusConflict
+		state = "busy"
+	case errors.Is(err, c1.ErrManualCleanupPending):
+		status = http.StatusConflict
+		state = "cleanup-pending"
+	case errors.Is(err, c1.ErrManualUnavailable):
+		status = http.StatusServiceUnavailable
+		state = "unavailable"
+	}
+	writeJSON(w, status, struct {
+		Accepted bool   `json:"accepted"`
+		State    string `json:"state"`
+	}{Accepted: false, State: state})
 }
 
 func (s *Server) exportBackup(w http.ResponseWriter, r *http.Request) {
@@ -1091,6 +1160,46 @@ func (s *Server) decodeMutation(w http.ResponseWriter, r *http.Request, value an
 	return true
 }
 
+func (s *Server) decodeManualNodeRequest(w http.ResponseWriter, r *http.Request, value any) bool {
+	contentTypes := r.Header.Values("Content-Type")
+	if len(contentTypes) != 1 || strings.TrimSpace(contentTypes[0]) != "application/json" {
+		writeError(w, http.StatusUnsupportedMediaType, "unsupported media type")
+		return false
+	}
+	if r.URL.RawQuery != "" {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return false
+	}
+	if r.ContentLength > maxManualNodeBody {
+		writeError(w, http.StatusRequestEntityTooLarge, "request too large")
+		return false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxManualNodeBody)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request too large")
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid request")
+		}
+		return false
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request too large")
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid request")
+		}
+		return false
+	}
+	return true
+}
+
 func (s *Server) decodeComponentCheckRequest(w http.ResponseWriter, r *http.Request, value any) bool {
 	if r.ContentLength > maxComponentCheckBody {
 		writeError(w, http.StatusRequestEntityTooLarge, "request too large")
@@ -1295,6 +1404,17 @@ func (s *Server) readOnly(w http.ResponseWriter, r *http.Request, selectView fun
 		return
 	}
 	writeJSON(w, http.StatusOK, selectView(s.collector.Snapshot(r.Context())))
+}
+
+func (s *Server) readPerformance(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	if s.collector == nil {
+		writeError(w, http.StatusServiceUnavailable, "runtime unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.collector.PerformanceSnapshot(r.Context()))
 }
 
 func (s *Server) readComponents(w http.ResponseWriter, r *http.Request) {

@@ -141,10 +141,11 @@ type Node struct {
 }
 
 type Performance struct {
-	SemanticIntervalMinutes int          `json:"semanticIntervalMinutes"`
-	InstalledSchedule       string       `json:"installedSchedule"`
-	LastBenchmarkAt         string       `json:"lastBenchmarkAt"`
-	Nodes                   []Throughput `json:"nodes"`
+	SemanticIntervalMinutes int                        `json:"semanticIntervalMinutes"`
+	InstalledSchedule       string                     `json:"installedSchedule"`
+	LastBenchmarkAt         string                     `json:"lastBenchmarkAt"`
+	Nodes                   []Throughput               `json:"nodes"`
+	Manual                  c1.ManualPerformanceStatus `json:"manual"`
 }
 
 type Throughput struct {
@@ -266,6 +267,41 @@ func (c *Collector) Snapshot(ctx context.Context) View {
 	}
 }
 
+// PerformanceSnapshot is the narrow status path for the performance page. A
+// running manual diagnostic overlays its Coordinator-owned RAM projection on
+// the last collected historical view, so one-second progress polling never
+// turns into one-second Xray/XKeen/config collection. An empty cache is seeded
+// once through the ordinary bounded collector path.
+func (c *Collector) PerformanceSnapshot(ctx context.Context) Performance {
+	if c == nil {
+		return Performance{Manual: c1.DefaultManualPerformanceStatus()}
+	}
+	manualRunning := false
+	if c.deps.C1 != nil {
+		manualRunning = c.deps.C1.ManualSnapshot().State == "running"
+	}
+	var view View
+	if manualRunning {
+		c.mu.Lock()
+		cached := c.value
+		hasCache := !c.updated.IsZero()
+		c.mu.Unlock()
+		if hasCache {
+			view = cached
+		} else {
+			view = c.Snapshot(ctx)
+		}
+	} else {
+		view = c.Snapshot(ctx)
+	}
+	if c.deps.C1 != nil {
+		view.Performance.Manual = c.deps.C1.ManualSnapshot()
+	} else {
+		view.Performance.Manual = c1.DefaultManualPerformanceStatus()
+	}
+	return view.Performance
+}
+
 func (c *Collector) collect(ctx context.Context) View {
 	var xrayState xrayapi.Snapshot
 	var probeReachable bool
@@ -284,6 +320,10 @@ func (c *Collector) collect(ctx context.Context) View {
 	var c1State c1.Status
 	if c.deps.C1 != nil {
 		c1State = c.deps.C1.Snapshot()
+	}
+	manual := c1.DefaultManualPerformanceStatus()
+	if c.deps.C1 != nil {
+		manual = c.deps.C1.ManualSnapshot()
 	}
 
 	tags := []string(nil)
@@ -415,6 +455,7 @@ func (c *Collector) collect(ctx context.Context) View {
 			InstalledSchedule:       benchmarkSchedule,
 			LastBenchmarkAt:         lastRun,
 			Nodes:                   performanceNodes,
+			Manual:                  manual,
 		},
 		ConfigSummary: buildConfigSummary(configState, benchmarkSchedule),
 	}

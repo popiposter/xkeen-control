@@ -11,10 +11,11 @@ import (
 )
 
 const (
-	ProbeInboundTag  = "probe"
-	ProbeAddress     = "127.0.0.1:10808"
-	LivenessRuleTag  = "xkeen-control-probe-liveness"
-	BenchmarkRuleTag = "xkeen-control-probe-benchmark"
+	ProbeInboundTag          = "probe"
+	ProbeAddress             = "127.0.0.1:10808"
+	LivenessRuleTag          = "xkeen-control-probe-liveness"
+	BenchmarkRuleTag         = "xkeen-control-probe-benchmark"
+	ManualPerformanceRuleTag = "xkeen-control-probe-manual-performance"
 )
 
 var ErrProbeCleanup = errors.New("temporary probe routing cleanup failed")
@@ -95,7 +96,7 @@ func (p *ProbeRouter) Reconcile(ctx context.Context) error {
 		return ErrProbeBlocked
 	}
 	for _, rule := range rules {
-		if rule.RuleTag != LivenessRuleTag && rule.RuleTag != BenchmarkRuleTag {
+		if !isManagedProbeRule(rule.RuleTag) {
 			continue
 		}
 		if err := p.api.RemoveRule(ctx, rule.RuleTag); err != nil {
@@ -118,8 +119,8 @@ func (p *ProbeRouter) reconcileLocked(ctx context.Context) error {
 	p.mu.Unlock()
 	if blocked {
 		// Removal is idempotent on the Xray API. Only clear the degraded gate
-		// after both known C.1 rule tags have been explicitly removed.
-		for _, tag := range []string{LivenessRuleTag, BenchmarkRuleTag} {
+		// after every known C.1 rule tag has been explicitly removed.
+		for _, tag := range managedProbeRuleTags() {
 			if err := p.removeIfPresent(ctx, tag); err != nil {
 				return ErrProbeBlocked
 			}
@@ -160,5 +161,21 @@ func ruleTagFor(kind string) string {
 	if kind == "benchmark" {
 		return BenchmarkRuleTag
 	}
+	if kind == "manual-node" {
+		return ManualPerformanceRuleTag
+	}
 	return fmt.Sprintf("xkeen-control-probe-%s", kind)
+}
+
+func managedProbeRuleTags() []string {
+	return []string{LivenessRuleTag, BenchmarkRuleTag, ManualPerformanceRuleTag}
+}
+
+func isManagedProbeRule(tag string) bool {
+	for _, managed := range managedProbeRuleTags() {
+		if tag == managed {
+			return true
+		}
+	}
+	return false
 }

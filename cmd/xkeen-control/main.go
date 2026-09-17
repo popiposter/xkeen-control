@@ -141,7 +141,7 @@ func main() {
 		}
 		result := make([]c1.NodeState, 0, len(items))
 		for _, item := range items {
-			result = append(result, c1.NodeState{Tag: item.OutboundTag, Enabled: item.Enabled})
+			result = append(result, c1.NodeState{ID: item.ID, Tag: item.OutboundTag, Enabled: item.Enabled})
 		}
 		_ = ctx
 		return result
@@ -153,6 +153,7 @@ func main() {
 	})
 	runner := c1.NewBenchmarkRunner(policy, probeRouter, c1.BenchmarkStore{Path: getenv("XKEEN_CONTROL_BENCHMARK_PATH", c1.DefaultBenchmarkPath)})
 	coordinator := c1.NewCoordinator(policy, supervisor, runner, nodeReader)
+	coordinator.SetManualRunner(c1.NewManualNodeRunner(probeRouter))
 	authorityLease := authority.NewLease()
 	componentGate := components.NewComponentMutationGate()
 	componentMaintenance := components.NewComponentMaintenance(coordinator, authorityLease)
@@ -307,6 +308,7 @@ func main() {
 		Assets:             webassets.Handler(),
 		StartedAt:          startedAt,
 		Components:         componentService,
+		Manual:             coordinator,
 		ComponentChecks:    componentPolicyChecker,
 		ComponentMutations: componentMutations,
 		ComponentPolicy:    componentPolicy,
