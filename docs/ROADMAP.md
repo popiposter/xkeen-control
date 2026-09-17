@@ -42,7 +42,7 @@ public source + signed GitHub Releases (#2, done)
         ↓
 local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
-managed XKeen / Xray / geodata lifecycle (#4, active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-C delivered by PRs #69/#71/#73, D next, then E-F; D.2 G and one feature-complete candidate afterward)
+managed XKeen / Xray / geodata lifecycle (#4, active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-D delivered by PRs #69/#71/#73/#75, E next, then F; D.2 G and one feature-complete candidate afterward)
         ↓
 visual typed configuration + transactional render/apply (#5, after #46 and D.2 G)
 ```
@@ -58,8 +58,8 @@ visual typed configuration + transactional render/apply (#5, after #46 and D.2 G
 | Pre-D — canonical Go module/import identity | Done | Issue #8 / PR #9 | Canonical `github.com/popiposter/xkeen-control` provenance; no runtime behavior change |
 | D — releases/bootstrap/panel self-update | Done | Issue #2 / `v0.1.1` | Public signed Releases, CI/release pipeline, one-command bootstrap, setup mode, transactional panel update/rollback |
 | D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
-| D.2 — component lifecycle | **Active — trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-C delivered by PRs #69/#71/#73, D next, then E-F; G after A-F** | Issue #4 / current `main` + live `v0.3.0-beta.2` trial | The prior Xray live pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the diagnostic source correction. Live qualification remains paused while the feature-complete source sequence is implemented and fully qualified offline; F3/G do not independently lead to a release |
-| D.3 — foundation A-F (#46) | **A-C delivered by PRs #69/#71/#73; D next, then E-F** | Issue #46 / #68 / #70 / #72 | Selection-first Nodes/atomic batch mutations, exact subscription reconciliation and bounded automatic subscription refresh delivered; D manual-node diagnostics, E adaptive shortlist/scoring and F integrated source UX/qualification remain later source-only slices |
+| D.2 — component lifecycle | **Active — trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-D delivered by PRs #69/#71/#73/#75, E next, then F; G after A-F** | Issue #4 / current `main` + live `v0.3.0-beta.2` trial | The prior Xray live pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the diagnostic source correction. Live qualification remains paused while the feature-complete source sequence is implemented and fully qualified offline; F3/G do not independently lead to a release |
+| D.3 — foundation A-F (#46) | **A-D delivered by PRs #69/#71/#73/#75; E next, then F** | Issue #46 / #68 / #70 / #72 / #74 | Selection-first Nodes/atomic batch mutations, exact subscription reconciliation, bounded automatic subscription refresh and fixed one-node diagnostic performance delivered; E adaptive shortlist/scoring and F integrated source UX/qualification remain later source-only slices |
 | D.3/#5 — remaining visual configuration | Later source scope | Issue #5 | Planned typed routing/DNS/XKeen/Xray/panel/performance UI and deterministic render/apply; not deployed |
 | E — notifications/security hardening | Planned after remaining D.3/#5 source | master issue #1 | Outbound alerts, management-VPN guidance, final attack-surface hardening |
 
@@ -92,7 +92,7 @@ Safe export excludes secrets by default; secret-bearing export is explicit and e
 
 Pre-adoption compatibility is explicit: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit and unknown/manual drift fails closed.
 
-## D.2 / Issue #4 — active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered; #46 A-C delivered by PRs #69/#71/#73, D next
+## D.2 / Issue #4 — active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered; #46 A-D delivered by PRs #69/#71/#73/#75, E next
 
 Phase A merged via PR #23 to `main` `bda9dd0cc7bb142a4cb1468811fff9b5146b1e8e`; source main gained the bounded read-only component inventory and authenticated `GET /api/v1/components` for panel, XKeen, Xray, geodata, KeeneticOS and Entware.
 
@@ -136,9 +136,9 @@ F3 is delivered by PR #67: bounded persisted `off|notify|manual` component polic
 
 The sequence is **#46 A-F foundation → D.2 G Setup Mode source → remaining D.3/#5 source → planned E notifications/security hardening → one feature-complete signed candidate plus integrated live qualification**. These source slices do not independently trigger release publication, router install or live qualification. Only after that integrated candidate is installed may live Xray/geodata/XKeen update+rollback qualification resume, restoring each component baseline before the next class and settling all component state before the original stable panel return.
 
-## D.3 / Issue #46 foundation — Slices A-C delivered; Slice D next; not deployed
+## D.3 / Issue #46 foundation — Slices A-D delivered; Slice E next; not deployed
 
-PR #69 delivered Slice A (selection-first Nodes and atomic batch mutations). PR #71 delivered Slice B (exact subscription membership reconciliation). PR #73 delivered Slice C (bounded automatic subscription refresh with non-preemptive background admission); Slice D manual-node down/up diagnostics + progress, Slice E adaptive shortlist + scoring, and Slice F integrated source UX/qualification remain later work. The #46 slices remain source-only and do not deploy to production; no release, router access or live qualification is implied.
+PR #69 delivered Slice A (selection-first Nodes and atomic batch mutations). PR #71 delivered Slice B (exact subscription membership reconciliation). PR #73 delivered Slice C (bounded automatic subscription refresh with non-preemptive background admission). PR #75 delivers Slice D (fixed manual-node down/up diagnostics and bounded progress); Slice E adaptive shortlist + scoring and Slice F integrated source UX/qualification remain later work. The #46 slices remain source-only and do not deploy to production; no release, router access or live qualification is implied.
 
 ## After remaining D.3/#5 source
 
