@@ -93,7 +93,7 @@ async function prepare(page) {
       }
       case '/api/v1/performance': {
         if (state.manual.state === 'running' && state.manualPolls > 0) {
-          state.manual = { ...state.manual, state: 'completed', phase: 'done', completedStages: 11, bytesTransferred: 48 * 1024 * 1024, latencyMs: 42, downloadBps: 10000000, uploadBps: 5000000 }
+          state.manual = { ...state.manual, state: 'completed', phase: 'done', completedStages: 11, bytesTransferred: 48 * 1024 * 1024, latencyMs: 42, downloadBps: 1250000, uploadBps: 625000 }
         }
         if (state.manual.state === 'running') state.manualPolls++
         return json(route, { nodes: [], manual: state.manual })
