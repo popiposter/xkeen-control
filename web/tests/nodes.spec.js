@@ -283,7 +283,7 @@ test('gates toolbar actions and sends one exact batch state preview', async ({ p
   await page.getByRole('button', { name: 'Cancel', exact: true }).click()
 })
 
-test('gates Full speed test to one enabled node and polls only while active', async ({ page }) => {
+test('allows Full speed test beside another manual override and polls only while active', async ({ page }) => {
   const prepared = await prepare(page)
   page.__nodesIssues = prepared.issues
   await openNodes(page)
@@ -291,6 +291,7 @@ test('gates Full speed test to one enabled node and polls only while active', as
   const speedTest = page.getByRole('button', { name: 'Full speed test', exact: true })
   await expect(speedTest).toBeDisabled()
   await page.getByLabel('Select Node 001').check()
+  expect(prepared.state.status.selection.manualOverride).toBe(`proxy-${nodeID(2)}`)
   await expect(speedTest).toBeEnabled()
   await speedTest.click()
   expect(prepared.state.requests.filter((request) => request.path === '/api/v1/performance/manual-node')).toEqual([
@@ -311,6 +312,22 @@ test('gates Full speed test to one enabled node and polls only while active', as
   await expect(speedTest).toBeDisabled()
   await page.getByLabel('Select Node 001').check()
   await expect(speedTest).toBeDisabled()
+})
+
+test('stops manual performance polling when the Nodes workspace unmounts', async ({ page }) => {
+  const prepared = await prepare(page)
+  page.__nodesIssues = prepared.issues
+  await openNodes(page)
+
+  await page.getByLabel('Select Node 001').check()
+  await page.getByRole('button', { name: 'Full speed test', exact: true }).click()
+  await expect(page.getByTestId('manual-performance')).toContainText('Running')
+  const performanceRequestsBeforeUnmount = prepared.state.requests.filter((request) => request.path === '/api/v1/performance').length
+
+  await page.getByRole('button', { name: 'Overview', exact: true }).click()
+  await expect(page.getByText('Panel readiness')).toBeVisible()
+  await page.waitForTimeout(1200)
+  expect(prepared.state.requests.filter((request) => request.path === '/api/v1/performance')).toHaveLength(performanceRequestsBeforeUnmount)
 })
 
 test('sends one batch remove preview, renders warnings, and reconciles after Apply', async ({ page }) => {

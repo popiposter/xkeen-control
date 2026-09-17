@@ -117,6 +117,88 @@ func TestManualRunnerKeepsEarlierValidStagesAfterOneFailure(t *testing.T) {
 	}
 }
 
+type pausedManualCleanupProbeAPI struct {
+	*benchmarkProbeAPI
+	removeStarted chan struct{}
+	releaseRemove chan struct{}
+	removeErr     error
+	removeOnce    sync.Once
+}
+
+func (p *pausedManualCleanupProbeAPI) RemoveRule(ctx context.Context, tag string) error {
+	p.removeOnce.Do(func() { close(p.removeStarted) })
+	select {
+	case <-p.releaseRemove:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	p.mu.Lock()
+	p.removes = append(p.removes, tag)
+	p.mu.Unlock()
+	return p.removeErr
+}
+
+func TestManualRunnerKeepsCleanupNonTerminalUntilPausedRemovalFails(t *testing.T) {
+	api := &pausedManualCleanupProbeAPI{
+		benchmarkProbeAPI: &benchmarkProbeAPI{},
+		removeStarted:     make(chan struct{}),
+		releaseRemove:     make(chan struct{}),
+		removeErr:         errors.New("synthetic cleanup failure"),
+	}
+	runner := &ManualNodeRunner{
+		Probe:     NewProbeRouter(api),
+		Transport: &manualTransportStub{stageDuration: 300 * time.Millisecond, failedDownload: -1},
+	}
+	var progressMu sync.Mutex
+	var progress []ManualPerformanceStatus
+	resultCh := make(chan ManualPerformanceStatus, 1)
+	go func() {
+		resultCh <- runner.Run(context.Background(), validManualTestNode(), func(status ManualPerformanceStatus) {
+			progressMu.Lock()
+			progress = append(progress, status)
+			progressMu.Unlock()
+		})
+	}()
+
+	<-api.removeStarted
+	progressMu.Lock()
+	pausedProgress := append([]ManualPerformanceStatus(nil), progress...)
+	progressMu.Unlock()
+	if len(pausedProgress) == 0 || pausedProgress[len(pausedProgress)-1].State != "running" || pausedProgress[len(pausedProgress)-1].Phase != "cleanup" {
+		t.Fatalf("paused cleanup projection = %+v", pausedProgress)
+	}
+	for _, status := range pausedProgress {
+		if status.State != "running" {
+			t.Fatalf("terminal state published before cleanup returned = %+v", pausedProgress)
+		}
+	}
+	select {
+	case result := <-resultCh:
+		t.Fatalf("manual run returned while cleanup was paused = %+v", result)
+	default:
+	}
+
+	close(api.releaseRemove)
+	result := <-resultCh
+	if result.State != "cleanup-pending" || result.Phase != "cleanup" || result.ErrorCode != "probe-cleanup" || !runner.Probe.Blocked() {
+		t.Fatalf("failed cleanup result = %+v blocked=%v", result, runner.Probe.Blocked())
+	}
+	progressMu.Lock()
+	deferredProgress := append([]ManualPerformanceStatus(nil), progress...)
+	progressMu.Unlock()
+	for index, status := range deferredProgress {
+		if index == len(deferredProgress)-1 {
+			if status.State != "cleanup-pending" {
+				t.Fatalf("final cleanup projection = %+v", deferredProgress)
+			}
+			continue
+		}
+		if status.State != "running" {
+			t.Fatalf("terminal state preceded cleanup-pending = %+v", deferredProgress)
+		}
+	}
+}
+
 type recordingManualRoundTripper struct {
 	mu             sync.Mutex
 	requests       []manualRequestRecord

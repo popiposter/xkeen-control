@@ -158,18 +158,23 @@ func (r *ManualNodeRunner) Run(parent context.Context, node NodeState, publish f
 	if err != nil && status.State == "running" {
 		state, code := manualContextOutcome(err, workContext)
 		status.State = state
-		status.Phase = "cleanup"
+		status.Phase = "done"
 		status.CurrentStage = ""
 		status.ErrorCode = code
 		status.ElapsedMS = elapsedMilliseconds(started, now())
 		emit()
 		return status
 	}
-	if status.State == "running" {
+	if execution.firstErr != "" {
 		status.State = "failed"
 		status.Phase = "done"
-		status.ErrorCode = "probe-unavailable"
+		status.ErrorCode = execution.firstErr
+	} else if status.State == "running" {
+		status.State = "completed"
+		status.Phase = "done"
+		status.ErrorCode = ""
 	}
+	status.CurrentStage = ""
 	status.ElapsedMS = elapsedMilliseconds(started, now())
 	emit()
 	return status
@@ -238,14 +243,10 @@ func (e *manualExecution) run(ctx context.Context) error {
 		return err
 	}
 
-	if e.firstErr != "" {
-		e.status.State = "failed"
-		e.status.ErrorCode = e.firstErr
-	} else {
-		e.status.State = "completed"
-		e.status.ErrorCode = ""
-	}
-	e.status.Phase = "done"
+	// ProbeRouter removes the targeted rule only after this callback returns.
+	// Keep the public projection non-terminal until that cleanup has completed.
+	e.status.State = "running"
+	e.status.Phase = "cleanup"
 	e.status.CurrentStage = ""
 	e.emit()
 	return nil
@@ -377,13 +378,11 @@ func (e *manualExecution) ensureActive(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		e.status.Phase = "cleanup"
 		e.status.CurrentStage = ""
-		if errors.Is(err, context.DeadlineExceeded) {
-			e.status.State = "failed"
-			e.status.ErrorCode = "timeout"
-		} else {
-			e.status.State = "cancelled"
-			e.status.ErrorCode = "cancelled"
-		}
+		// WithTarget still owns the targeted rule until its callback returns.
+		// Publish cleanup progress only; Run assigns the terminal outcome after
+		// ProbeRouter has reported whether removal succeeded.
+		e.status.State = "running"
+		e.status.ErrorCode = ""
 		e.emit()
 		return err
 	}

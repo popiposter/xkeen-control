@@ -127,6 +127,87 @@ func TestManualNodeRouteIsAuthenticatedCSRFBoundAndClosed(t *testing.T) {
 	}
 }
 
+type chunkedManualBody struct {
+	reader *strings.Reader
+}
+
+func (b *chunkedManualBody) Read(value []byte) (int, error) {
+	return b.reader.Read(value)
+}
+
+func TestManualNodeRouteRejectsCrossOriginQueryAndChunkedOversizeBeforeService(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "password.bcrypt")
+	if err := auth.SetPassword(path, []byte("synthetic-control-password")); err != nil {
+		t.Fatal(err)
+	}
+	manual := &manualHTTPStub{}
+	server := httptest.NewServer(New(Config{Auth: auth.NewManager(auth.Config{HashPath: path}), Manual: manual}))
+	defer server.Close()
+	client := &http.Client{Jar: mustCookieJar(t)}
+
+	loginResponse := postJSON(t, client, server.URL+"/api/v1/session/login", map[string]string{"password": "synthetic-control-password"}, "")
+	var login struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	decodeResponse(t, loginResponse, &login)
+
+	crossOriginRequest, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/performance/manual-node", strings.NewReader(`{"nodeId":"node-00000001"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	crossOriginRequest.Header.Set("Content-Type", "application/json")
+	crossOriginRequest.Header.Set(auth.CSRFHeader, login.CSRFToken)
+	crossOriginRequest.Header.Set("Origin", "http://evil.example")
+	crossOrigin, err := client.Do(crossOriginRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if crossOrigin.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin manual route = %d %s", crossOrigin.StatusCode, readBody(crossOrigin))
+	}
+	crossOrigin.Body.Close()
+
+	queryRequest, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/performance/manual-node?bytes=1", strings.NewReader(`{"nodeId":"node-00000001"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryRequest.Header.Set("Content-Type", "application/json")
+	queryRequest.Header.Set(auth.CSRFHeader, login.CSRFToken)
+	queryResponse, err := client.Do(queryRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queryResponse.StatusCode != http.StatusBadRequest {
+		t.Fatalf("manual query = %d %s", queryResponse.StatusCode, readBody(queryResponse))
+	}
+	queryResponse.Body.Close()
+
+	oversizedBody := `{"nodeId":"` + strings.Repeat("a", maxManualNodeBody) + `"}`
+	chunkedRequest, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/performance/manual-node", &chunkedManualBody{reader: strings.NewReader(oversizedBody)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chunkedRequest.ContentLength != 0 {
+		t.Fatalf("oversized regression was not chunked: content length=%d", chunkedRequest.ContentLength)
+	}
+	chunkedRequest.Header.Set("Content-Type", "application/json")
+	chunkedRequest.Header.Set(auth.CSRFHeader, login.CSRFToken)
+	chunkedResponse, err := client.Do(chunkedRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chunkedResponse.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("chunked oversized manual body = %d %s", chunkedResponse.StatusCode, readBody(chunkedResponse))
+	}
+	chunkedResponse.Body.Close()
+
+	manual.mu.Lock()
+	defer manual.mu.Unlock()
+	if len(manual.ids) != 0 {
+		t.Fatalf("rejected manual boundary requests reached service: %v", manual.ids)
+	}
+}
+
 func TestManualNodeRouteMapsBusyCleanupAndUnavailableToClosedStates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "password.bcrypt")
 	if err := auth.SetPassword(path, []byte("synthetic-control-password")); err != nil {
