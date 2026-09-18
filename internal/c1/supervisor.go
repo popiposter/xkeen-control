@@ -143,7 +143,7 @@ func (s *Supervisor) Tick(ctx context.Context) error {
 		evidence[item.Tag] = itemEvidence
 		observations = append(observations, Observation{Tag: item.Tag, Alive: item.Alive, DelayMS: item.DelayMS, LastTry: item.LastTry, LastSeen: item.LastSeen})
 	}
-	stable, stableSince := s.currentRecord()
+	stable, _ := s.currentRecord()
 	override := safeTag(snapshot.Balancer.Override)
 	native := safeTag(snapshot.Balancer.NativeSelected)
 	if manual := s.currentManualOverride(); manual != "" {
@@ -190,7 +190,7 @@ func (s *Supervisor) Tick(ctx context.Context) error {
 			return err
 		}
 		override = current
-		stable, stableSince = current, now
+		stable = current
 		validatedThisTick = true
 	}
 	if override != "" {
@@ -208,17 +208,14 @@ func (s *Supervisor) Tick(ctx context.Context) error {
 			if err := s.changeRecord(SelectionRecord{Target: current, StableSince: now, LastSwitchReason: ReasonStartup, LastSwitchAt: now}, false); err != nil {
 				return err
 			}
-			stable, stableSince = current, now
+			stable = current
 		}
 	}
-	observationsChanged := s.engine.Observe(now, observations)
-	decision := s.engine.LatencyDecision(now, current, evidence, observationsChanged, stableSince)
-	if decision.Changed && decision.Target != current {
-		if err := s.changeTarget(ctx, decision.Target, decision.Reason, now, false); err != nil {
-			return err
-		}
-		stable, stableSince, override, current = decision.Target, now, decision.Target, decision.Target
-	}
+	// Observatory RTT remains evidence for the scheduled adaptive quality
+	// generation. Healthy Tick no longer writes a selection target from RTT
+	// alone; startup, active liveness/recovery and native leastPing retain
+	// their independent ownership and fallback semantics above.
+	s.engine.Observe(now, observations)
 	s.updateStatus(snapshot, stable, native, override, "", now)
 	return nil
 }
@@ -357,8 +354,17 @@ func (s *Supervisor) changeTarget(ctx context.Context, target, reason string, no
 	if target == "" || !validTag(target) {
 		return errors.New("selection target is invalid")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := s.api.OverrideBalancerTarget(ctx, "bal-proxy", target); err != nil {
 		return err
 	}
@@ -511,42 +517,286 @@ func (s *Supervisor) SetManualOverride(ctx context.Context, target string) error
 }
 
 func (s *Supervisor) ApplyBenchmark(ctx context.Context, result BenchmarkResult) error {
-	if s == nil {
-		return nil
+	// Legacy benchmark results remain readable and may be persisted by
+	// BenchmarkRunner, but they are compatibility diagnostics only. Healthy
+	// selection changes belong exclusively to ApplyAdaptive.
+	_ = ctx
+	_ = result
+	return nil
+}
+
+// PrepareAdaptiveGeneration freezes the Supervisor-owned RTT evidence and
+// current managed target for one scheduled quality run. It never performs an
+// active probe or external transfer.
+func (s *Supervisor) PrepareAdaptiveGeneration(ctx context.Context, generation uint64) (AdaptiveGeneration, string) {
+	if s == nil || !s.policy.Enabled || generation == 0 {
+		return AdaptiveGeneration{}, AdaptiveReasonUnavailable
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	s.policyMu.Lock()
 	defer s.policyMu.Unlock()
-	if !result.SwitchAllowed || s.currentManualOverride() != "" {
-		return nil
+	if s.currentManualOverride() != "" {
+		return AdaptiveGeneration{}, AdaptiveReasonManualOverride
+	}
+	if s.xray == nil || s.api == nil || s.probe == nil {
+		return AdaptiveGeneration{}, AdaptiveReasonUnavailable
+	}
+	if s.probe.Blocked() {
+		return AdaptiveGeneration{}, AdaptiveReasonCleanupPending
 	}
 	snapshot := s.xray.Snapshot(ctx)
-	current := safeTag(snapshot.Balancer.Override)
-	if current == "" {
-		current = s.currentTarget()
+	if !snapshot.APIReachable || !snapshot.RoutingReachable || !snapshot.ObservatoryReachable {
+		return AdaptiveGeneration{}, AdaptiveReasonUnavailable
 	}
-	if current == "" {
-		return nil
+	now := s.clock()
+	observations := adaptiveObservations(snapshot)
+	s.engine.Observe(now, observations)
+	stable, stableSince := s.currentRecord()
+	if stable == "" || safeTag(snapshot.Balancer.Override) != stable {
+		return AdaptiveGeneration{}, AdaptiveReasonNoCurrentTarget
 	}
-	evidence := make(map[string]Evidence)
-	for _, node := range s.readNodes(ctx, snapshot) {
-		if validTag(node.Tag) {
-			evidence[node.Tag] = Evidence{Tag: node.Tag, Enabled: node.Enabled}
-		}
-	}
+
+	nodes := s.readNodes(ctx, snapshot)
+	health := make(map[string]xrayapi.OutboundHealth, len(snapshot.OutboundHealth))
 	for _, item := range snapshot.OutboundHealth {
 		if validTag(item.Tag) {
-			itemEvidence := evidence[item.Tag]
-			itemEvidence.Tag = item.Tag
-			itemEvidence.Alive = item.Alive
-			itemEvidence.DelayMS = item.DelayMS
-			evidence[item.Tag] = itemEvidence
+			health[item.Tag] = item
 		}
 	}
-	decision := s.engine.ThroughputDecision(current, evidence, result.Samples, s.currentStableSince(), s.clock())
-	if !decision.Changed || decision.Target == current {
-		return nil
+	eligible := make([]AdaptiveCandidateInput, 0, len(nodes))
+	seenNodes := make(map[string]struct{}, len(nodes))
+	cutoff := now.Add(-s.policy.LatencyWindow)
+	for _, node := range nodes {
+		if !node.Enabled || !validTag(node.Tag) {
+			continue
+		}
+		if _, seen := seenNodes[node.Tag]; seen {
+			continue
+		}
+		seenNodes[node.Tag] = struct{}{}
+		item, observed := health[node.Tag]
+		if !observed || !item.Alive || s.engine.SampleCount(node.Tag) < s.policy.LatencyObservations {
+			continue
+		}
+		median, medianOK := s.engine.RollingMedian(node.Tag)
+		latest, latestOK := s.engine.LatestSampleAt(node.Tag)
+		if !medianOK || median <= 0 || !latestOK || latest.Before(cutoff) || latest.After(now) {
+			continue
+		}
+		eligible = append(eligible, AdaptiveCandidateInput{Tag: node.Tag, RTTMS: median, Samples: s.engine.SampleCount(node.Tag), LatestAt: latest})
 	}
-	return s.changeTarget(ctx, decision.Target, decision.Reason, s.clock(), false)
+	currentEligible := false
+	for _, candidate := range eligible {
+		if candidate.Tag == stable {
+			currentEligible = true
+			break
+		}
+	}
+	if !currentEligible {
+		return AdaptiveGeneration{}, AdaptiveReasonCurrentIneligible
+	}
+	if len(eligible) < 2 {
+		return AdaptiveGeneration{}, AdaptiveReasonInsufficientCandidates
+	}
+	sortAdaptiveCandidates(eligible)
+	shortlist := append([]AdaptiveCandidateInput(nil), eligible[:minInt(len(eligible), AdaptiveShortlistLimit)]...)
+	currentInShortlist := false
+	for _, candidate := range shortlist {
+		if candidate.Tag == stable {
+			currentInShortlist = true
+			break
+		}
+	}
+	if !currentInShortlist {
+		shortlist = append(shortlist, adaptiveCandidateFor(eligible, stable))
+	}
+	if len(shortlist) > AdaptiveMaxCandidates {
+		shortlist = shortlist[:AdaptiveMaxCandidates]
+	}
+	if len(shortlist) < 2 {
+		return AdaptiveGeneration{}, AdaptiveReasonInsufficientCandidates
+	}
+	return AdaptiveGeneration{
+		Generation:    generation,
+		StartedAt:     now,
+		CurrentTarget: stable,
+		StableSince:   stableSince,
+		Candidates:    shortlist,
+	}, ""
+}
+
+func adaptiveCandidateFor(candidates []AdaptiveCandidateInput, tag string) AdaptiveCandidateInput {
+	for _, candidate := range candidates {
+		if candidate.Tag == tag {
+			return candidate
+		}
+	}
+	return AdaptiveCandidateInput{}
+}
+
+// AdaptiveDecision is the bounded outcome of applying one completed frozen
+// generation. A false Applied value always means that selection persistence
+// and runtime target writes were skipped.
+type AdaptiveDecision struct {
+	Target       string
+	Applied      bool
+	ReasonCode   string
+	CurrentScore float64
+	WinnerScore  float64
+}
+
+// ApplyAdaptive revalidates a completed generation under Supervisor policy
+// serialization before using the existing runtime/persistence target path.
+// Liveness/recovery or operator changes therefore make the generation stale
+// and cannot be overwritten by an older quality result.
+func (s *Supervisor) ApplyAdaptive(ctx context.Context, generation AdaptiveGeneration, result AdaptiveResult) (AdaptiveDecision, error) {
+	decision := AdaptiveDecision{Target: generation.CurrentTarget, ReasonCode: AdaptiveReasonNoSwitch}
+	if s == nil || !s.policy.Enabled {
+		decision.ReasonCode = AdaptiveReasonUnavailable
+		return decision, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		decision.ReasonCode = AdaptiveReasonCancelled
+		return decision, nil
+	}
+	s.policyMu.Lock()
+	defer s.policyMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		decision.ReasonCode = AdaptiveReasonCancelled
+		return decision, nil
+	}
+	if s.currentManualOverride() != "" {
+		decision.ReasonCode = AdaptiveReasonManualOverride
+		return decision, nil
+	}
+	if result.State != "completed" || result.Generation != generation.Generation || !validAdaptiveGeneration(generation) || !adaptiveGenerationMatchesResult(generation, result) {
+		if result.State != "completed" {
+			decision.ReasonCode = safeAdaptiveReason(result.ReasonCode)
+			if decision.ReasonCode == "" {
+				decision.ReasonCode = AdaptiveReasonUnavailable
+			}
+		} else {
+			decision.ReasonCode = AdaptiveReasonStaleGeneration
+		}
+		return decision, nil
+	}
+	if s.xray == nil || s.api == nil {
+		decision.ReasonCode = AdaptiveReasonUnavailable
+		return decision, nil
+	}
+	snapshot := s.xray.Snapshot(ctx)
+	if !snapshot.APIReachable || !snapshot.RoutingReachable {
+		decision.ReasonCode = AdaptiveReasonUnavailable
+		return decision, nil
+	}
+	stable, stableSince := s.currentRecord()
+	if stable != generation.CurrentTarget || !stableSince.Equal(generation.StableSince) || safeTag(snapshot.Balancer.Override) != generation.CurrentTarget {
+		decision.ReasonCode = AdaptiveReasonStaleGeneration
+		return decision, nil
+	}
+	if !adaptiveTargetIdentityValid(s, ctx, snapshot, generation.CurrentTarget) {
+		decision.ReasonCode = AdaptiveReasonCurrentInvalid
+		return decision, nil
+	}
+	results := append([]AdaptiveCandidateResult(nil), result.Candidates...)
+	winner, winnerScore, currentScore, challenger := scoreAdaptiveResults(results, generation.CurrentTarget)
+	decision.Target = winner
+	decision.CurrentScore = currentScore
+	decision.WinnerScore = winnerScore
+	if !result.CurrentValid || !adaptiveCandidateValid(results, generation.CurrentTarget) {
+		decision.ReasonCode = AdaptiveReasonCurrentInvalid
+		return decision, nil
+	}
+	if !challenger {
+		decision.ReasonCode = AdaptiveReasonNoChallenger
+		return decision, nil
+	}
+	if winner == "" || winner == generation.CurrentTarget {
+		decision.ReasonCode = AdaptiveReasonHysteresis
+		return decision, nil
+	}
+	now := s.clock()
+	if stableSince.IsZero() || now.Sub(stableSince) < s.policy.MinimumDwell {
+		decision.ReasonCode = AdaptiveReasonMinimumDwell
+		return decision, nil
+	}
+	if !finitePositive(winnerScore) || !finitePositive(currentScore) || winnerScore < currentScore*AdaptiveQualityHysteresis {
+		decision.ReasonCode = AdaptiveReasonHysteresis
+		return decision, nil
+	}
+	if !adaptiveTargetIdentityValid(s, ctx, snapshot, winner) {
+		decision.ReasonCode = AdaptiveReasonCurrentInvalid
+		return decision, nil
+	}
+	// Apply has operator priority. Recheck the owned context immediately
+	// before the existing runtime/persistence selection transaction so a
+	// drained operator Apply cannot rely on downstream Xray cancellation alone
+	// to prevent an adaptive target write.
+	if err := ctx.Err(); err != nil {
+		decision.ReasonCode = AdaptiveReasonCancelled
+		return decision, nil
+	}
+	if err := s.changeTarget(ctx, winner, AdaptiveReasonAdaptiveQuality, now, false); err != nil {
+		return decision, err
+	}
+	decision.Target = winner
+	decision.Applied = true
+	decision.ReasonCode = AdaptiveReasonAdaptiveQuality
+	return decision, nil
+}
+
+func adaptiveObservations(snapshot xrayapi.Snapshot) []Observation {
+	result := make([]Observation, 0, len(snapshot.OutboundHealth))
+	for _, item := range snapshot.OutboundHealth {
+		if !validTag(item.Tag) {
+			continue
+		}
+		result = append(result, Observation{Tag: item.Tag, Alive: item.Alive, DelayMS: item.DelayMS, LastTry: item.LastTry, LastSeen: item.LastSeen})
+	}
+	return result
+}
+
+func adaptiveGenerationMatchesResult(generation AdaptiveGeneration, result AdaptiveResult) bool {
+	if result.CurrentTarget != generation.CurrentTarget || len(generation.Candidates) != len(result.Candidates) || len(result.Candidates) > AdaptiveMaxCandidates {
+		return false
+	}
+	inputs := make(map[string]AdaptiveCandidateInput, len(generation.Candidates))
+	for _, candidate := range generation.Candidates {
+		inputs[candidate.Tag] = candidate
+	}
+	seen := make(map[string]struct{}, len(result.Candidates))
+	for _, candidate := range result.Candidates {
+		input, ok := inputs[candidate.Tag]
+		if !ok || input.RTTMS != candidate.RTTMS {
+			return false
+		}
+		if _, duplicate := seen[candidate.Tag]; duplicate {
+			return false
+		}
+		seen[candidate.Tag] = struct{}{}
+	}
+	return len(seen) == len(inputs)
+}
+
+func adaptiveTargetIdentityValid(s *Supervisor, ctx context.Context, snapshot xrayapi.Snapshot, tag string) bool {
+	if !validTag(tag) {
+		return false
+	}
+	found := 0
+	for _, node := range s.readNodes(ctx, snapshot) {
+		if node.Tag == tag {
+			found++
+			if !node.Enabled || !validTag(node.Tag) {
+				return false
+			}
+		}
+	}
+	return found == 1
 }
 
 func (s *Supervisor) Snapshot() SelectionStatus {

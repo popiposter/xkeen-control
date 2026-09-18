@@ -11,11 +11,13 @@ import (
 )
 
 const (
-	ProbeInboundTag          = "probe"
-	ProbeAddress             = "127.0.0.1:10808"
-	LivenessRuleTag          = "xkeen-control-probe-liveness"
-	BenchmarkRuleTag         = "xkeen-control-probe-benchmark"
-	ManualPerformanceRuleTag = "xkeen-control-probe-manual-performance"
+	ProbeInboundTag            = "probe"
+	ProbeAddress               = "127.0.0.1:10808"
+	LivenessRuleTag            = "xkeen-control-probe-liveness"
+	BenchmarkRuleTag           = "xkeen-control-probe-benchmark"
+	ManualPerformanceRuleTag   = "xkeen-control-probe-manual-performance"
+	AdaptiveRuleTag            = "xkeen-control-probe-adaptive"
+	AdaptivePerformanceRuleTag = AdaptiveRuleTag
 )
 
 var ErrProbeCleanup = errors.New("temporary probe routing cleanup failed")
@@ -164,11 +166,14 @@ func ruleTagFor(kind string) string {
 	if kind == "manual-node" {
 		return ManualPerformanceRuleTag
 	}
+	if kind == AdaptiveMode {
+		return AdaptiveRuleTag
+	}
 	return fmt.Sprintf("xkeen-control-probe-%s", kind)
 }
 
 func managedProbeRuleTags() []string {
-	return []string{LivenessRuleTag, BenchmarkRuleTag, ManualPerformanceRuleTag}
+	return []string{LivenessRuleTag, BenchmarkRuleTag, ManualPerformanceRuleTag, AdaptiveRuleTag}
 }
 
 func isManagedProbeRule(tag string) bool {

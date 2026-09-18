@@ -10,6 +10,8 @@ import (
 var ErrBenchmarkBusy = errors.New("benchmark is already running or lifecycle is busy")
 var ErrLifecycleBusy = errors.New("runtime lifecycle is busy")
 
+const ExplicitBenchmarkSchedule = "explicit-only"
+
 type BenchmarkStatus struct {
 	Enabled             bool                        `json:"enabled"`
 	Running             bool                        `json:"running"`
@@ -58,19 +60,26 @@ type Coordinator struct {
 	supervisor     *Supervisor
 	runner         *BenchmarkRunner
 	manualRunner   *ManualNodeRunner
+	adaptiveRunner *AdaptiveRunner
 	nodes          NodeReader
 	lifecycle      chan struct{}
 	supervisorWake chan struct{}
 
-	mu               sync.Mutex
-	benchmarkCancel  context.CancelFunc
-	benchmarkDone    chan struct{}
-	supervisorCancel context.CancelFunc
-	supervisorDone   chan struct{}
-	benchmark        BenchmarkStatus
-	manual           ManualPerformanceStatus
-	applyWaiters     int
-	applyActive      bool
+	mu              sync.Mutex
+	benchmarkCancel context.CancelFunc
+	benchmarkDone   chan struct{}
+	// benchmarkCancel/Done are the shared Coordinator performance owner for
+	// legacy-full, manual-node and adaptive modes. The historical field names
+	// remain for source compatibility with the C.1 tests and state projection.
+	performanceMode    string
+	supervisorCancel   context.CancelFunc
+	supervisorDone     chan struct{}
+	benchmark          BenchmarkStatus
+	manual             ManualPerformanceStatus
+	adaptive           AdaptivePerformanceStatus
+	adaptiveGeneration uint64
+	applyWaiters       int
+	applyActive        bool
 	// maintenance is set when an interrupted appliance import cannot yet prove
 	// recovery. It is deliberately process-wide for every lifecycle mutation;
 	// only BeginRecovery may enter while it is set.
@@ -78,17 +87,26 @@ type Coordinator struct {
 	// Test-only synchronization point used to force the Apply admission
 	// interleaving covered by coordinator concurrency regressions.
 	beforeApplyAcquire func()
-	started            bool
-	stop               context.CancelFunc
-	wait               sync.WaitGroup
+	// Test-only synchronization point used to pause the final adaptive
+	// ApplyAdaptive/no-op decision while the Coordinator still owns the
+	// performance lifecycle.
+	beforeAdaptiveDecision func()
+	started                bool
+	stop                   context.CancelFunc
+	clock                  func() time.Time
+	wait                   sync.WaitGroup
 }
 
 func NewCoordinator(policy Policy, supervisor *Supervisor, runner *BenchmarkRunner, nodes NodeReader) *Coordinator {
 	policy = policy.normalized()
-	c := &Coordinator{policy: policy, supervisor: supervisor, runner: runner, nodes: nodes, lifecycle: make(chan struct{}, 1), supervisorWake: make(chan struct{}, 1)}
+	c := &Coordinator{policy: policy, supervisor: supervisor, runner: runner, nodes: nodes, lifecycle: make(chan struct{}, 1), supervisorWake: make(chan struct{}, 1), clock: func() time.Time { return time.Now().UTC() }}
 	c.lifecycle <- struct{}{}
-	c.benchmark = BenchmarkStatus{Enabled: policy.Enabled, State: "idle", Schedule: policy.Schedule, TotalBudgetBytes: policy.TotalBudgetBytes, MinimumPayloadBytes: policy.MinimumPayloadBytes, PerNodeTimeoutMS: policy.PerNodeTimeout.Milliseconds(), Samples: make(map[string]ThroughputStatus)}
+	c.benchmark = BenchmarkStatus{Enabled: policy.Enabled, State: "idle", Schedule: ExplicitBenchmarkSchedule, TotalBudgetBytes: policy.TotalBudgetBytes, MinimumPayloadBytes: policy.MinimumPayloadBytes, PerNodeTimeoutMS: policy.PerNodeTimeout.Milliseconds(), Samples: make(map[string]ThroughputStatus)}
 	c.manual = idleManualPerformanceStatus()
+	c.adaptive = idleAdaptivePerformanceStatus()
+	if runner != nil {
+		c.adaptiveRunner = NewAdaptiveRunner(runner.Probe)
+	}
 	if runner != nil && runner.Store.Path != "" {
 		if snapshot, err := runner.Store.Load(); err == nil && snapshot.ResultClass != "" {
 			c.benchmark.LastResult = snapshot.ResultClass
@@ -119,9 +137,48 @@ func (c *Coordinator) SetManualRunner(runner *ManualNodeRunner) {
 	c.mu.Unlock()
 }
 
+// SetAdaptiveRunner installs the fixed adaptive implementation. It is a
+// process-wiring seam for offline synthetic tests; the Coordinator retains
+// sole ownership of admission, cancellation and status.
+func (c *Coordinator) SetAdaptiveRunner(runner *AdaptiveRunner) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.adaptiveRunner = runner
+	c.mu.Unlock()
+}
+
+// SetClock is a test seam for the process-local adaptive scheduler and status
+// decisions. It does not create a configurable runtime cadence.
+func (c *Coordinator) SetClock(clock func() time.Time) {
+	if c == nil || clock == nil {
+		return
+	}
+	c.mu.Lock()
+	c.clock = clock
+	c.mu.Unlock()
+}
+
+func (c *Coordinator) now() time.Time {
+	if c == nil {
+		return time.Now().UTC()
+	}
+	c.mu.Lock()
+	clock := c.clock
+	c.mu.Unlock()
+	if clock == nil {
+		return time.Now().UTC()
+	}
+	return clock().UTC()
+}
+
 func (c *Coordinator) Start(parent context.Context) {
 	if c == nil {
 		return
+	}
+	if parent == nil {
+		parent = context.Background()
 	}
 	ctx, cancel := context.WithCancel(parent)
 	c.mu.Lock()
@@ -132,6 +189,11 @@ func (c *Coordinator) Start(parent context.Context) {
 	}
 	c.started = true
 	c.stop = cancel
+	start := c.clock()
+	if start.IsZero() {
+		start = time.Now().UTC()
+	}
+	c.adaptive.NextRunAt = start.UTC().Add(AdaptiveCadence)
 	c.mu.Unlock()
 	if c.supervisor != nil {
 		c.wait.Add(1)
@@ -201,6 +263,7 @@ func (c *Coordinator) TriggerBenchmark() error {
 		return ErrBenchmarkBusy
 	}
 	c.benchmarkCancel, c.benchmarkDone = cancel, done
+	c.performanceMode = "legacy-full"
 	c.benchmark.Running = true
 	c.benchmark.State = "running"
 	c.mu.Unlock()
@@ -243,6 +306,7 @@ func (c *Coordinator) TriggerManualNode(nodeID string) error {
 		done := make(chan struct{})
 		started := time.Now().UTC()
 		c.benchmarkCancel, c.benchmarkDone = cancel, done
+		c.performanceMode = ManualMode
 		c.manual = ManualPerformanceStatus{
 			Mode:          ManualMode,
 			State:         "running",
@@ -303,6 +367,7 @@ func (c *Coordinator) runManual(ctx context.Context, done chan struct{}, token s
 		if c.benchmarkDone == done {
 			c.benchmarkCancel = nil
 			c.benchmarkDone = nil
+			c.performanceMode = ""
 		}
 		c.mu.Unlock()
 		close(done)
@@ -324,6 +389,7 @@ func (c *Coordinator) finishManualAdmission(cancel context.CancelFunc, done chan
 	if c.benchmarkDone == done {
 		c.benchmarkCancel = nil
 		c.benchmarkDone = nil
+		c.performanceMode = ""
 	}
 	c.mu.Unlock()
 	cancel()
@@ -336,6 +402,7 @@ func (c *Coordinator) runBenchmark(ctx context.Context, done chan struct{}) {
 		c.mu.Lock()
 		c.benchmarkCancel = nil
 		c.benchmarkDone = nil
+		c.performanceMode = ""
 		c.benchmark.Running = false
 		c.mu.Unlock()
 		close(done)
@@ -350,10 +417,11 @@ func (c *Coordinator) runBenchmark(ctx context.Context, done chan struct{}) {
 		current = c.supervisor.currentTarget()
 	}
 	result := c.runner.Run(ctx, nodes, current)
-	if result.SwitchAllowed && c.supervisor != nil {
-		if err := c.supervisor.ApplyBenchmark(ctx, result); err != nil {
-			result.SwitchAllowed = false
-		}
+	// The explicit legacy run remains a compatibility diagnostic and snapshot
+	// writer. It is no longer allowed to select a healthy target; adaptive is
+	// the sole quality-switch path.
+	if c.supervisor != nil {
+		_ = c.supervisor.ApplyBenchmark(ctx, result)
 	}
 	c.mu.Lock()
 	c.benchmark.LastResult = result.ResultClass
@@ -367,7 +435,7 @@ func (c *Coordinator) runBenchmark(ctx context.Context, done chan struct{}) {
 	c.benchmark.MaximumWallSeconds = int64(result.MaximumWallTime.Seconds())
 	c.benchmark.Generation = result.Generation
 	c.benchmark.CleanupPending = result.CleanupPending
-	c.benchmark.SwitchAllowed = result.SwitchAllowed
+	c.benchmark.SwitchAllowed = false
 	c.benchmark.Samples = throughputStatuses(result.Samples)
 	c.mu.Unlock()
 }
@@ -378,6 +446,221 @@ func throughputStatuses(samples map[string]ThroughputSample) map[string]Throughp
 		result[tag] = ThroughputStatus{Valid: sample.Valid, BytesPerSecond: sample.BytesPerSecond}
 	}
 	return result
+}
+
+// runScheduledAdaptive is the only automatic performance admission path. It
+// acquires the same Coordinator performance token used by legacy-full and
+// manual-node, and skips without transfer when operator/lifecycle/performance
+// ownership is already active.
+func (c *Coordinator) runScheduledAdaptive(parent context.Context) {
+	if c == nil {
+		return
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	c.mu.Lock()
+	if !c.policy.Enabled || c.supervisor == nil || c.adaptiveRunner == nil {
+		c.setAdaptiveSkippedLocked(AdaptiveReasonUnavailable)
+		c.mu.Unlock()
+		return
+	}
+	if c.maintenance || c.applyWaiters > 0 || c.applyActive || c.benchmarkCancel != nil {
+		c.setAdaptiveSkippedLocked(AdaptiveReasonBusy)
+		c.mu.Unlock()
+		return
+	}
+	select {
+	case token := <-c.lifecycle:
+		ctx, cancel := context.WithCancel(parent)
+		done := make(chan struct{})
+		c.adaptiveGeneration++
+		generation := c.adaptiveGeneration
+		started := c.clock()
+		if started.IsZero() {
+			started = time.Now().UTC()
+		}
+		c.benchmarkCancel, c.benchmarkDone = cancel, done
+		c.performanceMode = AdaptiveMode
+		c.adaptive = AdaptivePerformanceStatus{
+			State:      "running",
+			NextRunAt:  c.adaptive.NextRunAt,
+			StartedAt:  started.UTC(),
+			Generation: generation,
+		}
+		runner := c.adaptiveRunner
+		supervisor := c.supervisor
+		c.mu.Unlock()
+		go c.runAdaptive(ctx, done, token, generation, runner, supervisor)
+	default:
+		c.setAdaptiveSkippedLocked(AdaptiveReasonBusy)
+		c.mu.Unlock()
+	}
+}
+
+func (c *Coordinator) runAdaptive(ctx context.Context, done chan struct{}, token struct{}, generationID uint64, runner *AdaptiveRunner, supervisor *Supervisor) {
+	defer func() {
+		c.mu.Lock()
+		if c.benchmarkDone == done {
+			c.benchmarkCancel = nil
+			c.benchmarkDone = nil
+			c.performanceMode = ""
+		}
+		c.mu.Unlock()
+		close(done)
+		c.lifecycle <- token
+	}()
+
+	generation, skipReason := supervisor.PrepareAdaptiveGeneration(ctx, generationID)
+	if skipReason != "" {
+		c.setAdaptiveSkipped(done, skipReason)
+		return
+	}
+	c.updateAdaptiveStatus(done, AdaptivePerformanceStatus{
+		State:          "running",
+		StartedAt:      generation.StartedAt,
+		Generation:     generation.Generation,
+		CurrentTarget:  generation.CurrentTarget,
+		ShortlistCount: len(generation.Candidates),
+	})
+	result := runner.Run(ctx, generation, func(progress AdaptivePerformanceStatus) {
+		// The runner has finished measuring, but the generation is not
+		// terminal until ApplyAdaptive has made the final guarded selection
+		// decision. Keep the public projection active across that boundary.
+		if progress.State == "completed" {
+			progress.State = "running"
+			progress.CompletedAt = time.Time{}
+			progress.SelectedTarget = ""
+			progress.SwitchApplied = false
+			progress.ReasonCode = ""
+		}
+		c.updateAdaptiveStatus(done, progress)
+	})
+	if result.State == "completed" {
+		c.updateAdaptiveStatus(done, AdaptivePerformanceStatus{
+			State:          "running",
+			NextRunAt:      c.adaptiveNextRunAt(done),
+			StartedAt:      result.StartedAt,
+			Generation:     result.Generation,
+			CurrentTarget:  result.CurrentTarget,
+			ShortlistCount: result.ShortlistCount,
+			ValidCount:     result.ValidCount,
+			Candidates:     adaptiveResultStatuses(result.Candidates),
+		})
+		c.mu.Lock()
+		beforeDecision := c.beforeAdaptiveDecision
+		c.mu.Unlock()
+		if beforeDecision != nil {
+			beforeDecision()
+		}
+		decision, err := supervisor.ApplyAdaptive(ctx, generation, result)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				result.State = "cancelled"
+				result.ReasonCode = AdaptiveReasonCancelled
+			} else {
+				result.State = "failed"
+				result.ReasonCode = AdaptiveReasonUnavailable
+			}
+		} else {
+			if decision.ReasonCode == AdaptiveReasonCancelled {
+				result.State = "cancelled"
+			}
+			result.SwitchApplied = decision.Applied
+			result.ReasonCode = decision.ReasonCode
+			result.CurrentScore = decision.CurrentScore
+			result.SelectedScore = decision.WinnerScore
+			if decision.Applied {
+				result.SelectedTarget = decision.Target
+			} else {
+				result.SelectedTarget = ""
+			}
+		}
+	}
+	status := AdaptivePerformanceStatus{
+		State:          result.State,
+		NextRunAt:      c.adaptiveNextRunAt(done),
+		StartedAt:      result.StartedAt,
+		CompletedAt:    result.CompletedAt,
+		Generation:     result.Generation,
+		CurrentTarget:  result.CurrentTarget,
+		ShortlistCount: result.ShortlistCount,
+		ValidCount:     result.ValidCount,
+		SelectedTarget: result.SelectedTarget,
+		SwitchApplied:  result.SwitchApplied,
+		ReasonCode:     result.ReasonCode,
+		Candidates:     adaptiveResultStatuses(result.Candidates),
+	}
+	if status.State == "" {
+		status.State = "failed"
+	}
+	c.updateAdaptiveStatus(done, status)
+}
+
+func (c *Coordinator) adaptiveNextRunAt(done chan struct{}) time.Time {
+	if c == nil {
+		return time.Time{}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.benchmarkDone != done {
+		return c.adaptive.NextRunAt
+	}
+	return c.adaptive.NextRunAt
+}
+
+func (c *Coordinator) updateAdaptiveStatus(done chan struct{}, status AdaptivePerformanceStatus) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.benchmarkDone != done {
+		return
+	}
+	if status.NextRunAt.IsZero() {
+		status.NextRunAt = c.adaptive.NextRunAt
+	}
+	if status.Generation == 0 {
+		status.Generation = c.adaptive.Generation
+	}
+	c.adaptive = sanitizeAdaptiveStatus(status)
+}
+
+func (c *Coordinator) setAdaptiveSkipped(done chan struct{}, reason string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if done != nil && c.benchmarkDone != done {
+		return
+	}
+	now := c.clock()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	c.adaptive = sanitizeAdaptiveStatus(AdaptivePerformanceStatus{
+		State:       "skipped",
+		NextRunAt:   c.adaptive.NextRunAt,
+		CompletedAt: now.UTC(),
+		Generation:  c.adaptive.Generation,
+		ReasonCode:  reason,
+	})
+}
+
+func (c *Coordinator) setAdaptiveSkippedLocked(reason string) {
+	now := c.clock()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	c.adaptive = sanitizeAdaptiveStatus(AdaptivePerformanceStatus{
+		State:       "skipped",
+		NextRunAt:   c.adaptive.NextRunAt,
+		CompletedAt: now.UTC(),
+		Generation:  c.adaptive.Generation,
+		ReasonCode:  reason,
+	})
 }
 
 // BeginApply gives an explicit operator mutation priority over managed runtime
@@ -686,21 +969,59 @@ func (c *Coordinator) ManualSnapshot() ManualPerformanceStatus {
 	return result
 }
 
+// AdaptiveSnapshot returns only bounded Coordinator-owned RAM state. It never
+// reads Xray, the node registry or the persisted legacy benchmark snapshot.
+func (c *Coordinator) AdaptiveSnapshot() AdaptivePerformanceStatus {
+	if c == nil {
+		return idleAdaptivePerformanceStatus()
+	}
+	c.mu.Lock()
+	result := sanitizeAdaptiveStatus(c.adaptive)
+	c.mu.Unlock()
+	return result
+}
+
 func (c *Coordinator) schedule(ctx context.Context) {
+	if c == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c.mu.Lock()
+	next := c.adaptive.NextRunAt
+	if next.IsZero() {
+		start := c.clock()
+		if start.IsZero() {
+			start = time.Now().UTC()
+		}
+		next = start.UTC().Add(AdaptiveCadence)
+		c.adaptive.NextRunAt = next
+	}
+	c.mu.Unlock()
 	for {
-		next := NextRunAt(time.Now(), time.Local)
-		c.mu.Lock()
-		c.benchmark.NextRunAt = next
-		c.mu.Unlock()
 		timer := time.NewTimer(time.Until(next))
 		select {
 		case <-ctx.Done():
 			if !timer.Stop() {
-				<-timer.C
+				select {
+				case <-timer.C:
+				default:
+				}
 			}
 			return
 		case <-timer.C:
-			_ = c.TriggerBenchmark()
+			c.runScheduledAdaptive(ctx)
+			now := c.now()
+			next = next.Add(AdaptiveCadence)
+			// A delayed process performs no catch-up burst. The next run is
+			// always one normal cadence after the due event or the wake time.
+			if !next.After(now) {
+				next = now.Add(AdaptiveCadence)
+			}
+			c.mu.Lock()
+			c.adaptive.NextRunAt = next
+			c.mu.Unlock()
 		}
 	}
 }

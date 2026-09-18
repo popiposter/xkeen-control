@@ -50,6 +50,15 @@ func idleManualPerformanceStatus() ManualPerformanceStatus {
 
 func DefaultManualPerformanceStatus() ManualPerformanceStatus { return idleManualPerformanceStatus() }
 
+// BandwidthMeasurementTransport is the shared fixed down/up transport seam
+// used by the explicit manual diagnostic and the adaptive quality generation.
+// Implementations never receive a caller-supplied endpoint or transport
+// policy; tests inject an offline synthetic adapter through this interface.
+type BandwidthMeasurementTransport interface {
+	Download(context.Context, int64) (ManualTransfer, error)
+	Upload(context.Context, int64) (ManualTransfer, error)
+}
+
 // ManualTransfer is the bounded result of one fixed transfer stage. Bytes are
 // measured from the local request/response path and never represent a
 // caller-supplied payload or endpoint.
@@ -58,13 +67,17 @@ type ManualTransfer struct {
 	Duration time.Duration
 }
 
+// MeasurementTransfer is the neutral name used by new internal callers. Keep
+// ManualTransfer as an alias so the Slice D test seam and callers remain
+// source-compatible.
+type MeasurementTransfer = ManualTransfer
+
 // ManualMeasurementTransport is deliberately a tiny internal seam. The
 // production implementation is fixedManualTransport; tests inject a synthetic
 // adapter without contacting the public provider.
 type ManualMeasurementTransport interface {
+	BandwidthMeasurementTransport
 	Latency(context.Context) (time.Duration, error)
-	Download(context.Context, int64) (ManualTransfer, error)
-	Upload(context.Context, int64) (ManualTransfer, error)
 }
 
 // ManualPerformanceStatus is the bounded RAM-only projection for one manual
@@ -335,6 +348,14 @@ func (e *manualExecution) projectDirection(direction string, stages []manualComp
 }
 
 func aggregateManualRate(stages []manualCompleteStage) (float64, bool) {
+	return aggregateMeasurementRate(stages, ManualMinimumRateDuration)
+}
+
+// aggregateMeasurementRate applies the Slice D aggregation rule shared by
+// manual and adaptive down/up measurements: use the median of rates from
+// complete stages lasting at least the minimum duration, or the largest
+// complete stage when every valid stage was faster.
+func aggregateMeasurementRate(stages []manualCompleteStage, minimumDuration time.Duration) (float64, bool) {
 	if len(stages) == 0 {
 		return 0, false
 	}
@@ -343,7 +364,7 @@ func aggregateManualRate(stages []manualCompleteStage) (float64, bool) {
 		if stage.bytes <= 0 || stage.duration <= 0 {
 			continue
 		}
-		if stage.duration >= ManualMinimumRateDuration {
+		if stage.duration >= minimumDuration {
 			eligible = append(eligible, stage)
 		}
 	}
@@ -357,7 +378,7 @@ func aggregateManualRate(stages []manualCompleteStage) (float64, bool) {
 		eligible = append(eligible, largest)
 	}
 	rates := make([]float64, 0, len(eligible))
-	if len(eligible) == 1 && eligible[0].duration < ManualMinimumRateDuration {
+	if len(eligible) == 1 && eligible[0].duration < minimumDuration {
 		rate := float64(eligible[0].bytes) / eligible[0].duration.Seconds()
 		return rate, finitePositive(rate)
 	}
@@ -500,17 +521,23 @@ func finitePositive(value float64) bool {
 	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
-type fixedManualTransport struct {
+type fixedMeasurementTransport struct {
 	roundTripper http.RoundTripper
 }
 
-func newFixedManualTransport() *fixedManualTransport { return &fixedManualTransport{} }
+// fixedManualTransport is retained as a compatibility alias for the Slice D
+// tests; the implementation is shared with adaptive quality measurements.
+type fixedManualTransport = fixedMeasurementTransport
 
-func newFixedManualTransportWithRoundTripper(roundTripper http.RoundTripper) *fixedManualTransport {
-	return &fixedManualTransport{roundTripper: roundTripper}
+func newFixedMeasurementTransport() *fixedMeasurementTransport { return &fixedMeasurementTransport{} }
+
+func newFixedManualTransport() *fixedMeasurementTransport { return newFixedMeasurementTransport() }
+
+func newFixedManualTransportWithRoundTripper(roundTripper http.RoundTripper) *fixedMeasurementTransport {
+	return &fixedMeasurementTransport{roundTripper: roundTripper}
 }
 
-func (t *fixedManualTransport) Latency(ctx context.Context) (time.Duration, error) {
+func (t *fixedMeasurementTransport) Latency(ctx context.Context) (time.Duration, error) {
 	started := time.Now()
 	response, closeTransport, err := t.request(ctx, http.MethodGet, fixedDownloadURL(0), nil, 0)
 	if err != nil {
@@ -524,7 +551,7 @@ func (t *fixedManualTransport) Latency(ctx context.Context) (time.Duration, erro
 	return time.Since(started), nil
 }
 
-func (t *fixedManualTransport) Download(ctx context.Context, payload int64) (ManualTransfer, error) {
+func (t *fixedMeasurementTransport) Download(ctx context.Context, payload int64) (ManualTransfer, error) {
 	started := time.Now()
 	response, closeTransport, err := t.request(ctx, http.MethodGet, fixedDownloadURL(payload), nil, 0)
 	if err != nil {
@@ -546,7 +573,7 @@ func (t *fixedManualTransport) Download(ctx context.Context, payload int64) (Man
 	return ManualTransfer{Bytes: bytesRead, Duration: duration}, nil
 }
 
-func (t *fixedManualTransport) Upload(ctx context.Context, payload int64) (ManualTransfer, error) {
+func (t *fixedMeasurementTransport) Upload(ctx context.Context, payload int64) (ManualTransfer, error) {
 	started := time.Now()
 	body := io.LimitReader(zeroByteReader{}, payload)
 	response, closeTransport, err := t.request(ctx, http.MethodPost, fixedUploadURL(), body, payload)
@@ -569,7 +596,7 @@ func (t *fixedManualTransport) Upload(ctx context.Context, payload int64) (Manua
 	return ManualTransfer{Bytes: payload, Duration: time.Since(started)}, nil
 }
 
-func (t *fixedManualTransport) request(ctx context.Context, method, rawURL string, body io.Reader, contentLength int64) (*http.Response, func(), error) {
+func (t *fixedMeasurementTransport) request(ctx context.Context, method, rawURL string, body io.Reader, contentLength int64) (*http.Response, func(), error) {
 	request, err := http.NewRequestWithContext(ctx, method, rawURL, body)
 	if err != nil {
 		return nil, func() {}, err
@@ -588,7 +615,7 @@ func (t *fixedManualTransport) request(ctx context.Context, method, rawURL strin
 	return response, closeTransport, nil
 }
 
-func (t *fixedManualTransport) client() (*http.Client, func()) {
+func (t *fixedMeasurementTransport) client() (*http.Client, func()) {
 	if t != nil && t.roundTripper != nil {
 		return &http.Client{
 			Transport: t.roundTripper,

@@ -141,11 +141,12 @@ type Node struct {
 }
 
 type Performance struct {
-	SemanticIntervalMinutes int                        `json:"semanticIntervalMinutes"`
-	InstalledSchedule       string                     `json:"installedSchedule"`
-	LastBenchmarkAt         string                     `json:"lastBenchmarkAt"`
-	Nodes                   []Throughput               `json:"nodes"`
-	Manual                  c1.ManualPerformanceStatus `json:"manual"`
+	SemanticIntervalMinutes int                          `json:"semanticIntervalMinutes"`
+	InstalledSchedule       string                       `json:"installedSchedule"`
+	LastBenchmarkAt         string                       `json:"lastBenchmarkAt"`
+	Nodes                   []Throughput                 `json:"nodes"`
+	Manual                  c1.ManualPerformanceStatus   `json:"manual"`
+	Adaptive                c1.AdaptivePerformanceStatus `json:"adaptive"`
 }
 
 type Throughput struct {
@@ -274,14 +275,16 @@ func (c *Collector) Snapshot(ctx context.Context) View {
 // once through the ordinary bounded collector path.
 func (c *Collector) PerformanceSnapshot(ctx context.Context) Performance {
 	if c == nil {
-		return Performance{Manual: c1.DefaultManualPerformanceStatus()}
+		return Performance{Manual: c1.DefaultManualPerformanceStatus(), Adaptive: c1.DefaultAdaptivePerformanceStatus()}
 	}
 	manualRunning := false
+	adaptiveRunning := false
 	if c.deps.C1 != nil {
 		manualRunning = c.deps.C1.ManualSnapshot().State == "running"
+		adaptiveRunning = c.deps.C1.AdaptiveSnapshot().State == "running"
 	}
 	var view View
-	if manualRunning {
+	if manualRunning || adaptiveRunning {
 		c.mu.Lock()
 		cached := c.value
 		hasCache := !c.updated.IsZero()
@@ -296,8 +299,10 @@ func (c *Collector) PerformanceSnapshot(ctx context.Context) Performance {
 	}
 	if c.deps.C1 != nil {
 		view.Performance.Manual = c.deps.C1.ManualSnapshot()
+		view.Performance.Adaptive = c.deps.C1.AdaptiveSnapshot()
 	} else {
 		view.Performance.Manual = c1.DefaultManualPerformanceStatus()
+		view.Performance.Adaptive = c1.DefaultAdaptivePerformanceStatus()
 	}
 	return view.Performance
 }
@@ -322,8 +327,10 @@ func (c *Collector) collect(ctx context.Context) View {
 		c1State = c.deps.C1.Snapshot()
 	}
 	manual := c1.DefaultManualPerformanceStatus()
+	adaptive := c1.DefaultAdaptivePerformanceStatus()
 	if c.deps.C1 != nil {
 		manual = c.deps.C1.ManualSnapshot()
+		adaptive = c.deps.C1.AdaptiveSnapshot()
 	}
 
 	tags := []string(nil)
@@ -456,6 +463,7 @@ func (c *Collector) collect(ctx context.Context) View {
 			LastBenchmarkAt:         lastRun,
 			Nodes:                   performanceNodes,
 			Manual:                  manual,
+			Adaptive:                adaptive,
 		},
 		ConfigSummary: buildConfigSummary(configState, benchmarkSchedule),
 	}
