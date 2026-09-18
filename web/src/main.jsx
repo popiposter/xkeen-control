@@ -78,13 +78,10 @@ const download = async (path, options = {}, filename) => {
   window.setTimeout(() => URL.revokeObjectURL(objectURL), 0)
 }
 
-const formatTime = (value) => value ? new Date(value).toLocaleString() : '—'
-const formatNumber = (value) => new Intl.NumberFormat().format(value ?? 0)
-const formatBytes = (value) => value ? `${formatNumber(Math.round(value / (1024 * 1024)))} MiB` : '—'
-const formatThroughput = (node) => {
-  if (!node.lastBenchmarkAt) return '—'
-  const value = `${formatNumber(Math.round(node.lastThroughputKBps || 0))} KB/s`
-  return node.lastThroughputError ? `${value} (${node.lastThroughputError})` : value
+const formatTime = (value) => {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isFinite(date.getTime()) && date.getTime() > 0 ? date.toLocaleString() : '—'
 }
 
 const visibleNodeName = (node) => String(node?.displayName || node?.name || '').replace(FLAG_PREFIX, '').trim() || 'Unnamed node'
@@ -161,8 +158,96 @@ const manualErrorLabels = {
 }
 const manualStatusLabel = (state) => manualStateLabels[state] || 'Unavailable'
 const manualPhaseLabel = (phase) => manualPhaseLabels[phase] || 'Unavailable'
-const formatManualBytes = (value) => `${((Number(value) || 0) / (1024 * 1024)).toFixed(2)} MiB`
-const formatManualRate = (value) => value == null ? '—' : `${((Number(value) * 8) / 1000000).toFixed(1)} Mbps`
+const formatManualBytes = (value) => {
+  const numeric = Number(value)
+  return value == null || !Number.isFinite(numeric) || numeric < 0 ? '—' : `${(numeric / (1024 * 1024)).toFixed(2)} MiB`
+}
+const formatManualRate = (value) => {
+  const numeric = Number(value)
+  return value == null || !Number.isFinite(numeric) || numeric < 0 ? '—' : `${((numeric * 8) / 1000000).toFixed(1)} Mbps`
+}
+
+const SAFE_CANONICAL_TAG = /^proxy-[A-Za-z0-9._-]{1,122}$/
+const safeCanonicalTag = (value) => {
+  const tag = String(value || '')
+  return SAFE_CANONICAL_TAG.test(tag) ? tag : ''
+}
+const safeCount = (value, maximum = Number.MAX_SAFE_INTEGER) => {
+  const numeric = Number(value)
+  return Number.isFinite(numeric) && numeric >= 0 ? Math.min(Math.floor(numeric), maximum) : 0
+}
+const formatAdaptiveLatency = (value) => {
+  const numeric = Number(value)
+  return value == null || !Number.isFinite(numeric) || numeric <= 0 ? '—' : `${Math.round(numeric)} ms`
+}
+const formatAdaptiveRate = (value) => {
+  const numeric = Number(value)
+  return value == null || !Number.isFinite(numeric) || numeric <= 0 ? '—' : `${((numeric * 8) / 1000000).toFixed(1)} Mbps`
+}
+const formatAdaptiveScore = (value, valid) => {
+  const numeric = Number(value)
+  if (!valid || value == null || !Number.isFinite(numeric) || numeric < 0) return '—'
+  return `${(Math.min(1, Math.max(0, numeric)) * 100).toFixed(1)}%`
+}
+
+const adaptiveStateLabels = {
+  waiting: 'Waiting for next check',
+  running: 'Measuring adaptive quality',
+  skipped: 'Skipped',
+  completed: 'Completed',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+  'cleanup-pending': 'Cleanup pending',
+}
+const adaptiveReasonLabels = {
+  'manual-override': 'Manual override is active',
+  busy: 'The runtime was busy',
+  unavailable: 'Adaptive quality is unavailable',
+  'no-current-target': 'No current target was available',
+  'current-ineligible': 'The current target was not eligible',
+  'insufficient-candidates': 'There were not enough candidates',
+  'generation-budget': 'The adaptive budget was exhausted',
+  cancelled: 'The generation was cancelled',
+  'cleanup-pending': 'Probe cleanup is pending',
+  'stale-generation': 'The generation became stale',
+  'current-invalid': 'The current target did not produce valid evidence',
+  'no-challenger': 'No eligible challenger beat the current target',
+  'minimum-dwell': 'The current target minimum dwell has not elapsed',
+  hysteresis: 'The quality margin was not large enough to switch',
+  'no-switch': 'No target switch was needed',
+  'adaptive-quality': 'Adaptive quality applied a target switch',
+}
+const selectionStateLabels = {
+  stable: 'Automatic stable selection',
+  manual: 'Explicit manual override',
+  'manual-fallback': 'Manual override with native fallback',
+  'fallback-leastping': 'Native fallback selection',
+  starting: 'Selection starting',
+  unavailable: 'Selection unavailable',
+}
+const selectionReasonLabels = {
+  startup: 'Startup selection',
+  'health-failover': 'Health failover',
+  'latency-quality': 'Latency evidence',
+  'throughput-benchmark': 'Legacy compatibility diagnostic',
+  'fallback-leastping': 'Native fallback',
+  'reapply-after-restart': 'Runtime re-apply',
+  'manual-override': 'Manual override',
+  'manual-unavailable': 'Manual target unavailable',
+  'manual-cleared': 'Manual override cleared',
+}
+const adaptiveState = (status) => adaptiveStateLabels[status?.state] ? status.state : 'unavailable'
+const adaptiveStateLabel = (status) => adaptiveStateLabels[adaptiveState(status)] || 'Adaptive state unavailable'
+const adaptiveReasonLabel = (reason) => adaptiveReasonLabels[reason] || 'Adaptive result unavailable'
+const selectionStateLabel = (state) => selectionStateLabels[state] || 'Selection state unavailable'
+const selectionReasonLabel = (reason) => selectionReasonLabels[reason] || 'Selection reason unavailable'
+const safeAdaptiveCandidates = (status) => (Array.isArray(status?.candidates) ? status.candidates : [])
+  .map((candidate) => ({ ...candidate, tag: safeCanonicalTag(candidate?.tag) }))
+  .filter((candidate) => candidate.tag)
+  .slice(0, 6)
+const hasAdaptiveGeneration = (status, candidates) => candidates.length > 0
+  || safeCount(status?.shortlistCount, 6) > 0
+  || safeCount(status?.validCount, 6) > 0
 
 const sortNodes = (nodes, key, direction) => {
   const multiplier = direction === 'desc' ? -1 : 1
@@ -174,7 +259,6 @@ const sortNodes = (nodes, key, direction) => {
       case 'latency': return node.alive && node.latencyMs ? node.latencyMs : Number.MAX_SAFE_INTEGER
       case 'role': return roleRank(node)
       case 'source': return stringValue(nodeSource(node))
-      case 'throughput': return node.lastBenchmarkAt ? Number(node.lastThroughputKBps || 0) : -1
       case 'country': return stringValue(node.countryCode)
       default: return stringValue(visibleNodeName(node))
     }
@@ -261,18 +345,6 @@ function App() {
     return () => window.clearInterval(timer)
   }, [session, loadDashboard])
 
-  const runBenchmark = async () => {
-    try {
-      await api('/api/v1/benchmark/run', {
-        method: 'POST',
-        headers: { 'X-CSRF-Token': session?.csrfToken || '' },
-      })
-      await loadDashboard()
-    } catch (cause) {
-      setError(cause.message)
-    }
-  }
-
   const login = async (event) => {
     event.preventDefault()
     setError('')
@@ -325,7 +397,7 @@ function App() {
   if (loading && !dashboard) return <Shell><div className="loading">Reading current router state…</div></Shell>
   if (!dashboard) return <Shell><Notice message={error || 'Runtime state is unavailable.'} /></Shell>
 
-  return <Dashboard dashboard={dashboard} session={session} error={error} onRefresh={loadDashboard} onPerformanceRefresh={loadPerformance} onLogout={logout} onRunBenchmark={runBenchmark} onCheckUpdate={checkUpdate} onUnauthorized={invalidateSession} />
+  return <Dashboard dashboard={dashboard} session={session} error={error} onRefresh={loadDashboard} onPerformanceRefresh={loadPerformance} onLogout={logout} onCheckUpdate={checkUpdate} onUnauthorized={invalidateSession} />
 }
 
 function Login({ error, password, setPassword, onSubmit }) {
@@ -342,7 +414,7 @@ function Login({ error, password, setPassword, onSubmit }) {
   </main>
 }
 
-function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh, onLogout, onRunBenchmark, onCheckUpdate, onUnauthorized }) {
+function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh, onLogout, onCheckUpdate, onUnauthorized }) {
   const { status, nodes, performance, config, update } = dashboard
   const [section, setSection] = useState('overview')
   const [nodeView, setNodeView] = useState(createNodeViewState)
@@ -356,6 +428,30 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   }, [componentController.loadInventory])
   const lifecycleBlocked = componentController.lifecycleMutationBlocked
   const manualLifecycleBlocked = !status.lifecycle || status.lifecycle.maintenance || status.lifecycle.applying
+  const manualRunning = performance?.manual?.state === 'running'
+  const adaptiveRunning = performance?.adaptive?.state === 'running'
+  const performancePolling = (section === 'overview' && adaptiveRunning)
+    || (section === 'nodes' && (manualRunning || adaptiveRunning))
+  const performancePollInFlight = useRef(false)
+
+  useEffect(() => {
+    if (!performancePolling || !onPerformanceRefresh) return undefined
+    let active = true
+    const poll = async () => {
+      if (!active || performancePollInFlight.current) return
+      performancePollInFlight.current = true
+      try {
+        await onPerformanceRefresh()
+      } finally {
+        performancePollInFlight.current = false
+      }
+    }
+    const timer = window.setInterval(() => { void poll() }, 1000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [performancePolling, onPerformanceRefresh])
 
   return <Shell>
     <header className="topbar">
@@ -374,7 +470,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     </nav>
     <ComponentLifecycleNotices controller={componentController} lifecycle={status.lifecycle} onOpenComponents={openComponents} />
     {error && <Notice message={error} />}
-    {section === 'overview' && <Overview status={status} nodeTotal={nodes.total || 0} nodesByTag={nodesByTag} onRunBenchmark={onRunBenchmark} lifecycleBlocked={lifecycleBlocked} />}
+    {section === 'overview' && <Overview status={status} performance={performance} nodeTotal={nodes.total || 0} nodesByTag={nodesByTag} />}
     {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} performance={performance} manualOverride={status.selection?.manualOverride || ''} benchmarkRunning={Boolean(status.benchmark?.controlPlane?.running)} csrf={session.csrfToken} onRefresh={onRefresh} onPerformanceRefresh={onPerformanceRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} manualLifecycleBlocked={manualLifecycleBlocked} />}
     {section === 'components' && <ComponentsUpdatesSection controller={componentController} lifecycle={status.lifecycle} onOpenSystem={() => setSection('system')} />}
     {section === 'system' && <SystemSection status={status} config={config} nodesByTag={nodesByTag} update={update} onCheckUpdate={onCheckUpdate} />}
@@ -382,7 +478,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   </Shell>
 }
 
-function Overview({ status, nodeTotal, nodesByTag, onRunBenchmark, lifecycleBlocked }) {
+function Overview({ status, performance, nodeTotal, nodesByTag }) {
   const healthy = status.observatory?.healthy || 0
   const total = status.observatory?.total || nodeTotal
   const healthText = total ? `${healthy}/${total} healthy` : 'No node data'
@@ -398,9 +494,62 @@ function Overview({ status, nodeTotal, nodesByTag, onRunBenchmark, lifecycleBloc
       <SelectionCard label="Native leastPing" node={nodesByTag.get(status.balancer?.nativeSelected)} tone="blue" />
       <SelectionCard label="Manual override" node={nodesByTag.get(status.selection?.manualOverride)} tone="amber" emptyText="Automatic selection" />
       <SelectionCard label="Effective" node={nodesByTag.get(status.balancer?.effective)} tone="green" />
-      <div className="panel schedule-card"><div className="schedule-heading"><span className="panel-label">Selection & benchmark</span><IconButton icon="gauge" label={status.benchmark?.controlPlane?.running ? 'Full benchmark running' : 'Run full benchmark'} active={status.benchmark?.controlPlane?.running} onClick={onRunBenchmark} disabled={status.benchmark?.controlPlane?.running || lifecycleBlocked} /></div><strong>{status.selection?.state || 'starting'} · {status.selection?.effectiveTarget || status.balancer?.effective || 'native fallback'}</strong><p>{status.selection?.lastSwitchReason || 'No selection change recorded'} · evidence: {status.selection?.latencyEvidence ?? 0} RTT samples · dwell: {status.selection?.dwellRemainingSeconds ? `${status.selection.dwellRemainingSeconds}s` : 'ready'}</p><small>Run policy: {formatBytes(status.benchmark?.controlPlane?.totalBudgetBytes)} total · {formatBytes(status.benchmark?.controlPlane?.payloadBytes)} planned/node · {status.benchmark?.controlPlane?.perNodeTimeoutMs ? `${status.benchmark.controlPlane.perNodeTimeoutMs / 1000}s` : '10s'} timeout · next: {formatTime(status.benchmark?.controlPlane?.nextRunAt)}</small></div>
     </section>
+    <AutomaticQualityOverview status={status} performance={performance} nodesByTag={nodesByTag} />
   </div>
+}
+
+function targetPresentation(tag, nodesByTag) {
+  const safeTag = safeCanonicalTag(tag)
+  const node = safeTag ? nodesByTag.get(safeTag) : null
+  return { tag: safeTag, node, label: node ? visibleNodeName(node) : safeTag || 'Unavailable' }
+}
+
+function adaptiveOutcomeLabel(status, nodesByTag) {
+  const state = adaptiveState(status)
+  if (state === 'waiting') return 'No adaptive generation has completed yet.'
+  if (state === 'running') return 'The current shortlist is being measured.'
+  if (status?.switchApplied === true) {
+    const target = targetPresentation(status.selectedTarget, nodesByTag)
+    return target.tag ? `Actual switch applied to ${target.label}.` : 'Actual switch applied; the safe target identity is unavailable.'
+  }
+  const reason = adaptiveReasonLabel(status?.reasonCode)
+  if (state === 'skipped') return `Adaptive generation skipped: ${reason}.`
+  if (state === 'completed') return `No target switch: ${reason}.`
+  return `${adaptiveStateLabel(status)}: ${reason}.`
+}
+
+function AdaptiveGenerationFacts({ status, candidates }) {
+  const nextRunAt = formatTime(status?.nextRunAt)
+  const completedAt = formatTime(status?.completedAt)
+  const hasGeneration = hasAdaptiveGeneration(status, candidates)
+  return <>
+    {hasGeneration && <div><span>Generation evidence</span><strong>{safeCount(status?.shortlistCount, 6)} shortlisted · {safeCount(status?.validCount, 6)} valid</strong></div>}
+    {nextRunAt !== '—' && <div><span>Next adaptive check</span><strong>{nextRunAt}</strong></div>}
+    {completedAt !== '—' && <div><span>Last completion</span><strong>{completedAt}</strong></div>}
+  </>
+}
+
+function AutomaticQualityOverview({ status, performance, nodesByTag }) {
+  const selection = status.selection || {}
+  const adaptive = performance?.adaptive || { state: 'waiting' }
+  const candidates = safeAdaptiveCandidates(adaptive)
+  const effective = targetPresentation(selection.effectiveTarget || status.balancer?.effective, nodesByTag)
+  const manual = targetPresentation(selection.manualOverride || status.balancer?.override, nodesByTag)
+  const selectionState = selectionStateLabel(selection.state || 'starting')
+  const selectionReason = selection.lastSwitchReason ? selectionReasonLabel(selection.lastSwitchReason) : 'No selection change recorded'
+  const switchedTarget = targetPresentation(adaptive.selectedTarget, nodesByTag)
+  return <section className={`panel automatic-quality-overview adaptive-${adaptiveState(adaptive)}`} data-testid="automatic-quality-overview">
+    <div className="automatic-quality-heading"><div><span className="panel-label">Automatic quality</span><h2>{selectionState}</h2><p>{selectionReason}</p></div><span className="chip neutral">{adaptiveStateLabel(adaptive)}</span></div>
+    <div className="automatic-quality-grid">
+      <div><span>Effective target</span><strong>{effective.label}</strong>{effective.tag && <code>{effective.tag}</code>}</div>
+      <div><span>Manual override</span><strong>{manual.tag ? manual.label : 'Not active'}</strong>{manual.tag && <code>{manual.tag}</code>}</div>
+      <div><span>Adaptive state</span><strong>{adaptiveStateLabel(adaptive)}</strong><small>{adaptiveOutcomeLabel(adaptive, nodesByTag)}</small></div>
+      <AdaptiveGenerationFacts status={adaptive} candidates={candidates} />
+      {adaptive.switchApplied === true && <div><span>Actual switched target</span><strong>{switchedTarget.label}</strong>{switchedTarget.tag && <code>{switchedTarget.tag}</code>}</div>}
+    </div>
+    {manual.tag && <p className="automatic-quality-note">Automatic quality is paused by the explicit manual override.</p>}
+  </section>
 }
 
 function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benchmarkRunning, csrf, onRefresh, onPerformanceRefresh, viewState, onViewStateChange, lifecycleBlocked, manualLifecycleBlocked }) {
@@ -418,6 +567,8 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
   const [manualRequestBusy, setManualRequestBusy] = useState(false)
   const manualStatus = performance?.manual || { state: 'idle', phase: 'done', plannedStages: 11, bytesPlanned: 48 * 1024 * 1024, completedStages: 0, bytesTransferred: 0 }
   const manualRunning = manualStatus.state === 'running'
+  const adaptiveStatus = performance?.adaptive || { state: 'waiting' }
+  const adaptiveRunning = adaptiveStatus.state === 'running'
   const { query, statusFilter, roleFilter, sourceFilter, countryFilter, sort, page } = viewState
 
   const filtered = useMemo(() => {
@@ -477,18 +628,6 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
       setReplacement('')
     }
   }, [editingID, selectedNode])
-
-  useEffect(() => {
-    if (!manualRunning || !onPerformanceRefresh) return undefined
-    let active = true
-    const timer = window.setInterval(() => {
-      if (active) void onPerformanceRefresh()
-    }, 1000)
-    return () => {
-      active = false
-      window.clearInterval(timer)
-    }
-  }, [manualRunning, onPerformanceRefresh])
 
   const chooseFilter = (key, value) => {
     onViewStateChange((current) => ({ ...current, [key]: value, page: 1 }))
@@ -610,7 +749,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
     try {
       await api('/api/v1/selection/override', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: JSON.stringify({ target }) })
       await onRefresh()
-      setNotice({ tone: 'success', message: target ? 'Manual override set. Automatic latency and benchmark selection are paused for this node.' : 'Manual override cleared. Automatic selection is active again.' })
+      setNotice({ tone: 'success', message: target ? 'Manual override set. Automatic quality selection is paused for this node.' : 'Manual override cleared. Automatic selection is active again.' })
     } catch (cause) {
       setNotice({ tone: 'error', message: cause.message })
     } finally {
@@ -619,7 +758,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
   }
 
   const runManualNode = async () => {
-    if (!selectedNode || selectedNodes.length !== 1 || !selectedNode.enabled || manualLifecycleBlocked || benchmarkRunning || manualRunning || manualRequestBusy) return
+    if (!selectedNode || selectedNodes.length !== 1 || !selectedNode.enabled || manualLifecycleBlocked || benchmarkRunning || manualRunning || adaptiveRunning || manualRequestBusy) return
     setManualRequestBusy(true)
     setNotice(null)
     try {
@@ -697,7 +836,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
       <div className="selection-summary"><strong data-testid="selected-count">{selectedIDs.size} selected</strong><button className="clear-filters" type="button" onClick={toggleAllFiltered} disabled={busy || lifecycleBlocked || !filtered.length || allFilteredSelected}>Select all {filtered.length} filtered</button><button className="clear-filters" type="button" onClick={clearSelection} disabled={busy || lifecycleBlocked || !selectedIDs.size}>Clear selection</button></div>
       <div className="selection-actions">
         <button type="button" onClick={() => setManualOverride(selectedManual ? '' : (selectedNode.outboundTag || selectedNode.tag))} disabled={busy || lifecycleBlocked || !selectedNode || (!selectedManual && !selectedNode.enabled)}>{selectedManual ? 'Clear manual override' : 'Set manual override'}</button>
-        <button type="button" onClick={runManualNode} disabled={busy || manualRequestBusy || manualLifecycleBlocked || benchmarkRunning || manualRunning || selectedNodes.length !== 1 || !selectedNode?.enabled}>{manualRequestBusy ? 'Starting speed test…' : 'Full speed test'}</button>
+        <button type="button" onClick={runManualNode} disabled={busy || manualRequestBusy || manualLifecycleBlocked || benchmarkRunning || manualRunning || adaptiveRunning || selectedNodes.length !== 1 || !selectedNode?.enabled}>{manualRequestBusy ? 'Starting speed test…' : 'Full speed test'}</button>
         <button type="button" onClick={openEditor} disabled={busy || lifecycleBlocked || selectedNodes.length !== 1}>Edit / replace profile</button>
         <button type="button" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: true })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => node.enabled)}>Enable</button>
         <button type="button" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: false })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => !node.enabled)}>Disable</button>
@@ -706,6 +845,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
     </div>
 
     {manualStatus.state !== 'idle' && <ManualPerformanceCard status={manualStatus} node={nodes.find((node) => node.id === manualStatus.targetNodeId)} />}
+    <AdaptiveQualityCard status={adaptiveStatus} nodes={nodes} />
 
     {selectedNode && editingID === selectedNode.id && <div className="selection-editor">
       <div><span className="panel-label">Replace profile</span><NodeName node={selectedNode} /><small>Stable tag: <code>{selectedNode.outboundTag || selectedNode.tag}</code></small></div>
@@ -713,13 +853,40 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
       <div className="inline-editor-actions"><button className="ghost" type="button" onClick={() => { setEditingID(''); setReplacement('') }}>Cancel</button><button type="button" disabled={busy || lifecycleBlocked || !replacement.trim()} onClick={() => requestPreview('/api/v1/nodes/replace/preview', { id: selectedNode.id, profile: replacement })}>Preview replacement</button></div>
     </div>}
 
-    <div className="table-wrap"><table className="nodes-table"><thead><tr><th className="selection-column"><SelectionCheckbox label="Select all filtered nodes" checked={allFilteredSelected} indeterminate={selectedFilteredCount > 0 && !allFilteredSelected} onChange={toggleAllFiltered} /></th><SortHeader label="Name" sortKey="name" sort={sort} onSort={changeSort} /><SortHeader label="Address" sortKey="address" sort={sort} onSort={changeSort} /><SortHeader label="Health" sortKey="health" sort={sort} onSort={changeSort} /><SortHeader label="Latency" sortKey="latency" sort={sort} onSort={changeSort} /><SortHeader label="Role" sortKey="role" sort={sort} onSort={changeSort} /><SortHeader label="Source" sortKey="source" sort={sort} onSort={changeSort} /><SortHeader label="Throughput" sortKey="throughput" sort={sort} onSort={changeSort} /></tr></thead><tbody>
+    <div className="table-wrap"><table className="nodes-table"><thead><tr><th className="selection-column"><SelectionCheckbox label="Select all filtered nodes" checked={allFilteredSelected} indeterminate={selectedFilteredCount > 0 && !allFilteredSelected} onChange={toggleAllFiltered} /></th><SortHeader label="Name" sortKey="name" sort={sort} onSort={changeSort} /><SortHeader label="Address" sortKey="address" sort={sort} onSort={changeSort} /><SortHeader label="Health" sortKey="health" sort={sort} onSort={changeSort} /><SortHeader label="Latency" sortKey="latency" sort={sort} onSort={changeSort} /><SortHeader label="Role" sortKey="role" sort={sort} onSort={changeSort} /><SortHeader label="Source" sortKey="source" sort={sort} onSort={changeSort} /></tr></thead><tbody>
       {visibleNodes.map((node) => <NodeRows key={node.id || node.tag} node={node} selected={selectedIDs.has(node.id)} onToggle={() => toggleSelection(node.id)} />)}
-      {!visibleNodes.length && <tr><td colSpan="8" className="empty">No nodes match this view.</td></tr>}
+      {!visibleNodes.length && <tr><td colSpan="7" className="empty">No nodes match this view.</td></tr>}
     </tbody></table></div>
 
     <Pagination page={page} totalPages={totalPages} onPage={(value) => onViewStateChange((current) => ({ ...current, page: value }))} />
     {preview && <PreviewDialog preview={preview} nodes={nodes} manualOverride={manualOverride} busy={busy || lifecycleBlocked} onCancel={cancelPreview} onApply={applyPreview} />}
+  </section>
+}
+
+function AdaptiveQualityCard({ status, nodes }) {
+  const nodesByTag = new Map(nodes.map((node) => [safeCanonicalTag(node.outboundTag || node.tag), node]))
+  const candidates = safeAdaptiveCandidates(status)
+  const current = targetPresentation(status?.currentTarget, nodesByTag)
+  const switchedTag = status?.switchApplied === true ? safeCanonicalTag(status.selectedTarget) : ''
+  const nextRunAt = formatTime(status?.nextRunAt)
+  const completedAt = formatTime(status?.completedAt)
+  const state = adaptiveState(status)
+  return <section className={`adaptive-performance ${state}`} data-testid="adaptive-performance" aria-live="polite">
+    <div className="adaptive-performance-heading"><div><span className="panel-label">Automatic quality</span><h3>{adaptiveStateLabel(status)}</h3></div><span className="chip neutral">{state === 'unavailable' ? 'Unavailable' : adaptiveStateLabel(status)}</span></div>
+    <div className="adaptive-performance-target"><span>Current target</span><strong>{current.label}</strong>{current.tag && <code>{current.tag}</code>}</div>
+    <div className="adaptive-facts"><div><span>Result</span><strong>{adaptiveOutcomeLabel(status, nodesByTag)}</strong></div>{nextRunAt !== '—' && <div><span>Next adaptive check</span><strong>{nextRunAt}</strong></div>}{completedAt !== '—' && <div><span>Last completion</span><strong>{completedAt}</strong></div>}{hasAdaptiveGeneration(status, candidates) && <div><span>Generation evidence</span><strong>{safeCount(status?.shortlistCount, 6)} shortlisted · {safeCount(status?.validCount, 6)} valid</strong></div>}</div>
+    {candidates.length > 0 ? <div className="adaptive-candidates" aria-label="Adaptive candidates">
+      {candidates.map((candidate, index) => {
+        const target = targetPresentation(candidate.tag, nodesByTag)
+        const valid = candidate.valid === true
+        const isCurrent = candidate.tag === current.tag
+        const isSwitched = Boolean(switchedTag) && candidate.tag === switchedTag
+        return <article className={`adaptive-candidate ${valid ? 'valid' : 'invalid'}`} data-testid="adaptive-candidate" key={`${candidate.tag}-${index}`}>
+          <div className="adaptive-candidate-heading"><div><strong>{target.label}</strong><code>{target.tag}</code></div><div className="adaptive-candidate-badges">{isCurrent && <span className="chip blue">Current target</span>}{isSwitched && <span className="chip green">Switched target</span>}<span className={`chip ${valid ? 'green' : 'amber'}`}>{valid ? 'Valid' : 'Invalid'}</span></div></div>
+          <div className="adaptive-metric-grid"><div><span>RTT</span><strong>{formatAdaptiveLatency(candidate.rttMs)}</strong></div><div><span>Download</span><strong>{formatAdaptiveRate(candidate.downloadBps)}</strong></div><div><span>Upload</span><strong>{formatAdaptiveRate(candidate.uploadBps)}</strong></div><div><span>Quality</span><strong>{formatAdaptiveScore(candidate.score, valid)}</strong></div></div>
+        </article>
+      })}
+    </div> : <p className="adaptive-empty">{state === 'waiting' ? 'Waiting for the next scheduled adaptive check.' : adaptiveOutcomeLabel(status, nodesByTag)}</p>}
   </section>
 }
 
@@ -734,7 +901,7 @@ function ManualPerformanceCard({ status, node }) {
     <div className="manual-progress-grid">
       <div><span>Stages</span><strong>{status.completedStages || 0} / {status.plannedStages || 0}</strong></div>
       <div><span>Bytes</span><strong>{formatManualBytes(status.bytesTransferred)} / {formatManualBytes(status.bytesPlanned)}</strong></div>
-      <div><span>Latency</span><strong>{status.latencyMs == null ? '—' : `${status.latencyMs} ms`}</strong></div>
+      <div><span>Latency</span><strong>{formatAdaptiveLatency(status.latencyMs)}</strong></div>
       <div><span>Download</span><strong>{formatManualRate(status.downloadBps)}</strong></div>
       <div><span>Upload</span><strong>{formatManualRate(status.uploadBps)}</strong></div>
     </div>
@@ -751,10 +918,9 @@ function NodeRows({ node, selected, onToggle }) {
       <td><NodeName node={node} />{node.stale && <span className="chip amber">stale</span>}</td>
       <td><code className="address">{node.address || '—'}</code></td>
       <td><span className={`status-dot ${node.alive ? 'up' : 'down'}`}></span>{health}</td>
-      <td>{node.latencyMs ? `${node.latencyMs} ms` : '—'}</td>
+      <td>{formatAdaptiveLatency(node.latencyMs)}</td>
       <td><NodeBadges node={node} /></td>
       <td><span>{node.subscriptionName || node.sourceType || 'legacy'}</span></td>
-      <td>{formatThroughput(node)}</td>
     </tr>
   </>
 }
@@ -1013,15 +1179,10 @@ function SystemSection({ status, config, nodesByTag, update, onCheckUpdate }) {
   const healthSelectors = config.observatory?.subjectSelectors || []
   const activeTag = status.selection?.effectiveTarget || status.balancer?.effective
   const activeNode = nodesByTag.get(activeTag)
-  const benchmark = status.benchmark?.controlPlane
-  const benchmarkResult = benchmark?.lastResult || benchmark?.state
-  const benchmarkDetails = benchmarkResult
-    ? `${benchmarkResult === 'completed' ? 'Completed' : benchmarkResult} · ${benchmark.lastValidSamples ?? 0} valid samples · ${formatTime(benchmark.lastCompletedAt || status.benchmark?.lastRunAt)}`
-    : 'Not run yet'
 
   return <section className="lower-grid system-section">
     <div className="panel"><span className="panel-label">Network policy</span><h2>How traffic is handled</h2><div className="metric-row"><span>Routing rules</span><strong>{config.routing?.ruleCount ?? '—'}</strong></div><div className="metric-row"><span>DNS servers</span><div className="metric-value-list">{dnsServers.length ? dnsServers.map((server) => <code key={server}>{server}</code>) : <strong>—</strong>}</div></div><div className="metric-row"><span>Proxy pool</span><strong>Unified proxy pool</strong></div><div className="metric-row"><span>Health-check scope</span><div className="metric-value-list">{healthSelectors.length ? healthSelectors.map((selector) => <code key={selector}>{selector}</code>) : <strong>—</strong>}</div></div></div>
-    <div className="panel"><span className="panel-label">Runtime</span><h2>Current state</h2><div className="metric-row"><span>Active proxy</span><div className="metric-value">{activeNode ? <strong>{visibleNodeName(activeNode)}</strong> : <strong>{activeTag || 'Automatic selection'}</strong>}{activeNode?.address && <small>{activeNode.address}</small>}</div></div><div className="metric-row"><span>Healthy proxies</span><strong>{status.observatory?.healthy ?? 0} / {status.observatory?.total ?? 0}</strong></div><div className="metric-row"><span>Full benchmark</span><div className="metric-value"><strong>{benchmarkDetails}</strong>{benchmark?.nextRunAt && <small>Next: {formatTime(benchmark.nextRunAt)}</small>}</div></div><div className="metric-row"><span>Control plane uptime</span><strong>{formatUptime(status.controlPlane?.uptimeSeconds)}</strong></div></div>
+    <div className="panel"><span className="panel-label">Runtime</span><h2>Current state</h2><div className="metric-row"><span>Active proxy</span><div className="metric-value">{activeNode ? <strong>{visibleNodeName(activeNode)}</strong> : <strong>{safeCanonicalTag(activeTag) || 'Automatic selection'}</strong>}{activeNode?.address && <small>{activeNode.address}</small>}</div></div><div className="metric-row"><span>Healthy proxies</span><strong>{status.observatory?.healthy ?? 0} / {status.observatory?.total ?? 0}</strong></div><div className="metric-row"><span>Control plane uptime</span><strong>{formatUptime(status.controlPlane?.uptimeSeconds)}</strong></div></div>
     <div className="panel"><span className="panel-label">Signed panel release</span><h2>{update?.installed?.version || 'development'}</h2><div className="metric-row"><span>Channel</span><strong>{update?.channel || 'stable'}</strong></div><div className="metric-row"><span>Latest compatible</span><strong>{update?.latestCompatibleVersion || 'Not checked'}</strong></div><div className="metric-row"><span>Rollback</span><strong>{update?.rollbackAvailable ? 'Available' : 'None'}</strong></div><button type="button" onClick={onCheckUpdate}>Check fixed GitHub release</button></div>
   </section>
 }

@@ -4,7 +4,7 @@ This is the sequencing/status authority. The active GitHub issue is the detailed
 
 ## Current production baseline
 
-Slices A/B/C/C.1 and D remain production-qualified. The validated fresh-source migration baseline merged as #7, the canonical Go module/import identity cleanup merged as #9 / Issue #8, and Slice D completed through Issue #2 with historical signed stable release `v0.1.1` from source `8f15246099538426ef08163b832c3aa6f73e8265` plus bounded live Keenetic adoption → rollback → re-adoption qualification. D.1 / Issue #3 is also production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. Issue #76 Slice E is present on source main as source/CI-only work and is not a production-qualification or release claim.
+Slices A/B/C/C.1 and D remain production-qualified. The validated fresh-source migration baseline merged as #7, the canonical Go module/import identity cleanup merged as #9 / Issue #8, and Slice D completed through Issue #2 with historical signed stable release `v0.1.1` from source `8f15246099538426ef08163b832c3aa6f73e8265` plus bounded live Keenetic adoption → rollback → re-adoption qualification. D.1 / Issue #3 is also production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. Issue #78 Slice F is present on source main as source/CI-only work and is not a production-qualification or release claim.
 
 Current runtime facts:
 
@@ -43,7 +43,7 @@ public source + signed GitHub Releases (#2, done)
         ↓
 local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
-managed XKeen / Xray / geodata lifecycle (#4, active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-E delivered through PRs #69/#71/#73/#75 and Issue #76, F next; D.2 G and one feature-complete candidate afterward)
+managed XKeen / Xray / geodata lifecycle (#4, active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-F delivered through PRs #69/#71/#73/#75 and Issues #76/#78, D.2 G next; one feature-complete candidate afterward)
         ↓
 visual typed configuration + transactional render/apply (#5, after #46 and D.2 G)
 ```
@@ -59,8 +59,8 @@ visual typed configuration + transactional render/apply (#5, after #46 and D.2 G
 | Pre-D — canonical Go module/import identity | Done | Issue #8 / PR #9 | Canonical `github.com/popiposter/xkeen-control` provenance; no runtime behavior change |
 | D — releases/bootstrap/panel self-update | Done | Issue #2 / `v0.1.1` | Public signed Releases, CI/release pipeline, one-command bootstrap, setup mode, transactional panel update/rollback |
 | D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
-| D.2 — component lifecycle | **Active — trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-E delivered through PRs #69/#71/#73/#75 and Issue #76, F next; G after A-F** | Issue #4 / current `main` + live `v0.3.0-beta.2` trial | The prior Xray live pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the diagnostic source correction. Live qualification remains paused while the feature-complete source sequence is implemented and fully qualified offline; F3/G do not independently lead to a release |
-| D.3 — foundation A-F (#46) | **A-E delivered through PRs #69/#71/#73/#75 and Issue #76; F next** | Issue #46 / #68 / #70 / #72 / #74 / #76 | Selection-first Nodes/atomic batch mutations, exact subscription reconciliation, bounded automatic subscription refresh, fixed one-node diagnostic performance and the single adaptive quality-switch path delivered; F integrated source UX/qualification remains the next source-only slice |
+| D.2 — component lifecycle | **Active — trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-F complete; G next** | Issue #4 / current `main` + live `v0.3.0-beta.2` trial | The prior Xray live pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the diagnostic source correction. Live qualification remains paused while the feature-complete source sequence is implemented and fully qualified offline; G does not independently lead to a release |
+| D.3 — foundation A-F (#46) | **Done source-only through Issue #78** | Issue #46 / #68 / #70 / #72 / #74 / #76 / #78 | Selection-first Nodes/atomic batch mutations, exact subscription reconciliation, bounded automatic subscription refresh, fixed one-node diagnostic performance, the single adaptive quality-switch path and the integrated automatic-quality operator UX/source qualification are complete; no release, router access or live qualification is implied |
 | D.3/#5 — remaining visual configuration | Later source scope | Issue #5 | Planned typed routing/DNS/XKeen/Xray/panel/performance UI and deterministic render/apply; not deployed |
 | E — notifications/security hardening | Planned after remaining D.3/#5 source | master issue #1 | Outbound alerts, management-VPN guidance, final attack-surface hardening |
 
@@ -93,7 +93,7 @@ Safe export excludes secrets by default; secret-bearing export is explicit and e
 
 Pre-adoption compatibility is explicit: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit and unknown/manual drift fails closed.
 
-## D.2 / Issue #4 — active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered; #46 A-E delivered through PRs #69/#71/#73/#75 and Issue #76, F next
+## D.2 / Issue #4 — active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered; #46 A-F complete, G next
 
 Phase A merged via PR #23 to `main` `bda9dd0cc7bb142a4cb1468811fff9b5146b1e8e`; source main gained the bounded read-only component inventory and authenticated `GET /api/v1/components` for panel, XKeen, Xray, geodata, KeeneticOS and Entware.
 
@@ -133,13 +133,13 @@ The simplicity decisions in [master issue #1](https://github.com/popiposter/xkee
 
 **Gate 3 and the initial Xray live pair are complete historical evidence.** The live router remains on trial `v0.3.0-beta.2`; production-qualified stable remains `v0.2.0` and its fresh rollback snapshot is retained. The Xray pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the #64 diagnostic source correction. Per operator sequencing, live qualification now pauses: no beta.3/publication/install and no further component mutation while the feature-complete source sequence is implemented and qualified offline.
 
-F3 is delivered by PR #67: bounded persisted `off|notify|manual` component policy with a check-only scheduler/notification hook. It must not introduce automatic component mutation. #46 A-E are delivered by PRs #69/#71/#73/#75 plus Issue #76; #46 F is next. D.2 G follows the complete #46 A-F source program: Setup Mode install using only already-qualified typed component primitives, without generic package/command/file surfaces or blanket `opkg upgrade`.
+F3 is delivered by PR #67: bounded persisted `off|notify|manual` component policy with a check-only scheduler/notification hook. It must not introduce automatic component mutation. #46 A-F are delivered by PRs #69/#71/#73/#75 plus Issues #76/#78; D.2 G follows the complete #46 A-F source program: Setup Mode install using only already-qualified typed component primitives, without generic package/command/file surfaces or blanket `opkg upgrade`.
 
 The sequence is **#46 A-F foundation → D.2 G Setup Mode source → remaining D.3/#5 source → planned E notifications/security hardening → one feature-complete signed candidate plus integrated live qualification**. These source slices do not independently trigger release publication, router install or live qualification. Only after that integrated candidate is installed may live Xray/geodata/XKeen update+rollback qualification resume, restoring each component baseline before the next class and settling all component state before the original stable panel return.
 
-## D.3 / Issue #46 foundation — Slices A-E delivered; Slice F next; not deployed
+## D.3 / Issue #46 foundation — Slices A-F delivered; not deployed
 
-PR #69 delivered Slice A (selection-first Nodes and atomic batch mutations). PR #71 delivered Slice B (exact subscription membership reconciliation). PR #73 delivered Slice C (bounded automatic subscription refresh with non-preemptive background admission). PR #75 delivered Slice D (fixed manual-node down/up diagnostics and bounded progress). Issue #76 delivers Slice E (fresh RTT shortlist, fixed down/up quality generation, deterministic scoring, hysteresis/dwell and the one Coordinator performance owner); Slice F integrated source UX/qualification is next. The #46 slices remain source-only and do not deploy to production; no release, router access or live qualification is implied.
+PR #69 delivered Slice A (selection-first Nodes and atomic batch mutations). PR #71 delivered Slice B (exact subscription membership reconciliation). PR #73 delivered Slice C (bounded automatic subscription refresh with non-preemptive background admission). PR #75 delivered Slice D (fixed manual-node down/up diagnostics and bounded progress). Issue #76 delivers Slice E (fresh RTT shortlist, fixed down/up quality generation, deterministic scoring, hysteresis/dwell and the one Coordinator performance owner). Issue #78 delivers Slice F (integrated automatic-quality Overview/Nodes presentation, closed state/reason vocabulary, view-scoped performance polling, legacy-trigger retirement and source qualification). The #46 slices remain source-only and do not deploy to production; no release, router access or live qualification is implied.
 
 ## After remaining D.3/#5 source
 

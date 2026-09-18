@@ -192,6 +192,27 @@ authenticated performance response; there is no new URL, configuration or
 run-now surface. Slice E is source/CI-only and is not deployed or
 production-qualified.
 
+Source-main Slice F / Issue #78 completes the #46 foundation presentation and
+integration boundary without adding another runtime policy or operation owner.
+Overview now presents automatic quality from the existing selection and
+adaptive projections, including manual-override, native/fallback, waiting,
+running, terminal and safe reason states. Nodes presents at most six current
+or last-generation candidates with display-name resolution, safe canonical-tag
+fallback, RTT/down/up/quality evidence and explicit current/actual-switched
+markers. The legacy full benchmark remains an authenticated explicit
+compatibility route and readable snapshot, but its primary UI trigger and
+daily/next-run presentation are removed; historical throughput is not shown as
+adaptive quality.
+
+The existing `GET /api/v1/performance` response remains the only active
+performance projection path. While adaptive work is running, the UI polls that
+path about once per second only on mounted Overview or Nodes views; manual
+diagnostic polling remains Nodes-only, and terminal/navigation transitions stop
+the extra poll. No new endpoint, persistent state, browser storage, scheduler,
+traffic budget, selection algorithm, Coordinator/ProbeRouter ownership or
+mutation API is introduced. Slice F is source/CI-only and is not deployed or
+production-qualified.
+
 Current panel lifecycle endpoints are:
 
 ```text
