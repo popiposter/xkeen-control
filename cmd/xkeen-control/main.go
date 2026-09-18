@@ -574,6 +574,7 @@ func newSetupService(coordinator *c1.Coordinator, lease *authority.Lease, xrayRe
 			StopFunc: activator.Stop, VerifyStoppedFunc: activator.VerifyStopped, VerifyFunc: activator.Verify,
 		},
 		Selection:    coordinator,
+		Interception: components.NewKeeneticHybridInterceptionOwner(paths),
 		MutationGate: mutationGate, Maintenance: maintenance, Coordinator: coordinator, AuthorityLease: lease,
 		TransactionTimeout: components.DefaultSetupTransactionLimit,
 	})

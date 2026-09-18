@@ -17,10 +17,13 @@ Before panel bootstrap, the router needs:
 
 XKeen/Xray may already be installed for a running appliance, but the signed
 `v0.2.0` panel bootstrap does not install or repair them. The Issue #81 source
-boundary adds a closed fresh-only Setup Mode flow for a later candidate: one
-server-owned ProductDefault + empty-registry transaction using fixed qualified
-Xray/geodata/XKeen primitives. It is source/CI-only in this branch and must not
-be assumed available in `v0.2.0` or used for live qualification.
+boundary adds a closed Setup Mode flow for a later candidate: fresh Setup uses
+one server-owned ProductDefault + empty-registry transaction, while recognized
+managed/legacy layouts use typed takeover/convergence with strict profile and
+policy preservation/migration, previous-generation rollback, sole-writer
+retirement, and source-owned TCP redirect + UDP TProxy Hybrid interception.
+It is source/CI-only in this branch and must not be assumed available in
+`v0.2.0` or used for live qualification.
 
 Do not run blanket `opkg upgrade` as a routine product bootstrap step. Install/update only prerequisites intentionally required by the active procedure. The historical repository `bootstrap.sh` is deliberately not part of the public product path because it predates the bounded installer architecture and used blanket package upgrade behavior.
 
@@ -160,9 +163,9 @@ Use an SSH tunnel or one explicitly configured private LAN bind. Do not expose t
 ## Current/next component lifecycle — Issue #4
 
 D.2 / Issue #4 is the current product slice and remains **not deployed** in
-`v0.2.0`. Issue #81's fresh-only Setup implementation is source/CI-only; it
-does not authorize release publication, router access, real candidate traffic,
-or live Setup Apply.
+`v0.2.0`. Issue #81's Setup installation/takeover implementation is
+source/CI-only; it does not authorize release publication, router access, real
+candidate traffic, or live Setup Apply.
 
 It will add typed capability-aware inventory and bounded lifecycle operations for XKeen, Xray and required geodata while preserving the D.1 appliance/node authorities and the shared lifecycle coordinator. The product path must not expose a shell, generic package manager, arbitrary URL downloader or blanket `opkg upgrade` behavior.
 

@@ -42,23 +42,26 @@ func (r setupTestXKeenResolver) ResolveXKeen(context.Context) (XKeenReleaseIdent
 
 func setupTestPaths(root string) SetupPaths {
 	return SetupPaths{
-		XrayBinary:          filepath.Join(root, "xray"),
-		XrayConfigDir:       filepath.Join(root, "configs"),
-		XrayAssetDir:        filepath.Join(root, "assets"),
-		XkeenBinary:         filepath.Join(root, "xkeen"),
-		XkeenModuleDir:      filepath.Join(root, ".xkeen"),
-		XkeenConfig:         filepath.Join(root, "xkeen.json"),
-		XkeenMarker:         filepath.Join(root, "xkeen-generation.json"),
-		LifecycleInit:       filepath.Join(root, "S05xkeen"),
-		LegacyLifecycleInit: filepath.Join(root, "S24xray"),
-		SiblingModule:       filepath.Join(root, "_xkeen"),
-		InstallHelper:       filepath.Join(root, "install.sh"),
-		Appliance:           filepath.Join(root, "appliance.json"),
-		Nodes:               filepath.Join(root, "nodes.json"),
-		ActiveOutbounds:     filepath.Join(root, "configs", "04_outbounds.json"),
-		Journal:             filepath.Join(root, "state", "component-transaction.json"),
-		RestoreJournal:      filepath.Join(root, "state", "restore.json"),
-		StagingDir:          filepath.Join(root, "staging"),
+		XrayBinary:               filepath.Join(root, "xray"),
+		XrayConfigDir:            filepath.Join(root, "configs"),
+		XrayAssetDir:             filepath.Join(root, "assets"),
+		XkeenBinary:              filepath.Join(root, "xkeen"),
+		XkeenModuleDir:           filepath.Join(root, ".xkeen"),
+		XkeenConfig:              filepath.Join(root, "xkeen.json"),
+		XkeenMarker:              filepath.Join(root, "xkeen-generation.json"),
+		LifecycleInit:            filepath.Join(root, "S05xkeen"),
+		LegacyLifecycleInit:      filepath.Join(root, "S24xray"),
+		SiblingModule:            filepath.Join(root, "_xkeen"),
+		InstallHelper:            filepath.Join(root, "install.sh"),
+		Appliance:                filepath.Join(root, "appliance.json"),
+		Nodes:                    filepath.Join(root, "nodes.json"),
+		ActiveOutbounds:          filepath.Join(root, "configs", "04_outbounds.json"),
+		InterceptionHook:         filepath.Join(root, "ndm", "netfilter.d", "proxy.sh"),
+		InterceptionScheduleHook: filepath.Join(root, "ndm", "schedule.d", "00-xkeen-hotspot-sync.sh"),
+		InterceptionState:        filepath.Join(root, "state", "interception.json"),
+		Journal:                  filepath.Join(root, "state", "component-transaction.json"),
+		RestoreJournal:           filepath.Join(root, "state", "restore.json"),
+		StagingDir:               filepath.Join(root, "staging"),
 	}
 }
 
@@ -1011,16 +1014,21 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 	if err := ensureXKeenOwnedDirectory(stageDir, setupStagingOwner); err != nil {
 		t.Fatalf("crash stage: %v", err)
 	}
+	interceptionSnapshot, err := service.config.Interception.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("crash interception snapshot: %v", err)
+	}
 	crashJournal := setupTransactionJournal{
 		SchemaVersion: SetupTransactionSchemaVersion,
 		Component:     string(KindSetup),
 		Operation:     SetupOperation,
 		Phase:         setupPhaseSnapshotIntent,
 		Previous: setupPreviousRecord{
-			AllAbsent:         false,
-			Class:             "managed-takeover",
-			SnapshotDir:       service.setupSnapshotRoot(),
-			SelectionSnapshot: []byte("old-selection"),
+			AllAbsent:            false,
+			Class:                "managed-takeover",
+			SnapshotDir:          service.setupSnapshotRoot(),
+			SelectionSnapshot:    []byte("old-selection"),
+			InterceptionSnapshot: interceptionSnapshot,
 		},
 		Candidate: setupCandidateRecord{
 			Xray:             candidate.Xray,
@@ -1031,6 +1039,7 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 			XKeen:            candidate.XKeen,
 			XKeenGeneration:  crashXKeenMeta,
 			LifecycleSHA256:  setupLifecycleDigest(lifecycle),
+			Interception:     candidate.Interception,
 		},
 		SourceClass:  "managed-takeover",
 		SourceDigest: source.Digest,

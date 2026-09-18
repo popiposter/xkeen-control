@@ -357,10 +357,11 @@ or `candidate-validation`); raw errors and candidate details never cross the
 HTTP/UI boundary. F2 adds no policy, scheduler, automatic install,
 operation-history endpoint, production deployment or live qualification.
 
-## Phase G — typed fresh Setup Mode source boundary
+## Phase G — typed Setup takeover/convergence source boundary
 
-Issue #81 adds one closed Setup Mode flow for an exact fresh product layout. It
-accepts only authenticated, same-origin/CSRF-bound `POST` requests to
+Issue #81 adds one closed Setup Mode flow for fresh installation and recognized
+managed/legacy takeover convergence. It accepts only authenticated,
+same-origin/CSRF-bound `POST` requests to
 `/api/v1/setup/preview`, `/api/v1/setup/apply` and `/api/v1/setup/cancel`.
 Preview accepts only `{}` and resolves the server-owned Xray stable, complete
 six-file geodata and qualified XKeen dev identities without downloading bodies
@@ -368,14 +369,20 @@ or writing durable state. Apply and Cancel accept only a one-shot,
 session-bound RAM token.
 
 Setup is not component Install/repair. It prepares the ProductDefault typed
-authority plus an empty canonical node registry, renders the complete staged
+authority plus an empty canonical node registry for fresh Setup, or preserves
+valid `nodes.json`, supported appliance policy, panel-local state and strictly
+migrates reviewed legacy profiles for takeover. It renders the complete staged
 candidate, validates Xray against that staged config and geodata, qualifies the
-XKeen generation and fixed source-owned `S05xkeen`, then enters the existing
-ComponentMutationGate → Coordinator → authority ownership order. One shared
-`setup` journal/recovery path commits the fixed setup-owned paths and starts
-the runtime once. A partial, mixed, manual or uncertain layout is blocked; it
-is never heuristically repaired. Ordinary component update/rollback contracts
-remain unchanged, including their non-empty outbound verification.
+XKeen generation and fixed source-owned `S05xkeen`, and converges one typed
+source-owned Keenetic Hybrid interception generation with TCP redirect and UDP
+TProxy before readiness. Reviewed legacy NDM/netfilter/ipset ownership and
+automatic writers are retired only through fixed typed operations; unrelated
+router state is preserved. One shared `setup` journal/recovery path snapshots
+the previous generation, commits the fixed setup-owned paths, starts/proves
+the runtime and interception owner, and restores both on failure or crash.
+Partial, mixed, manual or uncertain layouts are blocked; there is no generic
+repair or command surface. Ordinary component update/rollback contracts remain
+unchanged, including their non-empty outbound verification.
 
 This is source/CI behavior only. It is not a release, router-install,
 production-candidate or live-Setup qualification claim.
