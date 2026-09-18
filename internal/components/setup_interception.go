@@ -129,13 +129,13 @@ func validSetupInterceptionEvidence(evidence SetupInterceptionEvidence) bool {
 		return false
 	}
 	if evidence.Owner == "" {
-		return !evidence.Complete && !evidence.LegacyHook && !evidence.LegacySchedule && !evidence.LegacyRules && !evidence.LegacyIPSets && !evidence.TCPRedirect && !evidence.UDPTProxy
+		return evidence.Generation == "" && !evidence.Complete && !evidence.LegacyHook && !evidence.LegacySchedule && !evidence.LegacyRules && !evidence.LegacyIPSets && !evidence.TCPRedirect && !evidence.UDPTProxy
 	}
 	if evidence.Owner == setupInterceptionOwner {
 		return evidence.Generation == setupInterceptionGeneration && evidence.Complete && evidence.TCPRedirect && evidence.UDPTProxy && !evidence.LegacyHook && !evidence.LegacySchedule && !evidence.LegacyRules && !evidence.LegacyIPSets
 	}
 	if evidence.Owner == "xkeen-legacy" {
-		return evidence.LegacyHook || evidence.LegacySchedule || evidence.LegacyRules || evidence.LegacyIPSets
+		return evidence.Generation == "" && !evidence.Complete && !evidence.TCPRedirect && !evidence.UDPTProxy && (evidence.LegacyHook || evidence.LegacySchedule || evidence.LegacyRules || evidence.LegacyIPSets)
 	}
 	return false
 }
@@ -254,9 +254,6 @@ func validSetupHybridConfig(files map[string][]byte) bool {
 
 func setupReviewedLegacyNetfilterHook(contents []byte) bool {
 	text := strings.ReplaceAll(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\r", "\n")
-	if len(text) == 0 {
-		return true
-	}
 	return strings.HasPrefix(text, "#!/bin/sh\n# "+setupReviewedLegacyHookMarker) &&
 		strings.Contains(text, "file_netfilter_hook=") &&
 		strings.Contains(text, "file_schedule_hook=") &&
@@ -462,22 +459,12 @@ func (o *fileHybridInterceptionOwner) Restore(_ context.Context, snapshot []byte
 		return ErrSetupInterceptionUnavailable
 	}
 	if len(snapshot) == 0 {
-		current, err := o.Inspect(context.Background())
-		if err != nil {
-			return err
-		}
-		if current.Owner == "" {
-			return nil
-		}
-		if current.Owner != setupInterceptionOwner || !current.Complete {
-			return ErrSetupInterceptionConflict
-		}
-		for _, path := range []string{o.hookPath, o.schedulePath, o.statePath} {
-			if err := removeSetupInterceptionFile(path); err != nil {
-				return err
-			}
-		}
-		return nil
+		// Fresh rollback can interrupt Apply after only one source-owned file
+		// has been replaced. Inspecting only a complete generation would leave
+		// that partial generation behind and make recovery unprovable. Remove
+		// only a wholly source-owned-or-absent partial set; legacy/unknown state
+		// remains a hard conflict.
+		return o.removePartialSourceOwned()
 	}
 	if _, err := parseSetupInterceptionSnapshot(snapshot); err != nil {
 		return err
@@ -485,6 +472,55 @@ func (o *fileHybridInterceptionOwner) Restore(_ context.Context, snapshot []byte
 	// The Setup file snapshot restores exact hook/state bytes. The typed owner
 	// verifies those bytes after the rollback rather than re-creating a foreign
 	// lifecycle or editing a caller-provided path.
+	return nil
+}
+
+func (o *fileHybridInterceptionOwner) removePartialSourceOwned() error {
+	if o == nil {
+		return ErrSetupInterceptionUnavailable
+	}
+	hookKind, _, err := setupInterceptionFileKind(o.hookPath, func(contents []byte) bool { return bytes.Equal(contents, setupSourceOwnedHybridHookBytes()) }, setupReviewedLegacyNetfilterHook)
+	if err != nil {
+		return err
+	}
+	scheduleKind, _, err := setupInterceptionFileKind(o.schedulePath, func(contents []byte) bool { return bytes.Equal(contents, setupSourceOwnedScheduleHookBytes()) }, setupReviewedLegacyScheduleHook)
+	if err != nil {
+		return err
+	}
+	state, err := setupPathState(o.statePath)
+	if err != nil {
+		return err
+	}
+	stateSource := false
+	if state != setupPathAbsent {
+		if state != setupPathRegular {
+			return ErrSetupInterceptionConflict
+		}
+		contents, readErr := readBoundedSetupFile(o.statePath, setupMaxInterceptionBytes)
+		if readErr != nil {
+			return ErrSetupInterceptionConflict
+		}
+		if _, parseErr := parseSetupInterceptionState(contents); parseErr != nil {
+			return parseErr
+		}
+		stateSource = true
+	}
+	if hookKind == "legacy" || scheduleKind == "legacy" || hookKind == "unknown" || scheduleKind == "unknown" {
+		return ErrSetupInterceptionConflict
+	}
+	if hookKind != "source" && scheduleKind != "source" && !stateSource {
+		return nil
+	}
+	for _, path := range []string{o.hookPath, o.schedulePath, o.statePath} {
+		if err := removeSetupInterceptionFile(path); err != nil {
+			return err
+		}
+	}
+	for _, directory := range []string{filepath.Dir(o.hookPath), filepath.Dir(o.schedulePath), filepath.Dir(o.statePath)} {
+		if err := o.syncDir(directory); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

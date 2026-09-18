@@ -52,6 +52,25 @@ func TestSetupInterceptionFreshCreatesAndVerifiesHybridGeneration(t *testing.T) 
 	}
 }
 
+func TestSetupInterceptionFreshRollbackRemovesPartialSourceGeneration(t *testing.T) {
+	paths := setupTestPaths(t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(paths.InterceptionHook), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.InterceptionHook, setupSourceOwnedHybridHookBytes(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	owner := NewFileHybridInterceptionOwner(paths, func(string) error { return nil })
+	if err := owner.Restore(context.Background(), nil); err != nil {
+		t.Fatalf("partial fresh interception rollback failed: %v", err)
+	}
+	for _, path := range []string{paths.InterceptionHook, paths.InterceptionScheduleHook, paths.InterceptionState} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("partial source-owned interception artifact survived rollback at %s: %v", path, err)
+		}
+	}
+}
+
 func TestSetupInterceptionTakeoverRetiresReviewedOwnerPreservesUnrelatedNDM(t *testing.T) {
 	root := t.TempDir()
 	paths := setupTestPaths(root)
