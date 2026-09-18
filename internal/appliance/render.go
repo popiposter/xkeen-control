@@ -18,7 +18,7 @@ import (
 // able to render a complete candidate on a router without a repository
 // checkout. They are fixed product inputs, not editable appliance state.
 //
-//go:embed templates/01_log.json templates/03_inbounds.json templates/06_policy.json templates/08_api.json templates/xkeen.json
+//go:embed templates/01_log.json templates/02_dns.json templates/03_inbounds.json templates/05_routing.json templates/06_policy.json templates/07_observatory.json templates/08_api.json templates/xkeen.json
 var compatibilityTemplates embed.FS
 
 var fixedTemplatePaths = []string{

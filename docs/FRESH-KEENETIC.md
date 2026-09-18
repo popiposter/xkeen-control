@@ -15,7 +15,12 @@ Before panel bootstrap, the router needs:
 - supported `linux/arm64` architecture;
 - network access to the fixed public GitHub release hosts.
 
-XKeen/Xray may already be installed for a running appliance, but the current panel bootstrap does not install or repair them. Missing XKeen/Xray/configuration is reported as Setup Mode. Typed XKeen/Xray/geodata installation and lifecycle management remains planned under Issue #4 and must not be assumed available in `v0.2.0`.
+XKeen/Xray may already be installed for a running appliance, but the signed
+`v0.2.0` panel bootstrap does not install or repair them. The Issue #81 source
+boundary adds a closed fresh-only Setup Mode flow for a later candidate: one
+server-owned ProductDefault + empty-registry transaction using fixed qualified
+Xray/geodata/XKeen primitives. It is source/CI-only in this branch and must not
+be assumed available in `v0.2.0` or used for live qualification.
 
 Do not run blanket `opkg upgrade` as a routine product bootstrap step. Install/update only prerequisites intentionally required by the active procedure. The historical repository `bootstrap.sh` is deliberately not part of the public product path because it predates the bounded installer architecture and used blanket package upgrade behavior.
 
@@ -154,8 +159,14 @@ Use an SSH tunnel or one explicitly configured private LAN bind. Do not expose t
 
 ## Current/next component lifecycle — Issue #4
 
-D.2 / Issue #4 is the current product slice and remains **planned, not deployed** in `v0.2.0`.
+D.2 / Issue #4 is the current product slice and remains **not deployed** in
+`v0.2.0`. Issue #81's fresh-only Setup implementation is source/CI-only; it
+does not authorize release publication, router access, real candidate traffic,
+or live Setup Apply.
 
 It will add typed capability-aware inventory and bounded lifecycle operations for XKeen, Xray and required geodata while preserving the D.1 appliance/node authorities and the shared lifecycle coordinator. The product path must not expose a shell, generic package manager, arbitrary URL downloader or blanket `opkg upgrade` behavior.
 
-Until the relevant #4 phases are implemented, signed-released and live-qualified, Setup Mode reports missing XKeen/Xray prerequisites but does not install/repair them, and operators must not assume component update/rollback controls exist in the panel.
+Until the feature-complete #4 candidate is signed-released and live-qualified,
+the panel's Setup state is not an operational installation authorization. The
+Issue #81 flow rejects partial/mixed layouts, has no generic repair path, and
+must remain offline/synthetic in source qualification.

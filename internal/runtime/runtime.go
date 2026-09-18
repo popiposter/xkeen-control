@@ -82,6 +82,9 @@ type SetupStatus struct {
 	Xray          string `json:"xray"`
 	Configuration string `json:"configuration"`
 	Runtime       string `json:"runtime"`
+	State         string `json:"state"`
+	Eligible      bool   `json:"eligible"`
+	ReasonCode    string `json:"reasonCode,omitempty"`
 }
 
 type XrayStatus struct {
@@ -470,9 +473,27 @@ func (c *Collector) collect(ctx context.Context) View {
 }
 
 func (c *Collector) setupStatus(status Status, xkeenState xkeen.Snapshot, xrayState xrayapi.Snapshot, configState configview.Summary) SetupStatus {
-	result := SetupStatus{Panel: "ready", Xkeen: "missing", Xray: "missing", Configuration: "missing", Runtime: "setup"}
+	result := SetupStatus{Panel: "ready", Xkeen: "missing", Xray: "missing", Configuration: "missing", Runtime: "setup", State: "fresh", Eligible: true, ReasonCode: "fresh"}
 	if c.deps.Setup != nil {
 		result = c.deps.Setup()
+	}
+	if result.Panel == "" {
+		result.Panel = "ready"
+	}
+	if result.Xkeen == "" {
+		result.Xkeen = "missing"
+	}
+	if result.Xray == "" {
+		result.Xray = "missing"
+	}
+	if result.Configuration == "" {
+		result.Configuration = "missing"
+	}
+	if result.Runtime == "" {
+		result.Runtime = "setup"
+	}
+	if result.State == "" {
+		result.State = "fresh"
 	}
 	if xrayState.APIReachable || xkeenState.XrayRunning {
 		result.Xray = "ready"

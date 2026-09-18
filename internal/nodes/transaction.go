@@ -417,6 +417,29 @@ func (a CommandActivator) Restart(ctx context.Context) error {
 	return errors.New("Xray restart failed")
 }
 
+// Start is the setup-only lifecycle entry point. Ordinary update/rollback
+// callers continue to use Restart, which preserves their existing fallback
+// contract. Fresh Setup owns one fixed start after all candidates have been
+// durably committed and must not silently turn that start into a restart.
+func (a CommandActivator) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if a.FixedLifecycleInit == "" {
+		return errors.New("Xray start failed")
+	}
+	timeout := a.RestartTimeout
+	if timeout <= 0 {
+		timeout = 45 * time.Second
+	}
+	startContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if err := a.runFixedLifecycle(startContext, "start"); err != nil {
+		return errors.New("Xray start failed")
+	}
+	return nil
+}
+
 func (a CommandActivator) restartViaFixedInit(ctx context.Context) error {
 	info, err := os.Lstat(a.FixedLifecycleInit)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
@@ -656,6 +679,56 @@ func (a CommandActivator) VerifyOutboundTags(ctx context.Context, expected []str
 	return nil
 }
 
+// VerifyEmptyOutboundTags is intentionally separate from VerifyOutboundTags.
+// The ordinary update/node contract rejects an empty expected set; Setup Mode
+// proves the fixed empty-registry baseline through this narrower method.
+func (a CommandActivator) VerifyEmptyOutboundTags(ctx context.Context) error {
+	if a.ActiveOutboundsPath == "" {
+		return errors.New("active outbound artifact unavailable")
+	}
+	contents, err := ReadBoundedFile(a.ActiveOutboundsPath, MaxLegacyDocument)
+	if err != nil {
+		return errors.New("active outbound artifact unavailable")
+	}
+	var document struct {
+		Outbounds []struct {
+			Tag string `json:"tag"`
+		} `json:"outbounds"`
+	}
+	if err := json.Unmarshal(contents, &document); err != nil {
+		return errors.New("active outbound artifact is invalid")
+	}
+	allowed := map[string]struct{}{"api": {}, "block": {}, "direct": {}, "dns-out": {}}
+	seen := make(map[string]struct{}, len(document.Outbounds))
+	for _, outbound := range document.Outbounds {
+		if _, ok := allowed[outbound.Tag]; !ok {
+			return errors.New("empty-registry outbound artifact contains an unexpected tag")
+		}
+		if _, ok := seen[outbound.Tag]; ok {
+			return errors.New("empty-registry outbound artifact contains a duplicate tag")
+		}
+		seen[outbound.Tag] = struct{}{}
+	}
+	if len(seen) != len(allowed) {
+		return errors.New("empty-registry outbound artifact is incomplete")
+	}
+	routingPath := a.RoutingPath
+	if routingPath == "" {
+		routingPath = filepath.Join(filepath.Dir(a.ActiveOutboundsPath), "05_routing.json")
+	}
+	if err := verifyEmptyBalancerSelector(routingPath, "bal-proxy"); err != nil {
+		return err
+	}
+	verifyRuntime := a.RuntimeVerifier
+	if verifyRuntime == nil {
+		verifyRuntime = verifyEmptyXrayBalancerRuntime
+	}
+	if err := verifyRuntime(ctx, a.APIAddress, "bal-proxy", nil); err != nil {
+		return errors.New("active Xray balancer does not expose the empty-registry baseline")
+	}
+	return nil
+}
+
 func verifyBalancerSelector(path, balancerTag string, expected []string) error {
 	contents, err := ReadBoundedFile(path, MaxLegacyDocument)
 	if err != nil {
@@ -705,6 +778,41 @@ func verifyBalancerSelector(path, balancerTag string, expected []string) error {
 	return nil
 }
 
+func verifyEmptyBalancerSelector(path, balancerTag string) error {
+	contents, err := ReadBoundedFile(path, MaxLegacyDocument)
+	if err != nil {
+		return errors.New("active routing policy unavailable")
+	}
+	var document struct {
+		Routing struct {
+			Balancers []struct {
+				Tag      string   `json:"tag"`
+				Selector []string `json:"selector"`
+				Strategy struct {
+					Type string `json:"type"`
+				} `json:"strategy"`
+			} `json:"balancers"`
+		} `json:"routing"`
+	}
+	if json.Unmarshal(contents, &document) != nil {
+		return errors.New("active routing policy is invalid")
+	}
+	found := 0
+	for _, balancer := range document.Routing.Balancers {
+		if balancer.Tag != balancerTag {
+			continue
+		}
+		found++
+		if !strings.EqualFold(balancer.Strategy.Type, "leastPing") || len(balancer.Selector) != 1 || balancer.Selector[0] != "proxy-" {
+			return errors.New("empty-registry balancer selector contract is invalid")
+		}
+	}
+	if found != 1 {
+		return errors.New("empty-registry balancer selector contract is unavailable")
+	}
+	return nil
+}
+
 func verifyXrayBalancerRuntime(ctx context.Context, address, balancerTag string, expected []string) error {
 	verifyContext, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
@@ -742,4 +850,22 @@ func validBalancerRuntime(runtime xrayapi.BalancerRuntime, expected []string) bo
 		}
 	}
 	return true
+}
+
+func verifyEmptyXrayBalancerRuntime(ctx context.Context, address, balancerTag string, _ []string) error {
+	verifyContext, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		runtime, err := xrayapi.ReadBalancerRuntime(verifyContext, address, balancerTag, 3*time.Second)
+		if err == nil && len(runtime.PrincipleTargets) == 0 && runtime.Override == "" {
+			return nil
+		}
+		select {
+		case <-verifyContext.Done():
+			return errors.New("empty-registry Xray balancer runtime unavailable")
+		case <-ticker.C:
+		}
+	}
 }

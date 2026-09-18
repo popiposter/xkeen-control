@@ -91,6 +91,9 @@ GET  /api/v1/components
 POST /api/v1/components/check
 GET  /api/v1/components/policy
 POST /api/v1/components/policy
+POST /api/v1/setup/preview
+POST /api/v1/setup/apply
+POST /api/v1/setup/cancel
 GET  /healthz
 ```
 
@@ -267,7 +270,7 @@ Benchmark working state stays in RAM/`/tmp`; one compact completed-run snapshot 
 
 Explicit lifecycle operations must not race selection/probe/benchmark work. Node Apply, manual selection mutation and panel update/rollback share the coordinator lifecycle barrier. The barrier gives explicit operator mutations priority, drains/cancels managed work, holds the mutation critical section through activation/rollback and triggers immediate reconciliation after release.
 
-D.1 import Apply reuses this same maintenance ownership model. Component lifecycle in #4 must also reuse it rather than start independent mutation goroutines; #4 remains planned.
+D.1 import Apply reuses this same maintenance ownership model. Component lifecycle in #4 must also reuse it rather than start independent mutation goroutines. The Issue #81 Setup source boundary uses the same ComponentMutationGate → Coordinator → authority order and one shared component/setup recovery arbiter.
 
 ## Signed panel release / update boundary
 
@@ -285,7 +288,7 @@ Panel install/update does not install or repair XKeen/Xray and does not rewrite 
 
 Normal polling, update checks and runtime telemetry cause no persistent writes unless the operator deliberately changes policy or applies a release/state mutation.
 
-Persistent writes are purpose-specific and bounded, including auth/listener changes, explicit typed `appliance.json` adoption/restore changes, explicit `nodes.json` mutations plus generated active outbounds, the authenticated component policy at `/opt/etc/xkeen-control/state/component-policy.json`, real stable-selection changes, one compact completed legacy benchmark snapshot, compact panel release/update markers and bounded rollback generations. Adaptive generations, manual progress/results and component scheduler timestamps, status, notification dedupe and failures remain in RAM.
+Persistent writes are purpose-specific and bounded, including auth/listener changes, explicit typed `appliance.json` adoption/restore changes, explicit `nodes.json` mutations plus generated active outbounds, the authenticated component policy at `/opt/etc/xkeen-control/state/component-policy.json`, real stable-selection changes, one compact completed legacy benchmark snapshot, compact panel release/update markers and bounded rollback generations. The Issue #81 Setup source boundary additionally commits the empty authority pair, complete managed config/geodata, exact candidate generations, fixed `S05xkeen` and one bounded shared journal only during explicit Apply; its plan/token remains in RAM. Adaptive generations, manual progress/results and component scheduler timestamps, status, notification dedupe and failures remain in RAM.
 
 No SQLite/Redis/Prometheus/Grafana/growing revision history belongs on the router.
 
@@ -353,6 +356,29 @@ pre-commit class (`artifact-download`, `artifact-integrity`, `archive-extract`,
 or `candidate-validation`); raw errors and candidate details never cross the
 HTTP/UI boundary. F2 adds no policy, scheduler, automatic install,
 operation-history endpoint, production deployment or live qualification.
+
+## Phase G — typed fresh Setup Mode source boundary
+
+Issue #81 adds one closed Setup Mode flow for an exact fresh product layout. It
+accepts only authenticated, same-origin/CSRF-bound `POST` requests to
+`/api/v1/setup/preview`, `/api/v1/setup/apply` and `/api/v1/setup/cancel`.
+Preview accepts only `{}` and resolves the server-owned Xray stable, complete
+six-file geodata and qualified XKeen dev identities without downloading bodies
+or writing durable state. Apply and Cancel accept only a one-shot,
+session-bound RAM token.
+
+Setup is not component Install/repair. It prepares the ProductDefault typed
+authority plus an empty canonical node registry, renders the complete staged
+candidate, validates Xray against that staged config and geodata, qualifies the
+XKeen generation and fixed source-owned `S05xkeen`, then enters the existing
+ComponentMutationGate → Coordinator → authority ownership order. One shared
+`setup` journal/recovery path commits the fixed setup-owned paths and starts
+the runtime once. A partial, mixed, manual or uncertain layout is blocked; it
+is never heuristically repaired. Ordinary component update/rollback contracts
+remain unchanged, including their non-empty outbound verification.
+
+This is source/CI behavior only. It is not a release, router-install,
+production-candidate or live-Setup qualification claim.
 
 ## Phase F3 — bounded component policy and check-only scheduler
 

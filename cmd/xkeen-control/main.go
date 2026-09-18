@@ -46,6 +46,10 @@ var httpWriteTimeout = componentHTTPWriteWindow(
 	componentMutationResponseGrace,
 )
 
+func setupHTTPWriteWindow() time.Duration {
+	return components.DefaultSetupTransactionLimit + components.DefaultSetupRecoveryTimeout + componentMutationResponseGrace
+}
+
 func componentHTTPWriteWindow(admission, operation, recovery, responseGrace time.Duration) time.Duration {
 	return admission + operation + recovery + responseGrace
 }
@@ -165,6 +169,7 @@ func main() {
 	componentXrayService := newXrayService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
 	componentGeodataService := newGeodataService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
 	componentXKeenService := newXKeenService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
+	setupService := newSetupService(coordinator, authorityLease, xrayReader, componentGate, componentMaintenance)
 	componentPolicy := components.NewPolicyManager()
 	componentMutations := components.NewMutationService(components.MutationConfig{
 		// Preview resolution is intentionally separate from the transaction
@@ -194,6 +199,7 @@ func main() {
 		XKeenStagingDir:            getenv("XKEEN_XKEEN_COMPONENT_STAGING_DIR", components.DefaultXKeenComponentStagingDir),
 		XKeenActivationPath:        getenv("XKEEN_XKEEN_ACTIVATION_PATH", components.DefaultXKeenActivationPath),
 		XKeenMarkerStagingPath:     getenv("XKEEN_XKEEN_GENERATION_MARKER", components.DefaultXKeenMarkerPath) + ".staging",
+		SetupStagingDir:            getenv("XKEEN_SETUP_STAGING_DIR", components.DefaultSetupStagingDir),
 	}
 	recoveryState, componentJournalErr := components.InspectComponentRecovery(componentRecoveryConfig)
 	if restoreJournalErr != nil || componentJournalErr != nil {
@@ -215,6 +221,8 @@ func main() {
 			recoveryErr = componentGeodataService.RecoverStartup(context.Background())
 		case components.KindXKeen:
 			recoveryErr = componentXKeenService.RecoverStartup(context.Background())
+		case components.KindSetup:
+			recoveryErr = setupService.RecoverStartup(context.Background())
 		default:
 			recoveryErr = errors.New("component recovery owner is unavailable")
 		}
@@ -244,6 +252,10 @@ func main() {
 		log.Print("component startup recovery is not proven")
 		os.Exit(1)
 	}
+	if err := setupService.Ready(); err != nil {
+		log.Print("setup startup recovery is not proven")
+		os.Exit(1)
+	}
 	collector := controlruntime.NewCollector(buildinfo.Current().Version, startedAt, controlruntime.Dependencies{
 		Xray:             xrayReader,
 		Xkeen:            xkeenReader,
@@ -251,7 +263,8 @@ func main() {
 		OutboundTagsPath: getenv("XKEEN_NODES_PATH", defaultNodesPath),
 		C1:               coordinator,
 		Setup: func() controlruntime.SetupStatus {
-			return controlruntime.SetupStatus{Panel: "ready", Credential: authManager.CredentialState()}
+			projection := setupService.Status()
+			return controlruntime.SetupStatus{Panel: "ready", Credential: authManager.CredentialState(), State: projection.State, Eligible: projection.Eligible, ReasonCode: string(projection.ReasonCode)}
 		},
 	})
 	collector.SetBuildInfo(buildinfo.Current())
@@ -312,6 +325,7 @@ func main() {
 		ComponentChecks:    componentPolicyChecker,
 		ComponentMutations: componentMutations,
 		ComponentPolicy:    componentPolicy,
+		Setup:              setupService,
 		Updates:            updateManager,
 		Restore:            restoreService,
 		Backup: backup.NewService(backup.Config{
@@ -332,7 +346,7 @@ func main() {
 		// independent bounded context after a late activation failure. Keep the
 		// response window longer than all of those budgets so the operator can
 		// observe the committed or recovered result.
-		WriteTimeout:   httpWriteTimeout,
+		WriteTimeout:   max(httpWriteTimeout, setupHTTPWriteWindow()),
 		IdleTimeout:    30 * time.Second,
 		MaxHeaderBytes: 16 << 10,
 	}
@@ -513,6 +527,48 @@ func newXKeenService(coordinator *c1.Coordinator, lease *authority.Lease, applia
 			"/etc/crontabs/root", "/opt/etc/cron.d", "/opt/etc/init.d",
 		},
 		MutationGate: mutationGate, Maintenance: maintenance,
+	})
+}
+
+func newSetupService(coordinator *c1.Coordinator, lease *authority.Lease, xrayReader *xrayapi.Client, mutationGate *components.ComponentMutationGate, maintenance *components.ComponentMaintenance) *components.SetupService {
+	paths := components.DefaultSetupPaths()
+	configDir := getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir)
+	paths.XrayBinary = getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary)
+	paths.XrayConfigDir = configDir
+	paths.XrayAssetDir = getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)
+	paths.XkeenBinary = getenv("XKEEN_XKEEN_BINARY", components.DefaultXkeenBinary)
+	paths.XkeenModuleDir = getenv("XKEEN_XKEEN_MODULE_DIR", components.DefaultXkeenModuleDir)
+	paths.XkeenConfig = getenv("XKEEN_CONFIG_PATH", components.DefaultXkeenConfig)
+	paths.XkeenMarker = getenv("XKEEN_XKEEN_GENERATION_MARKER", components.DefaultXKeenMarkerPath)
+	paths.LifecycleInit = components.DefaultXkeenRuntimeInit
+	paths.LegacyLifecycleInit = components.DefaultXkeenLegacyRuntimeInit
+	paths.SiblingModule = filepath.Join(filepath.Dir(paths.XkeenModuleDir), "_xkeen")
+	paths.InstallHelper = "/opt/root/install.sh"
+	paths.Appliance = getenv("XKEEN_APPLIANCE_PATH", defaultAppliancePath)
+	paths.Nodes = getenv("XKEEN_NODES_PATH", defaultNodesPath)
+	paths.ActiveOutbounds = getenv("XKEEN_ACTIVE_OUTBOUNDS", filepath.Join(configDir, "04_outbounds.json"))
+	paths.Journal = getenv("XKEEN_COMPONENT_TRANSACTION_PATH", components.DefaultComponentTransactionJournal)
+	stateDir := getenv("XKEEN_APPLIANCE_IMPORT_STATE_DIR", "/opt/etc/xkeen-control/state")
+	paths.RestoreJournal = filepath.Join(stateDir, "appliance-import-transaction.json")
+	paths.StagingDir = getenv("XKEEN_SETUP_STAGING_DIR", components.DefaultSetupStagingDir)
+	activator := nodes.CommandActivator{
+		XrayBinary: paths.XrayBinary, XrayAssetDir: paths.XrayAssetDir, XkeenBinary: paths.XkeenBinary,
+		FixedLifecycleInit: paths.LifecycleInit, APIAddress: getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress),
+		ActiveOutboundsPath: paths.ActiveOutbounds, RoutingPath: filepath.Join(paths.XrayConfigDir, "05_routing.json"),
+	}
+	activeRuntime := components.CommandXrayRuntime{ActiveBinary: paths.XrayBinary, ConfigDir: paths.XrayConfigDir, AssetDir: paths.XrayAssetDir}
+	return components.NewSetupService(components.SetupConfig{
+		Paths:        paths,
+		XrayResolver: components.NewXrayResolver(nil, nil), XrayDownloader: components.NewXrayArtifactDownloader(nil, nil),
+		GeodataResolver: components.NewGeodataResolver(nil, nil), GeodataDownloader: components.NewGeodataArtifactDownloader(nil, nil),
+		XKeenResolver: components.NewXKeenResolver(nil, nil), XKeenDownloader: components.NewXKeenArtifactDownloader(nil, nil),
+		CandidateProbe: components.CommandXrayCandidateProbe{Binary: paths.XrayBinary}, CandidateValidator: components.CommandXrayCandidateValidator{Binary: paths.XrayBinary},
+		Runtime: components.SetupRuntimeFuncs{
+			StartFunc: activator.Start, WaitReadyFunc: activator.WaitReady, ProbeReachableFunc: xrayReader.ProbeReachable,
+			ValidateActiveConfigFunc: activeRuntime.ValidateActiveConfig, VerifyEmptyFunc: activator.VerifyEmptyOutboundTags,
+		},
+		MutationGate: mutationGate, Maintenance: maintenance, Coordinator: coordinator, AuthorityLease: lease,
+		TransactionTimeout: components.DefaultSetupTransactionLimit,
 	})
 }
 

@@ -172,6 +172,7 @@ type ComponentRecoveryConfig struct {
 	XKeenStagingDir            string
 	XKeenActivationPath        string
 	XKeenMarkerStagingPath     string
+	SetupStagingDir            string
 }
 
 type ComponentRecoveryState struct {
@@ -180,10 +181,11 @@ type ComponentRecoveryState struct {
 	XrayStagingPresent    bool
 	GeodataStagingPresent bool
 	XKeenStagingPresent   bool
+	SetupStagingPresent   bool
 }
 
 func (s ComponentRecoveryState) Pending() bool {
-	return s.JournalPresent || s.XrayStagingPresent || s.GeodataStagingPresent || s.XKeenStagingPresent
+	return s.JournalPresent || s.XrayStagingPresent || s.GeodataStagingPresent || s.XKeenStagingPresent || s.SetupStagingPresent
 }
 
 // InspectComponentRecovery validates the single shared journal and arbitrates
@@ -204,6 +206,13 @@ func InspectComponentRecovery(config ComponentRecoveryConfig) (ComponentRecovery
 	geodataStaging, err := componentStagingPresent(config.GeodataPreviousStagingPath, config.GeodataStagingDir)
 	if err != nil {
 		return ComponentRecoveryState{}, err
+	}
+	setupStaging := false
+	if config.SetupStagingDir != "" {
+		setupStaging, err = componentStagingRootPresent(config.SetupStagingDir)
+		if err != nil {
+			return ComponentRecoveryState{}, err
+		}
 	}
 	xkeenConfigured := config.XKeenPreviousStagingPath != "" || config.XKeenStagingDir != "" || config.XKeenActivationPath != "" || config.XKeenMarkerStagingPath != ""
 	xkeenStaging := false
@@ -232,17 +241,17 @@ func InspectComponentRecovery(config ComponentRecoveryConfig) (ComponentRecovery
 	if err != nil {
 		return ComponentRecoveryState{}, err
 	}
-	if restorePresent && (journalPresent || xrayStaging || geodataStaging || xkeenStaging) {
+	if restorePresent && (journalPresent || xrayStaging || geodataStaging || xkeenStaging || setupStaging) {
 		return ComponentRecoveryState{}, ErrComponentRecoveryConflict
 	}
-	if (xrayStaging && geodataStaging) || (xrayStaging && xkeenStaging) || (geodataStaging && xkeenStaging) {
+	if (xrayStaging && geodataStaging) || (xrayStaging && xkeenStaging) || (geodataStaging && xkeenStaging) || setupStaging && (xrayStaging || geodataStaging || xkeenStaging) {
 		return ComponentRecoveryState{}, ErrComponentRecoveryConflict
 	}
 	if journalPresent {
-		if envelope.Component == KindXray && (geodataStaging || xkeenStaging) || envelope.Component == KindGeodata && (xrayStaging || xkeenStaging) || envelope.Component == KindXKeen && (xrayStaging || geodataStaging) {
+		if envelope.Component == KindXray && (geodataStaging || xkeenStaging || setupStaging) || envelope.Component == KindGeodata && (xrayStaging || xkeenStaging || setupStaging) || envelope.Component == KindXKeen && (xrayStaging || geodataStaging || setupStaging) || envelope.Component == KindSetup && (xrayStaging || geodataStaging || xkeenStaging) {
 			return ComponentRecoveryState{}, ErrComponentRecoveryConflict
 		}
-		return ComponentRecoveryState{Kind: envelope.Component, JournalPresent: true, XrayStagingPresent: xrayStaging, GeodataStagingPresent: geodataStaging, XKeenStagingPresent: xkeenStaging}, nil
+		return ComponentRecoveryState{Kind: envelope.Component, JournalPresent: true, XrayStagingPresent: xrayStaging, GeodataStagingPresent: geodataStaging, XKeenStagingPresent: xkeenStaging, SetupStagingPresent: setupStaging}, nil
 	}
 	var kind ComponentKind
 	if xrayStaging {
@@ -251,8 +260,10 @@ func InspectComponentRecovery(config ComponentRecoveryConfig) (ComponentRecovery
 		kind = KindGeodata
 	} else if xkeenStaging {
 		kind = KindXKeen
+	} else if setupStaging {
+		kind = KindSetup
 	}
-	return ComponentRecoveryState{Kind: kind, XrayStagingPresent: xrayStaging, GeodataStagingPresent: geodataStaging, XKeenStagingPresent: xkeenStaging}, nil
+	return ComponentRecoveryState{Kind: kind, XrayStagingPresent: xrayStaging, GeodataStagingPresent: geodataStaging, XKeenStagingPresent: xkeenStaging, SetupStagingPresent: setupStaging}, nil
 }
 
 var (
@@ -278,7 +289,7 @@ func readComponentJournalEnvelope(path string) (componentJournalEnvelope, bool, 
 		return componentJournalEnvelope{}, false, errComponentRecoveryInvalid
 	}
 	allowed := map[string]struct{}{
-		"schemaVersion": {}, "component": {}, "operation": {}, "phase": {}, "previous": {}, "candidate": {}, "authorityGeneration": {}, "preservedFingerprint": {}, "xray": {},
+		"schemaVersion": {}, "component": {}, "operation": {}, "phase": {}, "previous": {}, "candidate": {}, "created": {}, "authorityGeneration": {}, "preservedFingerprint": {}, "xray": {},
 	}
 	for key := range object {
 		if _, ok := allowed[key]; !ok {
@@ -291,7 +302,7 @@ func readComponentJournalEnvelope(path string) (componentJournalEnvelope, bool, 
 		}
 	}
 	var envelope componentJournalEnvelope
-	if err := json.Unmarshal(contents, &envelope); err != nil || envelope.SchemaVersion != XrayTransactionSchemaVersion || (envelope.Component != KindXray && envelope.Component != KindGeodata && envelope.Component != KindXKeen) || (envelope.Operation != xrayOperationUpdate && envelope.Operation != xrayOperationRollback) {
+	if err := json.Unmarshal(contents, &envelope); err != nil || envelope.SchemaVersion != XrayTransactionSchemaVersion || (envelope.Component != KindXray && envelope.Component != KindGeodata && envelope.Component != KindXKeen && envelope.Component != KindSetup) || (envelope.Component != KindSetup && envelope.Operation != xrayOperationUpdate && envelope.Operation != xrayOperationRollback) || (envelope.Component == KindSetup && envelope.Operation != SetupOperation) {
 		return componentJournalEnvelope{}, false, errComponentRecoveryInvalid
 	}
 	switch envelope.Component {
@@ -307,6 +318,10 @@ func readComponentJournalEnvelope(path string) (componentJournalEnvelope, bool, 
 		if envelope.Phase != xkeenPhasePrepared && envelope.Phase != xkeenPhaseXkeenCommitted && envelope.Phase != xkeenPhaseModuleCommitted && envelope.Phase != xkeenPhaseGenerationCommitted && envelope.Phase != xkeenPhaseFilesCommitted && envelope.Phase != xkeenPhaseRuntimeVerified {
 			return componentJournalEnvelope{}, false, errComponentRecoveryInvalid
 		}
+	case KindSetup:
+		if envelope.Phase != setupPhasePrepared && envelope.Phase != setupPhaseNodesCommitted && envelope.Phase != setupPhaseAuthorityCommitted && envelope.Phase != setupPhaseConfigCommitted && envelope.Phase != setupPhaseGeodataCommitted && envelope.Phase != setupPhaseXrayCommitted && envelope.Phase != setupPhaseXKeenCommitted && envelope.Phase != setupPhaseLifecycleCommitted && envelope.Phase != setupPhaseRuntimeVerified {
+			return componentJournalEnvelope{}, false, errComponentRecoveryInvalid
+		}
 	}
 	decoder = json.NewDecoder(bytes.NewReader(contents))
 	decoder.DisallowUnknownFields()
@@ -320,9 +335,14 @@ func readComponentJournalEnvelope(path string) (componentJournalEnvelope, bool, 
 		if err := decoder.Decode(&journal); err != nil || decoder.Decode(&extra) != io.EOF || validateGeodataJournal(journal) != nil {
 			return componentJournalEnvelope{}, false, errComponentRecoveryInvalid
 		}
-	} else {
+	} else if envelope.Component == KindXKeen {
 		var journal xkeenTransactionJournal
 		if err := decoder.Decode(&journal); err != nil || decoder.Decode(&extra) != io.EOF || validateXKeenJournal(journal) != nil {
+			return componentJournalEnvelope{}, false, errComponentRecoveryInvalid
+		}
+	} else {
+		var journal setupTransactionJournal
+		if err := decoder.Decode(&journal); err != nil || decoder.Decode(&extra) != io.EOF || validateSetupJournal(journal) != nil {
 			return componentJournalEnvelope{}, false, errComponentRecoveryInvalid
 		}
 	}
