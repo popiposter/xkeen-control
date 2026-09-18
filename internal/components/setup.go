@@ -64,6 +64,7 @@ const (
 	setupMaxSnapshotEntries  = 1024
 	setupMaxSnapshotBytes    = 256 << 20
 	setupMaxCronBytes        = 128 << 10
+	setupMaxLifecycleBytes   = 256 << 10
 	setupMaxSelectionBytes   = 8 << 10
 	setupGeodataWriterScript = "update-" + "geodata.sh"
 )
@@ -1558,7 +1559,7 @@ func estimateSetupSnapshotBytes(paths SetupPaths) int64 {
 	// the old 8 MiB placeholder (and a generation-file-sized allowance) could
 	// pass /tmp while leaving persistent rollback storage unproven.
 	maxFileBytes := int64(MaxXrayCandidateBinaryBytes)
-	for _, limit := range []int64{MaxGeodataFileBytes, MaxXKeenGenerationFileBytes, nodes.MaxLegacyDocument, appliance.MaxDocumentSize, setupMaxCronBytes} {
+	for _, limit := range []int64{MaxGeodataFileBytes, MaxXKeenGenerationFileBytes, nodes.MaxLegacyDocument, appliance.MaxDocumentSize, setupMaxCronBytes, setupMaxLifecycleBytes} {
 		if limit > maxFileBytes {
 			maxFileBytes = limit
 		}
@@ -1624,12 +1625,10 @@ func setupResourceDemand(paths SetupPaths, class string, xrayArchive, geodataByt
 	for _, path := range paths.WriterScripts {
 		persistent = append(persistent, setupSpaceRequirement{path: filepath.Dir(path), bytes: uint64(setupMaxCronBytes)})
 	}
-	// Reserve the bounded previous-environment root on every Setup admission.
-	// Fresh Setup does not populate it, but keeping the reserve in the same
-	// typed demand model preserves the durable rollback budget if the layout is
-	// concurrently classified as takeover before the first persistent write.
-	persistent = append(persistent, setupSpaceRequirement{path: paths.PreviousDir, bytes: uint64(estimateSetupSnapshotBytes(paths))})
 	if class != "fresh" {
+		// Only takeover/reconciliation creates a previous-environment root.
+		// Fresh Setup must not reserve that unused rollback budget.
+		persistent = append(persistent, setupSpaceRequirement{path: paths.PreviousDir, bytes: uint64(estimateSetupSnapshotBytes(paths))})
 		// During activation the new generation and the displaced old
 		// generation can coexist in the activation directory in addition to
 		// the bounded previous-environment snapshot.
@@ -1912,7 +1911,7 @@ func setupLifecycleIdentity(path string) string {
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
 		return ""
 	}
-	contents, err := readBoundedSetupFile(path, 512<<10)
+	contents, err := readBoundedSetupFile(path, setupMaxLifecycleBytes)
 	if err != nil {
 		return ""
 	}
@@ -2104,7 +2103,7 @@ func (s *SetupService) setupConfigured(paths SetupPaths, managed []string) bool 
 	if err != nil || lifecycleInfo.Mode()&os.ModeSymlink != 0 || !lifecycleInfo.Mode().IsRegular() || runtime.GOOS != "windows" && lifecycleInfo.Mode().Perm()&0o111 == 0 {
 		return false
 	}
-	lifecycle, lifecycleErr := readBoundedSetupFile(paths.LifecycleInit, 16<<10)
+	lifecycle, lifecycleErr := readBoundedSetupFile(paths.LifecycleInit, setupMaxLifecycleBytes)
 	expectedLifecycle, expectedErr := setupLifecycleBytes()
 	if lifecycleErr != nil || expectedErr != nil || !bytes.Equal(lifecycle, expectedLifecycle) {
 		return false
@@ -3363,7 +3362,7 @@ func (s *SetupService) verifyInstalled(prepared preparedSetup) error {
 	if err != nil || !bytes.Equal(marker, prepared.marker) {
 		return ErrSetupVerificationFailed
 	}
-	if lifecycle, readErr := readBoundedSetupFile(paths.LifecycleInit, 16<<10); readErr != nil || !bytes.Equal(lifecycle, prepared.lifecycle) {
+	if lifecycle, readErr := readBoundedSetupFile(paths.LifecycleInit, setupMaxLifecycleBytes); readErr != nil || !bytes.Equal(lifecycle, prepared.lifecycle) {
 		return ErrSetupVerificationFailed
 	}
 	if forbidden, err := setupForbiddenPresent(paths); err != nil || forbidden {
@@ -3399,7 +3398,9 @@ func setupSnapshotLimits(target setupSnapshotTarget) (int64, int64) {
 		return nodes.MaxLegacyDocument, nodes.MaxLegacyDocument
 	case "appliance", "xkeen-config":
 		return appliance.MaxDocumentSize, appliance.MaxDocumentSize
-	case "lifecycle", "legacy-lifecycle", "install-helper":
+	case "lifecycle", "legacy-lifecycle":
+		return setupMaxLifecycleBytes, setupMaxLifecycleBytes
+	case "install-helper":
 		return setupMaxCronBytes, setupMaxCronBytes
 	default:
 		return MaxXKeenGenerationFileBytes, MaxXKeenGenerationBytes
@@ -3690,7 +3691,7 @@ func (s *SetupService) cleanupSetupSnapshotIntent() error {
 		return errSetupLayoutInvalid
 	}
 	maxFileBytes := int64(MaxXrayCandidateBinaryBytes)
-	for _, limit := range []int64{MaxGeodataFileBytes, MaxXKeenGenerationFileBytes, nodes.MaxLegacyDocument, appliance.MaxDocumentSize, setupMaxCronBytes} {
+	for _, limit := range []int64{MaxGeodataFileBytes, MaxXKeenGenerationFileBytes, nodes.MaxLegacyDocument, appliance.MaxDocumentSize, setupMaxCronBytes, setupMaxLifecycleBytes} {
 		if limit > maxFileBytes {
 			maxFileBytes = limit
 		}
@@ -3927,19 +3928,9 @@ func (s *SetupService) failApply(journalWritten bool, journal setupTransactionJo
 			return ErrSetupTransactionUnproven
 		}
 	}
-	if err := s.rollbackCreated(recoveryContext, journal, prepared); err != nil {
+	if err := s.restoreSetupPreviousEnvironment(recoveryContext, journal, prepared); err != nil {
 		s.markMaintenance(ErrSetupTransactionUnproven)
 		return ErrSetupTransactionUnproven
-	}
-	if err := s.restoreSetupSelection(recoveryContext, journal.Previous.SelectionSnapshot); err != nil {
-		s.markMaintenance(ErrSetupTransactionUnproven)
-		return ErrSetupTransactionUnproven
-	}
-	if journal.SourceClass != "fresh" && setupSnapshotHasLifecycle(prepared.snapshot) {
-		if err := s.startAndProveRestoredRuntime(recoveryContext); err != nil {
-			s.markMaintenance(ErrSetupTransactionUnproven)
-			return ErrSetupTransactionUnproven
-		}
 	}
 	if err := s.removeSnapshot(prepared.snapshot); err != nil {
 		s.markMaintenance(ErrSetupTransactionUnproven)
@@ -4032,17 +4023,22 @@ func (s *SetupService) rollbackCreated(ctx context.Context, journal setupTransac
 	return nil
 }
 
-func setupSnapshotHasFile(snapshot setupSnapshot, key string) bool {
-	for _, entry := range snapshot.Manifest.Entries {
-		if entry.Key == key && entry.Kind == "file" && entry.Relative == "" {
-			return true
+// restoreSetupPreviousEnvironment restores files first, then proves that the
+// restored runtime is accepting its target, and only then asks the typed C.1
+// owner to restore the durable selection record and balancer override. A
+// stopped runtime cannot accept that override, so selection restoration must
+// remain after runtime convergence in both synchronous rollback and startup
+// crash recovery.
+func (s *SetupService) restoreSetupPreviousEnvironment(ctx context.Context, journal setupTransactionJournal, prepared preparedSetup) error {
+	if err := s.rollbackCreated(ctx, journal, prepared); err != nil {
+		return err
+	}
+	if journal.SourceClass != "fresh" {
+		if err := s.startAndProveRestoredRuntime(ctx); err != nil {
+			return err
 		}
 	}
-	return false
-}
-
-func setupSnapshotHasLifecycle(snapshot setupSnapshot) bool {
-	return setupSnapshotHasFile(snapshot, "lifecycle") || setupSnapshotHasFile(snapshot, "legacy-lifecycle")
+	return s.restoreSetupSelection(ctx, journal.Previous.SelectionSnapshot)
 }
 
 func (s *SetupService) startAndProveRestoredRuntime(ctx context.Context) error {
@@ -4460,16 +4456,8 @@ func (s *SetupService) RecoverStartup(ctx context.Context) error {
 			return s.recoveryFailure()
 		}
 	}
-	if err := s.rollbackCreated(ownedContext, journal, prepared); err != nil {
+	if err := s.restoreSetupPreviousEnvironment(ownedContext, journal, prepared); err != nil {
 		return s.recoveryFailure()
-	}
-	if err := s.restoreSetupSelection(ownedContext, journal.Previous.SelectionSnapshot); err != nil {
-		return s.recoveryFailure()
-	}
-	if journal.SourceClass != "fresh" && setupSnapshotHasLifecycle(prepared.snapshot) {
-		if err := s.startAndProveRestoredRuntime(ownedContext); err != nil {
-			return s.recoveryFailure()
-		}
 	}
 	if err := s.removeSnapshot(prepared.snapshot); err != nil || s.clearJournal() != nil || s.removeStagingRootEntries() != nil {
 		return s.recoveryFailure()

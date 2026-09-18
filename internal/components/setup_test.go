@@ -124,12 +124,14 @@ type setupTestRuntime struct {
 }
 
 type setupTestSelectionTransaction struct {
-	snapshot        []byte
-	reconciled      bool
-	restoreCalls    int
-	failureJournal  bool
-	journalSyncs    int
-	failureInjected bool
+	snapshot            []byte
+	reconciled          bool
+	restoreCalls        int
+	runtime             *setupTestRuntime
+	restoreWhileStopped bool
+	failureJournal      bool
+	journalSyncs        int
+	failureInjected     bool
 }
 
 func (s *setupTestSelectionTransaction) ReconcileSetupSelection(context.Context, []string) error {
@@ -144,6 +146,10 @@ func (s *setupTestSelectionTransaction) SetupSelectionSnapshot(context.Context) 
 
 func (s *setupTestSelectionTransaction) RestoreSetupSelection(_ context.Context, snapshot []byte) error {
 	s.restoreCalls++
+	if s.runtime != nil && s.runtime.stopped {
+		s.restoreWhileStopped = true
+		return errors.New("selection runtime is stopped")
+	}
 	s.snapshot = append([]byte(nil), snapshot...)
 	s.reconciled = false
 	return nil
@@ -366,7 +372,7 @@ func TestSetupTakeoverResourceAdmissionChecksPersistentSpaceBeforeWrites(t *test
 		t.Fatal(err)
 	}
 	service := NewSetupService(SetupConfig{
-		Paths: paths, XrayResolver: setupTestXrayResolver{value: f1XrayIdentity()}, GeodataResolver: setupTestGeodataResolver{value: setupTestGeodata()}, XKeenResolver: setupTestXKeenResolver{value: setupTestXKeen()},
+		Paths: paths,
 		AvailableSpace: func(path string) (uint64, error) {
 			if strings.Contains(path, "persistent") {
 				return 0, nil
@@ -379,11 +385,8 @@ func TestSetupTakeoverResourceAdmissionChecksPersistentSpaceBeforeWrites(t *test
 			return leftPersistent == rightPersistent, nil
 		},
 	})
-	preview, err := service.Preview(context.Background(), "space")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.Apply(context.Background(), "space", preview.PreviewToken); !errors.Is(err, ErrSetupResourceInsufficient) {
+	demand := setupResourceDemand(paths, "managed-takeover", 40, 30, 20, 10, 100, 120, 80, 32, 64)
+	if err := service.checkSetupResources(demand); !errors.Is(err, ErrSetupResourceInsufficient) {
 		t.Fatalf("persistent space error = %v", err)
 	}
 	for _, path := range []string{paths.Journal, paths.Appliance, paths.Nodes, paths.XrayConfigDir, paths.StagingDir} {
@@ -435,6 +438,108 @@ func TestSetupResourceAdmissionUsesPerFilesystemDemand(t *testing.T) {
 	}
 	if err := service.checkSetupResources(demand); err != nil {
 		t.Fatalf("split filesystem budget was rejected: %v", err)
+	}
+}
+
+func TestSetupFreshResourceAdmissionDoesNotReservePreviousSnapshot(t *testing.T) {
+	staging := t.TempDir()
+	persistent := t.TempDir()
+	paths := setupTestPaths(persistent)
+	paths.StagingDir = staging
+	paths.PreviousDir = filepath.Join(persistent, "previous")
+	isStaging := func(path string) bool {
+		path = filepath.Clean(path)
+		return path == filepath.Clean(staging) || strings.HasPrefix(path, filepath.Clean(staging)+string(filepath.Separator))
+	}
+	fresh := setupResourceDemand(paths, "fresh", 40, 30, 20, 10, 100, 120, 80, 32, 64)
+	takeover := setupResourceDemand(paths, "managed-takeover", 40, 30, 20, 10, 100, 120, 80, 32, 64)
+	service := NewSetupService(SetupConfig{
+		Paths: paths,
+		SameFilesystem: func(left, right string) (bool, error) {
+			return isStaging(left) == isStaging(right), nil
+		},
+	})
+	freshGroups, err := service.groupSetupResources(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	takeoverGroups, err := service.groupSetupResources(takeover)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var freshPersistent, takeoverPersistent uint64
+	for _, group := range freshGroups {
+		if !isStaging(group.directory) {
+			freshPersistent = group.bytes
+		}
+	}
+	for _, group := range takeoverGroups {
+		if !isStaging(group.directory) {
+			takeoverPersistent = group.bytes
+		}
+	}
+	if freshPersistent == 0 || takeoverPersistent <= freshPersistent {
+		t.Fatalf("fresh demand retained takeover snapshot reserve: fresh=%d takeover=%d", freshPersistent, takeoverPersistent)
+	}
+	service.config.AvailableSpace = func(path string) (uint64, error) {
+		if isStaging(path) {
+			for _, group := range freshGroups {
+				if isStaging(group.directory) {
+					return group.bytes + uint64(XrayFreeSpaceReserve) + 1, nil
+				}
+			}
+		}
+		return freshPersistent + uint64(XrayFreeSpaceReserve) + 1, nil
+	}
+	if err := service.checkSetupResources(fresh); err != nil {
+		t.Fatalf("fresh Setup was rejected without snapshot reserve: %v", err)
+	}
+	if err := service.checkSetupResources(takeover); !errors.Is(err, ErrSetupResourceInsufficient) {
+		t.Fatalf("takeover unexpectedly fit the fresh-only budget: %v", err)
+	}
+}
+
+func TestSetupReviewedLifecycleSizeBoundAdmitsCurrentUpstreamS05(t *testing.T) {
+	const currentUpstreamS05Bytes = 154485
+	if int64(currentUpstreamS05Bytes) > setupMaxLifecycleBytes {
+		t.Fatalf("reviewed current upstream S05 exceeds lifecycle bound: size=%d bound=%d", currentUpstreamS05Bytes, setupMaxLifecycleBytes)
+	}
+	root := t.TempDir()
+	paths := setupTestPaths(root)
+	contents := bytes.Repeat([]byte{'s'}, currentUpstreamS05Bytes)
+	if err := os.WriteFile(paths.LifecycleInit, contents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	service := setupTestService(t, paths)
+	if _, err := service.setupSourceGenerationDigest(nil); err != nil {
+		t.Fatalf("source generation rejected reviewed-size lifecycle: %v", err)
+	}
+	snapshot, err := service.captureSetupSnapshot(context.Background(), "managed-takeover", nil)
+	if err != nil {
+		t.Fatalf("snapshot rejected reviewed-size lifecycle: %v", err)
+	}
+	var lifecycle setupSnapshotEntry
+	for _, entry := range snapshot.Manifest.Entries {
+		if entry.Key == "lifecycle" {
+			lifecycle = entry
+			break
+		}
+	}
+	if lifecycle.Size != currentUpstreamS05Bytes {
+		t.Fatalf("snapshot lifecycle size=%d want=%d", lifecycle.Size, currentUpstreamS05Bytes)
+	}
+	if err := os.WriteFile(paths.LifecycleInit, []byte("changed"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.restoreSetupSnapshot(snapshot); err != nil {
+		t.Fatalf("restore rejected reviewed-size lifecycle: %v", err)
+	}
+	got, err := os.ReadFile(paths.LifecycleInit)
+	if err != nil || !bytes.Equal(got, contents) {
+		t.Fatalf("restored lifecycle size/content mismatch: size=%d err=%v", len(got), err)
+	}
+	if err := service.removeSnapshot(snapshot); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -748,7 +853,7 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 
 	validator := &setupTestCandidateValidator{}
 	runtime := &setupTestRuntime{}
-	selection := &setupTestSelectionTransaction{}
+	selection := &setupTestSelectionTransaction{runtime: runtime}
 	snapshotSyncObserved := false
 	coordinator := &fakeXrayCoordinator{}
 	service := NewSetupService(SetupConfig{
@@ -849,6 +954,9 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 	if runtime.stopCalls != 2 || runtime.stoppedCalls != 2 || runtime.startCalls != 3 || runtime.emptyCalls != 3 || runtime.stopped {
 		t.Fatalf("late failure lifecycle proof = %+v", runtime)
 	}
+	if selection.restoreWhileStopped {
+		t.Fatal("selection owner was asked to restore a balancer target before the restored runtime started")
+	}
 	if _, err := os.Stat(paths.Journal); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("rollback journal remains: %v", err)
 	}
@@ -870,6 +978,95 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 	}
 	if !bytes.Equal(selection.snapshot, []byte("old-selection")) || selection.restoreCalls == 0 {
 		t.Fatalf("selection was not transactionally restored: snapshot=%q restores=%d", selection.snapshot, selection.restoreCalls)
+	}
+
+	// Recreate a crash after the new generation had reconciled selection but
+	// before the transaction receipt was cleared. Recovery must use the same
+	// runtime-before-C.1 ordering as synchronous failure rollback.
+	candidate, err := service.resolve(context.Background())
+	if err != nil {
+		t.Fatalf("crash candidate: %v", err)
+	}
+	writers, err := service.inspectSetupWriters()
+	if err != nil {
+		t.Fatalf("crash writers: %v", err)
+	}
+	source, err := service.currentSetupSourceManifest("managed-takeover", writers)
+	if err != nil {
+		t.Fatalf("crash source: %v", err)
+	}
+	xrayMeta, err := binaryMetadataWithoutProbe(paths.XrayBinary, candidate.Xray.Version)
+	if err != nil {
+		t.Fatalf("crash xray metadata: %v", err)
+	}
+	crashXKeenMeta, err := readXKeenGeneration(paths.XkeenBinary, paths.XkeenModuleDir)
+	if err != nil {
+		t.Fatalf("crash XKeen metadata: %v", err)
+	}
+	lifecycle, err := setupLifecycleBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stageDir := filepath.Join(paths.StagingDir, ".setup-crash")
+	if err := ensureXKeenOwnedDirectory(stageDir, setupStagingOwner); err != nil {
+		t.Fatalf("crash stage: %v", err)
+	}
+	crashJournal := setupTransactionJournal{
+		SchemaVersion: SetupTransactionSchemaVersion,
+		Component:     string(KindSetup),
+		Operation:     SetupOperation,
+		Phase:         setupPhaseSnapshotIntent,
+		Previous: setupPreviousRecord{
+			AllAbsent:         false,
+			Class:             "managed-takeover",
+			SnapshotDir:       service.setupSnapshotRoot(),
+			SelectionSnapshot: []byte("old-selection"),
+		},
+		Candidate: setupCandidateRecord{
+			Xray:             candidate.Xray,
+			XrayBinarySHA256: xrayMeta.SHA256,
+			XrayBinarySize:   xrayMeta.Size,
+			XrayBinaryMode:   xrayMeta.Mode,
+			Geodata:          candidate.Geodata,
+			XKeen:            candidate.XKeen,
+			XKeenGeneration:  crashXKeenMeta,
+			LifecycleSHA256:  setupLifecycleDigest(lifecycle),
+		},
+		SourceClass:  "managed-takeover",
+		SourceDigest: source.Digest,
+		StageDir:     stageDir,
+	}
+	if err := service.writeJournal(crashJournal); err != nil {
+		t.Fatalf("crash journal intent: %v", err)
+	}
+	snapshot, err := service.captureSetupSnapshot(context.Background(), "managed-takeover", writers)
+	if err != nil {
+		t.Fatalf("crash snapshot: %v", err)
+	}
+	crashJournal.Previous.SnapshotSHA = setupSnapshotDigest(snapshot.Manifest)
+	crashJournal.Phase = setupPhaseSelectionReconciled
+	if err := service.writeJournal(crashJournal); err != nil {
+		t.Fatalf("crash journal receipt: %v", err)
+	}
+	if err := os.WriteFile(paths.XkeenMarker, []byte("crashed-candidate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	selection.snapshot = []byte("new-selection")
+	selection.reconciled = true
+	if err := service.RecoverStartup(context.Background()); err != nil {
+		t.Fatalf("crash recovery: %v", err)
+	}
+	if selection.restoreWhileStopped {
+		t.Fatal("crash recovery asked C.1 to restore selection before the restored runtime started")
+	}
+	if !bytes.Equal(selection.snapshot, []byte("old-selection")) {
+		t.Fatalf("crash recovery selection=%q", selection.snapshot)
+	}
+	if got, err := os.ReadFile(paths.XkeenMarker); err != nil || !bytes.Equal(got, previousMarker) {
+		t.Fatalf("crash recovery marker=%q err=%v", got, err)
+	}
+	if _, err := os.Stat(paths.Journal); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("crash recovery journal remains: %v", err)
 	}
 }
 
