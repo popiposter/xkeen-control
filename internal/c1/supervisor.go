@@ -354,8 +354,17 @@ func (s *Supervisor) changeTarget(ctx context.Context, target, reason string, no
 	if target == "" || !validTag(target) {
 		return errors.New("selection target is invalid")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := s.api.OverrideBalancerTarget(ctx, "bal-proxy", target); err != nil {
 		return err
 	}
@@ -651,8 +660,16 @@ func (s *Supervisor) ApplyAdaptive(ctx context.Context, generation AdaptiveGener
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		decision.ReasonCode = AdaptiveReasonCancelled
+		return decision, nil
+	}
 	s.policyMu.Lock()
 	defer s.policyMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		decision.ReasonCode = AdaptiveReasonCancelled
+		return decision, nil
+	}
 	if s.currentManualOverride() != "" {
 		decision.ReasonCode = AdaptiveReasonManualOverride
 		return decision, nil
@@ -714,6 +731,14 @@ func (s *Supervisor) ApplyAdaptive(ctx context.Context, generation AdaptiveGener
 	}
 	if !adaptiveTargetIdentityValid(s, ctx, snapshot, winner) {
 		decision.ReasonCode = AdaptiveReasonCurrentInvalid
+		return decision, nil
+	}
+	// Apply has operator priority. Recheck the owned context immediately
+	// before the existing runtime/persistence selection transaction so a
+	// drained operator Apply cannot rely on downstream Xray cancellation alone
+	// to prevent an adaptive target write.
+	if err := ctx.Err(); err != nil {
+		decision.ReasonCode = AdaptiveReasonCancelled
 		return decision, nil
 	}
 	if err := s.changeTarget(ctx, winner, AdaptiveReasonAdaptiveQuality, now, false); err != nil {

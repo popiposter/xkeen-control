@@ -404,6 +404,206 @@ func TestCoordinatorAdaptiveIsOnePerformanceOwnerAndApplyCancelsIt(t *testing.T)
 	}
 }
 
+func waitAdaptiveState(t *testing.T, coordinator *Coordinator, want string) AdaptivePerformanceStatus {
+	t.Helper()
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		status := coordinator.AdaptiveSnapshot()
+		if status.State == want {
+			return status
+		}
+		select {
+		case <-deadline.C:
+			t.Fatalf("adaptive state = %+v, want %q", status, want)
+		case <-ticker.C:
+		}
+	}
+}
+
+func waitCoordinatorApplying(t *testing.T, coordinator *Coordinator) {
+	t.Helper()
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		snapshot := coordinator.Snapshot()
+		if snapshot.Lifecycle != nil && snapshot.Lifecycle.Applying {
+			return
+		}
+		select {
+		case <-deadline.C:
+			t.Fatalf("Coordinator never projected waiting operator Apply: %+v", snapshot.Lifecycle)
+		case <-ticker.C:
+		}
+	}
+}
+
+func adaptiveDecisionCoordinatorFixture(t *testing.T) (*Coordinator, *supervisorAPI, SelectionStore) {
+	t.Helper()
+	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	policy := supervisorPolicy()
+	policy.MinimumDwell = time.Nanosecond
+	tags := []string{"proxy-current", "proxy-challenger"}
+	supervisor, _, api, store := adaptiveEvidenceFixture(t, "proxy-current", now.Add(-time.Hour), policy, tags, []int64{100, 50}, now)
+	seedAdaptiveEvidence(supervisor, tags, now, []int64{100, 50})
+	probe := NewProbeRouter(api)
+	coordinator := NewCoordinator(policy, supervisor, NewBenchmarkRunner(policy, probe, BenchmarkStore{Path: t.TempDir() + "/benchmark.json"}), func(context.Context) []NodeState {
+		return []NodeState{{ID: "node-1", Tag: "proxy-current", Enabled: true}, {ID: "node-2", Tag: "proxy-challenger", Enabled: true}}
+	})
+	coordinator.SetAdaptiveRunner(&AdaptiveRunner{
+		Probe: probe,
+		Transport: &adaptiveTransportStub{
+			duration:       time.Millisecond,
+			failedDownload: -1,
+			failedUpload:   -1,
+		},
+	})
+	return coordinator, api, store
+}
+
+func TestCoordinatorAdaptiveAdmissionInterleavesActiveSupervisorAtDueBoundary(t *testing.T) {
+	now := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	policy := supervisorPolicy()
+	supervisor, _, api, _ := adaptiveEvidenceFixture(t, "proxy-current", now.Add(-time.Hour), policy, []string{"proxy-current", "proxy-challenger"}, []int64{100, 90}, now)
+	seedAdaptiveEvidence(supervisor, []string{"proxy-current", "proxy-challenger"}, now, []int64{100, 90})
+	probe := NewProbeRouter(api)
+	supervisorEntered := make(chan struct{})
+	supervisorProbeEntered := make(chan struct{})
+	allowSupervisor := make(chan struct{})
+	supervisorDone := make(chan error, 1)
+	adaptiveStarted := make(chan struct{})
+	adaptiveBlocked := make(chan struct{})
+	transport := &adaptiveTransportStub{
+		started:        adaptiveStarted,
+		block:          adaptiveBlocked,
+		duration:       time.Millisecond,
+		failedDownload: -1,
+		failedUpload:   -1,
+	}
+	coordinator := NewCoordinator(policy, supervisor, NewBenchmarkRunner(policy, probe, BenchmarkStore{Path: t.TempDir() + "/benchmark.json"}), func(context.Context) []NodeState {
+		return []NodeState{{ID: "node-1", Tag: "proxy-current", Enabled: true}, {ID: "node-2", Tag: "proxy-challenger", Enabled: true}}
+	})
+	coordinator.SetAdaptiveRunner(&AdaptiveRunner{Probe: probe, Transport: transport})
+
+	go func() {
+		supervisorDone <- coordinator.runSupervisorOperation(context.Background(), func(ctx context.Context) error {
+			close(supervisorEntered)
+			return probe.WithTarget(ctx, "liveness", "proxy-current", func(ctx context.Context) error {
+				close(supervisorProbeEntered)
+				select {
+				case <-allowSupervisor:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			})
+		})
+	}()
+	<-supervisorEntered
+	<-supervisorProbeEntered
+
+	// This is the aligned due event: supervisorCancel is active and the
+	// Supervisor still owns the ProbeRouter lease. Adaptive must be admitted,
+	// remain non-terminal, and wait for that shared lease rather than skip.
+	coordinator.runScheduledAdaptive(context.Background())
+	waitAdaptiveState(t, coordinator, "running")
+	select {
+	case <-adaptiveStarted:
+		t.Fatal("adaptive bypassed the active Supervisor ProbeRouter lease")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(allowSupervisor)
+	if err := <-supervisorDone; err != nil {
+		t.Fatalf("Supervisor operation = %v", err)
+	}
+	select {
+	case <-adaptiveStarted:
+	case <-time.After(time.Second):
+		t.Fatal("adaptive did not proceed after the Supervisor ProbeRouter lease was released")
+	}
+	coordinator.Stop()
+}
+
+func TestCoordinatorAdaptiveFinalDecisionStaysRunningAndFailsClosedOnApplyCancel(t *testing.T) {
+	t.Run("status remains running until successful decision", func(t *testing.T) {
+		coordinator, api, _ := adaptiveDecisionCoordinatorFixture(t)
+		decisionReached := make(chan struct{})
+		allowDecision := make(chan struct{})
+		coordinator.beforeAdaptiveDecision = func() {
+			close(decisionReached)
+			<-allowDecision
+		}
+		coordinator.runScheduledAdaptive(context.Background())
+		<-decisionReached
+		status := coordinator.AdaptiveSnapshot()
+		if status.State != "running" || status.CompletedAt != (time.Time{}) {
+			t.Fatalf("adaptive became terminal before ApplyAdaptive: %+v", status)
+		}
+		if len(api.override) != 0 {
+			t.Fatalf("adaptive wrote target before final decision: %v", api.override)
+		}
+		close(allowDecision)
+		status = waitAdaptiveState(t, coordinator, "completed")
+		if !status.SwitchApplied || status.ReasonCode != AdaptiveReasonAdaptiveQuality || len(api.override) != 1 || api.override[0] != "proxy-challenger" {
+			t.Fatalf("adaptive final decision = %+v overrides=%v", status, api.override)
+		}
+		coordinator.Stop()
+	})
+
+	t.Run("operator cancellation prevents adaptive target write", func(t *testing.T) {
+		coordinator, api, store := adaptiveDecisionCoordinatorFixture(t)
+		decisionReached := make(chan struct{})
+		allowDecision := make(chan struct{})
+		coordinator.beforeAdaptiveDecision = func() {
+			close(decisionReached)
+			<-allowDecision
+		}
+		coordinator.runScheduledAdaptive(context.Background())
+		<-decisionReached
+		if status := coordinator.AdaptiveSnapshot(); status.State != "running" {
+			t.Fatalf("adaptive final-decision pause was not projected as running: %+v", status)
+		}
+
+		applyResult := make(chan struct {
+			release func()
+			err     error
+		}, 1)
+		applyContext, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		go func() {
+			release, err := coordinator.BeginApply(applyContext)
+			applyResult <- struct {
+				release func()
+				err     error
+			}{release: release, err: err}
+		}()
+		waitCoordinatorApplying(t, coordinator)
+		close(allowDecision)
+		apply := <-applyResult
+		if apply.err != nil {
+			t.Fatalf("operator Apply admission = %v", apply.err)
+		}
+		status := waitAdaptiveState(t, coordinator, "cancelled")
+		if status.ReasonCode != AdaptiveReasonCancelled {
+			t.Fatalf("adaptive cancellation decision = %+v", status)
+		}
+		if len(api.override) != 0 {
+			t.Fatalf("cancelled adaptive generation wrote target: %v", api.override)
+		}
+		record, err := store.Load()
+		if err != nil || record.Target != "proxy-current" || record.LastSwitchReason == AdaptiveReasonAdaptiveQuality {
+			t.Fatalf("cancelled adaptive selection record = %+v err=%v", record, err)
+		}
+		apply.release()
+		coordinator.Stop()
+	})
+}
+
 func TestCoordinatorStartsFreshAdaptiveCadenceAndDoesNotExposeLegacyNextRun(t *testing.T) {
 	start := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
 	coordinator := NewCoordinator(DefaultPolicy(), nil, nil, nil)

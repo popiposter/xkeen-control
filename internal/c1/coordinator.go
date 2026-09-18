@@ -87,10 +87,14 @@ type Coordinator struct {
 	// Test-only synchronization point used to force the Apply admission
 	// interleaving covered by coordinator concurrency regressions.
 	beforeApplyAcquire func()
-	started            bool
-	stop               context.CancelFunc
-	clock              func() time.Time
-	wait               sync.WaitGroup
+	// Test-only synchronization point used to pause the final adaptive
+	// ApplyAdaptive/no-op decision while the Coordinator still owns the
+	// performance lifecycle.
+	beforeAdaptiveDecision func()
+	started                bool
+	stop                   context.CancelFunc
+	clock                  func() time.Time
+	wait                   sync.WaitGroup
 }
 
 func NewCoordinator(policy Policy, supervisor *Supervisor, runner *BenchmarkRunner, nodes NodeReader) *Coordinator {
@@ -461,7 +465,7 @@ func (c *Coordinator) runScheduledAdaptive(parent context.Context) {
 		c.mu.Unlock()
 		return
 	}
-	if c.maintenance || c.applyWaiters > 0 || c.applyActive || c.benchmarkCancel != nil || c.supervisorCancel != nil {
+	if c.maintenance || c.applyWaiters > 0 || c.applyActive || c.benchmarkCancel != nil {
 		c.setAdaptiveSkippedLocked(AdaptiveReasonBusy)
 		c.mu.Unlock()
 		return
@@ -520,14 +524,48 @@ func (c *Coordinator) runAdaptive(ctx context.Context, done chan struct{}, token
 		ShortlistCount: len(generation.Candidates),
 	})
 	result := runner.Run(ctx, generation, func(progress AdaptivePerformanceStatus) {
+		// The runner has finished measuring, but the generation is not
+		// terminal until ApplyAdaptive has made the final guarded selection
+		// decision. Keep the public projection active across that boundary.
+		if progress.State == "completed" {
+			progress.State = "running"
+			progress.CompletedAt = time.Time{}
+			progress.SelectedTarget = ""
+			progress.SwitchApplied = false
+			progress.ReasonCode = ""
+		}
 		c.updateAdaptiveStatus(done, progress)
 	})
 	if result.State == "completed" {
+		c.updateAdaptiveStatus(done, AdaptivePerformanceStatus{
+			State:          "running",
+			NextRunAt:      c.adaptiveNextRunAt(done),
+			StartedAt:      result.StartedAt,
+			Generation:     result.Generation,
+			CurrentTarget:  result.CurrentTarget,
+			ShortlistCount: result.ShortlistCount,
+			ValidCount:     result.ValidCount,
+			Candidates:     adaptiveResultStatuses(result.Candidates),
+		})
+		c.mu.Lock()
+		beforeDecision := c.beforeAdaptiveDecision
+		c.mu.Unlock()
+		if beforeDecision != nil {
+			beforeDecision()
+		}
 		decision, err := supervisor.ApplyAdaptive(ctx, generation, result)
 		if err != nil {
-			result.State = "failed"
-			result.ReasonCode = AdaptiveReasonUnavailable
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				result.State = "cancelled"
+				result.ReasonCode = AdaptiveReasonCancelled
+			} else {
+				result.State = "failed"
+				result.ReasonCode = AdaptiveReasonUnavailable
+			}
 		} else {
+			if decision.ReasonCode == AdaptiveReasonCancelled {
+				result.State = "cancelled"
+			}
 			result.SwitchApplied = decision.Applied
 			result.ReasonCode = decision.ReasonCode
 			result.CurrentScore = decision.CurrentScore
