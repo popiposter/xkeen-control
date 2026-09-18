@@ -55,6 +55,7 @@ const (
 	setupPhaseLifecycleCommitted   = "lifecycle-committed"
 	setupPhaseWritersRetired       = "writers-retired"
 	setupPhaseRuntimeStarted       = "runtime-started"
+	setupPhaseSelectionReconciled  = "selection-reconciled"
 	setupPhaseRuntimeVerified      = "runtime-verified"
 
 	setupTokenBytes          = 32
@@ -63,6 +64,7 @@ const (
 	setupMaxSnapshotEntries  = 1024
 	setupMaxSnapshotBytes    = 256 << 20
 	setupMaxCronBytes        = 128 << 10
+	setupMaxSelectionBytes   = 8 << 10
 	setupGeodataWriterScript = "update-" + "geodata.sh"
 )
 
@@ -278,6 +280,14 @@ type SetupSelectionReconciler interface {
 	ReconcileSetupSelection(context.Context, []string) error
 }
 
+// SetupSelectionTransaction is the recoverable extension used by takeover.
+// The bytes are an opaque, bounded representation owned and validated by C.1;
+// Setup only journals them and asks that same owner to restore them.
+type SetupSelectionTransaction interface {
+	SetupSelectionSnapshot(context.Context) ([]byte, error)
+	RestoreSetupSelection(context.Context, []byte) error
+}
+
 // SetupRuntimeFuncs is a narrow production adapter and a deterministic test
 // seam. It exposes only the fixed setup lifecycle/proof operations.
 type SetupRuntimeFuncs struct {
@@ -431,6 +441,7 @@ type SetupConfig struct {
 	TransactionTimeout time.Duration
 	RecoveryTimeout    time.Duration
 	AvailableSpace     func(string) (uint64, error)
+	SameFilesystem     func(string, string) (bool, error)
 	SyncDirectory      func(string) error
 	Now                func() time.Time
 }
@@ -549,6 +560,9 @@ func NewSetupService(config SetupConfig) *SetupService {
 	}
 	if config.AvailableSpace == nil {
 		config.AvailableSpace = availableFreeSpace
+	}
+	if config.SameFilesystem == nil {
+		config.SameFilesystem = sameFilesystem
 	}
 	if config.SyncDirectory == nil {
 		config.SyncDirectory = syncDirectory
@@ -1561,30 +1575,110 @@ func setupSpaceProbePath(path string) string {
 	return path
 }
 
-func setupResourcePaths(paths SetupPaths) []string {
-	result := []string{paths.StagingDir, paths.PreviousDir, filepath.Dir(paths.Journal), filepath.Dir(paths.Appliance), filepath.Dir(paths.Nodes), paths.XrayConfigDir, paths.XrayAssetDir, filepath.Dir(paths.XrayBinary), filepath.Dir(paths.XkeenBinary), filepath.Dir(paths.XkeenModuleDir), filepath.Dir(paths.XkeenActivation), filepath.Dir(paths.LifecycleInit)}
-	for _, path := range paths.CronPaths {
-		result = append(result, filepath.Dir(path))
-	}
-	for _, path := range paths.WriterScripts {
-		result = append(result, filepath.Dir(path))
-	}
-	return result
+type setupSpaceRequirement struct {
+	path  string
+	bytes uint64
 }
 
-func (s *SetupService) checkSetupResources(need uint64) error {
-	seen := make(map[string]struct{})
-	for _, path := range setupResourcePaths(s.config.Paths) {
-		if path == "" {
+type setupSpaceGroup struct {
+	directory string
+	bytes     uint64
+}
+
+func setupDoubleBytes(value uint64) uint64 {
+	if value > ^uint64(0)/2 {
+		return ^uint64(0)
+	}
+	return value * 2
+}
+
+// setupResourceDemand describes bytes that coexist on each destination while
+// Setup is preparing and committing. Transient candidate bodies stay on the
+// staging filesystem; target generations, journal/activation temporaries and
+// the takeover snapshot stay on their actual persistent filesystems.
+func setupResourceDemand(paths SetupPaths, class string, xrayArchive, geodataBytes, xkeenArchive, generationBytes uint64, configBytes, applianceBytes, nodesBytes, markerBytes, lifecycleBytes uint64) []setupSpaceRequirement {
+	staging := xrayArchive + geodataBytes + xkeenArchive + generationBytes + configBytes + uint64(MaxXrayCandidateBinaryBytes)
+	persistent := []setupSpaceRequirement{
+		{path: filepath.Dir(paths.Journal), bytes: uint64(MaxComponentJournalBytes)},
+		{path: filepath.Dir(paths.Appliance), bytes: setupDoubleBytes(applianceBytes)},
+		{path: filepath.Dir(paths.Nodes), bytes: setupDoubleBytes(nodesBytes)},
+		{path: paths.XrayConfigDir, bytes: setupDoubleBytes(configBytes)},
+		{path: paths.XrayAssetDir, bytes: setupDoubleBytes(geodataBytes)},
+		{path: filepath.Dir(paths.XrayBinary), bytes: uint64(MaxXrayCandidateBinaryBytes) * 2},
+		{path: filepath.Dir(paths.XkeenBinary), bytes: setupDoubleBytes(generationBytes)},
+		{path: filepath.Dir(paths.XkeenModuleDir), bytes: setupDoubleBytes(generationBytes)},
+		{path: filepath.Dir(paths.XkeenMarker), bytes: setupDoubleBytes(markerBytes)},
+		{path: filepath.Dir(paths.LifecycleInit), bytes: setupDoubleBytes(lifecycleBytes)},
+		{path: filepath.Dir(paths.XkeenActivation), bytes: uint64(MaxXKeenGenerationBytes) + generationBytes},
+	}
+	for _, path := range paths.CronPaths {
+		persistent = append(persistent, setupSpaceRequirement{path: filepath.Dir(path), bytes: uint64(setupMaxCronBytes)})
+	}
+	for _, path := range paths.WriterScripts {
+		persistent = append(persistent, setupSpaceRequirement{path: filepath.Dir(path), bytes: uint64(setupMaxCronBytes)})
+	}
+	// Reserve the bounded previous-environment root on every Setup admission.
+	// Fresh Setup does not populate it, but keeping the reserve in the same
+	// typed demand model preserves the durable rollback budget if the layout is
+	// concurrently classified as takeover before the first persistent write.
+	persistent = append(persistent, setupSpaceRequirement{path: paths.PreviousDir, bytes: uint64(estimateSetupSnapshotBytes(paths))})
+	if class != "fresh" {
+		// During activation the new generation and the displaced old
+		// generation can coexist in the activation directory in addition to
+		// the bounded previous-environment snapshot.
+		persistent = append(persistent, setupSpaceRequirement{path: filepath.Dir(paths.XkeenActivation), bytes: uint64(MaxXKeenGenerationBytes)})
+	}
+	return append([]setupSpaceRequirement{{path: paths.StagingDir, bytes: staging}}, persistent...)
+}
+
+func (s *SetupService) groupSetupResources(requirements []setupSpaceRequirement) ([]setupSpaceGroup, error) {
+	groups := make([]setupSpaceGroup, 0, len(requirements))
+	identity := s.config.SameFilesystem
+	if identity == nil {
+		identity = sameFilesystem
+	}
+	for _, requirement := range requirements {
+		if requirement.path == "" {
 			continue
 		}
-		probe := setupSpaceProbePath(path)
-		if _, ok := seen[probe]; ok {
+		probe := setupSpaceProbePath(requirement.path)
+		if probe == "" {
+			return nil, ErrSetupResourceInsufficient
+		}
+		groupIndex := -1
+		for index, group := range groups {
+			same, err := identity(group.directory, probe)
+			if err != nil {
+				return nil, ErrSetupResourceInsufficient
+			}
+			if same {
+				groupIndex = index
+				break
+			}
+		}
+		if groupIndex < 0 {
+			groups = append(groups, setupSpaceGroup{directory: probe, bytes: requirement.bytes})
 			continue
 		}
-		seen[probe] = struct{}{}
-		free, err := s.config.AvailableSpace(probe)
-		if err != nil || free < need {
+		if requirement.bytes > ^uint64(0)-groups[groupIndex].bytes {
+			return nil, ErrSetupResourceInsufficient
+		}
+		groups[groupIndex].bytes += requirement.bytes
+	}
+	return groups, nil
+}
+
+func (s *SetupService) checkSetupResources(requirements []setupSpaceRequirement) error {
+	groups, err := s.groupSetupResources(requirements)
+	if err != nil {
+		return ErrSetupResourceInsufficient
+	}
+	for _, group := range groups {
+		if uint64(XrayFreeSpaceReserve) > ^uint64(0)-group.bytes {
+			return ErrSetupResourceInsufficient
+		}
+		free, err := s.config.AvailableSpace(group.directory)
+		if err != nil || free < group.bytes+uint64(XrayFreeSpaceReserve) {
 			return ErrSetupResourceInsufficient
 		}
 	}
@@ -1780,25 +1874,70 @@ func setupKnownLifecycleLayout(paths SetupPaths) (bool, error) {
 	return true, nil
 }
 
+const (
+	reviewedUpstreamS05SHA256 = "6e2998bd8c471637ed4d0128eebc2d10bf72dc15b1600208601d70f0a1d0ee13"
+	reviewedUpstreamS24SHA256 = "4c6f3d8ddcc1e6fc37b8ff2cb577faf4382fcd7f2f8ef17c462c68e83dcdbcbf"
+)
+
 // IsReviewedSetupLifecycle is the closed identity predicate shared by Setup
 // classification and the production CommandActivator. A pre-takeover init is
-// executable as root only when it is the exact source-owned lifecycle shape;
-// names and incidental words such as "xray", "start" or "restart" are not
-// evidence of a reviewed script.
+// admitted only as the exact source-owned template or a bounded, reviewed
+// upstream generation. Names and incidental words such as "xray", "start" or
+// "restart" are not evidence of a reviewed script.
 func IsReviewedSetupLifecycle(path string) bool {
+	return setupLifecycleIdentity(path) != ""
+}
+
+// IsReviewedLegacySetupLifecycle identifies a recognized upstream lifecycle
+// that Setup may take over. CommandActivator uses this predicate to quiesce
+// the managed Xray process directly; the foreign lifecycle is never executed
+// as part of takeover.
+func IsReviewedLegacySetupLifecycle(path string) bool {
+	identity := setupLifecycleIdentity(path)
+	return identity == "upstream-s05" || identity == "upstream-s24"
+}
+
+func setupLifecycleIdentity(path string) string {
 	if path == "" {
-		return false
+		return ""
 	}
 	info, err := os.Lstat(path)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
-		return false
+		return ""
 	}
-	contents, err := readBoundedSetupFile(path, 16<<10)
+	contents, err := readBoundedSetupFile(path, 512<<10)
 	if err != nil {
-		return false
+		return ""
 	}
 	expected, err := setupLifecycleBytes()
-	return err == nil && bytes.Equal(contents, expected)
+	if err == nil && bytes.Equal(contents, expected) {
+		return "source-owned"
+	}
+	if filepath.Base(path) == "S05xkeen" && reviewedUpstreamS05(contents) {
+		return "upstream-s05"
+	}
+	if filepath.Base(path) == "S24xray" && reviewedUpstreamS24(contents) {
+		return "upstream-s24"
+	}
+	return ""
+}
+
+func reviewedUpstreamS05(contents []byte) bool {
+	return reviewedLifecycleDigest(contents, reviewedUpstreamS05SHA256)
+}
+
+func reviewedUpstreamS24(contents []byte) bool {
+	return reviewedLifecycleDigest(contents, reviewedUpstreamS24SHA256)
+}
+
+func reviewedLifecycleDigest(contents []byte, expected string) bool {
+	for _, candidate := range [][]byte{contents, []byte(strings.ReplaceAll(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\r", "\n"))} {
+		digest := sha256.Sum256(candidate)
+		if hex.EncodeToString(digest[:]) == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func setupStagingRootContainsOnly(root, allowedDir string) bool {
@@ -2055,8 +2194,8 @@ func (s *SetupService) Apply(ctx context.Context, binding, token string) (SetupR
 	if sourceErr != nil || currentSource.Digest != prepared.candidate.Source.Digest {
 		return SetupResult{}, ErrSetupPreviewStale
 	}
-	if prepared.resourceNeed != 0 {
-		if err := s.checkSetupResources(prepared.resourceNeed); err != nil {
+	if len(prepared.resourceDemand) != 0 {
+		if err := s.checkSetupResources(prepared.resourceDemand); err != nil {
 			return SetupResult{}, ErrSetupResourceInsufficient
 		}
 	}
@@ -2064,6 +2203,16 @@ func (s *SetupService) Apply(ctx context.Context, binding, token string) (SetupR
 	previous := setupPreviousRecord{AllAbsent: isFresh, Class: prepared.candidate.Source.Class}
 	if !isFresh {
 		previous.SnapshotDir = s.setupSnapshotRoot()
+		if s.config.Selection != nil {
+			selection, ok := s.config.Selection.(SetupSelectionTransaction)
+			if !ok {
+				return SetupResult{}, ErrSetupTransactionUnproven
+			}
+			previous.SelectionSnapshot, err = selection.SetupSelectionSnapshot(ownedContext)
+			if err != nil || len(previous.SelectionSnapshot) > setupMaxSelectionBytes {
+				return SetupResult{}, ErrSetupTransactionUnproven
+			}
+		}
 	}
 	journal := setupTransactionJournal{SchemaVersion: SetupTransactionSchemaVersion, Component: string(KindSetup), Operation: SetupOperation, Phase: setupPhasePrepared, Previous: previous, SourceClass: prepared.candidate.Source.Class, SourceDigest: prepared.candidate.Source.Digest, StageDir: prepared.stageDir, Candidate: prepared.record()}
 	if !isFresh {
@@ -2147,6 +2296,9 @@ func (s *SetupService) Apply(ctx context.Context, binding, token string) (SetupR
 	if err := s.reconcileSetupSelection(ownedContext, prepared.candidate.Registry); err != nil {
 		return SetupResult{}, s.failApply(true, journal, prepared, runtimeStarted, ErrSetupVerificationFailed)
 	}
+	if err := s.updateJournal(&journal, setupPhaseSelectionReconciled, ""); err != nil {
+		return SetupResult{}, s.failApply(true, journal, prepared, runtimeStarted, ErrSetupTransactionUnproven)
+	}
 	journal.Phase = setupPhaseRuntimeVerified
 	if err := s.writeJournal(journal); err != nil {
 		return SetupResult{}, s.failApply(true, journal, prepared, runtimeStarted, ErrSetupTransactionUnproven)
@@ -2224,7 +2376,7 @@ read_pid() {
   esac
   [ -r "/proc/$pid/exe" ] || return 1
   executable=$(readlink "/proc/$pid/exe" 2>/dev/null || true)
-  [ "$executable" = "$xray_binary" ] || return 1
+  [ "$executable" = "$xray_binary" ] || [ "$executable" = "$xray_binary (deleted)" ] || return 1
   kill -0 "$pid" 2>/dev/null
 }
 
@@ -2286,7 +2438,7 @@ type preparedSetup struct {
 	xkeenMetadata   xkeenGenerationMetadata
 	marker          []byte
 	lifecycle       []byte
-	resourceNeed    uint64
+	resourceDemand  []setupSpaceRequirement
 	snapshot        setupSnapshot
 }
 
@@ -2356,8 +2508,12 @@ func (s *SetupService) prepare(ctx context.Context, candidate setupCandidate, pl
 		}
 		geodataBytes += item.SizeBytes
 	}
-	need := uint64(candidate.Xray.SizeBytes) + uint64(geodataBytes) + uint64(candidate.XKeen.SizeBytes) + uint64(generationBytes) + uint64(MaxXrayCandidateBinaryBytes) + uint64(MaxComponentJournalBytes) + uint64(XrayFreeSpaceReserve) + uint64(estimateSetupSnapshotBytes(s.config.Paths))
-	if err := s.checkSetupResources(need); err != nil {
+	var configBytes uint64
+	for _, contents := range files {
+		configBytes += uint64(len(contents))
+	}
+	demand := setupResourceDemand(s.config.Paths, candidate.Source.Class, uint64(candidate.Xray.SizeBytes), uint64(geodataBytes), uint64(candidate.XKeen.SizeBytes), uint64(generationBytes), configBytes, uint64(len(appBytes)), uint64(len(nodesBytes)), uint64(MaxXKeenMarkerBytes), uint64(len(lifecycle)))
+	if err := s.checkSetupResources(demand); err != nil {
 		return preparedSetup{}, ErrSetupResourceInsufficient
 	}
 	if err := ensurePrivateDirectory(s.config.Paths.StagingDir); err != nil {
@@ -2424,7 +2580,7 @@ func (s *SetupService) prepare(ctx context.Context, candidate setupCandidate, pl
 		return preparedSetup{}, ErrSetupCandidateRejected
 	}
 	cleanup = false
-	return preparedSetup{candidate: candidate, plan: plan, stageDir: stageDir, configFiles: files, appBytes: appBytes, nodesBytes: nodesBytes, xrayBinaryPath: xrayBinary, xrayMetadata: xrayMetadata, geodataMetadata: geodataMetadata, xkeenPath: xkeenRoot, xkeenMetadata: xkeenMetadata, marker: marker, lifecycle: lifecycle, resourceNeed: need}, nil
+	return preparedSetup{candidate: candidate, plan: plan, stageDir: stageDir, configFiles: files, appBytes: appBytes, nodesBytes: nodesBytes, xrayBinaryPath: xrayBinary, xrayMetadata: xrayMetadata, geodataMetadata: geodataMetadata, xkeenPath: xkeenRoot, xkeenMetadata: xkeenMetadata, marker: marker, lifecycle: lifecycle, resourceDemand: demand}, nil
 }
 
 func validSetupLifecycle(contents []byte, plan SetupLifecyclePlan) bool {
@@ -2562,10 +2718,11 @@ const (
 )
 
 type setupPreviousRecord struct {
-	AllAbsent   bool   `json:"allAbsent"`
-	Class       string `json:"class,omitempty"`
-	SnapshotDir string `json:"snapshotDir,omitempty"`
-	SnapshotSHA string `json:"snapshotSha256,omitempty"`
+	AllAbsent         bool   `json:"allAbsent"`
+	Class             string `json:"class,omitempty"`
+	SnapshotDir       string `json:"snapshotDir,omitempty"`
+	SnapshotSHA       string `json:"snapshotSha256,omitempty"`
+	SelectionSnapshot []byte `json:"selectionSnapshot,omitempty"`
 }
 
 type setupSnapshotEntry struct {
@@ -2633,15 +2790,18 @@ func validateSetupJournal(journal setupTransactionJournal) error {
 		return errSetupJournalInvalid
 	}
 	switch journal.Phase {
-	case setupPhasePrepared, setupPhaseSnapshotIntent, setupPhaseSnapshotReady, setupPhaseNodesCommitted, setupPhaseAuthorityCommitted, setupPhaseConfigCommitted, setupPhaseGeodataCommitted, setupPhaseXrayCommitted, setupPhaseXKeenStaged, setupPhaseXKeenBinaryCommitted, setupPhaseXKeenModuleCommitted, setupPhaseXKeenCommitted, setupPhaseLifecycleCommitted, setupPhaseWritersRetired, setupPhaseRuntimeStarted, setupPhaseRuntimeVerified:
+	case setupPhasePrepared, setupPhaseSnapshotIntent, setupPhaseSnapshotReady, setupPhaseNodesCommitted, setupPhaseAuthorityCommitted, setupPhaseConfigCommitted, setupPhaseGeodataCommitted, setupPhaseXrayCommitted, setupPhaseXKeenStaged, setupPhaseXKeenBinaryCommitted, setupPhaseXKeenModuleCommitted, setupPhaseXKeenCommitted, setupPhaseLifecycleCommitted, setupPhaseWritersRetired, setupPhaseRuntimeStarted, setupPhaseSelectionReconciled, setupPhaseRuntimeVerified:
 	default:
 		return errSetupJournalInvalid
 	}
 	if journal.SourceClass == "fresh" {
-		if journal.Previous.SnapshotDir != "" || journal.Previous.SnapshotSHA != "" {
+		if journal.Previous.SnapshotDir != "" || journal.Previous.SnapshotSHA != "" || len(journal.Previous.SelectionSnapshot) != 0 {
 			return errSetupJournalInvalid
 		}
 	} else if journal.Phase != setupPhaseSnapshotIntent && !isHexSHA256(journal.Previous.SnapshotSHA) {
+		return errSetupJournalInvalid
+	}
+	if len(journal.Previous.SelectionSnapshot) > setupMaxSelectionBytes {
 		return errSetupJournalInvalid
 	}
 	allowed := map[string]struct{}{setupCreatedNodes: {}, setupCreatedAppliance: {}, setupCreatedConfig: {}, setupCreatedGeodata: {}, setupCreatedXray: {}, setupCreatedXKeen: {}, setupCreatedLifecycle: {}, setupCreatedWriters: {}}
@@ -3764,6 +3924,10 @@ func (s *SetupService) failApply(journalWritten bool, journal setupTransactionJo
 		s.markMaintenance(ErrSetupTransactionUnproven)
 		return ErrSetupTransactionUnproven
 	}
+	if err := s.restoreSetupSelection(recoveryContext, journal.Previous.SelectionSnapshot); err != nil {
+		s.markMaintenance(ErrSetupTransactionUnproven)
+		return ErrSetupTransactionUnproven
+	}
 	if journal.SourceClass != "fresh" && setupSnapshotHasLifecycle(prepared.snapshot) {
 		if err := s.startAndProveRestoredRuntime(recoveryContext); err != nil {
 			s.markMaintenance(ErrSetupTransactionUnproven)
@@ -3888,8 +4052,22 @@ func (s *SetupService) startAndProveRestoredRuntime(ctx context.Context) error {
 	if err := s.runtimeProof(ctx, authorities.registry); err != nil {
 		return err
 	}
-	if err := s.reconcileSetupSelection(ctx, authorities.registry); err != nil {
-		return ErrSetupVerificationFailed
+	return nil
+}
+
+func (s *SetupService) restoreSetupSelection(ctx context.Context, snapshot []byte) error {
+	if len(snapshot) == 0 || s.config.Selection == nil {
+		return nil
+	}
+	selection, ok := s.config.Selection.(SetupSelectionTransaction)
+	if !ok {
+		return ErrSetupTransactionUnproven
+	}
+	if len(snapshot) > setupMaxSelectionBytes {
+		return ErrSetupTransactionUnproven
+	}
+	if err := selection.RestoreSetupSelection(ctx, snapshot); err != nil {
+		return ErrSetupTransactionUnproven
 	}
 	return nil
 }
@@ -4270,12 +4448,15 @@ func (s *SetupService) RecoverStartup(ctx context.Context) error {
 		s.clearMaintenance()
 		return nil
 	}
-	if journal.SourceClass != "fresh" || journal.Phase == setupPhaseLifecycleCommitted || journal.Phase == setupPhaseWritersRetired || journal.Phase == setupPhaseRuntimeStarted || journal.Phase == setupPhaseRuntimeVerified {
+	if journal.SourceClass != "fresh" || journal.Phase == setupPhaseLifecycleCommitted || journal.Phase == setupPhaseWritersRetired || journal.Phase == setupPhaseRuntimeStarted || journal.Phase == setupPhaseSelectionReconciled || journal.Phase == setupPhaseRuntimeVerified {
 		if err := s.quiesceSetupRuntime(ownedContext); err != nil {
 			return s.recoveryFailure()
 		}
 	}
 	if err := s.rollbackCreated(ownedContext, journal, prepared); err != nil {
+		return s.recoveryFailure()
+	}
+	if err := s.restoreSetupSelection(ownedContext, journal.Previous.SelectionSnapshot); err != nil {
 		return s.recoveryFailure()
 	}
 	if journal.SourceClass != "fresh" && setupSnapshotHasLifecycle(prepared.snapshot) {

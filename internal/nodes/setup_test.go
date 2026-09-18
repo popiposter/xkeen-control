@@ -86,3 +86,29 @@ func TestCommandActivatorRejectsUnreviewedPreTakeoverLifecycle(t *testing.T) {
 		t.Fatalf("unreviewed lifecycle executed: %v", err)
 	}
 }
+
+func TestCommandActivatorDirectlyQuiescesReviewedLegacyWithoutExecutingScript(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("direct process quiesce fixture requires the Linux qualification environment")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "marker")
+	legacy := filepath.Join(dir, "S24xray")
+	if err := os.WriteFile(legacy, []byte("#!/bin/sh\nprintf executed > \"$XKEEN_SETUP_MARKER\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XKEEN_SETUP_MARKER", marker)
+	activator := CommandActivator{
+		LegacyLifecycleInit:         legacy,
+		XrayBinary:                  filepath.Join(dir, "xray"),
+		SetupLifecycleIdentity:      func(path string) bool { return path == legacy },
+		SetupLifecycleDirectProcess: func(path string) bool { return path == legacy },
+		RestartTimeout:              time.Second,
+	}
+	if err := activator.Stop(context.Background()); err != nil {
+		t.Fatalf("direct legacy stop failed: %v", err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("reviewed legacy lifecycle executed during takeover: %v", err)
+	}
+}

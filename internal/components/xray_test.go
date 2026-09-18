@@ -5,22 +5,146 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/popiposter/xkeen-control/internal/appliance"
 	"github.com/popiposter/xkeen-control/internal/authority"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 )
+
+func TestXrayUpdateAndRollbackRestartRealBinaryAfterAtomicReplacement(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("real Xray process replacement fixture requires the Linux qualification environment")
+	}
+	root := t.TempDir()
+	activePath := filepath.Join(root, "opt", "sbin", "xray")
+	configDir := filepath.Join(root, "opt", "etc", "xray", "configs")
+	assetDir := filepath.Join(root, "opt", "etc", "xray", "dat")
+	pidFile := filepath.Join(root, "tmp", "xray.pid")
+	lifecycle := filepath.Join(root, "opt", "etc", "init.d", "S05xkeen")
+	if err := os.MkdirAll(filepath.Dir(activePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(assetDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	buildRealXrayFixtureBinary(t, filepath.Join(root, "xray-v1"), "1.0.0")
+	buildRealXrayFixtureBinary(t, filepath.Join(root, "xray-v2"), "1.2.3")
+	if err := os.Rename(filepath.Join(root, "xray-v1"), activePath); err != nil {
+		t.Fatal(err)
+	}
+	contents := strings.ReplaceAll(setupLifecycleTemplate, "\r\n", "\n")
+	contents = strings.ReplaceAll(contents, "pidfile=/tmp/xkeen-control/xray.pid", "pidfile="+pidFile)
+	contents = strings.ReplaceAll(contents, "logfile=/tmp/xkeen-control/xray.log", "logfile="+filepath.Join(root, "tmp", "xray.log"))
+	contents = strings.ReplaceAll(contents, "/opt/sbin/xray", activePath)
+	if err := os.MkdirAll(filepath.Dir(lifecycle), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lifecycle, []byte(contents), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		for {
+			connection, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			_ = connection.Close()
+		}
+	}()
+
+	activator := nodes.CommandActivator{
+		XrayBinary:             activePath,
+		XrayAssetDir:           assetDir,
+		FixedLifecycleInit:     lifecycle,
+		SetupLifecycleIdentity: func(path string) bool { return path == lifecycle },
+		APIAddress:             listener.Addr().String(),
+		RestartTimeout:         15 * time.Second,
+		RestartAttemptTimeout:  5 * time.Second,
+	}
+	runtimeService := &realXrayTransactionRuntime{activator: activator, binary: activePath, configDir: configDir, assetDir: assetDir}
+	if err := activator.Start(context.Background()); err != nil {
+		t.Fatalf("start initial Xray: %v", err)
+	}
+	defer func() { _ = activator.Stop(context.Background()) }()
+	initialPID := waitRealManagedXray(t, activePath, pidFile)
+	initialMeta, err := binaryMetadata(activePath, "1.0.0", CommandXrayCandidateProbe{}, context.Background())
+	if err != nil {
+		t.Fatalf("initial metadata: %v", err)
+	}
+	v2, err := os.ReadFile(filepath.Join(root, "xray-v2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := writeSyntheticArchive(t, []syntheticZipEntry{{name: "xray", mode: 0o700, contents: v2}})
+	digest := sha256.Sum256(archive)
+	identity := XrayReleaseIdentity{Tag: "v1.2.3", Version: "1.2.3", AssetName: xrayCandidateAsset, SizeBytes: int64(len(archive)), SHA256: hex.EncodeToString(digest[:])}
+	authorityProvider := &fakeXrayAuthority{snapshot: XrayAuthoritySnapshot{Appliance: xrayTestAppliance(), Registry: xrayTestRegistry(t), Generation: sha256.Sum256([]byte("real-xray-generation"))}}
+	resolver := &fakeXrayResolver{identity: identity}
+	service := NewXrayService(XrayConfig{
+		Resolver: resolver, Downloader: &fakeXrayDownloader{archive: archive}, Authority: authorityProvider, Runtime: runtimeService,
+		CandidateProbe: CommandXrayCandidateProbe{}, CandidateValidator: CommandXrayCandidateValidator{}, AuthorityLease: authority.NewLease(), Coordinator: &fakeXrayCoordinator{},
+		ActiveBinaryPath: activePath, ConfigDir: configDir, AssetDir: assetDir,
+		PreviousDir: filepath.Join(root, "control", "previous"), JournalPath: filepath.Join(root, "control", "state", "component-transaction.json"),
+		StagingDir: filepath.Join(root, "tmp", "components"), RestoreJournalPath: filepath.Join(root, "control", "state", "restore.json"),
+		AvailableSpace: func(string) (uint64, error) { return ^uint64(0), nil }, SyncDirectory: func(string) error { return nil },
+		ActivationTimeout: 15 * time.Second, RollbackTimeout: 15 * time.Second, TransactionTimeout: 45 * time.Second,
+	})
+	if err := service.Update(context.Background(), identity); err != nil {
+		t.Fatalf("real Xray update: %v", err)
+	}
+	updatedPID := waitRealManagedXray(t, activePath, pidFile)
+	if updatedPID == initialPID || len(realManagedXrayPIDs(t, activePath)) != 1 {
+		t.Fatalf("update left unsafe runtime pids: initial=%d updated=%d all=%v", initialPID, updatedPID, realManagedXrayPIDs(t, activePath))
+	}
+	updatedMeta, err := binaryMetadata(activePath, "1.2.3", CommandXrayCandidateProbe{}, context.Background())
+	if err != nil || updatedMeta.Version != "1.2.3" {
+		t.Fatalf("updated metadata = %+v err=%v", updatedMeta, err)
+	}
+	previous, err := service.PreviousGeneration()
+	if err != nil || previous.Version != initialMeta.Version || previous.SHA256 != initialMeta.SHA256 {
+		t.Fatalf("previous update generation = %+v err=%v", previous, err)
+	}
+	if err := service.RollbackExpected(context.Background(), previous); err != nil {
+		t.Fatalf("real Xray rollback: %v", err)
+	}
+	rolledBackPID := waitRealManagedXray(t, activePath, pidFile)
+	if rolledBackPID == updatedPID || len(realManagedXrayPIDs(t, activePath)) != 1 {
+		t.Fatalf("rollback left unsafe runtime pids: updated=%d rollback=%d all=%v", updatedPID, rolledBackPID, realManagedXrayPIDs(t, activePath))
+	}
+	rolledBackMeta, err := binaryMetadata(activePath, "1.0.0", CommandXrayCandidateProbe{}, context.Background())
+	if err != nil || rolledBackMeta.Version != initialMeta.Version || rolledBackMeta.SHA256 != initialMeta.SHA256 {
+		t.Fatalf("rolled-back metadata = %+v err=%v", rolledBackMeta, err)
+	}
+	if runtimeService.restarts != 2 {
+		t.Fatalf("real runtime restart count = %d", runtimeService.restarts)
+	}
+}
 
 func TestXrayApplyReResolvesExactIdentityBeforeDownload(t *testing.T) {
 	fixture := newXrayFixture(t)
@@ -1263,6 +1387,139 @@ func writeSyntheticArchive(t *testing.T, entries []syntheticZipEntry) []byte {
 
 func syntheticXrayVersionOutput(version string) []byte {
 	return []byte("Xray " + version + " (Synthetic.)\ngo1.27.0 linux/arm64\n")
+}
+
+type realXrayTransactionRuntime struct {
+	activator nodes.CommandActivator
+	binary    string
+	configDir string
+	assetDir  string
+	restarts  int
+}
+
+func (r *realXrayTransactionRuntime) ValidateActiveConfig(ctx context.Context) error {
+	return (CommandXrayCandidateValidator{}).ValidateXrayCandidate(ctx, r.binary, r.configDir, r.assetDir)
+}
+
+func (r *realXrayTransactionRuntime) Restart(ctx context.Context) error {
+	r.restarts++
+	return r.activator.Restart(ctx)
+}
+
+func (r *realXrayTransactionRuntime) WaitReady(ctx context.Context) error {
+	return waitRealManagedXrayContext(ctx, r.binary)
+}
+
+func (r *realXrayTransactionRuntime) Verify(ctx context.Context, _ []string) error {
+	if err := waitRealManagedXrayContext(ctx, r.binary); err != nil {
+		return err
+	}
+	if len(realManagedXrayPIDs(nil, r.binary)) != 1 {
+		return errors.New("real Xray runtime has an unexpected process count")
+	}
+	return nil
+}
+
+func buildRealXrayFixtureBinary(t *testing.T, output, version string) {
+	t.Helper()
+	source := filepath.Join(t.TempDir(), "main.go")
+	program := fmt.Sprintf(`package main
+
+import (
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+)
+
+func main() {
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Printf("Xray %s (Synthetic.)\ngo1.27.0 linux/arm64\n")
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "run" {
+		for _, argument := range os.Args[2:] {
+			if argument == "-test" {
+				return
+			}
+		}
+		signals := make(chan os.Signal, 1)
+		signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
+		<-signals
+		return
+	}
+}
+`, version)
+	if err := os.WriteFile(source, []byte(program), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("go", "build", "-o", output, source)
+	command.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64")
+	if outputBytes, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("build Xray fixture %s: %v (%s)", version, err, strings.TrimSpace(string(outputBytes)))
+	}
+	if err := os.Chmod(output, 0o700); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func waitRealManagedXray(t *testing.T, binary, pidFile string) int {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		contents, err := os.ReadFile(pidFile)
+		if err == nil {
+			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(contents)))
+			if parseErr == nil {
+				if executable, readErr := os.Readlink(filepath.Join("/proc", strconv.Itoa(pid), "exe")); readErr == nil && (executable == binary || executable == binary+" (deleted)") {
+					return pid
+				}
+			}
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("managed Xray did not become ready: %s", binary)
+	return 0
+}
+
+func waitRealManagedXrayContext(ctx context.Context, binary string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if len(realManagedXrayPIDs(nil, binary)) == 1 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func realManagedXrayPIDs(t *testing.T, binary string) map[int]struct{} {
+	if t != nil {
+		t.Helper()
+	}
+	result := make(map[int]struct{})
+	contents, err := exec.Command("pidof", "xray").Output()
+	if err != nil {
+		return result
+	}
+	for _, field := range strings.Fields(string(contents)) {
+		pid, parseErr := strconv.Atoi(field)
+		if parseErr != nil || pid <= 0 {
+			continue
+		}
+		executable, readErr := os.Readlink(filepath.Join("/proc", field, "exe"))
+		if readErr == nil && (executable == binary || executable == binary+" (deleted)") {
+			result[pid] = struct{}{}
+		}
+	}
+	return result
 }
 
 func readFixtureFile(t *testing.T, path string) []byte {

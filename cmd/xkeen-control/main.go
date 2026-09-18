@@ -510,7 +510,7 @@ func newXKeenService(coordinator *c1.Coordinator, lease *authority.Lease, applia
 		}),
 		Runtime: components.CommandXrayRuntime{
 			Activator: nodes.CommandActivator{
-				XrayBinary: xrayBinary, XrayAssetDir: xrayAssetDir, FixedLifecycleInit: lifecycleInit,
+				XrayBinary: xrayBinary, XrayAssetDir: xrayAssetDir, ConfigDir: configDir, FixedLifecycleInit: lifecycleInit,
 				APIAddress: getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress), ActiveOutboundsPath: activeOutboundsPath,
 				RoutingPath: filepath.Join(configDir, "05_routing.json"),
 			},
@@ -557,8 +557,8 @@ func newSetupService(coordinator *c1.Coordinator, lease *authority.Lease, xrayRe
 	paths.PreviousDir = setupPreviousDirFromEnvironment()
 	paths.XkeenActivation = getenv("XKEEN_SETUP_XKEEN_ACTIVATION", components.DefaultSetupXKeenActivation)
 	activator := nodes.CommandActivator{
-		XrayBinary: paths.XrayBinary, XrayAssetDir: paths.XrayAssetDir, XkeenBinary: paths.XkeenBinary,
-		FixedLifecycleInit: paths.LifecycleInit, LegacyLifecycleInit: paths.LegacyLifecycleInit, SetupLifecycleIdentity: components.IsReviewedSetupLifecycle, APIAddress: getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress),
+		XrayBinary: paths.XrayBinary, XrayAssetDir: paths.XrayAssetDir, ConfigDir: paths.XrayConfigDir, XkeenBinary: paths.XkeenBinary,
+		FixedLifecycleInit: paths.LifecycleInit, LegacyLifecycleInit: paths.LegacyLifecycleInit, SetupLifecycleIdentity: components.IsReviewedSetupLifecycle, SetupLifecycleDirectProcess: components.IsReviewedLegacySetupLifecycle, APIAddress: getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress),
 		ActiveOutboundsPath: paths.ActiveOutbounds, RoutingPath: filepath.Join(paths.XrayConfigDir, "05_routing.json"),
 	}
 	activeRuntime := components.CommandXrayRuntime{ActiveBinary: paths.XrayBinary, ConfigDir: paths.XrayConfigDir, AssetDir: paths.XrayAssetDir}

@@ -359,3 +359,39 @@ func TestSupervisorSetupSelectionReconciliationClearsMigratedStaleOverride(t *te
 		t.Fatalf("stale runtime override was not cleared through C.1 owner: %v", api.override)
 	}
 }
+
+func TestSupervisorSetupSelectionSnapshotRestoresManualStableRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "selection.json")
+	when := time.Now().UTC().Add(-time.Hour)
+	store := SelectionStore{Path: path}
+	previous := SelectionRecord{Target: "proxy-old", ManualOverride: "proxy-old", StableSince: when, LastSwitchReason: ReasonManualOverride, LastSwitchAt: when}
+	if _, err := store.SaveIfChanged(SelectionRecord{}, previous); err != nil {
+		t.Fatal(err)
+	}
+	reader := &supervisorReader{snapshot: supervisorSnapshot("proxy-old", "proxy-new", "proxy-other")}
+	api := &supervisorAPI{reader: reader}
+	supervisor := NewSupervisor(supervisorPolicy(), reader, api, func(context.Context) []NodeState {
+		return []NodeState{{Tag: "proxy-new", Enabled: true}, {Tag: "proxy-other", Enabled: true}}
+	}, NewProbeRouter(api), store)
+
+	snapshot, err := supervisor.SetupSelectionSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := supervisor.ReconcileSetupSelection(context.Background(), []string{"proxy-new", "proxy-other"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := supervisor.RestoreSetupSelection(context.Background(), snapshot); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual != previous || reader.snapshot.Balancer.Override != "proxy-old" {
+		t.Fatalf("restored selection = %+v override=%q want %+v", actual, reader.snapshot.Balancer.Override, previous)
+	}
+	if !reflect.DeepEqual(api.override, []string{"", "proxy-old"}) {
+		t.Fatalf("selection restore runtime trace = %v", api.override)
+	}
+}

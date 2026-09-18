@@ -338,6 +338,7 @@ func copyTree(source, destination string) error {
 type CommandActivator struct {
 	XrayBinary          string
 	XrayAssetDir        string
+	ConfigDir           string
 	XkeenBinary         string
 	FixedLifecycleInit  string
 	LegacyLifecycleInit string
@@ -345,13 +346,17 @@ type CommandActivator struct {
 	// Ordinary Restart continues to use the installed fixed lifecycle contract;
 	// Setup must never execute an unqualified pre-takeover init as root.
 	SetupLifecycleIdentity func(string) bool
-	APIAddress             string
-	ActiveOutboundsPath    string
-	RoutingPath            string
-	RestartTimeout         time.Duration
-	RestartAttemptTimeout  time.Duration
-	ReadyTimeout           time.Duration
-	RuntimeVerifier        func(context.Context, string, string, []string) error
+	// SetupLifecycleDirectProcess marks a reviewed legacy lifecycle whose
+	// foreign script must not be executed during takeover. Setup uses the
+	// fixed Xray process path instead.
+	SetupLifecycleDirectProcess func(string) bool
+	APIAddress                  string
+	ActiveOutboundsPath         string
+	RoutingPath                 string
+	RestartTimeout              time.Duration
+	RestartAttemptTimeout       time.Duration
+	ReadyTimeout                time.Duration
+	RuntimeVerifier             func(context.Context, string, string, []string) error
 }
 
 func (a CommandActivator) ValidateCandidate(ctx context.Context, configDir string) error {
@@ -484,9 +489,105 @@ func (a CommandActivator) setupLifecyclePath() string {
 }
 
 func (a CommandActivator) runSetupLifecycle(ctx context.Context, path, action string) error {
+	if a.SetupLifecycleDirectProcess != nil && a.SetupLifecycleDirectProcess(path) {
+		return a.runDirectSetupLifecycle(ctx, action)
+	}
 	setup := a
 	setup.FixedLifecycleInit = path
 	return setup.runFixedLifecycle(ctx, action)
+}
+
+func (a CommandActivator) runDirectSetupLifecycle(ctx context.Context, action string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if action != "start" && action != "stop" && action != "restart" && action != "status" {
+		return errors.New("Xray lifecycle action failed")
+	}
+	if a.XrayBinary == "" {
+		a.XrayBinary = "xray"
+	}
+	switch action {
+	case "stop":
+		return a.stopManagedXray(ctx)
+	case "restart":
+		if err := a.stopManagedXray(ctx); err != nil {
+			return err
+		}
+		return a.startManagedXray(ctx)
+	case "status":
+		if len(managedXrayPIDs(ctx, a.XrayBinary)) == 0 {
+			return errors.New("Xray is not running")
+		}
+		return nil
+	default:
+		return a.startManagedXray(ctx)
+	}
+}
+
+func (a CommandActivator) startManagedXray(ctx context.Context) error {
+	if len(managedXrayPIDs(ctx, a.XrayBinary)) != 0 {
+		return nil
+	}
+	configDir := a.ConfigDir
+	if configDir == "" && a.ActiveOutboundsPath != "" {
+		configDir = filepath.Dir(a.ActiveOutboundsPath)
+	}
+	if configDir == "" {
+		configDir = "/opt/etc/xray/configs"
+	}
+	command := exec.Command(a.XrayBinary, "run", "-confdir", configDir)
+	command.Env = xrayEnvironment(a.XrayAssetDir)
+	command.Env = xkeenForegroundEnvironmentFor(command.Env)
+	command.Stdout = io.Discard
+	command.Stderr = io.Discard
+	if err := command.Start(); err != nil {
+		return errors.New("Xray start failed")
+	}
+	go func() { _ = command.Wait() }()
+	deadline := time.NewTicker(100 * time.Millisecond)
+	defer deadline.Stop()
+	for {
+		if len(managedXrayPIDs(ctx, a.XrayBinary)) != 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return errors.New("Xray start failed")
+		case <-deadline.C:
+		}
+	}
+}
+
+func (a CommandActivator) stopManagedXray(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	terminate := managedXrayPIDs(ctx, a.XrayBinary)
+	for pid := range terminate {
+		_ = signalXrayPID(pid, false)
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			for pid := range managedXrayPIDs(context.Background(), a.XrayBinary) {
+				_ = signalXrayPID(pid, true)
+			}
+			return errors.New("Xray stop failed")
+		}
+		if len(managedXrayPIDs(ctx, a.XrayBinary)) == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			for pid := range managedXrayPIDs(context.Background(), a.XrayBinary) {
+				_ = signalXrayPID(pid, true)
+			}
+			return errors.New("Xray stop failed")
+		case <-ticker.C:
+		}
+	}
 }
 
 func (a CommandActivator) VerifyStopped(ctx context.Context) error {
@@ -707,6 +808,10 @@ func xrayPIDSet(ctx context.Context) map[string]struct{} {
 
 func xkeenForegroundEnvironment() []string {
 	environment := os.Environ()
+	return xkeenForegroundEnvironmentFor(environment)
+}
+
+func xkeenForegroundEnvironmentFor(environment []string) []string {
 	const foreground = "XKEEN_FOREGROUND=1"
 	for index, entry := range environment {
 		if strings.HasPrefix(entry, "XKEEN_FOREGROUND=") {

@@ -1,8 +1,11 @@
 package c1
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"sort"
 	"sync"
 	"time"
@@ -505,6 +508,106 @@ func (s *Supervisor) ReconcileSetupSelection(ctx context.Context, enabledTags []
 		}
 		s.mu.Unlock()
 	}
+	return nil
+}
+
+// SetupSelectionSnapshot captures the complete typed selection record before
+// Setup changes the active generation. Setup journals this value as part of
+// its own transaction; selection.json remains owned by C.1 rather than being
+// edited by the component layer.
+func (s *Supervisor) SetupSelectionSnapshot(context.Context) ([]byte, error) {
+	if s == nil || !s.policy.Enabled {
+		return nil, nil
+	}
+	s.policyMu.Lock()
+	defer s.policyMu.Unlock()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	record := s.currentRecordRecord()
+	if (record.Target != "" && !validTag(record.Target)) || (record.ManualOverride != "" && !validTag(record.ManualOverride)) {
+		return nil, errors.New("selection state is invalid")
+	}
+	contents, err := json.Marshal(record)
+	if err != nil {
+		return nil, errors.New("selection snapshot encoding failed")
+	}
+	contents = append(contents, '\n')
+	if len(contents) > 8<<10 {
+		return nil, errors.New("selection snapshot is too large")
+	}
+	return contents, nil
+}
+
+// RestoreSetupSelection restores a prior C.1 record and converges the
+// balancer through the same typed runtime API used by normal selection
+// mutations. It is deliberately separate from ReconcileSetupSelection so a
+// failed Setup can restore the pre-takeover manual/stable choice exactly.
+func (s *Supervisor) RestoreSetupSelection(ctx context.Context, snapshot []byte) error {
+	if s == nil || !s.policy.Enabled {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if len(snapshot) == 0 || len(snapshot) > 8<<10 {
+		return errors.New("selection snapshot is invalid")
+	}
+	var record SelectionRecord
+	decoder := json.NewDecoder(bytes.NewReader(snapshot))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&record); err != nil || decoder.Decode(&struct{}{}) != io.EOF || (record.Target != "" && !validTag(record.Target)) || (record.ManualOverride != "" && !validTag(record.ManualOverride)) {
+		return errors.New("selection snapshot is invalid")
+	}
+
+	s.policyMu.Lock()
+	defer s.policyMu.Unlock()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	previous := s.currentRecordRecord()
+	runtimeBefore := ""
+	var runtimeSnapshot xrayapi.Snapshot
+	if s.xray != nil {
+		runtimeSnapshot = s.xray.Snapshot(ctx)
+		runtimeBefore = safeTag(runtimeSnapshot.Balancer.Override)
+	}
+	runtimeAfter := safeTag(record.Target)
+	if runtimeAfter != runtimeBefore && s.api != nil {
+		if err := s.api.OverrideBalancerTarget(ctx, "bal-proxy", runtimeAfter); err != nil {
+			return err
+		}
+	}
+	if _, err := s.selection.SaveIfChanged(previous, record); err != nil {
+		if runtimeAfter != runtimeBefore && s.api != nil {
+			_ = s.api.OverrideBalancerTarget(ctx, "bal-proxy", runtimeBefore)
+		}
+		return err
+	}
+	s.engine.ResetEvidence()
+	now := s.clock()
+	s.mu.Lock()
+	s.record = record
+	s.failures = 0
+	s.status.ManualOverride = record.ManualOverride
+	s.status.StableTarget = record.Target
+	s.status.StableSince = record.StableSince
+	s.status.NativeTarget = safeTag(runtimeSnapshot.Balancer.NativeSelected)
+	s.status.OverrideTarget = runtimeAfter
+	s.status.EffectiveTarget = runtimeAfter
+	if s.status.EffectiveTarget == "" {
+		s.status.EffectiveTarget = s.status.NativeTarget
+	}
+	s.status.LastSwitchReason = record.LastSwitchReason
+	s.status.LastSwitchAt = record.LastSwitchAt
+	s.status.LastRuntimeAction = "setup-restored"
+	s.status.LastRuntimeActionAt = now
+	if record.ManualOverride != "" {
+		s.status.State = "manual"
+	} else if record.Target == "" {
+		s.status.State = ReasonFallback
+	} else {
+		s.status.State = "stable"
+	}
+	s.mu.Unlock()
 	return nil
 }
 

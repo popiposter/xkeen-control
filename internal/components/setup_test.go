@@ -123,6 +123,32 @@ type setupTestRuntime struct {
 	emptyFails   int
 }
 
+type setupTestSelectionTransaction struct {
+	snapshot        []byte
+	reconciled      bool
+	restoreCalls    int
+	failureJournal  bool
+	journalSyncs    int
+	failureInjected bool
+}
+
+func (s *setupTestSelectionTransaction) ReconcileSetupSelection(context.Context, []string) error {
+	s.reconciled = true
+	s.snapshot = []byte("new-selection")
+	return nil
+}
+
+func (s *setupTestSelectionTransaction) SetupSelectionSnapshot(context.Context) ([]byte, error) {
+	return append([]byte(nil), s.snapshot...), nil
+}
+
+func (s *setupTestSelectionTransaction) RestoreSetupSelection(_ context.Context, snapshot []byte) error {
+	s.restoreCalls++
+	s.snapshot = append([]byte(nil), snapshot...)
+	s.reconciled = false
+	return nil
+}
+
 func (r *setupTestRuntime) Start(context.Context) error {
 	r.startCalls++
 	r.stopped = false
@@ -347,6 +373,11 @@ func TestSetupTakeoverResourceAdmissionChecksPersistentSpaceBeforeWrites(t *test
 			}
 			return ^uint64(0), nil
 		},
+		SameFilesystem: func(left, right string) (bool, error) {
+			leftPersistent := strings.Contains(left, "persistent")
+			rightPersistent := strings.Contains(right, "persistent")
+			return leftPersistent == rightPersistent, nil
+		},
 	})
 	preview, err := service.Preview(context.Background(), "space")
 	if err != nil {
@@ -359,6 +390,51 @@ func TestSetupTakeoverResourceAdmissionChecksPersistentSpaceBeforeWrites(t *test
 		if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
 			t.Fatalf("persistent write occurred at %s: %v", path, statErr)
 		}
+	}
+}
+
+func TestSetupResourceAdmissionUsesPerFilesystemDemand(t *testing.T) {
+	staging := t.TempDir()
+	persistent := t.TempDir()
+	paths := setupTestPaths(persistent)
+	paths.StagingDir = staging
+	paths.PreviousDir = filepath.Join(persistent, "previous")
+	if err := os.MkdirAll(paths.PreviousDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	isStaging := func(path string) bool {
+		path = filepath.Clean(path)
+		return path == filepath.Clean(staging) || strings.HasPrefix(path, filepath.Clean(staging)+string(filepath.Separator))
+	}
+	demand := setupResourceDemand(paths, "managed-takeover", 40, 30, 20, 10, 100, 120, 80, 32, 64)
+	config := SetupConfig{
+		Paths:          paths,
+		SameFilesystem: func(left, right string) (bool, error) { return isStaging(left) == isStaging(right), nil },
+	}
+	service := NewSetupService(config)
+	groups, err := service.groupSetupResources(demand)
+	if err != nil || len(groups) != 2 {
+		t.Fatalf("filesystem demand groups = %+v err=%v", groups, err)
+	}
+	var stagingNeed, persistentNeed uint64
+	for _, group := range groups {
+		if isStaging(group.directory) {
+			stagingNeed = group.bytes
+		} else {
+			persistentNeed = group.bytes
+		}
+	}
+	if stagingNeed == 0 || persistentNeed == 0 || stagingNeed+persistentNeed <= stagingNeed || stagingNeed+persistentNeed <= persistentNeed {
+		t.Fatalf("filesystem demands were not separated: staging=%d persistent=%d", stagingNeed, persistentNeed)
+	}
+	service.config.AvailableSpace = func(path string) (uint64, error) {
+		if isStaging(path) {
+			return stagingNeed + uint64(XrayFreeSpaceReserve) + 1, nil
+		}
+		return persistentNeed + uint64(XrayFreeSpaceReserve) + 1, nil
+	}
+	if err := service.checkSetupResources(demand); err != nil {
+		t.Fatalf("split filesystem budget was rejected: %v", err)
 	}
 }
 
@@ -672,6 +748,7 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 
 	validator := &setupTestCandidateValidator{}
 	runtime := &setupTestRuntime{}
+	selection := &setupTestSelectionTransaction{}
 	snapshotSyncObserved := false
 	coordinator := &fakeXrayCoordinator{}
 	service := NewSetupService(SetupConfig{
@@ -679,9 +756,16 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 		XrayResolver: setupTestXrayResolver{value: xrayIdentity}, XrayDownloader: &fakeXrayDownloader{archive: xrayArchive},
 		GeodataResolver: setupTestGeodataResolver{value: geodataSet}, GeodataDownloader: &fakeGeodataDownloader{payloads: geodataPayloads},
 		XKeenResolver: setupTestXKeenResolver{value: xkeenIdentity}, XKeenDownloader: &fakeXKeenDownloader{archive: xkeenArchive},
-		CandidateProbe: &fakeTransactionalProbe{newVersion: xrayIdentity.Version}, CandidateValidator: validator, Runtime: runtime,
+		CandidateProbe: &fakeTransactionalProbe{newVersion: xrayIdentity.Version}, CandidateValidator: validator, Runtime: runtime, Selection: selection,
 		MutationGate: NewComponentMutationGate(), Coordinator: coordinator, AuthorityLease: authority.NewLease(),
 		AvailableSpace: func(string) (uint64, error) { return ^uint64(0), nil }, SyncDirectory: func(path string) error {
+			if selection.failureJournal && selection.reconciled && filepath.Base(filepath.Clean(path)) == "state" && !selection.failureInjected {
+				selection.journalSyncs++
+				if selection.journalSyncs == 2 {
+					selection.failureInjected = true
+					return errors.New("synthetic journal failure after selection reconciliation")
+				}
+			}
 			if filepath.Base(filepath.Clean(path)) == ".setup-snapshot" {
 				snapshotSyncObserved = true
 				if _, err := os.Stat(paths.Journal); err != nil {
@@ -741,6 +825,8 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtime.emptyFails = 1
+	selection.snapshot = []byte("old-selection")
+	selection.reconciled = false
 	takeover, err := service.Preview(context.Background(), "session-b")
 	if err != nil {
 		t.Fatalf("takeover preview: %v", err)
@@ -768,6 +854,22 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 	}
 	if got, err := os.ReadFile(paths.LegacyLifecycleInit); err != nil || !bytes.Equal(got, legacyLifecycle) {
 		t.Fatalf("legacy lifecycle was not restored: %q (%v)", got, err)
+	}
+
+	selection.failureJournal = true
+	selection.journalSyncs = 0
+	selection.failureInjected = false
+	selection.snapshot = []byte("old-selection")
+	selection.reconciled = false
+	second, err := service.Preview(context.Background(), "session-c")
+	if err != nil {
+		t.Fatalf("selection rollback preview: %v", err)
+	}
+	if _, err := service.Apply(context.Background(), "session-c", second.PreviewToken); !errors.Is(err, ErrSetupTransactionRestored) {
+		t.Fatalf("selection journal failure = %v", err)
+	}
+	if !bytes.Equal(selection.snapshot, []byte("old-selection")) || selection.restoreCalls == 0 {
+		t.Fatalf("selection was not transactionally restored: snapshot=%q restores=%d", selection.snapshot, selection.restoreCalls)
 	}
 }
 
