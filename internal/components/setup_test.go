@@ -9,8 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/popiposter/xkeen-control/internal/appliance"
@@ -257,6 +261,37 @@ func TestSetupTakeoverUsesTypedAuthorityPrecedenceAndStrictLegacyMigration(t *te
 	}
 }
 
+func TestSetupLifecycleDoesNotSignalAReusedNonXrayPID(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("/proc executable identity fixture requires the Linux qualification environment")
+	}
+	root := t.TempDir()
+	pidFile := filepath.Join(root, "xray.pid")
+	logFile := filepath.Join(root, "xray.log")
+	process := exec.Command("sleep", "30")
+	if err := process.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = process.Process.Kill(); _ = process.Wait() }()
+	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(process.Process.Pid)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	contents := strings.ReplaceAll(setupLifecycleTemplate, "\r\n", "\n")
+	contents = strings.ReplaceAll(contents, "pidfile=/tmp/xkeen-control/xray.pid", "pidfile="+pidFile)
+	contents = strings.ReplaceAll(contents, "logfile=/tmp/xkeen-control/xray.log", "logfile="+logFile)
+	contents = strings.ReplaceAll(contents, "/opt/sbin/xray", filepath.Join(root, "xray"))
+	script := filepath.Join(root, "S05xkeen")
+	if err := os.WriteFile(script, []byte(contents), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.Command(script, "stop", "on").Run(); err != nil {
+		t.Fatalf("stale pidfile stop failed: %v", err)
+	}
+	if err := process.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("stale pidfile signalled a non-Xray process: %v", err)
+	}
+}
+
 func TestSetupTakeoverAdoptsSupportedLegacyPolicyBeforeProductDefault(t *testing.T) {
 	root := t.TempDir()
 	paths := setupTestPaths(root)
@@ -297,6 +332,9 @@ func TestSetupTakeoverAdoptsSupportedLegacyPolicyBeforeProductDefault(t *testing
 func TestSetupTakeoverResourceAdmissionChecksPersistentSpaceBeforeWrites(t *testing.T) {
 	root := t.TempDir()
 	paths := setupTestPaths(root)
+	if estimateSetupSnapshotBytes(paths) <= int64(8<<20) {
+		t.Fatalf("snapshot admission reverted to the superseded small placeholder: %d", estimateSetupSnapshotBytes(paths))
+	}
 	paths.PreviousDir = filepath.Join(root, "persistent")
 	if err := os.MkdirAll(paths.PreviousDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -378,6 +416,145 @@ func TestSetupClassifierSupportsFreshAndRecognizedTakeoverButFailsClosed(t *test
 	}
 	if layout, err := service.inspectLayout(); err != nil || layout.state != "blocked" || layout.reason != SetupReasonJournalPending {
 		t.Fatalf("staging layout = %+v, %v", layout, err)
+	}
+}
+
+func TestSetupRejectsMagicWordManualLifecycleWithoutExecutingIt(t *testing.T) {
+	root := t.TempDir()
+	paths := setupTestPaths(root)
+	marker := filepath.Join(root, "executed")
+	manual := []byte("#!/bin/sh\n# xray start restart\nprintf executed > " + marker + "\n")
+	if err := os.WriteFile(paths.LegacyLifecycleInit, manual, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	service := setupTestService(t, paths)
+	projection := service.Status()
+	if projection.State != "blocked" || projection.ReasonCode != SetupReasonLayoutMixed {
+		t.Fatalf("magic-word lifecycle was accepted: %+v", projection)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("manual lifecycle executed during classification: %v", err)
+	}
+}
+
+func TestSetupRecoveryRemovesOwnedOrphanedPreviousSnapshot(t *testing.T) {
+	root := t.TempDir()
+	paths := setupTestPaths(root)
+	service := setupTestService(t, paths)
+	snapshotRoot := service.setupSnapshotRoot()
+	if err := ensureXKeenOwnedDirectory(snapshotRoot, setupSnapshotOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(snapshotRoot, "payload"), []byte("bounded partial snapshot"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := service.HasPendingRecovery()
+	if err != nil || !pending {
+		t.Fatalf("orphan snapshot was not admitted to recovery: pending=%v err=%v", pending, err)
+	}
+	if err := service.RecoverStartup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(snapshotRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("owned orphaned snapshot remains: %v", err)
+	}
+	if err := service.Ready(); err != nil {
+		t.Fatalf("service remained in recovery maintenance: %v", err)
+	}
+}
+
+func TestSetupSourceManifestBindsEachTakeoverOwnedGeneration(t *testing.T) {
+	root := t.TempDir()
+	paths := setupTestPaths(root)
+	paths.WriterScripts = []string{filepath.Join(root, "known-writer.sh")}
+	paths.LegacyOutbounds = filepath.Join(root, "legacy-outbounds.json")
+	service := setupTestService(t, paths)
+	mutations := map[string]func() error{
+		"xray": func() error { return os.WriteFile(paths.XrayBinary, []byte("xray-generation"), 0o700) },
+		"xray-config": func() error {
+			if err := os.MkdirAll(paths.XrayConfigDir, 0o700); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(paths.XrayConfigDir, "01_log.json"), []byte("config-generation"), 0o600)
+		},
+		"xray-assets": func() error {
+			if err := os.MkdirAll(paths.XrayAssetDir, 0o700); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(paths.XrayAssetDir, productGeodataCatalog[0].Name), []byte("asset-generation"), 0o600)
+		},
+		"xkeen": func() error { return os.WriteFile(paths.XkeenBinary, []byte("xkeen-generation"), 0o700) },
+		"xkeen-module": func() error {
+			if err := os.MkdirAll(paths.XkeenModuleDir, 0o700); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(paths.XkeenModuleDir, "runtime.sh"), []byte("module-generation"), 0o600)
+		},
+		"xkeen-marker": func() error { return os.WriteFile(paths.XkeenMarker, []byte("marker-generation"), 0o600) },
+		"lifecycle": func() error {
+			contents, err := setupLifecycleBytes()
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(paths.LifecycleInit, append(contents, '\n'), 0o700)
+		},
+		"legacy-lifecycle": func() error {
+			contents, err := setupLifecycleBytes()
+			if err != nil {
+				return err
+			}
+			return os.WriteFile(paths.LegacyLifecycleInit, contents, 0o700)
+		},
+		"sibling-module": func() error {
+			if err := os.MkdirAll(paths.SiblingModule, 0o700); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(paths.SiblingModule, "legacy.sh"), []byte("sibling-generation"), 0o600)
+		},
+		"install-helper": func() error { return os.WriteFile(paths.InstallHelper, []byte("helper-generation"), 0o700) },
+		"appliance":      func() error { return os.WriteFile(paths.Appliance, []byte("appliance-generation"), 0o600) },
+		"nodes":          func() error { return os.WriteFile(paths.Nodes, []byte("nodes-generation"), 0o600) },
+		"legacy-outbounds": func() error {
+			return os.WriteFile(paths.LegacyOutbounds, []byte("legacy-outbounds-generation"), 0o600)
+		},
+	}
+	for name, mutate := range mutations {
+		before, err := service.setupSourceGenerationDigest(nil)
+		if err != nil {
+			t.Fatalf("baseline %s: %v", name, err)
+		}
+		if err := mutate(); err != nil {
+			t.Fatalf("mutate %s: %v", name, err)
+		}
+		after, err := service.setupSourceGenerationDigest(nil)
+		if err != nil {
+			t.Fatalf("changed %s: %v", name, err)
+		}
+		if before == after {
+			t.Fatalf("source manifest ignored takeover-owned %s", name)
+		}
+	}
+	beforeWriters, err := service.inspectSetupWriters()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := service.setupSourceGenerationDigest(beforeWriters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.WriterScripts[0], []byte("writer-generation"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	afterWriters, err := service.inspectSetupWriters()
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := service.setupSourceGenerationDigest(afterWriters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatal("source manifest ignored a takeover-owned writer generation")
 	}
 }
 
@@ -495,6 +672,7 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 
 	validator := &setupTestCandidateValidator{}
 	runtime := &setupTestRuntime{}
+	snapshotSyncObserved := false
 	coordinator := &fakeXrayCoordinator{}
 	service := NewSetupService(SetupConfig{
 		Paths:        paths,
@@ -503,7 +681,15 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 		XKeenResolver: setupTestXKeenResolver{value: xkeenIdentity}, XKeenDownloader: &fakeXKeenDownloader{archive: xkeenArchive},
 		CandidateProbe: &fakeTransactionalProbe{newVersion: xrayIdentity.Version}, CandidateValidator: validator, Runtime: runtime,
 		MutationGate: NewComponentMutationGate(), Coordinator: coordinator, AuthorityLease: authority.NewLease(),
-		AvailableSpace: func(string) (uint64, error) { return ^uint64(0), nil }, SyncDirectory: func(string) error { return nil },
+		AvailableSpace: func(string) (uint64, error) { return ^uint64(0), nil }, SyncDirectory: func(path string) error {
+			if filepath.Base(filepath.Clean(path)) == ".setup-snapshot" {
+				snapshotSyncObserved = true
+				if _, err := os.Stat(paths.Journal); err != nil {
+					t.Fatalf("snapshot was synced before the transaction journal: %v", err)
+				}
+			}
+			return nil
+		},
 	})
 
 	preview, err := service.Preview(context.Background(), "session-a")
@@ -550,7 +736,8 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 	if err := os.WriteFile(paths.XkeenMarker, previousMarker, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(paths.LegacyLifecycleInit, []byte("#!/bin/sh\n# xray start restart legacy lifecycle\n"), 0o700); err != nil {
+	legacyLifecycle, _ := setupLifecycleBytes()
+	if err := os.WriteFile(paths.LegacyLifecycleInit, legacyLifecycle, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	runtime.emptyFails = 1
@@ -564,6 +751,9 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 	if _, err := service.Apply(context.Background(), "session-b", takeover.PreviewToken); !errors.Is(err, ErrSetupTransactionRestored) {
 		t.Fatalf("late verification error = %v", err)
 	}
+	if !snapshotSyncObserved {
+		t.Fatal("takeover did not durably sync its previous-generation snapshot")
+	}
 	for path, expected := range map[string][]byte{paths.XkeenMarker: previousMarker, paths.XrayBinary: oldXray, paths.Nodes: oldNodes, paths.LifecycleInit: oldLifecycle} {
 		actual, readErr := os.ReadFile(path)
 		if readErr != nil || !bytes.Equal(actual, expected) {
@@ -576,7 +766,7 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 	if _, err := os.Stat(paths.Journal); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("rollback journal remains: %v", err)
 	}
-	if got, err := os.ReadFile(paths.LegacyLifecycleInit); err != nil || string(got) != "#!/bin/sh\n# xray start restart legacy lifecycle\n" {
+	if got, err := os.ReadFile(paths.LegacyLifecycleInit); err != nil || !bytes.Equal(got, legacyLifecycle) {
 		t.Fatalf("legacy lifecycle was not restored: %q (%v)", got, err)
 	}
 }
@@ -597,7 +787,8 @@ func TestSetupTakeoverPreservesAuthoritiesPanelStateAndRetiresReviewedWriters(t 
 	if err := os.WriteFile(paths.LegacyOutbounds, legacy, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(paths.LegacyLifecycleInit, []byte("#!/bin/sh\n# xray start restart legacy lifecycle\n"), 0o700); err != nil {
+	legacyLifecycle, _ := setupLifecycleBytes()
+	if err := os.WriteFile(paths.LegacyLifecycleInit, legacyLifecycle, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(paths.SiblingModule, 0o700); err != nil {
@@ -719,8 +910,27 @@ func TestSetupTakeoverPreservesAuthoritiesPanelStateAndRetiresReviewedWriters(t 
 	if err := os.WriteFile(paths.WriterScripts[0], []byte("reappeared writer"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if projection := service.Status(); projection.State != "blocked" || projection.ReasonCode != SetupReasonWriterConflict {
-		t.Fatalf("writer reappearance was not blocked: %+v", projection)
+	if projection := service.Status(); projection.State != "takeover" || projection.ReasonCode != SetupReasonManagedTakeover || !projection.Eligible {
+		t.Fatalf("writer reappearance did not become explicit Setup reconciliation: %+v", projection)
+	}
+	if !service.WriterConflict() {
+		t.Fatal("ordinary component mutation admission did not remain blocked for the reappeared writer")
+	}
+	reconcile, err := service.Preview(context.Background(), "reconcile-writer")
+	if err != nil {
+		t.Fatalf("writer reconciliation preview: %v", err)
+	}
+	if _, err := service.Apply(context.Background(), "reconcile-writer", reconcile.PreviewToken); err != nil {
+		t.Fatalf("writer reconciliation apply: %v", err)
+	}
+	if _, err := os.Stat(paths.WriterScripts[0]); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("reconciled writer remains: %v", err)
+	}
+	if projection := service.Status(); projection.State != "ready" || projection.Eligible {
+		t.Fatalf("writer reconciliation post-state: %+v", projection)
+	}
+	if service.WriterConflict() {
+		t.Fatal("writer conflict remained after explicit Setup reconciliation")
 	}
 	if got, err := os.ReadFile(cronDirWriter); err != nil || string(got) != "* * * * * /opt/etc/keep-dir.sh\n" {
 		t.Fatalf("cron.d writer retirement changed unexpected state: %q (%v)", got, err)

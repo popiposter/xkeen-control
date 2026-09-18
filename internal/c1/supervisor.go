@@ -411,6 +411,103 @@ func (s *Supervisor) changeRecord(record SelectionRecord, allowEmpty bool) error
 	return nil
 }
 
+// ReconcileSetupSelection is the typed owner seam used after a Setup
+// generation is activated. Valid targets and manual overrides survive; an
+// absent/disabled migrated target is cleared through SelectionStore and the
+// runtime override is converged through the existing C.1 API owner.
+func (s *Supervisor) ReconcileSetupSelection(ctx context.Context, enabledTags []string) error {
+	if s == nil || !s.policy.Enabled {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	allowed := make(map[string]struct{}, len(enabledTags))
+	for _, tag := range enabledTags {
+		if validTag(tag) {
+			allowed[tag] = struct{}{}
+		}
+	}
+
+	s.policyMu.Lock()
+	defer s.policyMu.Unlock()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	previous := s.currentRecordRecord()
+	next := previous
+	now := s.clock()
+	_, manualValid := allowed[previous.ManualOverride]
+	_, targetValid := allowed[previous.Target]
+	if previous.ManualOverride != "" && !manualValid {
+		next.ManualOverride = ""
+	}
+	if !targetValid {
+		next.Target = ""
+		next.StableSince = time.Time{}
+	}
+	if manualValid && next.Target == "" {
+		next.Target = previous.ManualOverride
+		next.StableSince = now
+	}
+	if next.ManualOverride != previous.ManualOverride || next.Target != previous.Target || !next.StableSince.Equal(previous.StableSince) {
+		next.LastSwitchReason = "setup-reconciled"
+		next.LastSwitchAt = now
+	}
+
+	runtimeBefore := ""
+	var snapshot xrayapi.Snapshot
+	if s.xray != nil {
+		snapshot = s.xray.Snapshot(ctx)
+		runtimeBefore = safeTag(snapshot.Balancer.Override)
+	}
+	runtimeAfter := ""
+	if next.Target != "" {
+		runtimeAfter = next.Target
+	}
+	if runtimeAfter != runtimeBefore && s.api != nil {
+		if err := s.api.OverrideBalancerTarget(ctx, "bal-proxy", runtimeAfter); err != nil {
+			return err
+		}
+	}
+	changed := previous.Target != next.Target || previous.ManualOverride != next.ManualOverride || !previous.StableSince.Equal(next.StableSince) || previous.LastSwitchReason != next.LastSwitchReason || !previous.LastSwitchAt.Equal(next.LastSwitchAt) || previous.LastBenchmarkGeneration != next.LastBenchmarkGeneration
+	if changed {
+		if _, err := s.selection.SaveIfChanged(previous, next); err != nil {
+			if runtimeAfter != runtimeBefore && s.api != nil {
+				_ = s.api.OverrideBalancerTarget(ctx, "bal-proxy", runtimeBefore)
+			}
+			return err
+		}
+	}
+	if changed || runtimeAfter != runtimeBefore {
+		s.engine.ResetEvidence()
+		s.mu.Lock()
+		s.record = next
+		s.failures = 0
+		s.status.ManualOverride = next.ManualOverride
+		s.status.StableTarget = next.Target
+		s.status.StableSince = next.StableSince
+		s.status.NativeTarget = safeTag(snapshot.Balancer.NativeSelected)
+		s.status.OverrideTarget = runtimeAfter
+		s.status.EffectiveTarget = runtimeAfter
+		if s.status.EffectiveTarget == "" {
+			s.status.EffectiveTarget = s.status.NativeTarget
+		}
+		s.status.LastSwitchReason = next.LastSwitchReason
+		s.status.LastSwitchAt = next.LastSwitchAt
+		s.status.LastRuntimeAction = "setup-reconciled"
+		s.status.LastRuntimeActionAt = now
+		if next.ManualOverride != "" {
+			s.status.State = "manual"
+		} else if next.Target == "" {
+			s.status.State = ReasonFallback
+		} else {
+			s.status.State = "stable"
+		}
+		s.mu.Unlock()
+	}
+	return nil
+}
+
 // SetManualOverride persists the operator's explicit node choice. While it is
 // set, latency and benchmark decisions are deliberately bypassed; Tick only
 // leaves the choice after the node fails the bounded liveness policy.

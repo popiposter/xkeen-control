@@ -336,18 +336,22 @@ func copyTree(source, destination string) error {
 }
 
 type CommandActivator struct {
-	XrayBinary            string
-	XrayAssetDir          string
-	XkeenBinary           string
-	FixedLifecycleInit    string
-	LegacyLifecycleInit   string
-	APIAddress            string
-	ActiveOutboundsPath   string
-	RoutingPath           string
-	RestartTimeout        time.Duration
-	RestartAttemptTimeout time.Duration
-	ReadyTimeout          time.Duration
-	RuntimeVerifier       func(context.Context, string, string, []string) error
+	XrayBinary          string
+	XrayAssetDir        string
+	XkeenBinary         string
+	FixedLifecycleInit  string
+	LegacyLifecycleInit string
+	// SetupLifecycleIdentity is required for Setup-only start/stop selection.
+	// Ordinary Restart continues to use the installed fixed lifecycle contract;
+	// Setup must never execute an unqualified pre-takeover init as root.
+	SetupLifecycleIdentity func(string) bool
+	APIAddress             string
+	ActiveOutboundsPath    string
+	RoutingPath            string
+	RestartTimeout         time.Duration
+	RestartAttemptTimeout  time.Duration
+	ReadyTimeout           time.Duration
+	RuntimeVerifier        func(context.Context, string, string, []string) error
 }
 
 func (a CommandActivator) ValidateCandidate(ctx context.Context, configDir string) error {
@@ -463,13 +467,16 @@ func (a CommandActivator) Stop(ctx context.Context) error {
 }
 
 func (a CommandActivator) setupLifecyclePath() string {
+	if a.SetupLifecycleIdentity == nil {
+		return ""
+	}
 	if a.FixedLifecycleInit != "" {
-		if info, err := os.Lstat(a.FixedLifecycleInit); err == nil && info.Mode()&os.ModeSymlink == 0 && info.Mode().IsRegular() {
+		if a.SetupLifecycleIdentity(a.FixedLifecycleInit) {
 			return a.FixedLifecycleInit
 		}
 	}
 	if a.LegacyLifecycleInit != "" {
-		if info, err := os.Lstat(a.LegacyLifecycleInit); err == nil && info.Mode()&os.ModeSymlink == 0 && info.Mode().IsRegular() {
+		if a.SetupLifecycleIdentity(a.LegacyLifecycleInit) {
 			return a.LegacyLifecycleInit
 		}
 	}

@@ -201,6 +201,7 @@ func main() {
 		XKeenActivationPath:        getenv("XKEEN_XKEEN_ACTIVATION_PATH", components.DefaultXKeenActivationPath),
 		XKeenMarkerStagingPath:     getenv("XKEEN_XKEEN_GENERATION_MARKER", components.DefaultXKeenMarkerPath) + ".staging",
 		SetupStagingDir:            getenv("XKEEN_SETUP_STAGING_DIR", components.DefaultSetupStagingDir),
+		SetupPreviousDir:           setupPreviousDirFromEnvironment(),
 	}
 	recoveryState, componentJournalErr := components.InspectComponentRecovery(componentRecoveryConfig)
 	if restoreJournalErr != nil || componentJournalErr != nil {
@@ -553,11 +554,11 @@ func newSetupService(coordinator *c1.Coordinator, lease *authority.Lease, xrayRe
 	stateDir := getenv("XKEEN_APPLIANCE_IMPORT_STATE_DIR", "/opt/etc/xkeen-control/state")
 	paths.RestoreJournal = filepath.Join(stateDir, "appliance-import-transaction.json")
 	paths.StagingDir = getenv("XKEEN_SETUP_STAGING_DIR", components.DefaultSetupStagingDir)
-	paths.PreviousDir = getenv("XKEEN_SETUP_PREVIOUS_DIR", components.DefaultSetupPreviousDir)
+	paths.PreviousDir = setupPreviousDirFromEnvironment()
 	paths.XkeenActivation = getenv("XKEEN_SETUP_XKEEN_ACTIVATION", components.DefaultSetupXKeenActivation)
 	activator := nodes.CommandActivator{
 		XrayBinary: paths.XrayBinary, XrayAssetDir: paths.XrayAssetDir, XkeenBinary: paths.XkeenBinary,
-		FixedLifecycleInit: paths.LifecycleInit, LegacyLifecycleInit: paths.LegacyLifecycleInit, APIAddress: getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress),
+		FixedLifecycleInit: paths.LifecycleInit, LegacyLifecycleInit: paths.LegacyLifecycleInit, SetupLifecycleIdentity: components.IsReviewedSetupLifecycle, APIAddress: getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress),
 		ActiveOutboundsPath: paths.ActiveOutbounds, RoutingPath: filepath.Join(paths.XrayConfigDir, "05_routing.json"),
 	}
 	activeRuntime := components.CommandXrayRuntime{ActiveBinary: paths.XrayBinary, ConfigDir: paths.XrayConfigDir, AssetDir: paths.XrayAssetDir}
@@ -572,9 +573,21 @@ func newSetupService(coordinator *c1.Coordinator, lease *authority.Lease, xrayRe
 			ValidateActiveConfigFunc: activeRuntime.ValidateActiveConfig, VerifyEmptyFunc: activator.VerifyEmptyOutboundTags,
 			StopFunc: activator.Stop, VerifyStoppedFunc: activator.VerifyStopped, VerifyFunc: activator.Verify,
 		},
+		Selection:    coordinator,
 		MutationGate: mutationGate, Maintenance: maintenance, Coordinator: coordinator, AuthorityLease: lease,
 		TransactionTimeout: components.DefaultSetupTransactionLimit,
 	})
+}
+
+func setupPreviousDirFromEnvironment() string {
+	previous := getenv("XKEEN_SETUP_PREVIOUS_DIR", components.DefaultSetupPreviousDir)
+	if previous == components.DefaultSetupPreviousDir {
+		appliancePath := getenv("XKEEN_APPLIANCE_PATH", defaultAppliancePath)
+		if appliancePath != defaultAppliancePath {
+			return filepath.Join(filepath.Dir(appliancePath), "previous-setup")
+		}
+	}
+	return previous
 }
 
 func transactionJournalPresent(path string) (bool, error) {

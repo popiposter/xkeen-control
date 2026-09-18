@@ -41,6 +41,8 @@ const (
 	DefaultSetupCronDir          = "/opt/etc/cron.d"
 
 	setupPhasePrepared             = "prepared"
+	setupPhaseSnapshotIntent       = "snapshot-intent"
+	setupPhaseSnapshotReady        = "snapshot-ready"
 	setupPhaseNodesCommitted       = "nodes-committed"
 	setupPhaseAuthorityCommitted   = "authority-committed"
 	setupPhaseConfigCommitted      = "config-committed"
@@ -61,7 +63,6 @@ const (
 	setupMaxSnapshotEntries  = 1024
 	setupMaxSnapshotBytes    = 256 << 20
 	setupMaxCronBytes        = 128 << 10
-	setupSnapshotReserve     = 8 << 20
 	setupGeodataWriterScript = "update-" + "geodata.sh"
 )
 
@@ -270,6 +271,13 @@ type SetupRuntimeVerifier interface {
 	Verify(context.Context, []string) error
 }
 
+// SetupSelectionReconciler keeps selection.json under the existing typed C.1
+// owner. Setup supplies only the post-activation enabled tags; it never edits
+// panel-local selection bytes directly.
+type SetupSelectionReconciler interface {
+	ReconcileSetupSelection(context.Context, []string) error
+}
+
 // SetupRuntimeFuncs is a narrow production adapter and a deterministic test
 // seam. It exposes only the fixed setup lifecycle/proof operations.
 type SetupRuntimeFuncs struct {
@@ -411,6 +419,7 @@ type SetupConfig struct {
 	CandidateProbe     XrayCandidateProbe
 	CandidateValidator XrayCandidateValidator
 	Runtime            SetupRuntime
+	Selection          SetupSelectionReconciler
 
 	MutationGate   *ComponentMutationGate
 	Maintenance    *ComponentMaintenance
@@ -557,6 +566,10 @@ func NewSetupService(config SetupConfig) *SetupService {
 		service.markMaintenance(ErrSetupRecoveryFailed)
 	} else if pending {
 		service.markMaintenance(ErrSetupRecoveryFailed)
+	} else if snapshot, snapshotErr := setupPathState(service.setupSnapshotRoot()); snapshotErr != nil {
+		service.markMaintenance(ErrSetupRecoveryFailed)
+	} else if snapshot != setupPathAbsent {
+		service.markMaintenance(ErrSetupRecoveryFailed)
 	} else if activation, activationErr := setupPathState(config.Paths.XkeenActivation); activationErr != nil {
 		service.markMaintenance(ErrSetupRecoveryFailed)
 	} else if activation != setupPathAbsent {
@@ -665,6 +678,11 @@ func (s *SetupService) HasPendingRecovery() (bool, error) {
 	}
 	if staging, err := componentStagingRootPresent(s.config.Paths.StagingDir); err != nil || staging {
 		return staging, err
+	}
+	if snapshot, err := setupPathState(s.setupSnapshotRoot()); err != nil {
+		return false, err
+	} else if snapshot != setupPathAbsent {
+		return true, nil
 	}
 	activation, err := setupPathState(s.config.Paths.XkeenActivation)
 	return activation != setupPathAbsent, err
@@ -1068,6 +1086,175 @@ func setupWritersDigest(writers []setupWriter) string {
 	return digestSetupBytes([]byte(strings.Join(writerNames, "\n")))
 }
 
+// setupSourceGenerationDigest binds the complete takeover-owned pre-state to a
+// Preview. It intentionally records only bounded types, modes, sizes and
+// hashes; secret-bearing contents never leave the local authority boundary.
+// Panel-local paths are not part of setupSnapshotTargets and therefore remain
+// outside both this binding and takeover replacement.
+func (s *SetupService) setupSourceGenerationDigest(writers []setupWriter) (string, error) {
+	entries := make([]setupSnapshotEntry, 0, setupMaxSnapshotEntries)
+	totalBytes := int64(0)
+	for _, target := range s.setupSnapshotTargets(writers) {
+		maxFileBytes, maxRootBytes := setupSnapshotLimits(target)
+		state, err := setupPathState(target.Path)
+		if err != nil || state == setupPathInvalid {
+			return "", errSetupLayoutInvalid
+		}
+		if state == setupPathAbsent {
+			entries = append(entries, setupSnapshotEntry{Key: target.Key, Target: target.Path, Kind: "absent"})
+			continue
+		}
+		if target.Recursive {
+			if state != setupPathDirectory {
+				return "", errSetupLayoutInvalid
+			}
+			entries = append(entries, setupSnapshotEntry{Key: target.Key, Target: target.Path, Kind: "directory", Mode: uint32(fileMode(target.Path))})
+			rootBytes := int64(0)
+			walkErr := filepath.WalkDir(target.Path, func(path string, entry os.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				if path == target.Path {
+					return nil
+				}
+				if len(entries) >= setupMaxSnapshotEntries {
+					return ErrSetupResourceInsufficient
+				}
+				info, infoErr := entry.Info()
+				if infoErr != nil || info.Mode()&os.ModeSymlink != 0 {
+					return errSetupLayoutInvalid
+				}
+				relative, relErr := filepath.Rel(target.Path, path)
+				if relErr != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+					return errSetupLayoutInvalid
+				}
+				if entry.IsDir() {
+					entries = append(entries, setupSnapshotEntry{Key: target.Key, Target: target.Path, Relative: filepath.ToSlash(relative), Kind: "directory", Mode: uint32(info.Mode().Perm())})
+					return nil
+				}
+				if !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > maxFileBytes || rootBytes > maxRootBytes-info.Size() || totalBytes > setupMaxSnapshotBytes-info.Size() {
+					return ErrSetupResourceInsufficient
+				}
+				contents, readErr := readBoundedSetupFile(path, maxFileBytes)
+				if readErr != nil {
+					return readErr
+				}
+				entries = append(entries, setupSnapshotEntry{Key: target.Key, Target: target.Path, Relative: filepath.ToSlash(relative), Kind: "file", Mode: uint32(info.Mode().Perm()), Size: int64(len(contents)), SHA256: digestSetupBytes(contents)})
+				totalBytes += int64(len(contents))
+				rootBytes += int64(len(contents))
+				return nil
+			})
+			if walkErr != nil {
+				return "", walkErr
+			}
+			continue
+		}
+		if state != setupPathRegular {
+			return "", errSetupLayoutInvalid
+		}
+		contents, err := readBoundedSetupFile(target.Path, maxFileBytes)
+		if err != nil || int64(len(contents)) > maxRootBytes || totalBytes > setupMaxSnapshotBytes-int64(len(contents)) {
+			return "", errSetupLayoutInvalid
+		}
+		entries = append(entries, setupSnapshotEntry{Key: target.Key, Target: target.Path, Kind: "file", Mode: uint32(fileMode(target.Path)), Size: int64(len(contents)), SHA256: digestSetupBytes(contents)})
+		totalBytes += int64(len(contents))
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		left := entries[i].Key + "\x00" + entries[i].Target + "\x00" + entries[i].Relative + "\x00" + entries[i].Kind
+		right := entries[j].Key + "\x00" + entries[j].Target + "\x00" + entries[j].Relative + "\x00" + entries[j].Kind
+		return left < right
+	})
+	contents, err := json.Marshal(entries)
+	if err != nil {
+		return "", errSetupLayoutInvalid
+	}
+	return digestSetupBytes(contents), nil
+}
+
+func normalizeSetupAuthorities(authorities setupAuthorities, class string) (setupAuthorities, error) {
+	if !authorities.profilePresent {
+		if class != "fresh" {
+			return setupAuthorities{}, &SetupLayoutError{ReasonCode: SetupReasonProfileUnavailable}
+		}
+		registry := nodes.NewRegistry()
+		contents, err := nodes.MarshalCanonical(registry)
+		if err != nil {
+			return setupAuthorities{}, ErrSetupCandidateRejected
+		}
+		authorities.registry, authorities.registryBytes, authorities.profileAction = registry, contents, "empty"
+	}
+	if !authorities.policyPresent {
+		value := appliance.ProductDefault()
+		contents, err := appliance.MarshalCanonical(value)
+		if err != nil {
+			return setupAuthorities{}, ErrSetupCandidateRejected
+		}
+		authorities.app, authorities.appBytes, authorities.policyAction = value, contents, "product-default"
+	}
+	return authorities, nil
+}
+
+func (s *SetupService) buildSetupSourceManifest(class string, authorities setupAuthorities, writers []setupWriter) (setupSourceManifest, error) {
+	base := authorities.sourceManifest(class, writers)
+	generationDigest, err := s.setupSourceGenerationDigest(writers)
+	if err != nil {
+		return setupSourceManifest{}, err
+	}
+	binding, err := json.Marshal(struct {
+		Class            string `json:"class"`
+		ProfileAction    string `json:"profileAction"`
+		PolicyAction     string `json:"policyAction"`
+		RegistryDigest   string `json:"registryDigest"`
+		PolicyDigest     string `json:"policyDigest"`
+		WritersDigest    string `json:"writersDigest"`
+		GenerationDigest string `json:"generationDigest"`
+		PanelPreserved   bool   `json:"panelPreserved"`
+	}{
+		Class: base.Class, ProfileAction: base.ProfileAction, PolicyAction: base.PolicyAction,
+		RegistryDigest: base.RegistryDigest, PolicyDigest: base.PolicyDigest, WritersDigest: base.WritersDigest,
+		GenerationDigest: generationDigest, PanelPreserved: base.PanelPreserved,
+	})
+	if err != nil {
+		return setupSourceManifest{}, errSetupLayoutInvalid
+	}
+	base.Digest = digestSetupBytes(binding)
+	return base, nil
+}
+
+func (s *SetupService) currentSetupSourceManifest(class string, writers []setupWriter) (setupSourceManifest, error) {
+	authorities, reason, err := s.readSetupAuthorities()
+	if err != nil {
+		return setupSourceManifest{}, err
+	}
+	if reason != "" {
+		return setupSourceManifest{}, &SetupLayoutError{ReasonCode: reason}
+	}
+	authorities, err = normalizeSetupAuthorities(authorities, class)
+	if err != nil {
+		return setupSourceManifest{}, err
+	}
+	return s.buildSetupSourceManifest(class, authorities, writers)
+}
+
+// verifySetupSource re-reads every takeover-owned source that participates in
+// the Preview binding. The writer list is deliberately re-inspected rather
+// than reused from an earlier admission point: a writer can disappear or
+// reappear while a bounded previous-generation snapshot is being written.
+func (s *SetupService) verifySetupSource(class string, expected setupSourceManifest) ([]setupWriter, error) {
+	writers, err := s.inspectSetupWriters()
+	if err != nil {
+		return nil, ErrSetupWriterConflict
+	}
+	if setupWritersDigest(writers) != expected.WritersDigest {
+		return nil, ErrSetupWriterConflict
+	}
+	current, err := s.currentSetupSourceManifest(class, writers)
+	if err != nil || current.Digest != expected.Digest {
+		return nil, ErrSetupPreviewStale
+	}
+	return writers, nil
+}
+
 func (s *SetupService) inspectSetupWriters() ([]setupWriter, error) {
 	paths := s.config.Paths
 	result := make([]setupWriter, 0, len(paths.WriterScripts)+len(paths.CronPaths)+len(paths.PanelPaths))
@@ -1286,30 +1473,18 @@ func (s *SetupService) resolve(ctx context.Context) (setupCandidate, error) {
 	if layout.state != "fresh" && layout.state != "takeover" {
 		return setupCandidate{}, &SetupLayoutError{ReasonCode: layout.reason}
 	}
-	if !authorities.profilePresent {
-		if layout.state != "fresh" {
-			return setupCandidate{}, &SetupLayoutError{ReasonCode: SetupReasonProfileUnavailable}
-		}
-		authorities.registry = nodes.NewRegistry()
-		authorities.registryBytes, err = nodes.MarshalCanonical(authorities.registry)
-		if err != nil {
-			return setupCandidate{}, ErrSetupCandidateRejected
-		}
-		authorities.profileAction = "empty"
-	}
-	if !authorities.policyPresent {
-		authorities.app = appliance.ProductDefault()
-		authorities.appBytes, err = appliance.MarshalCanonical(authorities.app)
-		if err != nil {
-			return setupCandidate{}, ErrSetupCandidateRejected
-		}
-		authorities.policyAction = "product-default"
-	}
 	class := layout.class
 	if class == "" {
 		class = "fresh"
 	}
-	source := authorities.sourceManifest(class, writers)
+	authorities, err = normalizeSetupAuthorities(authorities, class)
+	if err != nil {
+		return setupCandidate{}, err
+	}
+	source, err := s.buildSetupSourceManifest(class, authorities, writers)
+	if err != nil {
+		return setupCandidate{}, ErrSetupCandidateRejected
+	}
 	return setupCandidate{Xray: xray, Geodata: geodata, XKeen: xkeen, Lifecycle: lifecycle, Registry: authorities.registry, NodesBytes: authorities.registryBytes, Appliance: authorities.app, AppBytes: authorities.appBytes, Source: source, Writers: writers}, nil
 }
 
@@ -1362,10 +1537,12 @@ func sameSetupCandidate(left, right setupCandidate) bool {
 }
 
 func estimateSetupSnapshotBytes(paths SetupPaths) int64 {
-	// The snapshot is bounded independently from candidate downloads. Reserve a
-	// conservative fixed amount before the first persistent write; the exact
-	// snapshot reader applies the tighter entry/byte caps below.
-	return setupSnapshotReserve
+	_ = paths
+	// Snapshot payload bytes are independently capped at 256 MiB. Admission
+	// must reserve that real bound plus the bounded manifest and one temporary
+	// payload/owner write; the old 8 MiB placeholder could pass /tmp while
+	// leaving persistent rollback storage unproven.
+	return int64(setupMaxSnapshotBytes) + int64(setupMaxCronBytes) + int64(setupMaxSnapshotEntries*256) + int64(MaxXKeenGenerationFileBytes)
 }
 
 func setupSpaceProbePath(path string) string {
@@ -1445,6 +1622,11 @@ func (s *SetupService) inspectLayoutWithStaging(allowedStagingDir string) (setup
 	} else if activation != setupPathAbsent {
 		return setupLayout{state: "blocked", reason: SetupReasonJournalPending}, nil
 	}
+	if snapshot, err := setupPathState(s.setupSnapshotRoot()); err != nil {
+		return setupLayout{}, err
+	} else if snapshot != setupPathAbsent {
+		return setupLayout{state: "blocked", reason: SetupReasonJournalPending}, nil
+	}
 	if err := validateSetupFixedPaths(paths); err != nil {
 		return setupLayout{state: "blocked", reason: SetupReasonLayoutMixed}, nil
 	}
@@ -1500,11 +1682,16 @@ func (s *SetupService) inspectLayoutWithStaging(allowedStagingDir string) (setup
 		return setupLayout{state: "blocked", reason: reason}, nil
 	}
 	if s.setupConfigured(paths, managed) {
-		if len(writers) != 0 {
-			return setupLayout{state: "blocked", reason: SetupReasonWriterConflict, writers: writers}, nil
+		if len(writers) == 0 {
+			source := authorities.sourceManifest("managed-converged", writers)
+			return setupLayout{state: "configured", reason: SetupReasonAlreadyConfigured, class: "managed-converged", source: source}, nil
 		}
-		source := authorities.sourceManifest("managed-converged", writers)
-		return setupLayout{state: "configured", reason: SetupReasonAlreadyConfigured, class: "managed-converged", source: source}, nil
+		// Recognized removable writers are an explicit Setup reconciliation
+		// class. Ordinary component mutation remains blocked until this
+		// takeover-owned operation retires them.
+		class := "managed-takeover"
+		source := authorities.sourceManifest(class, writers)
+		return setupLayout{state: "takeover", reason: SetupReasonManagedTakeover, class: class, source: source, writers: writers}, nil
 	}
 
 	recognized, signalErr := setupRecognizedLegacySignal(paths, geodataEntries, present, writers, authorities)
@@ -1586,16 +1773,32 @@ func setupKnownLifecycleLayout(paths SetupPaths) (bool, error) {
 		if state != setupPathRegular {
 			return false, nil
 		}
-		contents, readErr := readBoundedSetupFile(path, 16<<10)
-		if readErr != nil {
-			return false, nil
-		}
-		lower := strings.ToLower(string(contents))
-		if !strings.Contains(lower, "xray") || !strings.Contains(lower, "start") || !strings.Contains(lower, "restart") || strings.Contains(lower, "opkg") || strings.Contains(lower, "install.sh") {
+		if !IsReviewedSetupLifecycle(path) {
 			return false, nil
 		}
 	}
 	return true, nil
+}
+
+// IsReviewedSetupLifecycle is the closed identity predicate shared by Setup
+// classification and the production CommandActivator. A pre-takeover init is
+// executable as root only when it is the exact source-owned lifecycle shape;
+// names and incidental words such as "xray", "start" or "restart" are not
+// evidence of a reviewed script.
+func IsReviewedSetupLifecycle(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
+		return false
+	}
+	contents, err := readBoundedSetupFile(path, 16<<10)
+	if err != nil {
+		return false
+	}
+	expected, err := setupLifecycleBytes()
+	return err == nil && bytes.Equal(contents, expected)
 }
 
 func setupStagingRootContainsOnly(root, allowedDir string) bool {
@@ -1848,26 +2051,79 @@ func (s *SetupService) Apply(ctx context.Context, binding, token string) (SetupR
 	if writerErr != nil || setupWritersDigest(currentWriters) != prepared.candidate.Source.WritersDigest {
 		return SetupResult{}, ErrSetupWriterConflict
 	}
-	snapshot, snapshotErr := s.captureSetupSnapshot(ownedContext, prepared.candidate.Source.Class, prepared.candidate.Writers)
-	if snapshotErr != nil {
-		return SetupResult{}, ErrSetupResourceInsufficient
+	currentSource, sourceErr := s.currentSetupSourceManifest(layout.class, currentWriters)
+	if sourceErr != nil || currentSource.Digest != prepared.candidate.Source.Digest {
+		return SetupResult{}, ErrSetupPreviewStale
 	}
-	prepared.snapshot = snapshot
-	previous := setupPreviousRecord{AllAbsent: prepared.candidate.Source.Class == "fresh", Class: prepared.candidate.Source.Class}
-	if snapshot.Dir != "" {
-		previous.SnapshotDir = snapshot.Dir
-		previous.SnapshotSHA = setupSnapshotDigest(snapshot.Manifest)
+	if prepared.resourceNeed != 0 {
+		if err := s.checkSetupResources(prepared.resourceNeed); err != nil {
+			return SetupResult{}, ErrSetupResourceInsufficient
+		}
+	}
+	isFresh := prepared.candidate.Source.Class == "fresh"
+	previous := setupPreviousRecord{AllAbsent: isFresh, Class: prepared.candidate.Source.Class}
+	if !isFresh {
+		previous.SnapshotDir = s.setupSnapshotRoot()
 	}
 	journal := setupTransactionJournal{SchemaVersion: SetupTransactionSchemaVersion, Component: string(KindSetup), Operation: SetupOperation, Phase: setupPhasePrepared, Previous: previous, SourceClass: prepared.candidate.Source.Class, SourceDigest: prepared.candidate.Source.Digest, StageDir: prepared.stageDir, Candidate: prepared.record()}
+	if !isFresh {
+		// The journal intent is the first persistent byte of the previous
+		// generation. A crash during any later snapshot write is therefore
+		// visible to startup recovery and cannot strand a secret-bearing root.
+		journal.Phase = setupPhaseSnapshotIntent
+	}
 	if err := s.writeJournal(journal); err != nil {
-		_ = s.removeSnapshot(snapshot)
 		return SetupResult{}, ErrSetupTransactionUnproven
 	}
 	journalWritten := true
+	if !isFresh {
+		snapshot, snapshotErr := s.captureSetupSnapshot(ownedContext, prepared.candidate.Source.Class, currentWriters)
+		if snapshotErr != nil {
+			_ = s.cleanupSetupSnapshotIntent()
+			_ = s.clearJournal()
+			return SetupResult{}, ErrSetupResourceInsufficient
+		}
+		prepared.snapshot = snapshot
+		journal.Previous.SnapshotSHA = setupSnapshotDigest(snapshot.Manifest)
+		if err := s.updateJournal(&journal, setupPhaseSnapshotReady, ""); err != nil {
+			_ = s.removeSnapshot(snapshot)
+			_ = s.clearJournal()
+			return SetupResult{}, ErrSetupTransactionUnproven
+		}
+		var postSnapshotErr error
+		currentWriters, postSnapshotErr = s.verifySetupSource(layout.class, prepared.candidate.Source)
+		if postSnapshotErr != nil {
+			if s.removeSnapshot(snapshot) != nil || s.clearJournal() != nil {
+				s.markMaintenance(ErrSetupTransactionUnproven)
+				return SetupResult{}, ErrSetupTransactionUnproven
+			}
+			return SetupResult{}, postSnapshotErr
+		}
+	}
 	if prepared.candidate.Source.Class != "fresh" {
 		if err := s.quiesceSetupRuntime(ownedContext); err != nil {
 			return SetupResult{}, s.failApply(journalWritten, journal, prepared, false, ErrSetupRuntimeUnavailable)
 		}
+	}
+	// Recompute after quiescing and immediately before the first replacement
+	// write. This closes the gap between snapshot creation and commit while
+	// preserving the ordinary ComponentMutationGate/Coordinator ownership.
+	if _, sourceErr := s.verifySetupSource(layout.class, prepared.candidate.Source); sourceErr != nil {
+		if prepared.candidate.Source.Class != "fresh" {
+			recoveryContext, recoveryCancel := context.WithTimeout(context.Background(), s.config.RecoveryTimeout)
+			restartErr := s.startAndProveRestoredRuntime(recoveryContext)
+			recoveryCancel()
+			if restartErr != nil || s.clearJournal() != nil || s.removeSnapshot(prepared.snapshot) != nil {
+				s.markMaintenance(ErrSetupTransactionUnproven)
+				return SetupResult{}, ErrSetupTransactionUnproven
+			}
+			return SetupResult{}, sourceErr
+		}
+		if err := s.clearJournal(); err != nil {
+			s.markMaintenance(ErrSetupTransactionUnproven)
+			return SetupResult{}, ErrSetupTransactionUnproven
+		}
+		return SetupResult{}, sourceErr
 	}
 	if err := s.commit(ownedContext, &journal, prepared); err != nil {
 		return SetupResult{}, s.failApply(journalWritten, journal, prepared, false, err)
@@ -1886,6 +2142,9 @@ func (s *SetupService) Apply(ctx context.Context, binding, token string) (SetupR
 		return SetupResult{}, s.failApply(true, journal, prepared, runtimeStarted, ErrSetupVerificationFailed)
 	}
 	if err := s.verifyInstalled(prepared); err != nil {
+		return SetupResult{}, s.failApply(true, journal, prepared, runtimeStarted, ErrSetupVerificationFailed)
+	}
+	if err := s.reconcileSetupSelection(ownedContext, prepared.candidate.Registry); err != nil {
 		return SetupResult{}, s.failApply(true, journal, prepared, runtimeStarted, ErrSetupVerificationFailed)
 	}
 	journal.Phase = setupPhaseRuntimeVerified
@@ -1955,6 +2214,7 @@ mode=${2-}
 [ "$#" -le 2 ] || exit 2
 pidfile=/tmp/xkeen-control/xray.pid
 logfile=/tmp/xkeen-control/xray.log
+xray_binary=/opt/sbin/xray
 
 read_pid() {
   [ -r "$pidfile" ] || return 1
@@ -1962,6 +2222,9 @@ read_pid() {
   case "$pid" in
     ''|*[!0-9]*) return 1 ;;
   esac
+  [ -r "/proc/$pid/exe" ] || return 1
+  executable=$(readlink "/proc/$pid/exe" 2>/dev/null || true)
+  [ "$executable" = "$xray_binary" ] || return 1
   kill -0 "$pid" 2>/dev/null
 }
 
@@ -1989,7 +2252,7 @@ start_xray() {
   mkdir -p "$(dirname "$pidfile")"
   export XRAY_LOCATION_ASSET=/opt/etc/xray/dat
   export XKEEN_FOREGROUND=1
-  /opt/sbin/xray run -confdir /opt/etc/xray/configs </dev/null >>"$logfile" 2>&1 &
+  "$xray_binary" run -confdir /opt/etc/xray/configs </dev/null >>"$logfile" 2>&1 &
   xray_pid=$!
   printf '%s\n' "$xray_pid" >"$pidfile"
   kill -0 "$xray_pid" 2>/dev/null
@@ -2023,6 +2286,7 @@ type preparedSetup struct {
 	xkeenMetadata   xkeenGenerationMetadata
 	marker          []byte
 	lifecycle       []byte
+	resourceNeed    uint64
 	snapshot        setupSnapshot
 }
 
@@ -2160,7 +2424,7 @@ func (s *SetupService) prepare(ctx context.Context, candidate setupCandidate, pl
 		return preparedSetup{}, ErrSetupCandidateRejected
 	}
 	cleanup = false
-	return preparedSetup{candidate: candidate, plan: plan, stageDir: stageDir, configFiles: files, appBytes: appBytes, nodesBytes: nodesBytes, xrayBinaryPath: xrayBinary, xrayMetadata: xrayMetadata, geodataMetadata: geodataMetadata, xkeenPath: xkeenRoot, xkeenMetadata: xkeenMetadata, marker: marker, lifecycle: lifecycle}, nil
+	return preparedSetup{candidate: candidate, plan: plan, stageDir: stageDir, configFiles: files, appBytes: appBytes, nodesBytes: nodesBytes, xrayBinaryPath: xrayBinary, xrayMetadata: xrayMetadata, geodataMetadata: geodataMetadata, xkeenPath: xkeenRoot, xkeenMetadata: xkeenMetadata, marker: marker, lifecycle: lifecycle, resourceNeed: need}, nil
 }
 
 func validSetupLifecycle(contents []byte, plan SetupLifecyclePlan) bool {
@@ -2365,12 +2629,19 @@ func validateSetupJournal(journal setupTransactionJournal) error {
 	default:
 		return errSetupJournalInvalid
 	}
-	if journal.SourceClass == "" || !isHexSHA256(journal.SourceDigest) || journal.StageDir == "" || filepath.Base(filepath.Clean(journal.StageDir)) == "." || journal.SourceClass == "fresh" && !journal.Previous.AllAbsent || journal.SourceClass != "fresh" && (journal.Previous.AllAbsent || journal.Previous.SnapshotDir == "" || !isHexSHA256(journal.Previous.SnapshotSHA)) {
+	if journal.SourceClass == "" || !isHexSHA256(journal.SourceDigest) || journal.StageDir == "" || filepath.Base(filepath.Clean(journal.StageDir)) == "." || journal.SourceClass == "fresh" && !journal.Previous.AllAbsent || journal.SourceClass != "fresh" && (journal.Previous.AllAbsent || journal.Previous.SnapshotDir == "") {
 		return errSetupJournalInvalid
 	}
 	switch journal.Phase {
-	case setupPhasePrepared, setupPhaseNodesCommitted, setupPhaseAuthorityCommitted, setupPhaseConfigCommitted, setupPhaseGeodataCommitted, setupPhaseXrayCommitted, setupPhaseXKeenStaged, setupPhaseXKeenBinaryCommitted, setupPhaseXKeenModuleCommitted, setupPhaseXKeenCommitted, setupPhaseLifecycleCommitted, setupPhaseWritersRetired, setupPhaseRuntimeStarted, setupPhaseRuntimeVerified:
+	case setupPhasePrepared, setupPhaseSnapshotIntent, setupPhaseSnapshotReady, setupPhaseNodesCommitted, setupPhaseAuthorityCommitted, setupPhaseConfigCommitted, setupPhaseGeodataCommitted, setupPhaseXrayCommitted, setupPhaseXKeenStaged, setupPhaseXKeenBinaryCommitted, setupPhaseXKeenModuleCommitted, setupPhaseXKeenCommitted, setupPhaseLifecycleCommitted, setupPhaseWritersRetired, setupPhaseRuntimeStarted, setupPhaseRuntimeVerified:
 	default:
+		return errSetupJournalInvalid
+	}
+	if journal.SourceClass == "fresh" {
+		if journal.Previous.SnapshotDir != "" || journal.Previous.SnapshotSHA != "" {
+			return errSetupJournalInvalid
+		}
+	} else if journal.Phase != setupPhaseSnapshotIntent && !isHexSHA256(journal.Previous.SnapshotSHA) {
 		return errSetupJournalInvalid
 	}
 	allowed := map[string]struct{}{setupCreatedNodes: {}, setupCreatedAppliance: {}, setupCreatedConfig: {}, setupCreatedGeodata: {}, setupCreatedXray: {}, setupCreatedXKeen: {}, setupCreatedLifecycle: {}, setupCreatedWriters: {}}
@@ -3013,6 +3284,10 @@ func (s *SetupService) setupSnapshotTargets(writers []setupWriter) []setupSnapsh
 	return result
 }
 
+func (s *SetupService) setupSnapshotRoot() string {
+	return filepath.Join(s.config.Paths.PreviousDir, ".setup-snapshot")
+}
+
 func setupSnapshotDigest(manifest setupSnapshotManifest) string {
 	contents, _ := json.Marshal(manifest)
 	return digestSetupBytes(contents)
@@ -3025,7 +3300,7 @@ func (s *SetupService) captureSetupSnapshot(ctx context.Context, class string, w
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	root := filepath.Join(s.config.Paths.PreviousDir, ".setup-snapshot")
+	root := s.setupSnapshotRoot()
 	if state, err := setupPathState(root); err != nil {
 		return setupSnapshot{}, err
 	} else if state != setupPathAbsent {
@@ -3196,6 +3471,14 @@ func (s *SetupService) readSetupSnapshot(journal setupTransactionJournal) (setup
 	if root != filepath.Clean(filepath.Join(s.config.Paths.PreviousDir, ".setup-snapshot")) {
 		return setupSnapshot{}, errSetupJournalInvalid
 	}
+	if state, stateErr := setupPathState(root); stateErr != nil {
+		return setupSnapshot{}, errSetupJournalInvalid
+	} else if state == setupPathAbsent && journal.Phase == setupPhaseRuntimeVerified {
+		// Success proof is journaled before transient snapshot cleanup. A
+		// crash after that cleanup but before journal removal is already a
+		// committed generation, not a recoverable takeover snapshot.
+		return setupSnapshot{}, nil
+	}
 	contents, err := readBoundedSetupFile(filepath.Join(root, "manifest.json"), setupMaxCronBytes)
 	if err != nil {
 		return setupSnapshot{}, errSetupJournalInvalid
@@ -3228,6 +3511,31 @@ func (s *SetupService) removeSnapshot(snapshot setupSnapshot) error {
 		return err
 	}
 	return s.config.SyncDirectory(filepath.Dir(snapshot.Dir))
+}
+
+func (s *SetupService) cleanupSetupSnapshotIntent() error {
+	root := s.setupSnapshotRoot()
+	state, err := setupPathState(root)
+	if err != nil || state == setupPathAbsent {
+		return err
+	}
+	if state != setupPathDirectory || validXKeenOwner(root, setupSnapshotOwner) != nil {
+		return errSetupLayoutInvalid
+	}
+	maxFileBytes := int64(MaxXrayCandidateBinaryBytes)
+	for _, limit := range []int64{MaxGeodataFileBytes, MaxXKeenGenerationFileBytes, nodes.MaxLegacyDocument, appliance.MaxDocumentSize, setupMaxCronBytes} {
+		if limit > maxFileBytes {
+			maxFileBytes = limit
+		}
+	}
+	maxRootBytes := int64(setupMaxSnapshotBytes) + int64(setupMaxCronBytes) + int64(setupMaxSnapshotEntries*256) + maxFileBytes
+	if err := setupRollbackDirectorySafe(root, maxFileBytes, maxRootBytes); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(root); err != nil {
+		return err
+	}
+	return s.config.SyncDirectory(filepath.Dir(root))
 }
 
 func (s *SetupService) restoreSetupSnapshot(snapshot setupSnapshot) error {
@@ -3580,6 +3888,9 @@ func (s *SetupService) startAndProveRestoredRuntime(ctx context.Context) error {
 	if err := s.runtimeProof(ctx, authorities.registry); err != nil {
 		return err
 	}
+	if err := s.reconcileSetupSelection(ctx, authorities.registry); err != nil {
+		return ErrSetupVerificationFailed
+	}
 	return nil
 }
 
@@ -3892,9 +4203,11 @@ func (s *SetupService) RecoverStartup(ctx context.Context) error {
 		return s.recoveryFailure()
 	}
 	if !journalPresent {
-		// A crash during prepare can leave only the private setup staging
-		// subtree. It has no journaled activation to finish; validate and remove
-		// only its owned entries before classifying the durable layout again.
+		// A crash before journal creation can leave only private setup staging
+		// or an older orphaned snapshot. Remove only owned, bounded entries.
+		if err := s.cleanupSetupSnapshotIntent(); err != nil {
+			return s.recoveryFailure()
+		}
 		if err := s.removeStagingRootEntries(); err != nil {
 			return s.recoveryFailure()
 		}
@@ -3911,6 +4224,40 @@ func (s *SetupService) RecoverStartup(ctx context.Context) error {
 		}
 		s.clearMaintenance()
 		return nil
+	}
+	if journal.Phase == setupPhaseSnapshotIntent {
+		// Snapshot creation has not yet reached the ready manifest phase. The
+		// target environment is untouched; discard the owned partial/complete
+		// snapshot and the journaled staging tree, then reclassify.
+		if err := s.cleanupSetupSnapshotIntent(); err != nil || s.clearJournal() != nil || s.removeStagingRootEntries() != nil {
+			return s.recoveryFailure()
+		}
+		layout, layoutErr := s.inspectLayout()
+		if layoutErr != nil || layout.state != "fresh" && layout.state != "takeover" {
+			return s.recoveryFailure()
+		}
+		s.clearMaintenance()
+		return nil
+	}
+	if journal.Phase == setupPhaseSnapshotReady {
+		// A bounded cleanup can clear the journal after proving that no target
+		// write occurred. If power was lost after that clear's predecessor
+		// removed the snapshot, the ready-phase journal is still recoverable as
+		// an untouched previous environment; do not quiesce a live runtime or
+		// attempt a rollback from a missing payload.
+		if snapshotState, snapshotErr := setupPathState(s.setupSnapshotRoot()); snapshotErr != nil {
+			return s.recoveryFailure()
+		} else if snapshotState == setupPathAbsent {
+			if s.clearJournal() != nil || s.removeStagingRootEntries() != nil {
+				return s.recoveryFailure()
+			}
+			layout, layoutErr := s.inspectLayout()
+			if layoutErr != nil || layout.state != "fresh" && layout.state != "takeover" {
+				return s.recoveryFailure()
+			}
+			s.clearMaintenance()
+			return nil
+		}
 	}
 	prepared, err := s.preparedFromJournal(journal)
 	if err != nil {
@@ -3976,6 +4323,13 @@ func (s *SetupService) runtimeProof(ctx context.Context, registry nodes.Registry
 		return ErrSetupVerificationFailed
 	}
 	return nil
+}
+
+func (s *SetupService) reconcileSetupSelection(ctx context.Context, registry nodes.Registry) error {
+	if s.config.Selection == nil {
+		return nil
+	}
+	return s.config.Selection.ReconcileSetupSelection(ctx, setupRuntimeTags(registry))
 }
 
 func (s *SetupService) quiesceSetupRuntime(ctx context.Context) error {

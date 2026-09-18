@@ -54,7 +54,7 @@ func TestCommandActivatorSetupLifecycleFallsBackToKnownLegacyInit(t *testing.T) 
 		t.Fatal(err)
 	}
 	t.Setenv("XKEEN_SETUP_MARKER", marker)
-	activator := CommandActivator{FixedLifecycleInit: filepath.Join(dir, "missing-S05xkeen"), LegacyLifecycleInit: legacy, RestartTimeout: time.Second}
+	activator := CommandActivator{FixedLifecycleInit: filepath.Join(dir, "missing-S05xkeen"), LegacyLifecycleInit: legacy, SetupLifecycleIdentity: func(path string) bool { return path == legacy }, RestartTimeout: time.Second}
 	if err := activator.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -64,5 +64,25 @@ func TestCommandActivatorSetupLifecycleFallsBackToKnownLegacyInit(t *testing.T) 
 	contents, err := os.ReadFile(marker)
 	if err != nil || string(contents) != "start stop " {
 		t.Fatalf("legacy setup lifecycle marker = %q, %v", contents, err)
+	}
+}
+
+func TestCommandActivatorRejectsUnreviewedPreTakeoverLifecycle(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("init-script execution fixture requires the Linux qualification environment")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "marker")
+	legacy := filepath.Join(dir, "S24xray")
+	if err := os.WriteFile(legacy, []byte("#!/bin/sh\nprintf executed > \"$XKEEN_SETUP_MARKER\"\n# xray start restart\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XKEEN_SETUP_MARKER", marker)
+	activator := CommandActivator{LegacyLifecycleInit: legacy, SetupLifecycleIdentity: func(path string) bool { return false }, RestartTimeout: time.Second}
+	if err := activator.Start(context.Background()); err == nil {
+		t.Fatal("unreviewed legacy lifecycle was executable")
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unreviewed lifecycle executed: %v", err)
 	}
 }

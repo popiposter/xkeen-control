@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -307,4 +308,54 @@ func TestSupervisorManualOverrideUsesActiveLivenessNotObservatory(t *testing.T) 
 
 func readSelectionBytes(path string) ([]byte, error) {
 	return os.ReadFile(path)
+}
+
+func TestSupervisorSetupSelectionReconciliationPreservesValidManualOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "selection.json")
+	when := time.Now().UTC().Add(-time.Hour)
+	store := SelectionStore{Path: path}
+	record := SelectionRecord{Target: "proxy-new", ManualOverride: "proxy-new", StableSince: when, LastSwitchReason: ReasonManualOverride, LastSwitchAt: when}
+	if _, err := store.SaveIfChanged(SelectionRecord{}, record); err != nil {
+		t.Fatal(err)
+	}
+	reader := &supervisorReader{snapshot: supervisorSnapshot("proxy-new", "proxy-new", "proxy-other")}
+	api := &supervisorAPI{reader: reader}
+	supervisor := NewSupervisor(supervisorPolicy(), reader, api, func(context.Context) []NodeState {
+		return []NodeState{{Tag: "proxy-new", Enabled: true}}
+	}, NewProbeRouter(api), store)
+	if err := supervisor.ReconcileSetupSelection(context.Background(), []string{"proxy-new"}); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := store.Load()
+	if err != nil || actual.Target != "proxy-new" || actual.ManualOverride != "proxy-new" {
+		t.Fatalf("valid selection was not preserved: %+v err=%v", actual, err)
+	}
+	if len(api.override) != 0 {
+		t.Fatalf("valid selection caused an unnecessary runtime write: %v", api.override)
+	}
+}
+
+func TestSupervisorSetupSelectionReconciliationClearsMigratedStaleOverride(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "selection.json")
+	when := time.Now().UTC().Add(-time.Hour)
+	store := SelectionStore{Path: path}
+	stale := SelectionRecord{Target: "proxy-old", ManualOverride: "proxy-old", StableSince: when, LastSwitchReason: ReasonManualOverride, LastSwitchAt: when}
+	if _, err := store.SaveIfChanged(SelectionRecord{}, stale); err != nil {
+		t.Fatal(err)
+	}
+	reader := &supervisorReader{snapshot: supervisorSnapshot("proxy-old", "proxy-new", "proxy-other")}
+	api := &supervisorAPI{reader: reader}
+	supervisor := NewSupervisor(supervisorPolicy(), reader, api, func(context.Context) []NodeState {
+		return []NodeState{{Tag: "proxy-new", Enabled: true}, {Tag: "proxy-other", Enabled: true}}
+	}, NewProbeRouter(api), store)
+	if err := supervisor.ReconcileSetupSelection(context.Background(), []string{"proxy-new", "proxy-other"}); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := store.Load()
+	if err != nil || actual.Target != "" || actual.ManualOverride != "" {
+		t.Fatalf("stale migrated selection was not cleared by owner: %+v err=%v", actual, err)
+	}
+	if !reflect.DeepEqual(api.override, []string{""}) {
+		t.Fatalf("stale runtime override was not cleared through C.1 owner: %v", api.override)
+	}
 }

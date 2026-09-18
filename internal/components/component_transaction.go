@@ -173,6 +173,7 @@ type ComponentRecoveryConfig struct {
 	XKeenActivationPath        string
 	XKeenMarkerStagingPath     string
 	SetupStagingDir            string
+	SetupPreviousDir           string
 }
 
 type ComponentRecoveryState struct {
@@ -182,10 +183,11 @@ type ComponentRecoveryState struct {
 	GeodataStagingPresent bool
 	XKeenStagingPresent   bool
 	SetupStagingPresent   bool
+	SetupSnapshotPresent  bool
 }
 
 func (s ComponentRecoveryState) Pending() bool {
-	return s.JournalPresent || s.XrayStagingPresent || s.GeodataStagingPresent || s.XKeenStagingPresent || s.SetupStagingPresent
+	return s.JournalPresent || s.XrayStagingPresent || s.GeodataStagingPresent || s.XKeenStagingPresent || s.SetupStagingPresent || s.SetupSnapshotPresent
 }
 
 // InspectComponentRecovery validates the single shared journal and arbitrates
@@ -214,6 +216,14 @@ func InspectComponentRecovery(config ComponentRecoveryConfig) (ComponentRecovery
 			return ComponentRecoveryState{}, err
 		}
 	}
+	setupSnapshot := false
+	if config.SetupPreviousDir != "" {
+		state, stateErr := setupPathState(filepath.Join(config.SetupPreviousDir, ".setup-snapshot"))
+		if stateErr != nil {
+			return ComponentRecoveryState{}, stateErr
+		}
+		setupSnapshot = state != setupPathAbsent
+	}
 	xkeenConfigured := config.XKeenPreviousStagingPath != "" || config.XKeenStagingDir != "" || config.XKeenActivationPath != "" || config.XKeenMarkerStagingPath != ""
 	xkeenStaging := false
 	if xkeenConfigured {
@@ -241,17 +251,17 @@ func InspectComponentRecovery(config ComponentRecoveryConfig) (ComponentRecovery
 	if err != nil {
 		return ComponentRecoveryState{}, err
 	}
-	if restorePresent && (journalPresent || xrayStaging || geodataStaging || xkeenStaging || setupStaging) {
+	if restorePresent && (journalPresent || xrayStaging || geodataStaging || xkeenStaging || setupStaging || setupSnapshot) {
 		return ComponentRecoveryState{}, ErrComponentRecoveryConflict
 	}
-	if (xrayStaging && geodataStaging) || (xrayStaging && xkeenStaging) || (geodataStaging && xkeenStaging) || setupStaging && (xrayStaging || geodataStaging || xkeenStaging) {
+	if (xrayStaging && geodataStaging) || (xrayStaging && xkeenStaging) || (geodataStaging && xkeenStaging) || setupStaging && (xrayStaging || geodataStaging || xkeenStaging) || setupSnapshot && (xrayStaging || geodataStaging || xkeenStaging) {
 		return ComponentRecoveryState{}, ErrComponentRecoveryConflict
 	}
 	if journalPresent {
-		if envelope.Component == KindXray && (geodataStaging || xkeenStaging || setupStaging) || envelope.Component == KindGeodata && (xrayStaging || xkeenStaging || setupStaging) || envelope.Component == KindXKeen && (xrayStaging || geodataStaging || setupStaging) || envelope.Component == KindSetup && (xrayStaging || geodataStaging || xkeenStaging) {
+		if envelope.Component == KindXray && (geodataStaging || xkeenStaging || setupStaging || setupSnapshot) || envelope.Component == KindGeodata && (xrayStaging || xkeenStaging || setupStaging || setupSnapshot) || envelope.Component == KindXKeen && (xrayStaging || geodataStaging || setupStaging || setupSnapshot) || envelope.Component == KindSetup && (xrayStaging || geodataStaging || xkeenStaging) {
 			return ComponentRecoveryState{}, ErrComponentRecoveryConflict
 		}
-		return ComponentRecoveryState{Kind: envelope.Component, JournalPresent: true, XrayStagingPresent: xrayStaging, GeodataStagingPresent: geodataStaging, XKeenStagingPresent: xkeenStaging, SetupStagingPresent: setupStaging}, nil
+		return ComponentRecoveryState{Kind: envelope.Component, JournalPresent: true, XrayStagingPresent: xrayStaging, GeodataStagingPresent: geodataStaging, XKeenStagingPresent: xkeenStaging, SetupStagingPresent: setupStaging, SetupSnapshotPresent: setupSnapshot}, nil
 	}
 	var kind ComponentKind
 	if xrayStaging {
@@ -262,8 +272,10 @@ func InspectComponentRecovery(config ComponentRecoveryConfig) (ComponentRecovery
 		kind = KindXKeen
 	} else if setupStaging {
 		kind = KindSetup
+	} else if setupSnapshot {
+		kind = KindSetup
 	}
-	return ComponentRecoveryState{Kind: kind, XrayStagingPresent: xrayStaging, GeodataStagingPresent: geodataStaging, XKeenStagingPresent: xkeenStaging, SetupStagingPresent: setupStaging}, nil
+	return ComponentRecoveryState{Kind: kind, XrayStagingPresent: xrayStaging, GeodataStagingPresent: geodataStaging, XKeenStagingPresent: xkeenStaging, SetupStagingPresent: setupStaging, SetupSnapshotPresent: setupSnapshot}, nil
 }
 
 var (
@@ -319,7 +331,7 @@ func readComponentJournalEnvelope(path string) (componentJournalEnvelope, bool, 
 			return componentJournalEnvelope{}, false, errComponentRecoveryInvalid
 		}
 	case KindSetup:
-		if envelope.Phase != setupPhasePrepared && envelope.Phase != setupPhaseNodesCommitted && envelope.Phase != setupPhaseAuthorityCommitted && envelope.Phase != setupPhaseConfigCommitted && envelope.Phase != setupPhaseGeodataCommitted && envelope.Phase != setupPhaseXrayCommitted && envelope.Phase != setupPhaseXKeenStaged && envelope.Phase != setupPhaseXKeenBinaryCommitted && envelope.Phase != setupPhaseXKeenModuleCommitted && envelope.Phase != setupPhaseXKeenCommitted && envelope.Phase != setupPhaseLifecycleCommitted && envelope.Phase != setupPhaseWritersRetired && envelope.Phase != setupPhaseRuntimeStarted && envelope.Phase != setupPhaseRuntimeVerified {
+		if envelope.Phase != setupPhasePrepared && envelope.Phase != setupPhaseSnapshotIntent && envelope.Phase != setupPhaseSnapshotReady && envelope.Phase != setupPhaseNodesCommitted && envelope.Phase != setupPhaseAuthorityCommitted && envelope.Phase != setupPhaseConfigCommitted && envelope.Phase != setupPhaseGeodataCommitted && envelope.Phase != setupPhaseXrayCommitted && envelope.Phase != setupPhaseXKeenStaged && envelope.Phase != setupPhaseXKeenBinaryCommitted && envelope.Phase != setupPhaseXKeenModuleCommitted && envelope.Phase != setupPhaseXKeenCommitted && envelope.Phase != setupPhaseLifecycleCommitted && envelope.Phase != setupPhaseWritersRetired && envelope.Phase != setupPhaseRuntimeStarted && envelope.Phase != setupPhaseRuntimeVerified {
 			return componentJournalEnvelope{}, false, errComponentRecoveryInvalid
 		}
 	}

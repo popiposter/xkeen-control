@@ -862,6 +862,17 @@ func (c *Coordinator) SetManualOverride(ctx context.Context, target string) erro
 	return c.supervisor.SetManualOverride(ctx, target)
 }
 
+// ReconcileSetupSelection is called by Setup while it already owns the
+// Coordinator lifecycle barrier. The Supervisor remains the sole typed
+// selection owner; this method deliberately does not hand-edit selection.json
+// or acquire a second lifecycle token.
+func (c *Coordinator) ReconcileSetupSelection(ctx context.Context, enabledTags []string) error {
+	if c == nil || c.supervisor == nil {
+		return nil
+	}
+	return c.supervisor.ReconcileSetupSelection(ctx, enabledTags)
+}
+
 // runSupervisorOperation registers one cancellable supervisor operation under
 // the coordinator. Performance work deliberately does not block admission
 // here: the supervisor may interleave liveness probes between legacy benchmark
