@@ -1553,10 +1553,17 @@ func sameSetupCandidate(left, right setupCandidate) bool {
 func estimateSetupSnapshotBytes(paths SetupPaths) int64 {
 	_ = paths
 	// Snapshot payload bytes are independently capped at 256 MiB. Admission
-	// must reserve that real bound plus the bounded manifest and one temporary
-	// payload/owner write; the old 8 MiB placeholder could pass /tmp while
-	// leaving persistent rollback storage unproven.
-	return int64(setupMaxSnapshotBytes) + int64(setupMaxCronBytes) + int64(setupMaxSnapshotEntries*256) + int64(MaxXKeenGenerationFileBytes)
+	// must reserve that real bound plus the bounded manifest/entry overhead and
+	// one temporary payload write. The temporary can be a full Xray binary;
+	// the old 8 MiB placeholder (and a generation-file-sized allowance) could
+	// pass /tmp while leaving persistent rollback storage unproven.
+	maxFileBytes := int64(MaxXrayCandidateBinaryBytes)
+	for _, limit := range []int64{MaxGeodataFileBytes, MaxXKeenGenerationFileBytes, nodes.MaxLegacyDocument, appliance.MaxDocumentSize, setupMaxCronBytes} {
+		if limit > maxFileBytes {
+			maxFileBytes = limit
+		}
+	}
+	return int64(setupMaxSnapshotBytes) + int64(setupMaxCronBytes) + int64(setupMaxSnapshotEntries*256) + maxFileBytes
 }
 
 func setupSpaceProbePath(path string) string {
