@@ -108,10 +108,17 @@ const openApplication = async (page, options = {}) => {
 const performanceRequests = (scenario) => scenario.requests.filter((request) => request.path === '/api/v1/performance')
 
 test('Overview presents automatic quality and never mounts the legacy benchmark trigger', async ({ page }) => {
-  const scenario = await openApplication(page)
+  const scenario = await openApplication(page, {
+    status: statusFixture({
+      balancer: { nativeSelected: 'proxy-alpha', effective: 'proxy-alpha', override: 'proxy-alpha' },
+      selection: { state: 'stable', effectiveTarget: 'proxy-alpha', manualOverride: '', lastSwitchReason: 'startup', latencyEvidence: 3 },
+    }),
+  })
   const overview = page.getByTestId('automatic-quality-overview')
   await expect(overview).toContainText('Automatic quality')
   await expect(overview).toContainText('Automatic stable selection')
+  await expect(overview).toContainText('Not active')
+  await expect(overview).not.toContainText('paused by the explicit manual override')
   await expect(page.getByRole('button', { name: /Run full benchmark/i })).toHaveCount(0)
   await expect(page.getByText('Selection & benchmark', { exact: true })).toHaveCount(0)
   expect(scenario.requests.some((request) => request.path === '/api/v1/benchmark/run' && request.method === 'POST')).toBe(false)
@@ -196,9 +203,20 @@ test('completed switch exposes only the actual switched target and bounded candi
       { tag: 'proxy-beta', rttMs: 48, downloadBps: 48_000_000, uploadBps: 14_000_000, score: 0.94, valid: true },
     ],
   })
-  const scenario = await openApplication(page, { performance })
-  await expect(page.getByTestId('automatic-quality-overview')).toContainText('Actual switched target')
-  await expect(page.getByTestId('automatic-quality-overview')).toContainText('Beta')
+  const scenario = await openApplication(page, {
+    performance,
+    status: statusFixture({
+      balancer: { nativeSelected: 'proxy-alpha', effective: 'proxy-beta', override: 'proxy-beta' },
+      selection: { state: 'stable', effectiveTarget: 'proxy-beta', manualOverride: '', lastSwitchReason: 'adaptive-quality', latencyEvidence: 3 },
+    }),
+  })
+  const overview = page.getByTestId('automatic-quality-overview')
+  await expect(overview).toContainText('Actual switched target')
+  await expect(overview).toContainText('Beta')
+  await expect(overview).toContainText('Adaptive quality applied a target switch')
+  await expect(overview).not.toContainText('Selection reason unavailable')
+  await expect(overview).toContainText('Not active')
+  await expect(overview).not.toContainText('paused by the explicit manual override')
   await page.getByRole('button', { name: 'Nodes' }).click()
   const card = page.getByTestId('adaptive-performance')
   await expect(card).toContainText('Switched target')

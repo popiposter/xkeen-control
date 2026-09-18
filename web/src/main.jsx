@@ -230,6 +230,7 @@ const selectionReasonLabels = {
   'health-failover': 'Health failover',
   'latency-quality': 'Latency evidence',
   'throughput-benchmark': 'Legacy compatibility diagnostic',
+  'adaptive-quality': 'Adaptive quality applied a target switch',
   'fallback-leastping': 'Native fallback',
   'reapply-after-restart': 'Runtime re-apply',
   'manual-override': 'Manual override',
@@ -535,7 +536,7 @@ function AutomaticQualityOverview({ status, performance, nodesByTag }) {
   const adaptive = performance?.adaptive || { state: 'waiting' }
   const candidates = safeAdaptiveCandidates(adaptive)
   const effective = targetPresentation(selection.effectiveTarget || status.balancer?.effective, nodesByTag)
-  const manual = targetPresentation(selection.manualOverride || status.balancer?.override, nodesByTag)
+  const manual = targetPresentation(selection.manualOverride, nodesByTag)
   const selectionState = selectionStateLabel(selection.state || 'starting')
   const selectionReason = selection.lastSwitchReason ? selectionReasonLabel(selection.lastSwitchReason) : 'No selection change recorded'
   const switchedTarget = targetPresentation(adaptive.selectedTarget, nodesByTag)
