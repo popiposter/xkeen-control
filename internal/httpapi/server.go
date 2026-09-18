@@ -1837,6 +1837,8 @@ func writeSetupError(w http.ResponseWriter, err error) {
 		writeCodedError(w, http.StatusServiceUnavailable, "runtime-unavailable", "setup runtime is unavailable")
 	case errors.Is(err, components.ErrSetupVerificationFailed):
 		writeCodedError(w, http.StatusServiceUnavailable, "verification-failed", "setup verification failed")
+	case errors.Is(err, components.ErrSetupWriterConflict):
+		writeCodedError(w, http.StatusConflict, "writer-conflict", "a competing automatic writer was detected")
 	case errors.Is(err, components.ErrSetupMaintenance), errors.Is(err, components.ErrSetupRecoveryFailed):
 		writeCodedError(w, http.StatusServiceUnavailable, "maintenance", "setup unavailable during maintenance")
 	case errors.Is(err, components.ErrSetupUnavailable):
@@ -1854,6 +1856,8 @@ func writeComponentMutationError(w http.ResponseWriter, err error) {
 		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid component mutation request")
 	case errors.Is(err, components.ErrMutationBusy):
 		writeCodedError(w, http.StatusConflict, "busy", "component mutation busy")
+	case errors.Is(err, components.ErrMutationWriterConflict):
+		writeCodedError(w, http.StatusConflict, "writer-conflict", "a competing automatic writer was detected")
 	case errors.Is(err, components.ErrMutationPreviewExpired):
 		writeCodedError(w, http.StatusConflict, "preview-expired", "component mutation preview expired or invalid")
 	case errors.Is(err, components.ErrMutationPreviewStale):

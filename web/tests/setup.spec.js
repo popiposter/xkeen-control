@@ -40,8 +40,12 @@ async function prepare(page, setup) {
         expiresAt: new Date(Date.now() + 300_000).toISOString(),
         plan: {
           schemaVersion: 1,
+          setupClass: 'fresh',
           productDefault: true,
           emptyRegistry: true,
+          profiles: { action: 'empty', count: 0 },
+          policy: { action: 'product-default' },
+          panelPreserved: true,
           xray: { version: '25.9.1', sha256: 'a'.repeat(64) },
           geodata: { generation: 'geo-generation', items: [{ id: 'geoip' }, { id: 'geosite' }, { id: 'geoip-ir' }, { id: 'geosite-ir' }, { id: 'geoip-ru' }, { id: 'geosite-ru' }] },
           xkeen: { version: 'dev-test', generationSha256: 'b'.repeat(64) },

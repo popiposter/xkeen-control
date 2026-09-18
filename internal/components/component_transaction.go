@@ -289,7 +289,7 @@ func readComponentJournalEnvelope(path string) (componentJournalEnvelope, bool, 
 		return componentJournalEnvelope{}, false, errComponentRecoveryInvalid
 	}
 	allowed := map[string]struct{}{
-		"schemaVersion": {}, "component": {}, "operation": {}, "phase": {}, "previous": {}, "candidate": {}, "created": {}, "authorityGeneration": {}, "preservedFingerprint": {}, "xray": {},
+		"schemaVersion": {}, "component": {}, "operation": {}, "phase": {}, "previous": {}, "candidate": {}, "created": {}, "authorityGeneration": {}, "preservedFingerprint": {}, "xray": {}, "sourceClass": {}, "sourceDigest": {}, "stageDir": {},
 	}
 	for key := range object {
 		if _, ok := allowed[key]; !ok {
@@ -319,7 +319,7 @@ func readComponentJournalEnvelope(path string) (componentJournalEnvelope, bool, 
 			return componentJournalEnvelope{}, false, errComponentRecoveryInvalid
 		}
 	case KindSetup:
-		if envelope.Phase != setupPhasePrepared && envelope.Phase != setupPhaseNodesCommitted && envelope.Phase != setupPhaseAuthorityCommitted && envelope.Phase != setupPhaseConfigCommitted && envelope.Phase != setupPhaseGeodataCommitted && envelope.Phase != setupPhaseXrayCommitted && envelope.Phase != setupPhaseXKeenCommitted && envelope.Phase != setupPhaseLifecycleCommitted && envelope.Phase != setupPhaseRuntimeVerified {
+		if envelope.Phase != setupPhasePrepared && envelope.Phase != setupPhaseNodesCommitted && envelope.Phase != setupPhaseAuthorityCommitted && envelope.Phase != setupPhaseConfigCommitted && envelope.Phase != setupPhaseGeodataCommitted && envelope.Phase != setupPhaseXrayCommitted && envelope.Phase != setupPhaseXKeenStaged && envelope.Phase != setupPhaseXKeenBinaryCommitted && envelope.Phase != setupPhaseXKeenModuleCommitted && envelope.Phase != setupPhaseXKeenCommitted && envelope.Phase != setupPhaseLifecycleCommitted && envelope.Phase != setupPhaseWritersRetired && envelope.Phase != setupPhaseRuntimeStarted && envelope.Phase != setupPhaseRuntimeVerified {
 			return componentJournalEnvelope{}, false, errComponentRecoveryInvalid
 		}
 	}

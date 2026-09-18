@@ -259,6 +259,44 @@ func TestMutationServiceFreshPreviewTypedDispatchAndOneShot(t *testing.T) {
 	}
 }
 
+func TestMutationServiceBlocksCompetingAutomaticWriter(t *testing.T) {
+	conflict := false
+	backend := &f1XrayBackend{previous: XrayPreviousGeneration{Generation: strings.Repeat("b", 64), Version: "1.0.0", SizeBytes: 10, SHA256: strings.Repeat("b", 64), Mode: 0o755}}
+	service := NewMutationService(MutationConfig{
+		XrayResolver:   &f1XrayResolver{identity: f1XrayIdentity()},
+		Xray:           backend,
+		WriterConflict: func() bool { return conflict },
+	})
+	request := MutationRequest{Component: KindXray, Operation: MutationOperationUpdate, Channel: MutationChannelStable}
+	conflict = true
+	if service.Supports(KindXray, MutationChannelStable) {
+		t.Fatal("component support remained available during writer conflict")
+	}
+	if _, err := service.Preview(context.Background(), "session-a", request); !errors.Is(err, ErrMutationWriterConflict) {
+		t.Fatalf("conflicted preview error = %v", err)
+	}
+
+	conflict = false
+	preview, err := service.Preview(context.Background(), "session-a", request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflict = true
+	if _, err := service.Apply(context.Background(), "session-a", preview.PreviewToken); !errors.Is(err, ErrMutationWriterConflict) {
+		t.Fatalf("late conflicted apply error = %v", err)
+	}
+
+	conflict = false
+	rollbackPreview, err := service.Preview(context.Background(), "session-a", MutationRequest{Component: KindXray, Operation: MutationOperationRollback})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflict = true
+	if _, err := service.Rollback(context.Background(), "session-a", rollbackPreview.PreviewToken); !errors.Is(err, ErrMutationWriterConflict) {
+		t.Fatalf("late conflicted rollback error = %v", err)
+	}
+}
+
 func TestMutationServiceExpiryCancellationAndRetention(t *testing.T) {
 	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
 	resolver := &f1XrayResolver{identity: f1XrayIdentity()}

@@ -182,6 +182,14 @@ func parseActivePolicyBytes(dns, routing, observatory []byte) (Appliance, error)
 	return result, nil
 }
 
+// ParseSupportedPolicyFiles strictly adopts the reviewed typed subset from
+// an existing active Xray policy. It is the read-only takeover boundary; the
+// caller still decides whether the returned policy may replace a missing
+// appliance authority.
+func ParseSupportedPolicyFiles(dns, routing, observatory []byte) (Appliance, error) {
+	return parseActivePolicyBytes(dns, routing, observatory)
+}
+
 func parseNetworkGrammar(value string) ([]string, error) {
 	if value == "" {
 		return []string{}, nil

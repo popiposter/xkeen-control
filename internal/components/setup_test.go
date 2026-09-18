@@ -6,13 +6,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/popiposter/xkeen-control/internal/appliance"
 	"github.com/popiposter/xkeen-control/internal/authority"
+	"github.com/popiposter/xkeen-control/internal/nodes"
 )
 
 type setupTestXrayResolver struct{ value XrayReleaseIdentity }
@@ -103,15 +106,22 @@ func (v *setupTestCandidateValidator) ValidateXrayCandidate(_ context.Context, b
 }
 
 type setupTestRuntime struct {
-	startCalls  int
-	readyCalls  int
-	probeCalls  int
-	configCalls int
-	emptyCalls  int
+	startCalls   int
+	readyCalls   int
+	probeCalls   int
+	configCalls  int
+	emptyCalls   int
+	stopCalls    int
+	stoppedCalls int
+	verifyCalls  int
+	stopped      bool
+	verifyFails  int
+	emptyFails   int
 }
 
 func (r *setupTestRuntime) Start(context.Context) error {
 	r.startCalls++
+	r.stopped = false
 	return nil
 }
 func (r *setupTestRuntime) WaitReady(context.Context) error {
@@ -120,7 +130,7 @@ func (r *setupTestRuntime) WaitReady(context.Context) error {
 }
 func (r *setupTestRuntime) ProbeReachable(context.Context) bool {
 	r.probeCalls++
-	return true
+	return !r.stopped
 }
 func (r *setupTestRuntime) ValidateActiveConfig(context.Context) error {
 	r.configCalls++
@@ -128,6 +138,27 @@ func (r *setupTestRuntime) ValidateActiveConfig(context.Context) error {
 }
 func (r *setupTestRuntime) VerifyEmpty(context.Context) error {
 	r.emptyCalls++
+	if r.emptyFails > 0 {
+		r.emptyFails--
+		return errors.New("synthetic late empty verification failure")
+	}
+	return nil
+}
+func (r *setupTestRuntime) Stop(context.Context) error {
+	r.stopCalls++
+	r.stopped = true
+	return nil
+}
+func (r *setupTestRuntime) VerifyStopped(context.Context) error {
+	r.stoppedCalls++
+	return nil
+}
+func (r *setupTestRuntime) Verify(context.Context, []string) error {
+	r.verifyCalls++
+	if r.verifyFails > 0 {
+		r.verifyFails--
+		return errors.New("synthetic late verification failure")
+	}
 	return nil
 }
 
@@ -141,9 +172,165 @@ func setupTestService(t *testing.T, paths SetupPaths) *SetupService {
 	})
 }
 
-func TestSetupClassifierIsFreshOnlyAndFailClosed(t *testing.T) {
+func setupTestLegacyOutbounds(t *testing.T) ([]byte, nodes.Registry) {
+	t.Helper()
+	profileText := strings.Join([]string{
+		"vless:", "//11111111-1111-4111-8111-111111111111@edge.example.com:443?",
+		"encryption=none&security=reality&sni=front.example.com&fp=chrome&",
+		"pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=abcd&type=tcp#Existing",
+	}, "")
+	profile, err := nodes.ParseProfile(profileText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := nodes.NewNode(profile.VLESS, profile.Name, nodes.Source{Type: "manual"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := nodes.NewRegistry()
+	registry.Nodes = []nodes.Node{node}
+	contents, err := nodes.Render(registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contents, registry
+}
+
+func TestSetupTakeoverUsesTypedAuthorityPrecedenceAndStrictLegacyMigration(t *testing.T) {
 	root := t.TempDir()
 	paths := setupTestPaths(root)
+	paths.LegacyOutbounds = filepath.Join(root, "legacy-outbounds.json")
+	legacy, legacyRegistry := setupTestLegacyOutbounds(t)
+	if err := os.WriteFile(paths.LegacyOutbounds, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	canonicalNodes, err := nodes.MarshalCanonical(legacyRegistry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.Nodes, canonicalNodes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := setupTestService(t, paths)
+	preview, err := service.Preview(context.Background(), "takeover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Plan.SetupClass != "managed-takeover" || preview.Plan.Profiles.Action != "preserve" || preview.Plan.Profiles.Count != 1 {
+		t.Fatalf("valid nodes did not win precedence: %+v", preview.Plan)
+	}
+	publicPreview, err := json.Marshal(preview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"11111111-1111-4111-8111-111111111111", "front.example.com", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "vless:" + "//"} {
+		if bytes.Contains(publicPreview, []byte(secret)) {
+			t.Fatalf("preview leaked profile secret %q: %s", secret, publicPreview)
+		}
+	}
+	if got, err := os.ReadFile(paths.Nodes); err != nil || !bytes.Equal(got, canonicalNodes) {
+		t.Fatalf("nodes authority changed during Preview: %v", err)
+	}
+
+	if err := os.WriteFile(paths.Nodes, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service.InvalidateAll()
+	if projection := service.Status(); projection.State != "blocked" || projection.ReasonCode != SetupReasonNodeAuthorityInvalid {
+		t.Fatalf("invalid nodes did not block: %+v", projection)
+	}
+	if err := os.Remove(paths.Nodes); err != nil {
+		t.Fatal(err)
+	}
+	if preview, err := service.Preview(context.Background(), "legacy"); err != nil {
+		t.Fatal(err)
+	} else if preview.Plan.SetupClass != "legacy-xkeen-takeover" || preview.Plan.Profiles.Action != "migrate" || preview.Plan.Profiles.Count != 1 {
+		t.Fatalf("legacy plan = %+v", preview.Plan)
+	}
+
+	if err := os.WriteFile(paths.LegacyOutbounds, []byte(`{"outbounds":[{"tag":"unexpected","protocol":"freedom"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service.InvalidateAll()
+	if projection := service.Status(); projection.State != "blocked" || projection.ReasonCode != SetupReasonProfileUnavailable {
+		t.Fatalf("unsupported legacy profile did not block: %+v", projection)
+	}
+}
+
+func TestSetupTakeoverAdoptsSupportedLegacyPolicyBeforeProductDefault(t *testing.T) {
+	root := t.TempDir()
+	paths := setupTestPaths(root)
+	paths.LegacyOutbounds = filepath.Join(root, "legacy-outbounds.json")
+	legacy, _ := setupTestLegacyOutbounds(t)
+	if err := os.WriteFile(paths.LegacyOutbounds, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := nodes.MigrateLegacy(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := appliance.RenderCandidateFiles(appliance.ProductDefault(), migrated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"02_dns.json", "05_routing.json", "07_observatory.json"} {
+		if err := os.MkdirAll(paths.XrayConfigDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(paths.XrayConfigDir, name), files["xray/"+name], 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := setupTestService(t, paths)
+	preview, err := service.Preview(context.Background(), "legacy-policy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Plan.Policy.Action != "adopt-supported" || preview.Plan.ProductDefault || preview.Plan.Profiles.Action != "migrate" {
+		t.Fatalf("supported legacy policy plan = %+v", preview.Plan)
+	}
+	if _, err := os.Stat(paths.Appliance); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Preview wrote appliance authority: %v", err)
+	}
+}
+
+func TestSetupTakeoverResourceAdmissionChecksPersistentSpaceBeforeWrites(t *testing.T) {
+	root := t.TempDir()
+	paths := setupTestPaths(root)
+	paths.PreviousDir = filepath.Join(root, "persistent")
+	if err := os.MkdirAll(paths.PreviousDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	service := NewSetupService(SetupConfig{
+		Paths: paths, XrayResolver: setupTestXrayResolver{value: f1XrayIdentity()}, GeodataResolver: setupTestGeodataResolver{value: setupTestGeodata()}, XKeenResolver: setupTestXKeenResolver{value: setupTestXKeen()},
+		AvailableSpace: func(path string) (uint64, error) {
+			if strings.Contains(path, "persistent") {
+				return 0, nil
+			}
+			return ^uint64(0), nil
+		},
+	})
+	preview, err := service.Preview(context.Background(), "space")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Apply(context.Background(), "space", preview.PreviewToken); !errors.Is(err, ErrSetupResourceInsufficient) {
+		t.Fatalf("persistent space error = %v", err)
+	}
+	for _, path := range []string{paths.Journal, paths.Appliance, paths.Nodes, paths.XrayConfigDir, paths.StagingDir} {
+		if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("persistent write occurred at %s: %v", path, statErr)
+		}
+	}
+}
+
+func TestSetupClassifierSupportsFreshAndRecognizedTakeoverButFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	paths := setupTestPaths(root)
+	paths.PanelPaths = []string{filepath.Join(root, "panel-state.json")}
+	if err := os.WriteFile(paths.PanelPaths[0], []byte("panel-local-state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	service := setupTestService(t, paths)
 	if projection := service.Status(); projection.State != "fresh" || !projection.Eligible || projection.ReasonCode != SetupReasonFresh {
 		t.Fatalf("fresh projection = %+v", projection)
@@ -172,7 +359,7 @@ func TestSetupClassifierIsFreshOnlyAndFailClosed(t *testing.T) {
 	if err := os.WriteFile(paths.Appliance, []byte("authority"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if projection := service.Status(); projection.State != "blocked" || projection.ReasonCode != SetupReasonAuthorityPresent {
+	if projection := service.Status(); projection.State != "blocked" || projection.ReasonCode != SetupReasonPolicyUnsupported {
 		t.Fatalf("authority projection = %+v", projection)
 	}
 	if err := os.Remove(paths.Appliance); err != nil {
@@ -182,11 +369,32 @@ func TestSetupClassifierIsFreshOnlyAndFailClosed(t *testing.T) {
 	if err := os.MkdirAll(paths.StagingDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(paths.StagingDir, ".setup-synthetic"), []byte("candidate"), 0o600); err != nil {
+	staging := filepath.Join(paths.StagingDir, ".setup-synthetic")
+	if err := ensureXKeenOwnedDirectory(staging, setupStagingOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staging, "candidate"), []byte("candidate"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if layout, err := service.inspectLayout(); err != nil || layout.state != "blocked" || layout.reason != SetupReasonJournalPending {
 		t.Fatalf("staging layout = %+v, %v", layout, err)
+	}
+}
+
+func TestSetupBlocksPanelAutomaticWriterWithoutTouchingPanelState(t *testing.T) {
+	root := t.TempDir()
+	paths := setupTestPaths(root)
+	paths.PanelPaths = []string{filepath.Join(root, "panel-state.json")}
+	contents := []byte(`{"command":"` + "xkeen" + ` ` + "-i" + `"}`)
+	if err := os.WriteFile(paths.PanelPaths[0], contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := setupTestService(t, paths)
+	if projection := service.Status(); projection.State != "blocked" || projection.ReasonCode != SetupReasonWriterConflict {
+		t.Fatalf("panel writer projection = %+v", projection)
+	}
+	if got, err := os.ReadFile(paths.PanelPaths[0]); err != nil || !bytes.Equal(got, contents) {
+		t.Fatalf("panel writer state changed: %v", err)
 	}
 }
 
@@ -225,14 +433,18 @@ func TestSetupRecoveryRemovesOnlyOrphanedPrivateStaging(t *testing.T) {
 	if err := os.MkdirAll(paths.StagingDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(paths.StagingDir, ".setup-orphan"), []byte("candidate"), 0o600); err != nil {
+	staging := filepath.Join(paths.StagingDir, ".setup-orphan")
+	if err := ensureXKeenOwnedDirectory(staging, setupStagingOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staging, "candidate"), []byte("candidate"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	service := setupTestService(t, paths)
 	if err := service.RecoverStartup(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(paths.StagingDir, ".setup-orphan")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(staging); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("orphan staging remains: %v", err)
 	}
 	if err := service.Ready(); err != nil {
@@ -321,5 +533,199 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 	}
 	if _, err := os.Stat(paths.LifecycleInit); err != nil {
 		t.Fatalf("fixed lifecycle missing: %v", err)
+	}
+	oldXray, err := os.ReadFile(paths.XrayBinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldNodes, err := os.ReadFile(paths.Nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldLifecycle, err := os.ReadFile(paths.LifecycleInit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousMarker := []byte("{}\n")
+	if err := os.WriteFile(paths.XkeenMarker, previousMarker, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.LegacyLifecycleInit, []byte("#!/bin/sh\n# xray start restart legacy lifecycle\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runtime.emptyFails = 1
+	takeover, err := service.Preview(context.Background(), "session-b")
+	if err != nil {
+		t.Fatalf("takeover preview: %v", err)
+	}
+	if takeover.Plan.SetupClass != "managed-takeover" || takeover.Plan.Profiles.Action != "preserve" || takeover.Plan.Policy.Action != "preserve" {
+		t.Fatalf("takeover rollback plan = %+v", takeover.Plan)
+	}
+	if _, err := service.Apply(context.Background(), "session-b", takeover.PreviewToken); !errors.Is(err, ErrSetupTransactionRestored) {
+		t.Fatalf("late verification error = %v", err)
+	}
+	for path, expected := range map[string][]byte{paths.XkeenMarker: previousMarker, paths.XrayBinary: oldXray, paths.Nodes: oldNodes, paths.LifecycleInit: oldLifecycle} {
+		actual, readErr := os.ReadFile(path)
+		if readErr != nil || !bytes.Equal(actual, expected) {
+			t.Fatalf("rollback changed %s: actual=%q expected=%q err=%v", path, actual, expected, readErr)
+		}
+	}
+	if runtime.stopCalls != 2 || runtime.stoppedCalls != 2 || runtime.startCalls != 3 || runtime.emptyCalls != 3 || runtime.stopped {
+		t.Fatalf("late failure lifecycle proof = %+v", runtime)
+	}
+	if _, err := os.Stat(paths.Journal); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rollback journal remains: %v", err)
+	}
+	if got, err := os.ReadFile(paths.LegacyLifecycleInit); err != nil || string(got) != "#!/bin/sh\n# xray start restart legacy lifecycle\n" {
+		t.Fatalf("legacy lifecycle was not restored: %q (%v)", got, err)
+	}
+}
+
+func TestSetupTakeoverPreservesAuthoritiesPanelStateAndRetiresReviewedWriters(t *testing.T) {
+	root := t.TempDir()
+	paths := setupTestPaths(root)
+	paths.LegacyOutbounds = filepath.Join(root, "legacy-outbounds.json")
+	paths.WriterScripts = []string{
+		filepath.Join(root, "run-bounded-speed-benchmark.sh"),
+		filepath.Join(root, "speed_failover_watchdog.sh"),
+		filepath.Join(root, "xkeen-control-watchdog"),
+		filepath.Join(root, "update-"+"geodata.sh"),
+	}
+	paths.CronPaths = []string{filepath.Join(root, "root.cron"), filepath.Join(root, "cron.d")}
+	paths.PanelPaths = []string{filepath.Join(root, "password.bcrypt"), filepath.Join(root, "selection.json")}
+	legacy, _ := setupTestLegacyOutbounds(t)
+	if err := os.WriteFile(paths.LegacyOutbounds, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.LegacyLifecycleInit, []byte("#!/bin/sh\n# xray start restart legacy lifecycle\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(paths.SiblingModule, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(paths.SiblingModule, "legacy.sh"), []byte("legacy-module"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.InstallHelper, []byte("legacy-helper"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths.WriterScripts {
+		if err := os.WriteFile(path, []byte("legacy writer"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cronBefore := "17 4 * * * /opt/etc/xkeen-control/run-bounded-speed-benchmark.sh\n18 4 * * * /opt/etc/xkeen-control/speed_failover_watchdog.sh\n19 4 * * * /opt/etc/xkeen-control/xkeen-control-watchdog\n20 4 * * * /opt/etc/xkeen/update-" + "geodata.sh\n23 * * * * /opt/etc/keep-this.sh\n"
+	if err := os.WriteFile(paths.CronPaths[0], []byte(cronBefore), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(paths.CronPaths[1], 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cronDirWriter := filepath.Join(paths.CronPaths[1], "xkeen-updater")
+	if err := os.WriteFile(cronDirWriter, []byte("xkeen -ug\n* * * * * /opt/etc/keep-dir.sh\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cronDirUnrelated := filepath.Join(paths.CronPaths[1], "keep")
+	if err := os.WriteFile(cronDirUnrelated, []byte("* * * * * /opt/etc/keep-dir.sh\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	panelBefore := map[string][]byte{paths.PanelPaths[0]: []byte("bcrypt-state"), paths.PanelPaths[1]: []byte(`{"target":"proxy-existing"}`)}
+	for path, contents := range panelBefore {
+		if err := os.WriteFile(path, contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	xrayArchive := writeSyntheticArchive(t, []syntheticZipEntry{{name: "xray", mode: 0o700, contents: []byte("new-xray-binary")}})
+	xrayDigest := sha256.Sum256(xrayArchive)
+	xrayIdentity := XrayReleaseIdentity{Tag: "v1.2.3", Version: "1.2.3", AssetName: xrayCandidateAsset, SizeBytes: int64(len(xrayArchive)), SHA256: hex.EncodeToString(xrayDigest[:])}
+	geodataItems := make([]GeodataReleaseIdentity, len(productGeodataCatalog))
+	geodataPayloads := make(map[string][]byte, len(productGeodataCatalog))
+	for index, entry := range productGeodataCatalog {
+		payload := bytes.Repeat([]byte{byte('k' + index)}, index+1)
+		digest := sha256.Sum256(payload)
+		geodataPayloads[entry.Name] = payload
+		geodataItems[index] = GeodataReleaseIdentity{ID: entry.ID, Repository: entry.Repository, Tag: "2026-09-05", AssetName: entry.Asset, ActiveName: entry.Name, SizeBytes: int64(len(payload)), SHA256: hex.EncodeToString(digest[:])}
+	}
+	geodata := GeodataCandidateSet{Items: geodataItems, Generation: geodataIdentityGeneration(geodataItems)}
+	xkeenArchivePath := writeTestGzipTar(t, []testTarEntry{{name: "_xkeen/runtime.sh", kind: tar.TypeReg, mode: 0o644, format: tar.FormatGNU, contents: []byte("takeover-module")}, {name: "xkeen", kind: tar.TypeReg, mode: 0o755, format: tar.FormatGNU, contents: []byte("takeover-xkeen")}})
+	xkeenArchive, err := os.ReadFile(xkeenArchivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xkeenEntry, xkeenIdentity := installableCatalogFixture(t, xkeenArchive)
+	xkeenEntry.ArchiveMembers = []XKeenArchiveMember{{Name: "_xkeen/runtime.sh", Type: xkeenArchiveRegular, Mode: 0o644, Size: int64(len("takeover-module"))}, {Name: "xkeen", Type: xkeenArchiveRegular, Mode: 0o755, Size: int64(len("takeover-xkeen"))}}
+	probePath := filepath.Join(t.TempDir(), "xkeen-candidate")
+	xkeenMeta, err := extractXKeenArchiveMembers(context.Background(), xkeenArchivePath, probePath, xkeenEntry.ArchiveMembers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xkeenEntry.GenerationSHA256 = xkeenMeta.GenerationSHA256()
+	xkeenIdentity.GenerationSHA256 = xkeenEntry.GenerationSHA256
+	xkeenIdentity.Generation = xkeenEntry.GenerationSHA256
+	reviewedXKeenCompatibility[xkeenCompatibilityKey(xkeenCatalogBuildCommit, xkeenCatalogAsset)] = xkeenEntry
+	runtime := &setupTestRuntime{}
+	service := NewSetupService(SetupConfig{
+		Paths: paths, XrayResolver: setupTestXrayResolver{value: xrayIdentity}, XrayDownloader: &fakeXrayDownloader{archive: xrayArchive},
+		GeodataResolver: setupTestGeodataResolver{value: geodata}, GeodataDownloader: &fakeGeodataDownloader{payloads: geodataPayloads},
+		XKeenResolver: setupTestXKeenResolver{value: xkeenIdentity}, XKeenDownloader: &fakeXKeenDownloader{archive: xkeenArchive},
+		CandidateProbe: &fakeTransactionalProbe{newVersion: xrayIdentity.Version}, CandidateValidator: &setupTestCandidateValidator{}, Runtime: runtime,
+		MutationGate: NewComponentMutationGate(), Coordinator: &fakeXrayCoordinator{}, AuthorityLease: authority.NewLease(),
+		AvailableSpace: func(string) (uint64, error) { return ^uint64(0), nil }, SyncDirectory: func(string) error { return nil },
+	})
+	preview, err := service.Preview(context.Background(), "takeover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Plan.SetupClass != "legacy-xkeen-takeover" || preview.Plan.Profiles.Action != "migrate" || len(preview.Plan.Writers) == 0 || !preview.Plan.PanelPreserved {
+		t.Fatalf("takeover plan = %+v", preview.Plan)
+	}
+	if _, err := service.Apply(context.Background(), "takeover", preview.PreviewToken); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.stopCalls != 1 || runtime.stoppedCalls != 1 || runtime.verifyCalls != 1 {
+		t.Fatalf("takeover lifecycle calls = %+v", runtime)
+	}
+	nodesAfter, err := os.ReadFile(paths.Nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	migratedRegistry, err := nodes.MigrateLegacy(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedNodes, err := nodes.MarshalCanonical(migratedRegistry)
+	if err != nil || !bytes.Equal(nodesAfter, expectedNodes) {
+		t.Fatalf("migrated nodes were not preserved losslessly: %v", err)
+	}
+	cronAfter, err := os.ReadFile(paths.CronPaths[0])
+	if err != nil || string(cronAfter) != "23 * * * * /opt/etc/keep-this.sh\n" {
+		t.Fatalf("cron retirement changed unrelated state: %q (%v)", cronAfter, err)
+	}
+	for _, path := range paths.WriterScripts {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("legacy writer remains at %s: %v", path, err)
+		}
+	}
+	for path, before := range panelBefore {
+		after, readErr := os.ReadFile(path)
+		if readErr != nil || !bytes.Equal(after, before) {
+			t.Fatalf("panel state changed at %s: %v", path, readErr)
+		}
+	}
+	if projection := service.Status(); projection.State != "ready" || projection.Eligible {
+		t.Fatalf("takeover post-state = %+v", projection)
+	}
+	if err := os.WriteFile(paths.WriterScripts[0], []byte("reappeared writer"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if projection := service.Status(); projection.State != "blocked" || projection.ReasonCode != SetupReasonWriterConflict {
+		t.Fatalf("writer reappearance was not blocked: %+v", projection)
+	}
+	if got, err := os.ReadFile(cronDirWriter); err != nil || string(got) != "* * * * * /opt/etc/keep-dir.sh\n" {
+		t.Fatalf("cron.d writer retirement changed unexpected state: %q (%v)", got, err)
+	}
+	if got, err := os.ReadFile(cronDirUnrelated); err != nil || string(got) != "* * * * * /opt/etc/keep-dir.sh\n" {
+		t.Fatalf("cron.d unrelated state changed: %q (%v)", got, err)
 	}
 }

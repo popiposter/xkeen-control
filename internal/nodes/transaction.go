@@ -340,6 +340,7 @@ type CommandActivator struct {
 	XrayAssetDir          string
 	XkeenBinary           string
 	FixedLifecycleInit    string
+	LegacyLifecycleInit   string
 	APIAddress            string
 	ActiveOutboundsPath   string
 	RoutingPath           string
@@ -425,7 +426,8 @@ func (a CommandActivator) Start(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if a.FixedLifecycleInit == "" {
+	lifecycle := a.setupLifecyclePath()
+	if lifecycle == "" {
 		return errors.New("Xray start failed")
 	}
 	timeout := a.RestartTimeout
@@ -434,10 +436,78 @@ func (a CommandActivator) Start(ctx context.Context) error {
 	}
 	startContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	if err := a.runFixedLifecycle(startContext, "start"); err != nil {
+	if err := a.runSetupLifecycle(startContext, lifecycle, "start"); err != nil {
 		return errors.New("Xray start failed")
 	}
 	return nil
+}
+
+func (a CommandActivator) Stop(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lifecycle := a.setupLifecyclePath()
+	if lifecycle == "" {
+		return errors.New("Xray stop failed")
+	}
+	timeout := a.RestartTimeout
+	if timeout <= 0 {
+		timeout = 45 * time.Second
+	}
+	stopContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if err := a.runSetupLifecycle(stopContext, lifecycle, "stop"); err != nil {
+		return errors.New("Xray stop failed")
+	}
+	return nil
+}
+
+func (a CommandActivator) setupLifecyclePath() string {
+	if a.FixedLifecycleInit != "" {
+		if info, err := os.Lstat(a.FixedLifecycleInit); err == nil && info.Mode()&os.ModeSymlink == 0 && info.Mode().IsRegular() {
+			return a.FixedLifecycleInit
+		}
+	}
+	if a.LegacyLifecycleInit != "" {
+		if info, err := os.Lstat(a.LegacyLifecycleInit); err == nil && info.Mode()&os.ModeSymlink == 0 && info.Mode().IsRegular() {
+			return a.LegacyLifecycleInit
+		}
+	}
+	return ""
+}
+
+func (a CommandActivator) runSetupLifecycle(ctx context.Context, path, action string) error {
+	setup := a
+	setup.FixedLifecycleInit = path
+	return setup.runFixedLifecycle(ctx, action)
+}
+
+func (a CommandActivator) VerifyStopped(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timeout := a.RestartAttemptTimeout
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+	verifyContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if len(xrayPIDSet(verifyContext)) == 0 && !a.apiReachable(verifyContext) {
+			return nil
+		}
+		select {
+		case <-verifyContext.Done():
+			return errors.New("Xray stop could not be proven")
+		case <-ticker.C:
+		}
+	}
+}
+
+func (a CommandActivator) Verify(ctx context.Context, expected []string) error {
+	return a.VerifyOutboundTags(ctx, expected)
 }
 
 func (a CommandActivator) restartViaFixedInit(ctx context.Context) error {
@@ -471,8 +541,31 @@ func (a CommandActivator) restartViaFixedInit(ctx context.Context) error {
 }
 
 func (a CommandActivator) runFixedLifecycle(ctx context.Context, action string) error {
-	if action != "restart" && action != "start" || a.FixedLifecycleInit == "" {
+	if action != "restart" && action != "start" && action != "stop" && action != "status" || a.FixedLifecycleInit == "" {
 		return errors.New("Xray restart failed")
+	}
+	if action == "stop" || action == "status" {
+		command := exec.Command(a.FixedLifecycleInit, action, "on")
+		command.Env = xkeenForegroundEnvironment()
+		command.Stdout = io.Discard
+		command.Stderr = io.Discard
+		configureCommandProcessGroup(command)
+		if err := command.Start(); err != nil {
+			return errors.New("Xray restart failed")
+		}
+		done := make(chan error, 1)
+		go func() { done <- command.Wait() }()
+		select {
+		case err := <-done:
+			if err != nil {
+				return errors.New("Xray restart failed")
+			}
+			return nil
+		case <-ctx.Done():
+			killCommandProcessGroup(command)
+			drainCommand(done)
+			return errors.New("Xray restart failed")
+		}
 	}
 	previousPIDs := xrayPIDSet(ctx)
 	command := exec.Command(a.FixedLifecycleInit, action, "on")
@@ -506,6 +599,19 @@ func (a CommandActivator) runFixedLifecycle(ctx context.Context, action string) 
 			return errors.New("Xray restart failed")
 		}
 	}
+}
+
+func (a CommandActivator) apiReachable(ctx context.Context) bool {
+	address := a.APIAddress
+	if address == "" {
+		address = "127.0.0.1:10085"
+	}
+	connection, err := (&net.Dialer{Timeout: 150 * time.Millisecond}).DialContext(ctx, "tcp", address)
+	if err != nil {
+		return false
+	}
+	_ = connection.Close()
+	return true
 }
 
 func (a CommandActivator) runXkeenLifecycle(ctx context.Context, action string) error {

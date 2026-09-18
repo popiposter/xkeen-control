@@ -13,9 +13,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/popiposter/xkeen-control/internal/appliance"
 	"github.com/popiposter/xkeen-control/internal/authority"
@@ -31,20 +34,35 @@ const (
 	DefaultSetupTransactionLimit = 10 * time.Minute
 	DefaultSetupRecoveryTimeout  = 2 * time.Minute
 	DefaultSetupStagingDir       = "/tmp/xkeen-control/setup"
+	DefaultSetupPreviousDir      = "/opt/etc/xkeen-control/previous/setup"
+	DefaultSetupXKeenActivation  = "/opt/sbin/.xkeen-control-setup-activation"
+	DefaultSetupCronRoot         = "/opt/var/spool/cron/crontabs/root"
+	DefaultSetupSystemCronRoot   = "/etc/crontabs/root"
+	DefaultSetupCronDir          = "/opt/etc/cron.d"
 
-	setupPhasePrepared           = "prepared"
-	setupPhaseNodesCommitted     = "nodes-committed"
-	setupPhaseAuthorityCommitted = "authority-committed"
-	setupPhaseConfigCommitted    = "config-committed"
-	setupPhaseGeodataCommitted   = "geodata-committed"
-	setupPhaseXrayCommitted      = "xray-committed"
-	setupPhaseXKeenCommitted     = "xkeen-committed"
-	setupPhaseLifecycleCommitted = "lifecycle-committed"
-	setupPhaseRuntimeVerified    = "runtime-verified"
+	setupPhasePrepared             = "prepared"
+	setupPhaseNodesCommitted       = "nodes-committed"
+	setupPhaseAuthorityCommitted   = "authority-committed"
+	setupPhaseConfigCommitted      = "config-committed"
+	setupPhaseGeodataCommitted     = "geodata-committed"
+	setupPhaseXrayCommitted        = "xray-committed"
+	setupPhaseXKeenStaged          = "xkeen-staged"
+	setupPhaseXKeenBinaryCommitted = "xkeen-binary-committed"
+	setupPhaseXKeenModuleCommitted = "xkeen-module-committed"
+	setupPhaseXKeenCommitted       = "xkeen-committed"
+	setupPhaseLifecycleCommitted   = "lifecycle-committed"
+	setupPhaseWritersRetired       = "writers-retired"
+	setupPhaseRuntimeStarted       = "runtime-started"
+	setupPhaseRuntimeVerified      = "runtime-verified"
 
-	setupTokenBytes = 32
-	setupMaxTokens  = 8
-	setupMaxCreated = 32
+	setupTokenBytes          = 32
+	setupMaxTokens           = 8
+	setupMaxCreated          = 32
+	setupMaxSnapshotEntries  = 1024
+	setupMaxSnapshotBytes    = 256 << 20
+	setupMaxCronBytes        = 128 << 10
+	setupSnapshotReserve     = 8 << 20
+	setupGeodataWriterScript = "update-" + "geodata.sh"
 )
 
 var (
@@ -62,6 +80,7 @@ var (
 	ErrSetupTransactionRestored  = errors.New("setup transaction failed and fresh state was restored")
 	ErrSetupTransactionUnproven  = errors.New("setup transaction outcome is not proven")
 	ErrSetupRecoveryFailed       = errors.New("setup recovery failed")
+	ErrSetupWriterConflict       = errors.New("setup detected a competing automatic writer")
 
 	errSetupJournalInvalid = errors.New("setup transaction journal is invalid")
 	errSetupLayoutInvalid  = errors.New("setup layout is invalid")
@@ -88,6 +107,13 @@ const (
 	SetupReasonTransactionUnproven  SetupReasonCode = "transaction-unproven"
 	SetupReasonRuntimeUnavailable   SetupReasonCode = "runtime-unavailable"
 	SetupReasonVerificationFailed   SetupReasonCode = "verification-failed"
+	SetupReasonManagedTakeover      SetupReasonCode = "managed-takeover"
+	SetupReasonLegacyTakeover       SetupReasonCode = "legacy-xkeen-takeover"
+	SetupReasonPolicyUnsupported    SetupReasonCode = "policy-unsupported"
+	SetupReasonNodeAuthorityInvalid SetupReasonCode = "node-authority-invalid"
+	SetupReasonProfileUnavailable   SetupReasonCode = "profile-source-unavailable"
+	SetupReasonWriterConflict       SetupReasonCode = "writer-conflict"
+	SetupReasonPersistentSpace      SetupReasonCode = "persistent-space-insufficient"
 )
 
 func (reason SetupReasonCode) valid() bool {
@@ -96,7 +122,10 @@ func (reason SetupReasonCode) valid() bool {
 		SetupReasonLayoutMixed, SetupReasonAuthorityPresent, SetupReasonJournalPending,
 		SetupReasonMaintenance, SetupReasonComponentUnavailable, SetupReasonCandidateStale,
 		SetupReasonCandidateRejected, SetupReasonResourceInsufficient, SetupReasonTransactionRestored,
-		SetupReasonTransactionUnproven, SetupReasonRuntimeUnavailable, SetupReasonVerificationFailed:
+		SetupReasonTransactionUnproven, SetupReasonRuntimeUnavailable, SetupReasonVerificationFailed,
+		SetupReasonManagedTakeover, SetupReasonLegacyTakeover, SetupReasonPolicyUnsupported,
+		SetupReasonNodeAuthorityInvalid, SetupReasonProfileUnavailable, SetupReasonWriterConflict,
+		SetupReasonPersistentSpace:
 		return true
 	default:
 		return false
@@ -158,12 +187,32 @@ type SetupLifecyclePlan struct {
 	SHA256 string `json:"sha256"`
 }
 
+type SetupProfilePlan struct {
+	Action string   `json:"action"`
+	Count  int      `json:"count"`
+	Labels []string `json:"labels,omitempty"`
+}
+
+type SetupPolicyPlan struct {
+	Action string `json:"action"`
+}
+
+type SetupWriterPlan struct {
+	Class string `json:"class"`
+}
+
 // SetupPlan is the only plan the server can issue. It has no caller-selected
 // component, channel, repository, URL, path, command, timeout or policy.
 type SetupPlan struct {
 	SchemaVersion  int                `json:"schemaVersion"`
+	SetupClass     string             `json:"setupClass"`
+	Destructive    bool               `json:"destructive"`
 	ProductDefault bool               `json:"productDefault"`
 	EmptyRegistry  bool               `json:"emptyRegistry"`
+	Profiles       SetupProfilePlan   `json:"profiles"`
+	Policy         SetupPolicyPlan    `json:"policy"`
+	Writers        []SetupWriterPlan  `json:"writers,omitempty"`
+	PanelPreserved bool               `json:"panelPreserved"`
 	Xray           SetupXrayPlan      `json:"xray"`
 	Geodata        SetupGeodataPlan   `json:"geodata"`
 	XKeen          SetupXKeenPlan     `json:"xkeen"`
@@ -207,6 +256,20 @@ type SetupRuntime interface {
 	VerifyEmpty(context.Context) error
 }
 
+// SetupRuntimeQuiescer is required once Setup has started a target runtime.
+// It is intentionally an optional extension so ordinary test/runtime adapters
+// and the existing component contracts do not acquire a generic lifecycle API.
+type SetupRuntimeQuiescer interface {
+	Stop(context.Context) error
+	VerifyStopped(context.Context) error
+}
+
+// SetupRuntimeVerifier proves a non-empty migrated/preserved registry through
+// the ordinary outbound verification contract without changing that contract.
+type SetupRuntimeVerifier interface {
+	Verify(context.Context, []string) error
+}
+
 // SetupRuntimeFuncs is a narrow production adapter and a deterministic test
 // seam. It exposes only the fixed setup lifecycle/proof operations.
 type SetupRuntimeFuncs struct {
@@ -215,6 +278,9 @@ type SetupRuntimeFuncs struct {
 	ProbeReachableFunc       func(context.Context) bool
 	ValidateActiveConfigFunc func(context.Context) error
 	VerifyEmptyFunc          func(context.Context) error
+	StopFunc                 func(context.Context) error
+	VerifyStoppedFunc        func(context.Context) error
+	VerifyFunc               func(context.Context, []string) error
 }
 
 func (f SetupRuntimeFuncs) Start(ctx context.Context) error {
@@ -244,6 +310,24 @@ func (f SetupRuntimeFuncs) VerifyEmpty(ctx context.Context) error {
 	}
 	return f.VerifyEmptyFunc(ctx)
 }
+func (f SetupRuntimeFuncs) Stop(ctx context.Context) error {
+	if f.StopFunc == nil {
+		return ErrSetupRuntimeUnavailable
+	}
+	return f.StopFunc(ctx)
+}
+func (f SetupRuntimeFuncs) VerifyStopped(ctx context.Context) error {
+	if f.VerifyStoppedFunc == nil {
+		return ErrSetupRuntimeUnavailable
+	}
+	return f.VerifyStoppedFunc(ctx)
+}
+func (f SetupRuntimeFuncs) Verify(ctx context.Context, tags []string) error {
+	if f.VerifyFunc == nil {
+		return ErrSetupRuntimeUnavailable
+	}
+	return f.VerifyFunc(ctx, tags)
+}
 
 // SetupPaths is the production-owned fixed path set. It is constructed by
 // the server, never from an HTTP request.
@@ -255,16 +339,22 @@ type SetupPaths struct {
 	XkeenModuleDir      string
 	XkeenConfig         string
 	XkeenMarker         string
+	XkeenActivation     string
 	LifecycleInit       string
 	LegacyLifecycleInit string
 	SiblingModule       string
 	InstallHelper       string
 	Appliance           string
 	Nodes               string
+	LegacyOutbounds     string
 	ActiveOutbounds     string
 	Journal             string
 	RestoreJournal      string
 	StagingDir          string
+	PreviousDir         string
+	CronPaths           []string
+	WriterScripts       []string
+	PanelPaths          []string
 }
 
 func DefaultSetupPaths() SetupPaths {
@@ -276,16 +366,36 @@ func DefaultSetupPaths() SetupPaths {
 		XkeenModuleDir:      DefaultXkeenModuleDir,
 		XkeenConfig:         DefaultXkeenConfig,
 		XkeenMarker:         DefaultXKeenMarkerPath,
+		XkeenActivation:     DefaultSetupXKeenActivation,
 		LifecycleInit:       DefaultXkeenRuntimeInit,
 		LegacyLifecycleInit: DefaultXkeenLegacyRuntimeInit,
 		SiblingModule:       filepath.Join(filepath.Dir(DefaultXkeenModuleDir), "_xkeen"),
 		InstallHelper:       "/opt/root/install.sh",
 		Appliance:           DefaultAppliancePath,
 		Nodes:               "/opt/etc/xkeen-control/secrets/nodes.json",
+		LegacyOutbounds:     "/opt/etc/xkeen-control/secrets/04_outbounds.json",
 		ActiveOutbounds:     filepath.Join(DefaultXrayConfigDir, "04_outbounds.json"),
 		Journal:             DefaultComponentTransactionJournal,
 		RestoreJournal:      filepath.Join(filepath.Dir(DefaultComponentTransactionJournal), "appliance-import-transaction.json"),
 		StagingDir:          DefaultSetupStagingDir,
+		PreviousDir:         DefaultSetupPreviousDir,
+		CronPaths:           []string{DefaultSetupCronRoot, DefaultSetupSystemCronRoot, "/opt/etc/cron.d"},
+		WriterScripts: []string{
+			"/opt/etc/xkeen/speed_failover_watchdog.sh",
+			"/opt/etc/xkeen-control/speed_failover_watchdog.sh",
+			"/opt/etc/xkeen-control/run-bounded-speed-benchmark.sh",
+			"/opt/etc/xkeen-control/xkeen-control-watchdog",
+			filepath.Join("/opt/etc/xkeen", setupGeodataWriterScript),
+			filepath.Join("/opt/etc/xkeen-control", setupGeodataWriterScript),
+		},
+		PanelPaths: []string{
+			"/opt/etc/xkeen-control/auth/password.bcrypt",
+			"/opt/etc/xkeen-control/listen-address",
+			"/opt/etc/xkeen-control/state/installed-release.json",
+			"/opt/etc/xkeen-control/state/update-policy.json",
+			"/opt/etc/xkeen-control/state/selection.json",
+			"/opt/etc/xkeen-control/state/component-policy.json",
+		},
 	}
 }
 
@@ -317,10 +427,43 @@ type SetupConfig struct {
 }
 
 type setupCandidate struct {
-	Xray      XrayReleaseIdentity
-	Geodata   GeodataCandidateSet
-	XKeen     XKeenReleaseIdentity
-	Lifecycle []byte
+	Xray       XrayReleaseIdentity
+	Geodata    GeodataCandidateSet
+	XKeen      XKeenReleaseIdentity
+	Lifecycle  []byte
+	Registry   nodes.Registry
+	NodesBytes []byte
+	Appliance  appliance.Appliance
+	AppBytes   []byte
+	Source     setupSourceManifest
+	Writers    []setupWriter
+}
+
+type setupSourceManifest struct {
+	Class          string
+	ProfileAction  string
+	PolicyAction   string
+	ProfileCount   int
+	ProfileLabels  []string
+	Digest         string
+	RegistryDigest string
+	PolicyDigest   string
+	WritersDigest  string
+	PanelPreserved bool
+}
+
+type setupWriter struct {
+	Class  string
+	Path   string
+	Digest string
+}
+
+type setupLayout struct {
+	state   string
+	reason  SetupReasonCode
+	class   string
+	source  setupSourceManifest
+	writers []setupWriter
 }
 
 type setupPreviewEntry struct {
@@ -346,14 +489,15 @@ type SetupService struct {
 	previewed   bool
 }
 
-type setupLayout struct {
-	state  string
-	reason SetupReasonCode
-}
-
 func NewSetupService(config SetupConfig) *SetupService {
 	paths := DefaultSetupPaths()
 	mergeSetupPaths(&paths, config.Paths)
+	if paths.XkeenActivation == DefaultSetupXKeenActivation && paths.XkeenBinary != DefaultXkeenBinary {
+		paths.XkeenActivation = filepath.Join(filepath.Dir(paths.XkeenBinary), ".xkeen-control-setup-activation")
+	}
+	if paths.PreviousDir == DefaultSetupPreviousDir && paths.Appliance != DefaultAppliancePath {
+		paths.PreviousDir = filepath.Join(filepath.Dir(paths.Appliance), "previous-setup")
+	}
 	config.Paths = paths
 	if config.XrayResolver == nil {
 		config.XrayResolver = NewXrayResolver(nil, nil)
@@ -413,6 +557,10 @@ func NewSetupService(config SetupConfig) *SetupService {
 		service.markMaintenance(ErrSetupRecoveryFailed)
 	} else if pending {
 		service.markMaintenance(ErrSetupRecoveryFailed)
+	} else if activation, activationErr := setupPathState(config.Paths.XkeenActivation); activationErr != nil {
+		service.markMaintenance(ErrSetupRecoveryFailed)
+	} else if activation != setupPathAbsent {
+		service.markMaintenance(ErrSetupRecoveryFailed)
 	}
 	return service
 }
@@ -439,6 +587,9 @@ func mergeSetupPaths(target *SetupPaths, value SetupPaths) {
 	if value.XkeenMarker != "" {
 		target.XkeenMarker = value.XkeenMarker
 	}
+	if value.XkeenActivation != "" {
+		target.XkeenActivation = value.XkeenActivation
+	}
 	if value.LifecycleInit != "" {
 		target.LifecycleInit = value.LifecycleInit
 	}
@@ -457,6 +608,9 @@ func mergeSetupPaths(target *SetupPaths, value SetupPaths) {
 	if value.Nodes != "" {
 		target.Nodes = value.Nodes
 	}
+	if value.LegacyOutbounds != "" {
+		target.LegacyOutbounds = value.LegacyOutbounds
+	}
 	if value.ActiveOutbounds != "" {
 		target.ActiveOutbounds = value.ActiveOutbounds
 	}
@@ -468,6 +622,18 @@ func mergeSetupPaths(target *SetupPaths, value SetupPaths) {
 	}
 	if value.StagingDir != "" {
 		target.StagingDir = value.StagingDir
+	}
+	if value.PreviousDir != "" {
+		target.PreviousDir = value.PreviousDir
+	}
+	if value.CronPaths != nil {
+		target.CronPaths = append([]string(nil), value.CronPaths...)
+	}
+	if value.WriterScripts != nil {
+		target.WriterScripts = append([]string(nil), value.WriterScripts...)
+	}
+	if value.PanelPaths != nil {
+		target.PanelPaths = append([]string(nil), value.PanelPaths...)
 	}
 }
 
@@ -497,7 +663,11 @@ func (s *SetupService) HasPendingRecovery() (bool, error) {
 	if present && kind == KindSetup {
 		return true, nil
 	}
-	return componentStagingRootPresent(s.config.Paths.StagingDir)
+	if staging, err := componentStagingRootPresent(s.config.Paths.StagingDir); err != nil || staging {
+		return staging, err
+	}
+	activation, err := setupPathState(s.config.Paths.XkeenActivation)
+	return activation != setupPathAbsent, err
 }
 
 func (s *SetupService) Status() SetupProjection {
@@ -519,6 +689,12 @@ func (s *SetupService) Status() SetupProjection {
 	}
 	if layout.state == "configured" {
 		return SetupProjection{State: "ready", Eligible: false, ReasonCode: SetupReasonAlreadyConfigured}
+	}
+	if layout.state == "takeover" {
+		if previewed {
+			return SetupProjection{State: "previewable", Eligible: true, ReasonCode: layout.reason}
+		}
+		return SetupProjection{State: "takeover", Eligible: true, ReasonCode: layout.reason}
 	}
 	if layout.state != "fresh" {
 		return SetupProjection{State: "blocked", Eligible: false, ReasonCode: layout.reason}
@@ -572,7 +748,7 @@ func (s *SetupService) Preview(ctx context.Context, binding string) (SetupPrevie
 	if err != nil {
 		return SetupPreview{}, ErrSetupMaintenance
 	}
-	if layout.state != "fresh" {
+	if layout.state != "fresh" && layout.state != "takeover" {
 		return SetupPreview{}, &SetupLayoutError{ReasonCode: layout.reason}
 	}
 	previewContext, cancel := context.WithTimeout(ctx, s.config.PreviewTimeout)
@@ -706,6 +882,363 @@ type SetupLayoutError struct {
 func (err *SetupLayoutError) Error() string { return ErrSetupBlocked.Error() }
 func (err *SetupLayoutError) Unwrap() error { return ErrSetupBlocked }
 
+type setupAuthorities struct {
+	registry            nodes.Registry
+	registryBytes       []byte
+	app                 appliance.Appliance
+	appBytes            []byte
+	profilePresent      bool
+	appPresent          bool
+	policyPresent       bool
+	legacyPresent       bool
+	legacyPath          string
+	profileAction       string
+	policyAction        string
+	profileSourceDigest string
+	policySourceDigest  string
+}
+
+func digestSetupBytes(contents []byte) string {
+	digest := sha256.Sum256(contents)
+	return hex.EncodeToString(digest[:])
+}
+
+func setupPresent(path string) (bool, error) {
+	state, err := setupPathState(path)
+	if err != nil {
+		return false, err
+	}
+	if state == setupPathAbsent {
+		return false, nil
+	}
+	if state != setupPathRegular {
+		return false, errSetupLayoutInvalid
+	}
+	return true, nil
+}
+
+func (s *SetupService) readSetupAuthorities() (setupAuthorities, SetupReasonCode, error) {
+	paths := s.config.Paths
+	result := setupAuthorities{}
+
+	if present, err := setupPresent(paths.Nodes); err != nil {
+		return result, SetupReasonNodeAuthorityInvalid, nil
+	} else if present {
+		contents, readErr := readBoundedSetupFile(paths.Nodes, nodes.MaxRegistryDocument)
+		if readErr != nil {
+			return result, SetupReasonNodeAuthorityInvalid, nil
+		}
+		registry, parseErr := nodes.ParseCanonical(contents)
+		if parseErr != nil {
+			return result, SetupReasonNodeAuthorityInvalid, nil
+		}
+		result.registry, result.registryBytes, result.profilePresent, result.profileSourceDigest = registry, contents, true, digestSetupBytes(contents)
+		result.profileAction = "preserve"
+	} else {
+		legacyCandidates := []string{paths.LegacyOutbounds, paths.ActiveOutbounds}
+		for _, path := range legacyCandidates {
+			if path == "" {
+				continue
+			}
+			present, stateErr := setupPresent(path)
+			if stateErr != nil {
+				return result, SetupReasonProfileUnavailable, nil
+			}
+			if !present {
+				continue
+			}
+			contents, readErr := readBoundedSetupFile(path, nodes.MaxLegacyDocument)
+			if readErr != nil {
+				return result, SetupReasonProfileUnavailable, nil
+			}
+			registry, migrateErr := nodes.MigrateLegacy(contents)
+			if migrateErr != nil {
+				return result, SetupReasonProfileUnavailable, nil
+			}
+			canonical, marshalErr := nodes.MarshalCanonical(registry)
+			if marshalErr != nil {
+				return result, SetupReasonProfileUnavailable, nil
+			}
+			result.registry, result.registryBytes, result.profilePresent, result.profileSourceDigest = registry, canonical, true, digestSetupBytes(contents)
+			result.legacyPresent, result.legacyPath = true, path
+			result.profileAction = "migrate"
+			break
+		}
+	}
+
+	if present, err := setupPresent(paths.Appliance); err != nil {
+		return result, SetupReasonPolicyUnsupported, nil
+	} else if present {
+		contents, readErr := readBoundedSetupFile(paths.Appliance, appliance.MaxDocumentSize)
+		if readErr != nil {
+			return result, SetupReasonPolicyUnsupported, nil
+		}
+		value, parseErr := appliance.Parse(contents)
+		if parseErr != nil {
+			return result, SetupReasonPolicyUnsupported, nil
+		}
+		result.app, result.appBytes, result.appPresent, result.policyPresent, result.policySourceDigest = value, contents, true, true, digestSetupBytes(contents)
+		result.policyAction = "preserve"
+	} else {
+		policyNames := []string{"02_dns.json", "05_routing.json", "07_observatory.json"}
+		policyBytes := make(map[string][]byte, len(policyNames))
+		policyCount := 0
+		for _, name := range policyNames {
+			path := filepath.Join(paths.XrayConfigDir, name)
+			present, stateErr := setupPresent(path)
+			if stateErr != nil {
+				return result, SetupReasonPolicyUnsupported, nil
+			}
+			if !present {
+				continue
+			}
+			policyCount++
+			contents, readErr := readBoundedSetupFile(path, appliance.MaxDocumentSize)
+			if readErr != nil {
+				return result, SetupReasonPolicyUnsupported, nil
+			}
+			policyBytes[name] = contents
+		}
+		if policyCount != 0 {
+			if policyCount != len(policyNames) {
+				return result, SetupReasonPolicyUnsupported, nil
+			}
+			value, parseErr := appliance.ParseSupportedPolicyFiles(policyBytes["02_dns.json"], policyBytes["05_routing.json"], policyBytes["07_observatory.json"])
+			if parseErr != nil {
+				return result, SetupReasonPolicyUnsupported, nil
+			}
+			canonical, marshalErr := appliance.MarshalCanonical(value)
+			if marshalErr != nil {
+				return result, SetupReasonPolicyUnsupported, nil
+			}
+			result.app, result.appBytes, result.appPresent, result.policyPresent, result.policySourceDigest = value, canonical, false, true, digestSetupBytes(bytes.Join([][]byte{policyBytes["02_dns.json"], policyBytes["05_routing.json"], policyBytes["07_observatory.json"]}, []byte{0}))
+			result.policyAction = "adopt-supported"
+		}
+	}
+	return result, "", nil
+}
+
+func setupSafeProfileLabels(registry nodes.Registry) []string {
+	ordered := registry.SortedNodes()
+	labels := make([]string, 0, len(ordered))
+	for index, node := range ordered {
+		// Use the stored display name only. PublicNodes may derive a generic
+		// label from the endpoint host, which is not needed in a Setup plan.
+		label := strings.TrimSpace(node.Name)
+		if label == "" {
+			label = "Node " + strconv.Itoa(index+1)
+		}
+		if len(label) > 96 {
+			label = label[:96]
+		}
+		labels = append(labels, label)
+		if len(labels) == 32 {
+			break
+		}
+	}
+	return labels
+}
+
+func (a setupAuthorities) sourceManifest(class string, writers []setupWriter) setupSourceManifest {
+	if a.profileAction == "" && a.profilePresent {
+		a.profileAction = "preserve"
+	}
+	if a.policyAction == "" && a.appPresent {
+		a.policyAction = "preserve"
+	}
+	registryDigest := a.profileSourceDigest
+	if registryDigest == "" {
+		registryDigest = digestSetupBytes(a.registryBytes)
+	}
+	policyDigest := a.policySourceDigest
+	if policyDigest == "" {
+		policyDigest = digestSetupBytes(a.appBytes)
+	}
+	writersDigest := setupWritersDigest(writers)
+	digest := digestSetupBytes([]byte(strings.Join([]string{class, a.profileAction, a.policyAction, registryDigest, policyDigest, writersDigest}, "\x00")))
+	return setupSourceManifest{Class: class, ProfileAction: a.profileAction, PolicyAction: a.policyAction, ProfileCount: len(a.registry.Nodes), ProfileLabels: setupSafeProfileLabels(a.registry), Digest: digest, RegistryDigest: registryDigest, PolicyDigest: policyDigest, WritersDigest: writersDigest, PanelPreserved: true}
+}
+
+func setupWritersDigest(writers []setupWriter) string {
+	writerNames := make([]string, 0, len(writers))
+	for _, writer := range writers {
+		writerNames = append(writerNames, writer.Class+":"+filepath.Clean(writer.Path)+":"+writer.Digest)
+	}
+	sort.Strings(writerNames)
+	return digestSetupBytes([]byte(strings.Join(writerNames, "\n")))
+}
+
+func (s *SetupService) inspectSetupWriters() ([]setupWriter, error) {
+	paths := s.config.Paths
+	result := make([]setupWriter, 0, len(paths.WriterScripts)+len(paths.CronPaths)+len(paths.PanelPaths))
+	seen := make(map[string]struct{})
+	add := func(class, path, digest string) {
+		key := class + "\x00" + path
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		result = append(result, setupWriter{Class: class, Path: path, Digest: digest})
+	}
+	for _, path := range paths.WriterScripts {
+		present, err := setupPresent(path)
+		if err != nil {
+			return nil, err
+		}
+		if !present {
+			continue
+		}
+		base := strings.ToLower(filepath.Base(path))
+		class := "known-writer"
+		switch {
+		case strings.Contains(base, "benchmark") || strings.Contains(base, "sbt"):
+			class = "xkeen-speed-benchmark"
+		case strings.Contains(base, "watchdog"):
+			class = "xkeen-speed-watchdog"
+		case strings.Contains(base, "geodata"):
+			class = "xkeen-geofile-cron"
+		}
+		contents, readErr := readBoundedSetupFile(path, setupMaxCronBytes)
+		if readErr != nil {
+			return nil, readErr
+		}
+		add(class, path, digestSetupBytes(contents))
+	}
+	inspectCronFile := func(path string) error {
+		contents, readErr := readBoundedSetupFile(path, setupMaxCronBytes)
+		if readErr != nil {
+			return readErr
+		}
+		for _, line := range strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n") {
+			class := ""
+			switch {
+			case setupXKeenCommand(line, "-ug", "-ugi", "-ugs", "-ux", "-uk"):
+				class = "xkeen-automatic-writer"
+			case setupXKeenCommand(line, "-sbt") || setupKnownWriterScript(line, "run-bounded-speed-benchmark.sh"):
+				class = "xkeen-speed-benchmark"
+			case setupKnownWriterScript(line, "speed_failover_watchdog.sh", "xkeen-control-watchdog"):
+				class = "xkeen-speed-watchdog"
+			case setupKnownWriterScript(line, "geofile", setupGeodataWriterScript):
+				class = "xkeen-geofile-cron"
+			}
+			if class != "" {
+				add(class, path, digestSetupBytes(contents))
+			}
+		}
+		return nil
+	}
+	for _, path := range paths.CronPaths {
+		state, err := setupPathState(path)
+		if err != nil {
+			return nil, err
+		}
+		switch state {
+		case setupPathAbsent:
+			continue
+		case setupPathRegular:
+			if err := inspectCronFile(path); err != nil {
+				return nil, err
+			}
+		case setupPathDirectory:
+			entries, readErr := os.ReadDir(path)
+			if readErr != nil || len(entries) > 64 {
+				return nil, errSetupLayoutInvalid
+			}
+			for _, entry := range entries {
+				if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !validSetupFileName(entry.Name()) {
+					return nil, errSetupLayoutInvalid
+				}
+				if err := inspectCronFile(filepath.Join(path, entry.Name())); err != nil {
+					return nil, err
+				}
+			}
+		default:
+			return nil, errSetupLayoutInvalid
+		}
+	}
+	for _, path := range paths.PanelPaths {
+		present, err := setupPresent(path)
+		if err != nil {
+			return nil, err
+		}
+		if !present {
+			continue
+		}
+		contents, readErr := readBoundedSetupFile(path, setupMaxCronBytes)
+		if readErr != nil {
+			return nil, readErr
+		}
+		for _, line := range strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n") {
+			if setupXKeenCommand(line, "-i", "-ug", "-ugi", "-ugs", "-ux", "-uk", "-sbt") {
+				add("panel-writer-conflict", path, digestSetupBytes(contents))
+				break
+			}
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Class+result[i].Path < result[j].Class+result[j].Path })
+	return result, nil
+}
+
+// WriterConflict is the read-only admission hook shared with ordinary
+// component mutations. A known automatic writer, or an inspection failure,
+// blocks update/rollback until Setup has explicitly reconciled the state.
+func (s *SetupService) WriterConflict() bool {
+	if s == nil {
+		return true
+	}
+	writers, err := s.inspectSetupWriters()
+	return err != nil || len(writers) != 0
+}
+
+func setupXKeenCommand(line string, flags ...string) bool {
+	wanted := make(map[string]struct{}, len(flags))
+	for _, flag := range flags {
+		wanted[flag] = struct{}{}
+	}
+	fields := setupWriterFields(line)
+	for index, field := range fields {
+		if strings.ToLower(filepath.Base(field)) != "xkeen" || index+1 >= len(fields) {
+			continue
+		}
+		argument := fields[index+1]
+		if _, ok := wanted[argument]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func setupKnownWriterScript(line string, names ...string) bool {
+	for _, field := range setupWriterFields(line) {
+		base := strings.ToLower(filepath.Base(field))
+		for _, name := range names {
+			if base == strings.ToLower(name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func validSetupFileName(name string) bool {
+	return name != "" && name != "." && name != ".." && filepath.Base(name) == name && !strings.ContainsRune(name, '\x00')
+}
+
+func setupWriterFields(line string) []string {
+	return strings.FieldsFunc(line, func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune("\"';&|()<>`{}[],:", r)
+	})
+}
+
+func setupPanelWriterConflict(writers []setupWriter) bool {
+	for _, writer := range writers {
+		if writer.Class == "panel-writer-conflict" {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *SetupService) resolve(ctx context.Context) (setupCandidate, error) {
 	if s.config.XrayResolver == nil || s.config.XrayDownloader == nil || s.config.GeodataResolver == nil || s.config.GeodataDownloader == nil || s.config.XKeenResolver == nil || s.config.XKeenDownloader == nil {
 		return setupCandidate{}, ErrSetupSourceUnavailable
@@ -735,7 +1268,49 @@ func (s *SetupService) resolve(ctx context.Context) (setupCandidate, error) {
 	if err != nil {
 		return setupCandidate{}, ErrSetupCandidateRejected
 	}
-	return setupCandidate{Xray: xray, Geodata: geodata, XKeen: xkeen, Lifecycle: lifecycle}, nil
+	writers, err := s.inspectSetupWriters()
+	if err != nil {
+		return setupCandidate{}, ErrSetupCandidateRejected
+	}
+	authorities, reason, err := s.readSetupAuthorities()
+	if err != nil {
+		return setupCandidate{}, ErrSetupCandidateRejected
+	}
+	if reason != "" {
+		return setupCandidate{}, &SetupLayoutError{ReasonCode: reason}
+	}
+	layout, layoutErr := s.inspectLayout()
+	if layoutErr != nil {
+		return setupCandidate{}, ErrSetupCandidateRejected
+	}
+	if layout.state != "fresh" && layout.state != "takeover" {
+		return setupCandidate{}, &SetupLayoutError{ReasonCode: layout.reason}
+	}
+	if !authorities.profilePresent {
+		if layout.state != "fresh" {
+			return setupCandidate{}, &SetupLayoutError{ReasonCode: SetupReasonProfileUnavailable}
+		}
+		authorities.registry = nodes.NewRegistry()
+		authorities.registryBytes, err = nodes.MarshalCanonical(authorities.registry)
+		if err != nil {
+			return setupCandidate{}, ErrSetupCandidateRejected
+		}
+		authorities.profileAction = "empty"
+	}
+	if !authorities.policyPresent {
+		authorities.app = appliance.ProductDefault()
+		authorities.appBytes, err = appliance.MarshalCanonical(authorities.app)
+		if err != nil {
+			return setupCandidate{}, ErrSetupCandidateRejected
+		}
+		authorities.policyAction = "product-default"
+	}
+	class := layout.class
+	if class == "" {
+		class = "fresh"
+	}
+	source := authorities.sourceManifest(class, writers)
+	return setupCandidate{Xray: xray, Geodata: geodata, XKeen: xkeen, Lifecycle: lifecycle, Registry: authorities.registry, NodesBytes: authorities.registryBytes, Appliance: authorities.app, AppBytes: authorities.appBytes, Source: source, Writers: writers}, nil
 }
 
 func makeSetupPlan(candidate setupCandidate) (SetupPlan, error) {
@@ -752,10 +1327,29 @@ func makeSetupPlan(candidate setupCandidate) (SetupPlan, error) {
 		items[index] = SetupGeodataItem{ID: item.ID, Tag: item.Tag, AssetName: item.AssetName, ActiveName: item.ActiveName, SizeBytes: item.SizeBytes, SHA256: item.SHA256}
 	}
 	lifecycleDigest := sha256.Sum256(candidate.Lifecycle)
+	if candidate.Source.Class == "" {
+		candidate.Source.Class = "fresh"
+	}
+	writerPlans := make([]SetupWriterPlan, 0, len(candidate.Writers))
+	seenWriters := make(map[string]struct{}, len(candidate.Writers))
+	for _, writer := range candidate.Writers {
+		if _, exists := seenWriters[writer.Class]; exists {
+			continue
+		}
+		seenWriters[writer.Class] = struct{}{}
+		writerPlans = append(writerPlans, SetupWriterPlan{Class: writer.Class})
+	}
+	sort.Slice(writerPlans, func(i, j int) bool { return writerPlans[i].Class < writerPlans[j].Class })
 	return SetupPlan{
 		SchemaVersion:  SetupTransactionSchemaVersion,
-		ProductDefault: true,
-		EmptyRegistry:  true,
+		SetupClass:     candidate.Source.Class,
+		Destructive:    candidate.Source.Class != "managed-converged",
+		ProductDefault: candidate.Source.PolicyAction == "product-default",
+		EmptyRegistry:  candidate.Source.ProfileAction == "empty",
+		Profiles:       SetupProfilePlan{Action: candidate.Source.ProfileAction, Count: candidate.Source.ProfileCount, Labels: append([]string(nil), candidate.Source.ProfileLabels...)},
+		Policy:         SetupPolicyPlan{Action: candidate.Source.PolicyAction},
+		Writers:        writerPlans,
+		PanelPreserved: candidate.Source.PanelPreserved,
 		Xray:           SetupXrayPlan{Tag: candidate.Xray.Tag, Version: candidate.Xray.Version, AssetName: candidate.Xray.AssetName, SizeBytes: candidate.Xray.SizeBytes, SHA256: candidate.Xray.SHA256},
 		Geodata:        SetupGeodataPlan{Items: items, Generation: candidate.Geodata.Generation},
 		XKeen:          SetupXKeenPlan{Repository: candidate.XKeen.Repository, Channel: candidate.XKeen.Channel, Tag: candidate.XKeen.Tag, Version: candidate.XKeen.Version, CommitSHA: candidate.XKeen.CommitSHA, SourceParentSHA: candidate.XKeen.SourceParentSHA, AssetName: candidate.XKeen.AssetName, BlobSHA: candidate.XKeen.BlobSHA, SizeBytes: candidate.XKeen.SizeBytes, SHA256: candidate.XKeen.SHA256, GenerationSHA256: xkeenIdentityGeneration(candidate.XKeen), GenerationBytes: generationBytes, ArchiveMemberCount: len(entry.ArchiveMembers), LifecycleClass: entry.LifecycleClass, CompatibilityClass: entry.CompatibilityClass},
@@ -764,7 +1358,60 @@ func makeSetupPlan(candidate setupCandidate) (SetupPlan, error) {
 }
 
 func sameSetupCandidate(left, right setupCandidate) bool {
-	return sameXrayIdentity(left.Xray, right.Xray) && sameGeodataCandidateSet(left.Geodata, right.Geodata) && sameXKeenIdentity(left.XKeen, right.XKeen) && bytes.Equal(left.Lifecycle, right.Lifecycle)
+	return sameXrayIdentity(left.Xray, right.Xray) && sameGeodataCandidateSet(left.Geodata, right.Geodata) && sameXKeenIdentity(left.XKeen, right.XKeen) && bytes.Equal(left.Lifecycle, right.Lifecycle) && left.Source.Digest == right.Source.Digest && bytes.Equal(left.NodesBytes, right.NodesBytes) && bytes.Equal(left.AppBytes, right.AppBytes)
+}
+
+func estimateSetupSnapshotBytes(paths SetupPaths) int64 {
+	// The snapshot is bounded independently from candidate downloads. Reserve a
+	// conservative fixed amount before the first persistent write; the exact
+	// snapshot reader applies the tighter entry/byte caps below.
+	return setupSnapshotReserve
+}
+
+func setupSpaceProbePath(path string) string {
+	path = filepath.Clean(path)
+	for path != "." && path != string(filepath.Separator) {
+		state, err := setupPathState(path)
+		if err == nil && state != setupPathAbsent {
+			return path
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			break
+		}
+		path = parent
+	}
+	return path
+}
+
+func setupResourcePaths(paths SetupPaths) []string {
+	result := []string{paths.StagingDir, paths.PreviousDir, filepath.Dir(paths.Journal), filepath.Dir(paths.Appliance), filepath.Dir(paths.Nodes), paths.XrayConfigDir, paths.XrayAssetDir, filepath.Dir(paths.XrayBinary), filepath.Dir(paths.XkeenBinary), filepath.Dir(paths.XkeenModuleDir), filepath.Dir(paths.XkeenActivation), filepath.Dir(paths.LifecycleInit)}
+	for _, path := range paths.CronPaths {
+		result = append(result, filepath.Dir(path))
+	}
+	for _, path := range paths.WriterScripts {
+		result = append(result, filepath.Dir(path))
+	}
+	return result
+}
+
+func (s *SetupService) checkSetupResources(need uint64) error {
+	seen := make(map[string]struct{})
+	for _, path := range setupResourcePaths(s.config.Paths) {
+		if path == "" {
+			continue
+		}
+		probe := setupSpaceProbePath(path)
+		if _, ok := seen[probe]; ok {
+			continue
+		}
+		seen[probe] = struct{}{}
+		free, err := s.config.AvailableSpace(probe)
+		if err != nil || free < need {
+			return ErrSetupResourceInsufficient
+		}
+	}
+	return nil
 }
 
 func (s *SetupService) inspectLayout() (setupLayout, error) {
@@ -793,6 +1440,11 @@ func (s *SetupService) inspectLayoutWithStaging(allowedStagingDir string) (setup
 			return setupLayout{state: "blocked", reason: SetupReasonJournalPending}, nil
 		}
 	}
+	if activation, err := setupPathState(paths.XkeenActivation); err != nil {
+		return setupLayout{}, err
+	} else if activation != setupPathAbsent {
+		return setupLayout{state: "blocked", reason: SetupReasonJournalPending}, nil
+	}
 	if err := validateSetupFixedPaths(paths); err != nil {
 		return setupLayout{state: "blocked", reason: SetupReasonLayoutMixed}, nil
 	}
@@ -800,16 +1452,11 @@ func (s *SetupService) inspectLayoutWithStaging(allowedStagingDir string) (setup
 	if err != nil {
 		return setupLayout{}, err
 	}
-	managed := make([]string, 0, 32)
-	managed = append(managed, paths.XrayBinary, paths.XkeenBinary, paths.XkeenModuleDir, paths.XkeenConfig, paths.XkeenMarker, paths.LifecycleInit, paths.Appliance, paths.Nodes)
-	for _, name := range []string{"01_log.json", "02_dns.json", "03_inbounds.json", "04_outbounds.json", "05_routing.json", "06_policy.json", "07_observatory.json", "08_api.json"} {
-		managed = append(managed, filepath.Join(paths.XrayConfigDir, name))
-	}
+	managed := setupManagedPaths(paths, geodataEntries)
 	for _, entry := range geodataEntries {
-		managed = append(managed, filepath.Join(paths.XrayAssetDir, entry.Name))
+		_ = entry
 	}
 	present := 0
-	authorityPresent := false
 	for _, path := range managed {
 		state, err := setupPathState(path)
 		if err != nil {
@@ -817,9 +1464,6 @@ func (s *SetupService) inspectLayoutWithStaging(allowedStagingDir string) (setup
 		}
 		if state != setupPathAbsent {
 			present++
-		}
-		if path == paths.Appliance || path == paths.Nodes {
-			authorityPresent = authorityPresent || state != setupPathAbsent
 		}
 	}
 	if conflict, err := setupDirectoryHasUnexpected(paths.XrayConfigDir, map[string]struct{}{"01_log.json": {}, "02_dns.json": {}, "03_inbounds.json": {}, "04_outbounds.json": {}, "05_routing.json": {}, "06_policy.json": {}, "07_observatory.json": {}, "08_api.json": {}}); err != nil {
@@ -836,21 +1480,122 @@ func (s *SetupService) inspectLayoutWithStaging(allowedStagingDir string) (setup
 	} else if conflict {
 		return setupLayout{state: "blocked", reason: SetupReasonLayoutMixed}, nil
 	}
-	if forbidden, err := setupForbiddenPresent(paths); err != nil {
+	if known, err := setupKnownLifecycleLayout(paths); err != nil {
 		return setupLayout{}, err
-	} else if forbidden {
+	} else if !known {
 		return setupLayout{state: "blocked", reason: SetupReasonLayoutMixed}, nil
 	}
-	if present == 0 {
-		return setupLayout{state: "fresh", reason: SetupReasonFresh}, nil
+	writers, writerErr := s.inspectSetupWriters()
+	if writerErr != nil {
+		return setupLayout{state: "blocked", reason: SetupReasonWriterConflict}, nil
+	}
+	if setupPanelWriterConflict(writers) {
+		return setupLayout{state: "blocked", reason: SetupReasonWriterConflict, writers: writers}, nil
+	}
+	authorities, reason, authorityErr := s.readSetupAuthorities()
+	if authorityErr != nil {
+		return setupLayout{}, authorityErr
+	}
+	if reason != "" {
+		return setupLayout{state: "blocked", reason: reason}, nil
 	}
 	if s.setupConfigured(paths, managed) {
-		return setupLayout{state: "configured", reason: SetupReasonAlreadyConfigured}, nil
+		if len(writers) != 0 {
+			return setupLayout{state: "blocked", reason: SetupReasonWriterConflict, writers: writers}, nil
+		}
+		source := authorities.sourceManifest("managed-converged", writers)
+		return setupLayout{state: "configured", reason: SetupReasonAlreadyConfigured, class: "managed-converged", source: source}, nil
 	}
-	if authorityPresent {
-		return setupLayout{state: "blocked", reason: SetupReasonAuthorityPresent}, nil
+
+	recognized, signalErr := setupRecognizedLegacySignal(paths, geodataEntries, present, writers, authorities)
+	if signalErr != nil {
+		return setupLayout{}, signalErr
 	}
-	return setupLayout{state: "blocked", reason: SetupReasonLayoutPartial}, nil
+	if !recognized {
+		if present == 0 {
+			return setupLayout{state: "fresh", reason: SetupReasonFresh, class: "fresh"}, nil
+		}
+		return setupLayout{state: "blocked", reason: SetupReasonLayoutPartial}, nil
+	}
+	if !authorities.profilePresent {
+		return setupLayout{state: "blocked", reason: SetupReasonProfileUnavailable}, nil
+	}
+	class := "managed-takeover"
+	if authorities.legacyPresent && !setupPathExists(paths.Nodes) {
+		class = "legacy-xkeen-takeover"
+	}
+	source := authorities.sourceManifest(class, writers)
+	takeoverReason := SetupReasonManagedTakeover
+	if class == "legacy-xkeen-takeover" {
+		takeoverReason = SetupReasonLegacyTakeover
+	}
+	return setupLayout{state: "takeover", reason: takeoverReason, class: class, source: source, writers: writers}, nil
+}
+
+func setupPathExists(path string) bool {
+	present, _ := setupPresent(path)
+	return present
+}
+
+func setupManagedPaths(paths SetupPaths, entries []catalogEntry) []string {
+	managed := make([]string, 0, 32)
+	managed = append(managed, paths.XrayBinary, paths.XkeenBinary, paths.XkeenModuleDir, paths.XkeenConfig, paths.XkeenMarker, paths.LifecycleInit, paths.Appliance, paths.Nodes)
+	for _, name := range []string{"01_log.json", "02_dns.json", "03_inbounds.json", "04_outbounds.json", "05_routing.json", "06_policy.json", "07_observatory.json", "08_api.json"} {
+		managed = append(managed, filepath.Join(paths.XrayConfigDir, name))
+	}
+	for _, entry := range entries {
+		managed = append(managed, filepath.Join(paths.XrayAssetDir, entry.Name))
+	}
+	return managed
+}
+
+func setupRecognizedLegacySignal(paths SetupPaths, entries []catalogEntry, present int, writers []setupWriter, authorities setupAuthorities) (bool, error) {
+	if len(writers) != 0 || authorities.profilePresent || authorities.appPresent || authorities.legacyPresent {
+		return true, nil
+	}
+	for _, path := range []string{paths.LegacyLifecycleInit, paths.SiblingModule, paths.InstallHelper, paths.XkeenBinary, paths.XkeenModuleDir, paths.XkeenConfig, paths.XkeenMarker, paths.LifecycleInit} {
+		if setupPathExists(path) {
+			return true, nil
+		}
+	}
+	for _, entry := range entries {
+		if setupPathExists(filepath.Join(paths.XrayAssetDir, entry.Name)) {
+			return true, nil
+		}
+	}
+	for _, name := range []string{"02_dns.json", "03_inbounds.json", "04_outbounds.json", "05_routing.json", "06_policy.json", "07_observatory.json", "08_api.json"} {
+		if setupPathExists(filepath.Join(paths.XrayConfigDir, name)) {
+			return true, nil
+		}
+	}
+	if present > 1 {
+		return false, nil
+	}
+	return false, nil
+}
+
+func setupKnownLifecycleLayout(paths SetupPaths) (bool, error) {
+	for _, path := range []string{paths.LifecycleInit, paths.LegacyLifecycleInit} {
+		state, err := setupPathState(path)
+		if err != nil {
+			return false, err
+		}
+		if state == setupPathAbsent {
+			continue
+		}
+		if state != setupPathRegular {
+			return false, nil
+		}
+		contents, readErr := readBoundedSetupFile(path, 16<<10)
+		if readErr != nil {
+			return false, nil
+		}
+		lower := strings.ToLower(string(contents))
+		if !strings.Contains(lower, "xray") || !strings.Contains(lower, "start") || !strings.Contains(lower, "restart") || strings.Contains(lower, "opkg") || strings.Contains(lower, "install.sh") {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func setupStagingRootContainsOnly(root, allowedDir string) bool {
@@ -866,6 +1611,9 @@ func setupStagingRootContainsOnly(root, allowedDir string) bool {
 	}
 	allowedState, err := setupPathState(allowedDir)
 	if err != nil || allowedState != setupPathDirectory {
+		return false
+	}
+	if validXKeenOwner(allowedDir, setupStagingOwner) != nil {
 		return false
 	}
 	entries, err := os.ReadDir(root)
@@ -947,6 +1695,9 @@ func (s *SetupService) setupConfigured(paths SetupPaths, managed []string) bool 
 			return false
 		}
 	}
+	if forbidden, err := setupForbiddenPresent(paths); err != nil || forbidden {
+		return false
+	}
 	if binaryInfo, err := os.Lstat(paths.XrayBinary); err != nil || binaryInfo.Mode()&os.ModeSymlink != 0 || !binaryInfo.Mode().IsRegular() || binaryInfo.Size() <= 0 || binaryInfo.Size() > MaxXrayCandidateBinaryBytes || runtime.GOOS != "windows" && binaryInfo.Mode().Perm()&0o111 == 0 {
 		return false
 	}
@@ -958,20 +1709,12 @@ func (s *SetupService) setupConfigured(paths SetupPaths, managed []string) bool 
 	if err != nil {
 		return false
 	}
-	canonicalApp, err := appliance.MarshalCanonical(appValue)
-	if err != nil || !bytes.Equal(appBytes, canonicalApp) {
-		return false
-	}
 	nodesBytes, err := readBoundedSetupFile(paths.Nodes, nodes.MaxRegistryDocument)
 	if err != nil {
 		return false
 	}
 	registry, err := nodes.ParseCanonical(nodesBytes)
 	if err != nil {
-		return false
-	}
-	canonicalNodes, err := nodes.MarshalCanonical(registry)
-	if err != nil || !bytes.Equal(nodesBytes, canonicalNodes) {
 		return false
 	}
 	files, err := appliance.RenderCandidateFiles(appValue, registry)
@@ -1012,11 +1755,20 @@ func (s *SetupService) setupConfigured(paths SetupPaths, managed []string) bool 
 	if err != nil || lifecycleInfo.Mode()&os.ModeSymlink != 0 || !lifecycleInfo.Mode().IsRegular() || runtime.GOOS != "windows" && lifecycleInfo.Mode().Perm()&0o111 == 0 {
 		return false
 	}
+	lifecycle, lifecycleErr := readBoundedSetupFile(paths.LifecycleInit, 16<<10)
+	expectedLifecycle, expectedErr := setupLifecycleBytes()
+	if lifecycleErr != nil || expectedErr != nil || !bytes.Equal(lifecycle, expectedLifecycle) {
+		return false
+	}
 	return true
 }
 
 func validateSetupFixedPaths(paths SetupPaths) error {
-	for _, path := range []string{paths.XrayBinary, paths.XrayConfigDir, paths.XrayAssetDir, paths.XkeenBinary, paths.XkeenModuleDir, paths.XkeenConfig, paths.XkeenMarker, paths.LifecycleInit, paths.LegacyLifecycleInit, paths.SiblingModule, paths.InstallHelper, paths.Appliance, paths.Nodes, paths.Journal, paths.RestoreJournal, paths.StagingDir} {
+	allPaths := []string{paths.XrayBinary, paths.XrayConfigDir, paths.XrayAssetDir, paths.XkeenBinary, paths.XkeenModuleDir, paths.XkeenConfig, paths.XkeenMarker, paths.XkeenActivation, paths.LifecycleInit, paths.LegacyLifecycleInit, paths.SiblingModule, paths.InstallHelper, paths.Appliance, paths.Nodes, paths.LegacyOutbounds, paths.ActiveOutbounds, paths.Journal, paths.RestoreJournal, paths.StagingDir, paths.PreviousDir}
+	allPaths = append(allPaths, paths.CronPaths...)
+	allPaths = append(allPaths, paths.WriterScripts...)
+	allPaths = append(allPaths, paths.PanelPaths...)
+	for _, path := range allPaths {
 		if strings.ContainsRune(path, '\x00') || filepath.Clean(path) == "." {
 			return errSetupLayoutInvalid
 		}
@@ -1089,35 +1841,64 @@ func (s *SetupService) Apply(ctx context.Context, binding, token string) (SetupR
 	if err != nil {
 		return SetupResult{}, ErrSetupMaintenance
 	}
-	if layout.state != "fresh" {
+	if layout.state != "fresh" && layout.state != "takeover" || layout.class != prepared.candidate.Source.Class {
 		return SetupResult{}, ErrSetupPreviewStale
 	}
-	journal := setupTransactionJournal{SchemaVersion: SetupTransactionSchemaVersion, Component: string(KindSetup), Operation: SetupOperation, Phase: setupPhasePrepared, Previous: setupPreviousRecord{AllAbsent: true}, Candidate: prepared.record()}
+	currentWriters, writerErr := s.inspectSetupWriters()
+	if writerErr != nil || setupWritersDigest(currentWriters) != prepared.candidate.Source.WritersDigest {
+		return SetupResult{}, ErrSetupWriterConflict
+	}
+	snapshot, snapshotErr := s.captureSetupSnapshot(ownedContext, prepared.candidate.Source.Class, prepared.candidate.Writers)
+	if snapshotErr != nil {
+		return SetupResult{}, ErrSetupResourceInsufficient
+	}
+	prepared.snapshot = snapshot
+	previous := setupPreviousRecord{AllAbsent: prepared.candidate.Source.Class == "fresh", Class: prepared.candidate.Source.Class}
+	if snapshot.Dir != "" {
+		previous.SnapshotDir = snapshot.Dir
+		previous.SnapshotSHA = setupSnapshotDigest(snapshot.Manifest)
+	}
+	journal := setupTransactionJournal{SchemaVersion: SetupTransactionSchemaVersion, Component: string(KindSetup), Operation: SetupOperation, Phase: setupPhasePrepared, Previous: previous, SourceClass: prepared.candidate.Source.Class, SourceDigest: prepared.candidate.Source.Digest, StageDir: prepared.stageDir, Candidate: prepared.record()}
 	if err := s.writeJournal(journal); err != nil {
+		_ = s.removeSnapshot(snapshot)
 		return SetupResult{}, ErrSetupTransactionUnproven
 	}
 	journalWritten := true
+	if prepared.candidate.Source.Class != "fresh" {
+		if err := s.quiesceSetupRuntime(ownedContext); err != nil {
+			return SetupResult{}, s.failApply(journalWritten, journal, prepared, false, ErrSetupRuntimeUnavailable)
+		}
+	}
 	if err := s.commit(ownedContext, &journal, prepared); err != nil {
-		return SetupResult{}, s.failApply(journalWritten, journal, prepared, err)
+		return SetupResult{}, s.failApply(journalWritten, journal, prepared, false, err)
 	}
 	if s.config.Runtime == nil {
-		return SetupResult{}, s.failApply(true, journal, prepared, ErrSetupRuntimeUnavailable)
+		return SetupResult{}, s.failApply(true, journal, prepared, false, ErrSetupRuntimeUnavailable)
 	}
+	runtimeStarted := true
 	if err := s.config.Runtime.Start(ownedContext); err != nil {
-		return SetupResult{}, s.failApply(true, journal, prepared, ErrSetupRuntimeUnavailable)
+		return SetupResult{}, s.failApply(true, journal, prepared, runtimeStarted, ErrSetupRuntimeUnavailable)
 	}
-	if err := s.config.Runtime.WaitReady(ownedContext); err != nil || !s.config.Runtime.ProbeReachable(ownedContext) || s.config.Runtime.ValidateActiveConfig(ownedContext) != nil || s.config.Runtime.VerifyEmpty(ownedContext) != nil {
-		return SetupResult{}, s.failApply(true, journal, prepared, ErrSetupVerificationFailed)
+	if err := s.updateJournal(&journal, setupPhaseRuntimeStarted, ""); err != nil {
+		return SetupResult{}, s.failApply(true, journal, prepared, runtimeStarted, ErrSetupTransactionUnproven)
+	}
+	if err := s.runtimeProof(ownedContext, prepared.candidate.Registry); err != nil {
+		return SetupResult{}, s.failApply(true, journal, prepared, runtimeStarted, ErrSetupVerificationFailed)
 	}
 	if err := s.verifyInstalled(prepared); err != nil {
-		return SetupResult{}, s.failApply(true, journal, prepared, ErrSetupVerificationFailed)
+		return SetupResult{}, s.failApply(true, journal, prepared, runtimeStarted, ErrSetupVerificationFailed)
 	}
 	journal.Phase = setupPhaseRuntimeVerified
 	if err := s.writeJournal(journal); err != nil {
-		return SetupResult{}, s.failApply(true, journal, prepared, ErrSetupTransactionUnproven)
+		return SetupResult{}, s.failApply(true, journal, prepared, runtimeStarted, ErrSetupTransactionUnproven)
+	}
+	if err := s.removeSnapshot(prepared.snapshot); err != nil {
+		s.markMaintenance(ErrSetupTransactionUnproven)
+		return SetupResult{}, ErrSetupTransactionUnproven
 	}
 	if err := s.clearJournal(); err != nil {
-		return SetupResult{}, s.failApply(true, journal, prepared, ErrSetupTransactionUnproven)
+		s.markMaintenance(ErrSetupTransactionUnproven)
+		return SetupResult{}, ErrSetupTransactionUnproven
 	}
 	return SetupResult{SchemaVersion: SetupTransactionSchemaVersion, Operation: SetupOperation, State: "ready", CompletedAt: s.config.Now(), Plan: prepared.plan}, nil
 }
@@ -1166,7 +1947,62 @@ func setupLifecycleBytes() ([]byte, error) {
 	return []byte(setupLifecycleTemplate), nil
 }
 
-const setupLifecycleTemplate = "#!/bin/sh\nset -eu\naction=${1-}\nmode=${2-}\n[ \"$mode\" = on ] || exit 2\ncase \"$action\" in\n  start|restart) ;;\n  stop|status) exit 0 ;;\n  *) exit 2 ;;\nesac\nexport XRAY_LOCATION_ASSET=/opt/etc/xray/dat\nexport XKEEN_FOREGROUND=1\n/opt/sbin/xray run -confdir /opt/etc/xray/configs &\nxray_pid=$!\ntrap 'kill \"$xray_pid\" 2>/dev/null || true; wait \"$xray_pid\" 2>/dev/null || true; exit 130' HUP INT TERM\nwait \"$xray_pid\"\n"
+const setupLifecycleTemplate = `#!/bin/sh
+set -eu
+action=${1-}
+mode=${2-}
+[ -z "$mode" ] || [ "$mode" = on ] || exit 2
+[ "$#" -le 2 ] || exit 2
+pidfile=/tmp/xkeen-control/xray.pid
+logfile=/tmp/xkeen-control/xray.log
+
+read_pid() {
+  [ -r "$pidfile" ] || return 1
+  pid=$(cat "$pidfile" 2>/dev/null || true)
+  case "$pid" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  kill -0 "$pid" 2>/dev/null
+}
+
+stop_xray() {
+  if read_pid; then
+    pid=$(cat "$pidfile")
+    kill "$pid" 2>/dev/null || true
+    i=0
+    while read_pid && [ "$i" -lt 10 ]; do
+      i=$((i + 1))
+      sleep 1
+    done
+    if read_pid; then
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  fi
+  rm -f "$pidfile"
+}
+
+start_xray() {
+  if read_pid; then
+    exit 0
+  fi
+  rm -f "$pidfile"
+  mkdir -p "$(dirname "$pidfile")"
+  export XRAY_LOCATION_ASSET=/opt/etc/xray/dat
+  export XKEEN_FOREGROUND=1
+  /opt/sbin/xray run -confdir /opt/etc/xray/configs </dev/null >>"$logfile" 2>&1 &
+  xray_pid=$!
+  printf '%s\n' "$xray_pid" >"$pidfile"
+  kill -0 "$xray_pid" 2>/dev/null
+}
+
+case "$action" in
+  start) start_xray ;;
+  restart) stop_xray; start_xray ;;
+  stop) stop_xray ;;
+  status) if read_pid; then exit 0; else exit 1; fi ;;
+  *) exit 2 ;;
+esac
+`
 
 func setupLifecycleDigest(contents []byte) string {
 	digest := sha256.Sum256(contents)
@@ -1187,12 +2023,13 @@ type preparedSetup struct {
 	xkeenMetadata   xkeenGenerationMetadata
 	marker          []byte
 	lifecycle       []byte
+	snapshot        setupSnapshot
 }
 
 func (p preparedSetup) record() setupCandidateRecord {
 	return setupCandidateRecord{
 		Xray: p.candidate.Xray, XrayBinarySHA256: p.xrayMetadata.SHA256, XrayBinarySize: p.xrayMetadata.Size, XrayBinaryMode: p.xrayMetadata.Mode,
-		Geodata: p.candidate.Geodata, XKeen: p.candidate.XKeen,
+		Geodata: p.candidate.Geodata, XKeen: p.candidate.XKeen, XKeenGeneration: p.xkeenMetadata,
 		LifecycleSHA256: setupLifecycleDigest(p.lifecycle),
 	}
 }
@@ -1201,14 +2038,31 @@ func (s *SetupService) prepare(ctx context.Context, candidate setupCandidate, pl
 	if err := ctx.Err(); err != nil {
 		return preparedSetup{}, err
 	}
-	value := appliance.ProductDefault()
-	registry := nodes.NewRegistry()
-	appBytes, err := appliance.MarshalCanonical(value)
-	if err != nil {
+	value := candidate.Appliance
+	registry := candidate.Registry
+	if err := registry.Validate(); err != nil {
 		return preparedSetup{}, ErrSetupCandidateRejected
 	}
-	nodesBytes, err := nodes.MarshalCanonical(registry)
-	if err != nil {
+	appBytes := append([]byte(nil), candidate.AppBytes...)
+	if len(appBytes) == 0 {
+		var err error
+		appBytes, err = appliance.MarshalCanonical(value)
+		if err != nil {
+			return preparedSetup{}, ErrSetupCandidateRejected
+		}
+	}
+	if _, err := appliance.Parse(appBytes); err != nil {
+		return preparedSetup{}, ErrSetupCandidateRejected
+	}
+	nodesBytes := append([]byte(nil), candidate.NodesBytes...)
+	if len(nodesBytes) == 0 {
+		var err error
+		nodesBytes, err = nodes.MarshalCanonical(registry)
+		if err != nil {
+			return preparedSetup{}, ErrSetupCandidateRejected
+		}
+	}
+	if _, err := nodes.ParseCanonical(nodesBytes); err != nil {
 		return preparedSetup{}, ErrSetupCandidateRejected
 	}
 	files, err := appliance.RenderCandidateFiles(value, registry)
@@ -1238,15 +2092,19 @@ func (s *SetupService) prepare(ctx context.Context, candidate setupCandidate, pl
 		}
 		geodataBytes += item.SizeBytes
 	}
-	if err := ensurePrivateDirectory(s.config.Paths.StagingDir); err != nil {
+	need := uint64(candidate.Xray.SizeBytes) + uint64(geodataBytes) + uint64(candidate.XKeen.SizeBytes) + uint64(generationBytes) + uint64(MaxXrayCandidateBinaryBytes) + uint64(MaxComponentJournalBytes) + uint64(XrayFreeSpaceReserve) + uint64(estimateSetupSnapshotBytes(s.config.Paths))
+	if err := s.checkSetupResources(need); err != nil {
 		return preparedSetup{}, ErrSetupResourceInsufficient
 	}
-	need := uint64(candidate.Xray.SizeBytes) + uint64(geodataBytes) + uint64(candidate.XKeen.SizeBytes) + uint64(generationBytes) + uint64(MaxXrayCandidateBinaryBytes) + uint64(MaxComponentJournalBytes) + uint64(XrayFreeSpaceReserve)
-	if free, freeErr := s.config.AvailableSpace(s.config.Paths.StagingDir); freeErr != nil || free < need {
+	if err := ensurePrivateDirectory(s.config.Paths.StagingDir); err != nil {
 		return preparedSetup{}, ErrSetupResourceInsufficient
 	}
 	stageDir, err := os.MkdirTemp(s.config.Paths.StagingDir, ".setup-")
 	if err != nil {
+		return preparedSetup{}, ErrSetupCandidateRejected
+	}
+	if err := ensureXKeenOwnedDirectory(stageDir, setupStagingOwner); err != nil {
+		_ = os.RemoveAll(stageDir)
 		return preparedSetup{}, ErrSetupCandidateRejected
 	}
 	cleanup := true
@@ -1436,20 +2294,49 @@ const (
 	setupCreatedXray      = "xray"
 	setupCreatedXKeen     = "xkeen"
 	setupCreatedLifecycle = "lifecycle"
+	setupCreatedWriters   = "writers"
 )
 
 type setupPreviousRecord struct {
-	AllAbsent bool `json:"allAbsent"`
+	AllAbsent   bool   `json:"allAbsent"`
+	Class       string `json:"class,omitempty"`
+	SnapshotDir string `json:"snapshotDir,omitempty"`
+	SnapshotSHA string `json:"snapshotSha256,omitempty"`
+}
+
+type setupSnapshotEntry struct {
+	Key      string `json:"key"`
+	Target   string `json:"target"`
+	Relative string `json:"relative,omitempty"`
+	Payload  string `json:"payload,omitempty"`
+	Kind     string `json:"kind"`
+	Mode     uint32 `json:"mode,omitempty"`
+	Size     int64  `json:"size,omitempty"`
+	SHA256   string `json:"sha256,omitempty"`
+}
+
+type setupSnapshotManifest struct {
+	SchemaVersion int                  `json:"schemaVersion"`
+	Owner         string               `json:"owner"`
+	Class         string               `json:"class"`
+	Bytes         int64                `json:"bytes"`
+	Entries       []setupSnapshotEntry `json:"entries"`
+}
+
+type setupSnapshot struct {
+	Dir      string
+	Manifest setupSnapshotManifest
 }
 
 type setupCandidateRecord struct {
-	Xray             XrayReleaseIdentity  `json:"xray"`
-	XrayBinarySHA256 string               `json:"xrayBinarySha256"`
-	XrayBinarySize   int64                `json:"xrayBinarySize"`
-	XrayBinaryMode   uint32               `json:"xrayBinaryMode"`
-	Geodata          GeodataCandidateSet  `json:"geodata"`
-	XKeen            XKeenReleaseIdentity `json:"xkeen"`
-	LifecycleSHA256  string               `json:"lifecycleSha256"`
+	Xray             XrayReleaseIdentity     `json:"xray"`
+	XrayBinarySHA256 string                  `json:"xrayBinarySha256"`
+	XrayBinarySize   int64                   `json:"xrayBinarySize"`
+	XrayBinaryMode   uint32                  `json:"xrayBinaryMode"`
+	Geodata          GeodataCandidateSet     `json:"geodata"`
+	XKeen            XKeenReleaseIdentity    `json:"xkeen"`
+	XKeenGeneration  xkeenGenerationMetadata `json:"xkeenGeneration"`
+	LifecycleSHA256  string                  `json:"lifecycleSha256"`
 }
 
 type setupTransactionJournal struct {
@@ -1459,23 +2346,34 @@ type setupTransactionJournal struct {
 	Phase         string               `json:"phase"`
 	Previous      setupPreviousRecord  `json:"previous"`
 	Candidate     setupCandidateRecord `json:"candidate"`
+	SourceClass   string               `json:"sourceClass"`
+	SourceDigest  string               `json:"sourceDigest"`
+	StageDir      string               `json:"stageDir"`
 	Created       []string             `json:"created,omitempty"`
 }
 
 func (p preparedSetup) candidateRecordMatches(record setupCandidateRecord) bool {
-	return sameXrayIdentity(p.candidate.Xray, record.Xray) && sameGeodataCandidateSet(p.candidate.Geodata, record.Geodata) && sameXKeenIdentity(p.candidate.XKeen, record.XKeen) && record.LifecycleSHA256 == setupLifecycleDigest(p.lifecycle)
+	return sameXrayIdentity(p.candidate.Xray, record.Xray) && sameGeodataCandidateSet(p.candidate.Geodata, record.Geodata) && sameXKeenIdentity(p.candidate.XKeen, record.XKeen) && sameXKeenGeneration(p.xkeenMetadata, record.XKeenGeneration) && record.LifecycleSHA256 == setupLifecycleDigest(p.lifecycle)
 }
 
 func validateSetupJournal(journal setupTransactionJournal) error {
-	if journal.SchemaVersion != SetupTransactionSchemaVersion || journal.Component != string(KindSetup) || journal.Operation != SetupOperation || !journal.Previous.AllAbsent || !validXrayIdentity(journal.Candidate.Xray) || !validXrayBinaryMetadata(xrayBinaryMetadata{Exists: true, Version: journal.Candidate.Xray.Version, SHA256: journal.Candidate.XrayBinarySHA256, Size: journal.Candidate.XrayBinarySize, Mode: journal.Candidate.XrayBinaryMode}, true) || validateGeodataCandidateSet(journal.Candidate.Geodata) != nil || !validXKeenIdentity(journal.Candidate.XKeen) || !isHexSHA256(journal.Candidate.LifecycleSHA256) || len(journal.Created) > setupMaxCreated {
+	if journal.SchemaVersion != SetupTransactionSchemaVersion || journal.Component != string(KindSetup) || journal.Operation != SetupOperation || !validXrayIdentity(journal.Candidate.Xray) || !validXrayBinaryMetadata(xrayBinaryMetadata{Exists: true, Version: journal.Candidate.Xray.Version, SHA256: journal.Candidate.XrayBinarySHA256, Size: journal.Candidate.XrayBinarySize, Mode: journal.Candidate.XrayBinaryMode}, true) || validateGeodataCandidateSet(journal.Candidate.Geodata) != nil || !validXKeenIdentity(journal.Candidate.XKeen) || !validXKeenGenerationMetadata(journal.Candidate.XKeenGeneration) || !strings.EqualFold(journal.Candidate.XKeenGeneration.Generation, xkeenIdentityGeneration(journal.Candidate.XKeen)) || !isHexSHA256(journal.Candidate.LifecycleSHA256) || len(journal.Created) > setupMaxCreated {
 		return errSetupJournalInvalid
 	}
-	switch journal.Phase {
-	case setupPhasePrepared, setupPhaseNodesCommitted, setupPhaseAuthorityCommitted, setupPhaseConfigCommitted, setupPhaseGeodataCommitted, setupPhaseXrayCommitted, setupPhaseXKeenCommitted, setupPhaseLifecycleCommitted, setupPhaseRuntimeVerified:
+	switch journal.SourceClass {
+	case "fresh", "managed-takeover", "legacy-xkeen-takeover":
 	default:
 		return errSetupJournalInvalid
 	}
-	allowed := map[string]struct{}{setupCreatedNodes: {}, setupCreatedAppliance: {}, setupCreatedConfig: {}, setupCreatedGeodata: {}, setupCreatedXray: {}, setupCreatedXKeen: {}, setupCreatedLifecycle: {}}
+	if journal.SourceClass == "" || !isHexSHA256(journal.SourceDigest) || journal.StageDir == "" || filepath.Base(filepath.Clean(journal.StageDir)) == "." || journal.SourceClass == "fresh" && !journal.Previous.AllAbsent || journal.SourceClass != "fresh" && (journal.Previous.AllAbsent || journal.Previous.SnapshotDir == "" || !isHexSHA256(journal.Previous.SnapshotSHA)) {
+		return errSetupJournalInvalid
+	}
+	switch journal.Phase {
+	case setupPhasePrepared, setupPhaseNodesCommitted, setupPhaseAuthorityCommitted, setupPhaseConfigCommitted, setupPhaseGeodataCommitted, setupPhaseXrayCommitted, setupPhaseXKeenStaged, setupPhaseXKeenBinaryCommitted, setupPhaseXKeenModuleCommitted, setupPhaseXKeenCommitted, setupPhaseLifecycleCommitted, setupPhaseWritersRetired, setupPhaseRuntimeStarted, setupPhaseRuntimeVerified:
+	default:
+		return errSetupJournalInvalid
+	}
+	allowed := map[string]struct{}{setupCreatedNodes: {}, setupCreatedAppliance: {}, setupCreatedConfig: {}, setupCreatedGeodata: {}, setupCreatedXray: {}, setupCreatedXKeen: {}, setupCreatedLifecycle: {}, setupCreatedWriters: {}}
 	seen := make(map[string]struct{}, len(journal.Created))
 	for _, value := range journal.Created {
 		if _, ok := allowed[value]; !ok {
@@ -1543,14 +2441,25 @@ func (s *SetupService) commit(ctx context.Context, journal *setupTransactionJour
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	writers, err := s.inspectSetupWriters()
+	if err != nil || setupWritersDigest(writers) != prepared.candidate.Source.WritersDigest {
+		return ErrSetupWriterConflict
+	}
 	paths := s.config.Paths
-	if err := s.writeSetupExclusive(paths.Nodes, prepared.nodesBytes, 0o600); err != nil {
+	replace := prepared.candidate.Source.Class != "fresh"
+	write := func(path string, contents []byte, mode os.FileMode) error {
+		if replace {
+			return s.writeSetupReplace(path, contents, mode)
+		}
+		return s.writeSetupExclusive(path, contents, mode)
+	}
+	if err := write(paths.Nodes, prepared.nodesBytes, 0o600); err != nil {
 		return err
 	}
 	if err := s.updateJournal(journal, setupPhaseNodesCommitted, setupCreatedNodes); err != nil {
 		return err
 	}
-	if err := s.writeSetupExclusive(paths.Appliance, prepared.appBytes, 0o600); err != nil {
+	if err := write(paths.Appliance, prepared.appBytes, 0o600); err != nil {
 		return err
 	}
 	if err := s.updateJournal(journal, setupPhaseAuthorityCommitted, setupCreatedAppliance); err != nil {
@@ -1558,7 +2467,7 @@ func (s *SetupService) commit(ctx context.Context, journal *setupTransactionJour
 	}
 	for _, name := range []string{"01_log.json", "02_dns.json", "03_inbounds.json", "04_outbounds.json", "05_routing.json", "06_policy.json", "07_observatory.json", "08_api.json"} {
 		contents, ok := prepared.configFiles["xray/"+name]
-		if !ok || s.writeSetupExclusive(filepath.Join(paths.XrayConfigDir, name), contents, 0o600) != nil {
+		if !ok || write(filepath.Join(paths.XrayConfigDir, name), contents, 0o600) != nil {
 			return ErrSetupCandidateRejected
 		}
 	}
@@ -1566,7 +2475,7 @@ func (s *SetupService) commit(ctx context.Context, journal *setupTransactionJour
 	if !ok {
 		return ErrSetupCandidateRejected
 	}
-	if err := s.writeSetupExclusive(paths.XkeenConfig, xkeenConfig, 0o600); err != nil {
+	if err := write(paths.XkeenConfig, xkeenConfig, 0o600); err != nil {
 		return err
 	}
 	if err := s.updateJournal(journal, setupPhaseConfigCommitted, setupCreatedConfig); err != nil {
@@ -1578,7 +2487,7 @@ func (s *SetupService) commit(ctx context.Context, journal *setupTransactionJour
 	}
 	for _, entry := range entries {
 		contents, readErr := readBoundedSetupFile(filepath.Join(prepared.stageDir, "assets", entry.Name), MaxGeodataFileBytes)
-		if readErr != nil || s.writeSetupExclusive(filepath.Join(paths.XrayAssetDir, entry.Name), contents, 0o600) != nil {
+		if readErr != nil || write(filepath.Join(paths.XrayAssetDir, entry.Name), contents, 0o600) != nil {
 			return ErrSetupCandidateRejected
 		}
 	}
@@ -1589,34 +2498,233 @@ func (s *SetupService) commit(ctx context.Context, journal *setupTransactionJour
 	if err != nil {
 		return ErrSetupCandidateRejected
 	}
-	if err := s.writeSetupExclusive(paths.XrayBinary, xrayContents, 0o700); err != nil {
+	if err := write(paths.XrayBinary, xrayContents, 0o700); err != nil {
 		return err
 	}
 	if err := s.updateJournal(journal, setupPhaseXrayCommitted, setupCreatedXray); err != nil {
 		return err
 	}
-	if err := requireSetupPathAbsent(paths.XkeenBinary); err != nil {
+	if err := s.activateSetupXKeenGeneration(journal, filepath.Join(prepared.xkeenPath, "xkeen"), filepath.Join(prepared.xkeenPath, ".xkeen"), paths.XkeenBinary, paths.XkeenModuleDir, prepared.xkeenMetadata); err != nil {
 		return err
 	}
-	if err := requireSetupPathAbsent(paths.XkeenModuleDir); err != nil {
+	if err := write(paths.XkeenMarker, prepared.marker, 0o600); err != nil {
 		return err
 	}
-	if err := copyXKeenGenerationToActive(filepath.Join(prepared.xkeenPath, "xkeen"), filepath.Join(prepared.xkeenPath, ".xkeen"), paths.XkeenBinary, paths.XkeenModuleDir, prepared.xkeenMetadata, s.config.SyncDirectory); err != nil {
+	if err := s.cleanupSetupActivation(); err != nil {
 		return err
 	}
-	if err := s.writeSetupExclusive(paths.XkeenMarker, prepared.marker, 0o600); err != nil {
-		return err
+	if journal.Phase != setupPhaseXKeenCommitted {
+		if err := s.updateJournal(journal, setupPhaseXKeenCommitted, setupCreatedXKeen); err != nil {
+			return err
+		}
+	} else if !containsSetupCreated(journal.Created, setupCreatedXKeen) {
+		journal.Created = append(journal.Created, setupCreatedXKeen)
+		if err := s.writeJournal(*journal); err != nil {
+			return err
+		}
 	}
-	if err := s.updateJournal(journal, setupPhaseXKeenCommitted, setupCreatedXKeen); err != nil {
-		return err
-	}
-	if err := s.writeSetupExclusive(paths.LifecycleInit, prepared.lifecycle, 0o755); err != nil {
+	if err := write(paths.LifecycleInit, prepared.lifecycle, 0o755); err != nil {
 		return err
 	}
 	if err := s.updateJournal(journal, setupPhaseLifecycleCommitted, setupCreatedLifecycle); err != nil {
 		return err
 	}
+	if err := s.retireLegacyArtifacts(); err != nil {
+		return err
+	}
+	if err := s.retireSetupWriters(journal, prepared.candidate.Writers); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (s *SetupService) retireLegacyArtifacts() error {
+	for _, path := range []string{s.config.Paths.LegacyLifecycleInit, s.config.Paths.SiblingModule, s.config.Paths.InstallHelper} {
+		state, err := setupPathState(path)
+		if err != nil {
+			return err
+		}
+		if state == setupPathAbsent {
+			continue
+		}
+		if state != setupPathRegular && state != setupPathDirectory {
+			return errSetupLayoutInvalid
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+		if err := s.config.SyncDirectory(filepath.Dir(path)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func containsSetupCreated(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *SetupService) activateSetupXKeenGeneration(journal *setupTransactionJournal, sourceBinary, sourceModule, destinationBinary, destinationModule string, expected xkeenGenerationMetadata) error {
+	if journal == nil || !validXKeenGenerationMetadata(expected) || sourceBinary == "" || sourceModule == "" || destinationBinary == "" || destinationModule == "" {
+		return errXKeenGenerationInvalid
+	}
+	parent := filepath.Dir(destinationBinary)
+	if filepath.Dir(destinationModule) != parent || filepath.Dir(s.config.Paths.XkeenActivation) != parent || filepath.Clean(s.config.Paths.XkeenActivation) == parent {
+		return errXKeenGenerationInvalid
+	}
+	if err := ensureSetupDirectory(parent); err != nil {
+		return err
+	}
+	if err := ensureXKeenOwnedDirectory(s.config.Paths.XkeenActivation, xkeenActivationOwnerValue); err != nil {
+		return err
+	}
+	activation := s.config.Paths.XkeenActivation
+	newGeneration := filepath.Join(activation, "new")
+	oldBinary := filepath.Join(activation, "old-xkeen")
+	oldModule := filepath.Join(activation, "old-module")
+	for _, path := range []string{newGeneration, oldBinary, oldModule} {
+		if state, err := setupPathState(path); err != nil {
+			return err
+		} else if state != setupPathAbsent {
+			if state == setupPathDirectory {
+				if err := validXkeenActivationPayload(path); err != nil {
+					return err
+				}
+			} else if state != setupPathRegular {
+				return errXKeenGenerationInvalid
+			}
+			if err := os.RemoveAll(path); err != nil {
+				return err
+			}
+		}
+	}
+	if err := ensureXKeenOwnedDirectory(newGeneration, xkeenActivationOwnerValue); err != nil {
+		return err
+	}
+	if err := copyXKeenGeneration(sourceBinary, sourceModule, newGeneration, expected); err != nil {
+		return err
+	}
+	if err := s.updateJournal(journal, setupPhaseXKeenStaged, ""); err != nil {
+		return err
+	}
+	if state, err := setupPathState(destinationBinary); err != nil {
+		return err
+	} else if state != setupPathAbsent {
+		same, sameErr := sameFilesystem(filepath.Dir(destinationBinary), activation)
+		if state != setupPathRegular || sameErr != nil || !same {
+			return errXKeenGenerationInvalid
+		}
+		if err := os.Rename(destinationBinary, oldBinary); err != nil {
+			return err
+		}
+	}
+	if err := os.Rename(filepath.Join(newGeneration, "xkeen"), destinationBinary); err != nil {
+		return err
+	}
+	if err := s.config.SyncDirectory(parent); err != nil {
+		return err
+	}
+	if err := s.updateJournal(journal, setupPhaseXKeenBinaryCommitted, ""); err != nil {
+		return err
+	}
+	if state, err := setupPathState(destinationModule); err != nil {
+		return err
+	} else if state != setupPathAbsent {
+		same, sameErr := sameFilesystem(filepath.Dir(destinationModule), activation)
+		if state != setupPathDirectory || sameErr != nil || !same {
+			return errXKeenGenerationInvalid
+		}
+		if err := os.Rename(destinationModule, oldModule); err != nil {
+			return err
+		}
+	}
+	if err := os.Rename(filepath.Join(newGeneration, ".xkeen"), destinationModule); err != nil {
+		return err
+	}
+	if err := s.config.SyncDirectory(parent); err != nil {
+		return err
+	}
+	if err := s.updateJournal(journal, setupPhaseXKeenModuleCommitted, ""); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SetupService) cleanupSetupActivation() error {
+	path := s.config.Paths.XkeenActivation
+	state, err := setupPathState(path)
+	if err != nil || state == setupPathAbsent {
+		return err
+	}
+	if state != setupPathDirectory || validXKeenOwner(path, xkeenActivationOwnerValue) != nil {
+		return errXKeenGenerationInvalid
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return err
+	}
+	return s.config.SyncDirectory(filepath.Dir(path))
+}
+
+func setupWriterLine(line string) bool {
+	return setupXKeenCommand(line, "-ug", "-ugi", "-ugs", "-ux", "-uk", "-sbt") || setupKnownWriterScript(line, "run-bounded-speed-benchmark.sh", "speed_failover_watchdog.sh", "xkeen-control-watchdog", "geofile", setupGeodataWriterScript)
+}
+
+func (s *SetupService) retireSetupWriters(journal *setupTransactionJournal, writers []setupWriter) error {
+	if len(writers) == 0 {
+		return nil
+	}
+	paths := s.config.Paths
+	cronPaths := make(map[string]struct{}, len(s.config.Paths.CronPaths))
+	for _, path := range s.config.Paths.CronPaths {
+		cronPaths[filepath.Clean(path)] = struct{}{}
+	}
+	seen := make(map[string]struct{})
+	for _, writer := range writers {
+		isPanelPath := false
+		for _, panelPath := range paths.PanelPaths {
+			if filepath.Clean(panelPath) == filepath.Clean(writer.Path) {
+				isPanelPath = true
+				break
+			}
+		}
+		if isPanelPath {
+			continue
+		}
+		if _, ok := seen[filepath.Clean(writer.Path)]; ok {
+			continue
+		}
+		seen[filepath.Clean(writer.Path)] = struct{}{}
+		contents, err := readBoundedSetupFile(writer.Path, setupMaxCronBytes)
+		if err != nil || digestSetupBytes(contents) != writer.Digest {
+			return ErrSetupWriterConflict
+		}
+		if _, isCron := cronPaths[filepath.Clean(writer.Path)]; isCron || setupCronPath(paths, writer.Path) {
+			lines := strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n")
+			filtered := make([]string, 0, len(lines))
+			for _, line := range lines {
+				if !setupWriterLine(line) {
+					filtered = append(filtered, line)
+				}
+			}
+			updated := []byte(strings.Join(filtered, "\n"))
+			if err := s.writeSetupReplace(writer.Path, updated, 0o600); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := os.Remove(writer.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := s.config.SyncDirectory(filepath.Dir(writer.Path)); err != nil {
+			return err
+		}
+	}
+	return s.updateJournal(journal, setupPhaseWritersRetired, setupCreatedWriters)
 }
 
 func copyXKeenGenerationToActive(sourceBinary, sourceModule, destinationBinary, destinationModule string, expected xkeenGenerationMetadata, syncDirectory func(string) error) error {
@@ -1674,11 +2782,26 @@ func requireSetupPathAbsent(path string) error {
 }
 
 func (s *SetupService) writeSetupExclusive(path string, contents []byte, mode os.FileMode) error {
-	if path == "" || len(contents) == 0 {
+	return s.writeSetupFile(path, contents, mode, false)
+}
+
+func (s *SetupService) writeSetupReplace(path string, contents []byte, mode os.FileMode) error {
+	return s.writeSetupFile(path, contents, mode, true)
+}
+
+func (s *SetupService) writeSetupFile(path string, contents []byte, mode os.FileMode, replace bool) error {
+	if path == "" || !replace && len(contents) == 0 {
 		return errSetupLayoutInvalid
 	}
-	if err := requireSetupPathAbsent(path); err != nil {
-		return err
+	if !replace {
+		if err := requireSetupPathAbsent(path); err != nil {
+			return err
+		}
+	} else if state, err := setupPathState(path); err != nil || state == setupPathInvalid || state == setupPathDirectory {
+		if err != nil {
+			return err
+		}
+		return errSetupLayoutInvalid
 	}
 	parent := filepath.Dir(path)
 	if err := ensureSetupDirectory(parent); err != nil {
@@ -1706,7 +2829,15 @@ func (s *SetupService) writeSetupExclusive(path string, contents []byte, mode os
 		return err
 	}
 	if err := os.Rename(temporaryPath, path); err != nil {
-		return err
+		if !replace {
+			return err
+		}
+		if removeErr := os.Remove(path); removeErr != nil {
+			return err
+		}
+		if retryErr := os.Rename(temporaryPath, path); retryErr != nil {
+			return retryErr
+		}
 	}
 	if err := os.Chmod(path, mode); err != nil {
 		return err
@@ -1803,19 +2934,544 @@ func (s *SetupService) verifyInstalled(prepared preparedSetup) error {
 	return nil
 }
 
-func (s *SetupService) failApply(journalWritten bool, journal setupTransactionJournal, prepared preparedSetup, cause error) error {
+const setupSnapshotOwner = "xkeen-control/setup-previous-v1\n"
+const setupStagingOwner = "xkeen-control/setup-staging-v1\n"
+
+type setupSnapshotTarget struct {
+	Key       string
+	Path      string
+	Recursive bool
+}
+
+func setupSnapshotLimits(target setupSnapshotTarget) (int64, int64) {
+	switch target.Key {
+	case "xray-binary":
+		return MaxXrayCandidateBinaryBytes, MaxXrayCandidateBinaryBytes
+	case "xray-assets":
+		return MaxGeodataFileBytes, MaxGeodataCandidateBytes
+	case "xray-config":
+		return nodes.MaxLegacyDocument, int64(nodes.MaxLegacyDocument) + 7*int64(appliance.MaxDocumentSize)
+	case "xkeen-module":
+		return MaxXKeenGenerationFileBytes, MaxXKeenGenerationBytes
+	case "legacy-module":
+		return MaxGeodataFileBytes, MaxGeodataCandidateBytes
+	case "nodes":
+		return nodes.MaxRegistryDocument, nodes.MaxRegistryDocument
+	case "legacy-outbounds", "active-outbounds":
+		return nodes.MaxLegacyDocument, nodes.MaxLegacyDocument
+	case "appliance", "xkeen-config":
+		return appliance.MaxDocumentSize, appliance.MaxDocumentSize
+	case "lifecycle", "legacy-lifecycle", "install-helper":
+		return setupMaxCronBytes, setupMaxCronBytes
+	default:
+		return MaxXKeenGenerationFileBytes, MaxXKeenGenerationBytes
+	}
+}
+
+func (s *SetupService) setupSnapshotTargets(writers []setupWriter) []setupSnapshotTarget {
+	paths := s.config.Paths
+	result := []setupSnapshotTarget{
+		{Key: "xray-binary", Path: paths.XrayBinary},
+		{Key: "xray-config", Path: paths.XrayConfigDir, Recursive: true},
+		{Key: "xray-assets", Path: paths.XrayAssetDir, Recursive: true},
+		{Key: "xkeen-binary", Path: paths.XkeenBinary},
+		{Key: "xkeen-module", Path: paths.XkeenModuleDir, Recursive: true},
+		{Key: "xkeen-config", Path: paths.XkeenConfig},
+		{Key: "xkeen-marker", Path: paths.XkeenMarker},
+		{Key: "lifecycle", Path: paths.LifecycleInit},
+		{Key: "legacy-lifecycle", Path: paths.LegacyLifecycleInit},
+		{Key: "legacy-module", Path: paths.SiblingModule, Recursive: true},
+		{Key: "install-helper", Path: paths.InstallHelper},
+		{Key: "appliance", Path: paths.Appliance},
+		{Key: "nodes", Path: paths.Nodes},
+		{Key: "legacy-outbounds", Path: paths.LegacyOutbounds},
+	}
+	if filepath.Clean(paths.ActiveOutbounds) != filepath.Clean(filepath.Join(paths.XrayConfigDir, "04_outbounds.json")) {
+		result = append(result, setupSnapshotTarget{Key: "active-outbounds", Path: paths.ActiveOutbounds})
+	}
+	seen := make(map[string]struct{}, len(result)+len(writers))
+	for _, target := range result {
+		seen[filepath.Clean(target.Path)] = struct{}{}
+	}
+	for _, writer := range writers {
+		panelPath := false
+		for _, candidate := range paths.PanelPaths {
+			if filepath.Clean(candidate) == filepath.Clean(writer.Path) {
+				panelPath = true
+				break
+			}
+		}
+		if panelPath {
+			continue
+		}
+		if _, ok := seen[filepath.Clean(writer.Path)]; ok {
+			continue
+		}
+		seen[filepath.Clean(writer.Path)] = struct{}{}
+		result = append(result, setupSnapshotTarget{Key: "writer-" + strconv.Itoa(len(result)), Path: writer.Path})
+	}
+	return result
+}
+
+func setupSnapshotDigest(manifest setupSnapshotManifest) string {
+	contents, _ := json.Marshal(manifest)
+	return digestSetupBytes(contents)
+}
+
+func (s *SetupService) captureSetupSnapshot(ctx context.Context, class string, writers []setupWriter) (setupSnapshot, error) {
+	if class == "fresh" {
+		return setupSnapshot{}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	root := filepath.Join(s.config.Paths.PreviousDir, ".setup-snapshot")
+	if state, err := setupPathState(root); err != nil {
+		return setupSnapshot{}, err
+	} else if state != setupPathAbsent {
+		return setupSnapshot{}, ErrSetupResourceInsufficient
+	}
+	if err := ensureSetupDirectory(filepath.Dir(root)); err != nil {
+		return setupSnapshot{}, err
+	}
+	if err := ensureXKeenOwnedDirectory(root, setupSnapshotOwner); err != nil {
+		return setupSnapshot{}, err
+	}
+	manifest := setupSnapshotManifest{SchemaVersion: SetupTransactionSchemaVersion, Owner: setupSnapshotOwner, Class: class}
+	totalBytes := int64(0)
+	for _, target := range s.setupSnapshotTargets(writers) {
+		maxFileBytes, maxRootBytes := setupSnapshotLimits(target)
+		if err := ctx.Err(); err != nil {
+			_ = os.RemoveAll(root)
+			return setupSnapshot{}, err
+		}
+		state, err := setupPathState(target.Path)
+		if err != nil || state == setupPathInvalid {
+			_ = os.RemoveAll(root)
+			return setupSnapshot{}, errSetupLayoutInvalid
+		}
+		if state == setupPathAbsent {
+			manifest.Entries = append(manifest.Entries, setupSnapshotEntry{Key: target.Key, Target: target.Path, Kind: "absent"})
+			continue
+		}
+		if target.Recursive {
+			if state != setupPathDirectory {
+				_ = os.RemoveAll(root)
+				return setupSnapshot{}, errSetupLayoutInvalid
+			}
+			manifest.Entries = append(manifest.Entries, setupSnapshotEntry{Key: target.Key, Target: target.Path, Kind: "directory", Mode: uint32(fileMode(target.Path))})
+			rootBytes := int64(0)
+			walkErr := filepath.WalkDir(target.Path, func(path string, entry os.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				if path == target.Path {
+					return nil
+				}
+				if len(manifest.Entries) >= setupMaxSnapshotEntries {
+					return ErrSetupResourceInsufficient
+				}
+				info, infoErr := entry.Info()
+				if infoErr != nil || info.Mode()&os.ModeSymlink != 0 {
+					return errSetupLayoutInvalid
+				}
+				relative, relErr := filepath.Rel(target.Path, path)
+				if relErr != nil || relative == "." || strings.HasPrefix(relative, "..") {
+					return errSetupLayoutInvalid
+				}
+				if entry.IsDir() {
+					if len(manifest.Entries) >= setupMaxSnapshotEntries {
+						return ErrSetupResourceInsufficient
+					}
+					manifest.Entries = append(manifest.Entries, setupSnapshotEntry{Key: target.Key, Target: target.Path, Relative: filepath.ToSlash(relative), Kind: "directory", Mode: uint32(info.Mode().Perm())})
+					return nil
+				}
+				if !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > maxFileBytes || rootBytes > maxRootBytes-info.Size() || totalBytes > setupMaxSnapshotBytes-info.Size() {
+					return ErrSetupResourceInsufficient
+				}
+				contents, readErr := readBoundedSetupFile(path, maxFileBytes)
+				if readErr != nil {
+					return readErr
+				}
+				payload := filepath.Join(root, "payload", strconv.Itoa(len(manifest.Entries)))
+				if err := writeSnapshotPayload(payload, contents, info.Mode().Perm()); err != nil {
+					return err
+				}
+				digest := digestSetupBytes(contents)
+				manifest.Entries = append(manifest.Entries, setupSnapshotEntry{Key: target.Key, Target: target.Path, Relative: filepath.ToSlash(relative), Payload: filepath.Base(payload), Kind: "file", Mode: uint32(info.Mode().Perm()), Size: int64(len(contents)), SHA256: digest})
+				totalBytes += int64(len(contents))
+				rootBytes += int64(len(contents))
+				return nil
+			})
+			if walkErr != nil {
+				_ = os.RemoveAll(root)
+				return setupSnapshot{}, walkErr
+			}
+			continue
+		}
+		if state != setupPathRegular {
+			_ = os.RemoveAll(root)
+			return setupSnapshot{}, errSetupLayoutInvalid
+		}
+		contents, readErr := readBoundedSetupFile(target.Path, maxFileBytes)
+		if readErr != nil || int64(len(contents)) > maxRootBytes || totalBytes > setupMaxSnapshotBytes-int64(len(contents)) {
+			_ = os.RemoveAll(root)
+			return setupSnapshot{}, ErrSetupResourceInsufficient
+		}
+		payload := filepath.Join(root, "payload", strconv.Itoa(len(manifest.Entries)))
+		info, infoErr := os.Lstat(target.Path)
+		if infoErr != nil || info.Mode()&os.ModeSymlink != 0 {
+			_ = os.RemoveAll(root)
+			return setupSnapshot{}, errSetupLayoutInvalid
+		}
+		if err := writeSnapshotPayload(payload, contents, info.Mode().Perm()); err != nil {
+			_ = os.RemoveAll(root)
+			return setupSnapshot{}, err
+		}
+		manifest.Entries = append(manifest.Entries, setupSnapshotEntry{Key: target.Key, Target: target.Path, Payload: filepath.Base(payload), Kind: "file", Mode: uint32(info.Mode().Perm()), Size: int64(len(contents)), SHA256: digestSetupBytes(contents)})
+		totalBytes += int64(len(contents))
+	}
+	manifest.Bytes = totalBytes
+	contents, err := json.Marshal(manifest)
+	if err != nil || len(contents) > setupMaxCronBytes {
+		_ = os.RemoveAll(root)
+		return setupSnapshot{}, ErrSetupResourceInsufficient
+	}
+	if err := writeSnapshotPayload(filepath.Join(root, "manifest.json"), append(contents, '\n'), 0o600); err != nil {
+		_ = os.RemoveAll(root)
+		return setupSnapshot{}, err
+	}
+	if err := s.config.SyncDirectory(root); err != nil {
+		_ = os.RemoveAll(root)
+		return setupSnapshot{}, err
+	}
+	if err := s.config.SyncDirectory(filepath.Dir(root)); err != nil {
+		_ = os.RemoveAll(root)
+		return setupSnapshot{}, err
+	}
+	return setupSnapshot{Dir: root, Manifest: manifest}, nil
+}
+
+func fileMode(path string) os.FileMode {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return 0o700
+	}
+	return info.Mode().Perm()
+}
+
+func writeSnapshotPayload(path string, contents []byte, mode os.FileMode) error {
+	if err := ensureSetupDirectory(filepath.Dir(path)); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".snapshot-")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(mode); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(contents); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, path)
+}
+
+func (s *SetupService) readSetupSnapshot(journal setupTransactionJournal) (setupSnapshot, error) {
+	if journal.Previous.AllAbsent || journal.Previous.SnapshotDir == "" {
+		return setupSnapshot{}, nil
+	}
+	root := filepath.Clean(journal.Previous.SnapshotDir)
+	if root != filepath.Clean(filepath.Join(s.config.Paths.PreviousDir, ".setup-snapshot")) {
+		return setupSnapshot{}, errSetupJournalInvalid
+	}
+	contents, err := readBoundedSetupFile(filepath.Join(root, "manifest.json"), setupMaxCronBytes)
+	if err != nil {
+		return setupSnapshot{}, errSetupJournalInvalid
+	}
+	var manifest setupSnapshotManifest
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.DisallowUnknownFields()
+	var extra any
+	if decoder.Decode(&manifest) != nil || decoder.Decode(&extra) != io.EOF || manifest.SchemaVersion != SetupTransactionSchemaVersion || manifest.Owner != setupSnapshotOwner || len(manifest.Entries) == 0 || len(manifest.Entries) > setupMaxSnapshotEntries || setupSnapshotDigest(manifest) != journal.Previous.SnapshotSHA || validXKeenOwner(root, setupSnapshotOwner) != nil {
+		return setupSnapshot{}, errSetupJournalInvalid
+	}
+	return setupSnapshot{Dir: root, Manifest: manifest}, nil
+}
+
+func (s *SetupService) removeSnapshot(snapshot setupSnapshot) error {
+	if snapshot.Dir == "" {
+		return nil
+	}
+	if filepath.Clean(snapshot.Dir) != filepath.Clean(filepath.Join(s.config.Paths.PreviousDir, ".setup-snapshot")) {
+		return errSetupLayoutInvalid
+	}
+	state, err := setupPathState(snapshot.Dir)
+	if errors.Is(err, os.ErrNotExist) || state == setupPathAbsent {
+		return nil
+	}
+	if err != nil || state != setupPathDirectory || validXKeenOwner(snapshot.Dir, setupSnapshotOwner) != nil {
+		return errSetupLayoutInvalid
+	}
+	if err := os.RemoveAll(snapshot.Dir); err != nil {
+		return err
+	}
+	return s.config.SyncDirectory(filepath.Dir(snapshot.Dir))
+}
+
+func (s *SetupService) restoreSetupSnapshot(snapshot setupSnapshot) error {
+	if snapshot.Dir == "" {
+		return nil
+	}
+	if err := s.checkSetupWriterConflictForRestore(snapshot); err != nil {
+		return err
+	}
+	targets := s.setupSnapshotTargets(nil)
+	byKey := make(map[string]setupSnapshotTarget, len(targets))
+	for _, target := range targets {
+		byKey[target.Key] = target
+	}
+	for _, entry := range snapshot.Manifest.Entries {
+		target, ok := byKey[entry.Key]
+		if !ok && setupSnapshotTargetAllowed(s.config.Paths, entry.Target) {
+			target = setupSnapshotTarget{Key: entry.Key, Path: entry.Target, Recursive: entry.Relative == "" && entry.Kind == "directory"}
+			ok = true
+		}
+		if !ok {
+			return errSetupLayoutInvalid
+		}
+		if target.Recursive && entry.Relative == "" && entry.Kind == "directory" {
+			maxFileBytes, maxRootBytes := setupSnapshotLimits(target)
+			if state, err := setupPathState(target.Path); err != nil {
+				return err
+			} else if state == setupPathDirectory {
+				if err := setupRollbackDirectorySafe(target.Path, maxFileBytes, maxRootBytes); err != nil {
+					return err
+				}
+				if err := os.RemoveAll(target.Path); err != nil {
+					return err
+				}
+			} else if state != setupPathAbsent {
+				return errSetupLayoutInvalid
+			}
+		}
+	}
+	for _, entry := range snapshot.Manifest.Entries {
+		target, ok := byKey[entry.Key]
+		if !ok && setupSnapshotTargetAllowed(s.config.Paths, entry.Target) {
+			target = setupSnapshotTarget{Key: entry.Key, Path: entry.Target, Recursive: entry.Relative == "" && entry.Kind == "directory"}
+			ok = true
+		}
+		if !ok {
+			return errSetupLayoutInvalid
+		}
+		path := target.Path
+		if entry.Relative != "" {
+			relative := filepath.FromSlash(entry.Relative)
+			if filepath.IsAbs(relative) || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || relative == ".." {
+				return errSetupLayoutInvalid
+			}
+			path = filepath.Join(path, relative)
+		}
+		switch entry.Kind {
+		case "absent":
+			state, err := setupPathState(path)
+			if err != nil {
+				return err
+			}
+			if state == setupPathRegular {
+				if err := os.Remove(path); err != nil {
+					return err
+				}
+			} else if state == setupPathDirectory {
+				maxFileBytes, maxRootBytes := setupSnapshotLimits(target)
+				if !target.Recursive || setupRollbackDirectorySafe(path, maxFileBytes, maxRootBytes) != nil {
+					return errSetupLayoutInvalid
+				}
+				if err := os.RemoveAll(path); err != nil {
+					return err
+				}
+			} else if state != setupPathAbsent {
+				return errSetupLayoutInvalid
+			}
+		case "directory":
+			if err := ensureSetupDirectory(path); err != nil {
+				return err
+			}
+			if entry.Mode != 0 {
+				_ = os.Chmod(path, os.FileMode(entry.Mode))
+			}
+		case "file":
+			if entry.Payload == "" || filepath.Base(entry.Payload) != entry.Payload || strings.ContainsAny(entry.Payload, `/\\`) {
+				return errSetupLayoutInvalid
+			}
+			maxFileBytes, _ := setupSnapshotLimits(target)
+			contents, err := readBoundedSetupFile(filepath.Join(snapshot.Dir, "payload", entry.Payload), maxFileBytes)
+			if err != nil || int64(len(contents)) != entry.Size || digestSetupBytes(contents) != entry.SHA256 {
+				return errSetupLayoutInvalid
+			}
+			if err := ensureSetupDirectory(filepath.Dir(path)); err != nil {
+				return err
+			}
+			temporary, err := os.CreateTemp(filepath.Dir(path), ".restore-")
+			if err != nil {
+				return err
+			}
+			temporaryPath := temporary.Name()
+			if err := temporary.Chmod(os.FileMode(entry.Mode)); err == nil {
+				_, err = temporary.Write(contents)
+			}
+			if err == nil {
+				err = temporary.Sync()
+			}
+			if closeErr := temporary.Close(); err == nil {
+				err = closeErr
+			}
+			if err == nil {
+				err = os.Rename(temporaryPath, path)
+			}
+			_ = os.Remove(temporaryPath)
+			if err != nil {
+				return err
+			}
+		default:
+			return errSetupLayoutInvalid
+		}
+	}
+	return nil
+}
+
+func setupRollbackDirectorySafe(path string, maxFileBytes, maxRootBytes int64) error {
+	if maxFileBytes <= 0 {
+		maxFileBytes = MaxXKeenGenerationFileBytes
+	}
+	if maxRootBytes <= 0 {
+		maxRootBytes = MaxXKeenGenerationBytes
+	}
+	entries := 0
+	rootBytes := int64(0)
+	return filepath.WalkDir(path, func(current string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		entries++
+		if entries > setupMaxSnapshotEntries || entry.Type()&os.ModeSymlink != 0 {
+			return errSetupLayoutInvalid
+		}
+		if current == path || entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > maxFileBytes || rootBytes > maxRootBytes-info.Size() {
+			return errSetupLayoutInvalid
+		}
+		rootBytes += info.Size()
+		return nil
+	})
+}
+
+func (s *SetupService) checkSetupWriterConflictForRestore(snapshot setupSnapshot) error {
+	current, err := s.inspectSetupWriters()
+	if err != nil {
+		return ErrSetupWriterConflict
+	}
+	original := make(map[string]string)
+	for _, entry := range snapshot.Manifest.Entries {
+		if strings.HasPrefix(entry.Key, "writer-") && entry.Kind == "file" {
+			original[filepath.Clean(entry.Target)] = entry.SHA256
+		}
+	}
+	for _, writer := range current {
+		want, ok := original[filepath.Clean(writer.Path)]
+		if !ok || want != writer.Digest {
+			return ErrSetupWriterConflict
+		}
+	}
+	return nil
+}
+
+func setupSnapshotTargetAllowed(paths SetupPaths, path string) bool {
+	if path == "" {
+		return false
+	}
+	for _, target := range (&SetupService{config: SetupConfig{Paths: paths}}).setupSnapshotTargets(nil) {
+		if filepath.Clean(target.Path) == filepath.Clean(path) {
+			return true
+		}
+	}
+	for _, candidate := range paths.WriterScripts {
+		if filepath.Clean(candidate) == filepath.Clean(path) {
+			return true
+		}
+	}
+	if setupCronPath(paths, path) {
+		return true
+	}
+	return false
+}
+
+func setupCronPath(paths SetupPaths, path string) bool {
+	path = filepath.Clean(path)
+	for _, candidate := range paths.CronPaths {
+		candidate = filepath.Clean(candidate)
+		if candidate == path {
+			return true
+		}
+		state, err := setupPathState(candidate)
+		if err != nil || state != setupPathDirectory {
+			continue
+		}
+		relative, relErr := filepath.Rel(candidate, path)
+		if relErr == nil && relative != "." && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && filepath.Dir(relative) != ".." {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *SetupService) failApply(journalWritten bool, journal setupTransactionJournal, prepared preparedSetup, runtimeStarted bool, cause error) error {
 	if !journalWritten {
 		return cause
 	}
 	recoveryContext, cancel := context.WithTimeout(context.Background(), s.config.RecoveryTimeout)
 	defer cancel()
+	if runtimeStarted || journal.SourceClass != "fresh" {
+		if err := s.quiesceSetupRuntime(recoveryContext); err != nil {
+			s.markMaintenance(ErrSetupTransactionUnproven)
+			return ErrSetupTransactionUnproven
+		}
+	}
 	if err := s.rollbackCreated(recoveryContext, journal, prepared); err != nil {
+		s.markMaintenance(ErrSetupTransactionUnproven)
+		return ErrSetupTransactionUnproven
+	}
+	if journal.SourceClass != "fresh" && setupSnapshotHasLifecycle(prepared.snapshot) {
+		if err := s.startAndProveRestoredRuntime(recoveryContext); err != nil {
+			s.markMaintenance(ErrSetupTransactionUnproven)
+			return ErrSetupTransactionUnproven
+		}
+	}
+	if err := s.removeSnapshot(prepared.snapshot); err != nil {
 		s.markMaintenance(ErrSetupTransactionUnproven)
 		return ErrSetupTransactionUnproven
 	}
 	if err := s.clearJournal(); err != nil {
 		s.markMaintenance(ErrSetupTransactionUnproven)
 		return ErrSetupTransactionUnproven
+	}
+	if errors.Is(cause, ErrSetupWriterConflict) {
+		return ErrSetupWriterConflict
 	}
 	return ErrSetupTransactionRestored
 }
@@ -1825,6 +3481,23 @@ func (s *SetupService) rollbackCreated(ctx context.Context, journal setupTransac
 		return err
 	}
 	paths := s.config.Paths
+	if !journal.Previous.AllAbsent {
+		snapshot := prepared.snapshot
+		if snapshot.Dir == "" {
+			var err error
+			snapshot, err = s.readSetupSnapshot(journal)
+			if err != nil {
+				return err
+			}
+		}
+		if err := s.restoreSetupSnapshot(snapshot); err != nil {
+			return err
+		}
+		if err := s.cleanupSetupActivation(); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
 	for _, name := range []string{"S05xkeen"} {
 		if err := removeSetupFileExact(paths.LifecycleInit, prepared.lifecycle); err != nil {
 			return err
@@ -1834,7 +3507,7 @@ func (s *SetupService) rollbackCreated(ctx context.Context, journal setupTransac
 	if err := removeSetupFileExact(paths.XkeenMarker, prepared.marker); err != nil {
 		return err
 	}
-	if err := removeSetupGeneration(paths.XkeenBinary, paths.XkeenModuleDir, prepared.xkeenMetadata); err != nil {
+	if err := removeSetupGenerationPartial(paths.XkeenBinary, paths.XkeenModuleDir, prepared.xkeenMetadata); err != nil {
 		return err
 	}
 	if err := removeSetupFileHash(paths.XrayBinary, prepared.xrayMetadata.Size, prepared.xrayMetadata.SHA256); err != nil {
@@ -1871,7 +3544,153 @@ func (s *SetupService) rollbackCreated(ctx context.Context, journal setupTransac
 	if err := removeSetupFileExact(paths.Nodes, prepared.nodesBytes); err != nil {
 		return err
 	}
+	if err := s.cleanupSetupActivation(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, directory := range []string{paths.XrayConfigDir, paths.XrayAssetDir, paths.XkeenModuleDir, filepath.Dir(paths.Appliance), filepath.Dir(paths.Nodes)} {
+		removeEmptySetupDirectory(directory)
+	}
 	return nil
+}
+
+func setupSnapshotHasFile(snapshot setupSnapshot, key string) bool {
+	for _, entry := range snapshot.Manifest.Entries {
+		if entry.Key == key && entry.Kind == "file" && entry.Relative == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func setupSnapshotHasLifecycle(snapshot setupSnapshot) bool {
+	return setupSnapshotHasFile(snapshot, "lifecycle") || setupSnapshotHasFile(snapshot, "legacy-lifecycle")
+}
+
+func (s *SetupService) startAndProveRestoredRuntime(ctx context.Context) error {
+	if s.config.Runtime == nil {
+		return ErrSetupRuntimeUnavailable
+	}
+	if err := s.config.Runtime.Start(ctx); err != nil {
+		return ErrSetupRuntimeUnavailable
+	}
+	authorities, reason, err := s.readSetupAuthorities()
+	if err != nil || reason != "" || !authorities.profilePresent {
+		return ErrSetupVerificationFailed
+	}
+	if err := s.runtimeProof(ctx, authorities.registry); err != nil {
+		return err
+	}
+	return nil
+}
+
+func removeSetupGenerationPartial(binaryPath, modulePath string, expected xkeenGenerationMetadata) error {
+	if !validXKeenGenerationMetadata(expected) {
+		return errSetupLayoutInvalid
+	}
+	if state, err := setupPathState(binaryPath); err != nil {
+		return err
+	} else if state != setupPathAbsent {
+		if state != setupPathRegular {
+			return errSetupLayoutInvalid
+		}
+		var binaryEntry xkeenGenerationEntry
+		for _, entry := range expected.Entries {
+			if entry.Path == "xkeen" {
+				binaryEntry = entry
+				break
+			}
+		}
+		contents, readErr := readBoundedSetupFile(binaryPath, MaxXKeenGenerationFileBytes)
+		if readErr != nil || binaryEntry.Path == "" || int64(len(contents)) != binaryEntry.Size || digestSetupBytes(contents) != binaryEntry.SHA256 {
+			return errSetupLayoutInvalid
+		}
+		if err := os.Remove(binaryPath); err != nil {
+			return err
+		}
+	}
+	if state, err := setupPathState(modulePath); err != nil {
+		return err
+	} else if state != setupPathAbsent {
+		if state != setupPathDirectory || !validSetupPartialXKeenDirectory(modulePath, expected) {
+			return errSetupLayoutInvalid
+		}
+		if err := os.RemoveAll(modulePath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validSetupPartialXKeenDirectory(root string, expected xkeenGenerationMetadata) bool {
+	allowed := make(map[string]xkeenGenerationEntry, len(expected.Entries))
+	for _, entry := range expected.Entries {
+		if entry.Path == "xkeen" {
+			continue
+		}
+		relative := strings.TrimPrefix(entry.Path, ".xkeen/")
+		if relative == entry.Path || relative == "" {
+			continue
+		}
+		allowed[filepath.FromSlash(relative)] = entry
+	}
+	valid := true
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil || !valid {
+			valid = false
+			return walkErr
+		}
+		if path == root {
+			return nil
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil || info.Mode()&os.ModeSymlink != 0 {
+			valid = false
+			return errSetupLayoutInvalid
+		}
+		relative, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			valid = false
+			return relErr
+		}
+		if entry.IsDir() {
+			for key, item := range allowed {
+				if item.Type == "directory" && filepath.Clean(key) == filepath.Clean(relative) {
+					return nil
+				}
+			}
+			// Empty directories are valid only when the expected generation also
+			// owns that directory. This covers a crash immediately after mkdir.
+			for key, item := range allowed {
+				if item.Type == "directory" && filepath.Dir(key) == filepath.Clean(relative) {
+					return nil
+				}
+			}
+			valid = false
+			return errSetupLayoutInvalid
+		}
+		item, ok := allowed[filepath.Clean(relative)]
+		if !ok || item.Type != "file" || info.Size() != item.Size {
+			valid = false
+			return errSetupLayoutInvalid
+		}
+		contents, readErr := readBoundedSetupFile(path, MaxXKeenGenerationFileBytes)
+		if readErr != nil || digestSetupBytes(contents) != item.SHA256 {
+			valid = false
+			return errSetupLayoutInvalid
+		}
+		return nil
+	})
+	return valid
+}
+
+func removeEmptySetupDirectory(path string) {
+	if path == "" || path == "." || filepath.Clean(path) == string(filepath.Separator) {
+		return
+	}
+	entries, err := os.ReadDir(path)
+	if err == nil && len(entries) == 0 {
+		_ = os.Remove(path)
+	}
 }
 
 func removeSetupFileMap(directory string, files map[string][]byte, prefix string) error {
@@ -1975,7 +3794,7 @@ func (s *SetupService) removeStage(path string) {
 		return
 	}
 	info, err := os.Lstat(target)
-	if err != nil || info.Mode()&os.ModeSymlink != 0 {
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || validXKeenOwner(target, setupStagingOwner) != nil {
 		return
 	}
 	_ = os.RemoveAll(target)
@@ -2000,7 +3819,7 @@ func (s *SetupService) removeStagingRootEntries() error {
 		}
 		path := filepath.Join(root, entry.Name())
 		child, childErr := os.Lstat(path)
-		if childErr != nil || child.Mode()&os.ModeSymlink != 0 {
+		if childErr != nil || child.Mode()&os.ModeSymlink != 0 || !child.IsDir() || validXKeenOwner(path, setupStagingOwner) != nil {
 			return errSetupLayoutInvalid
 		}
 		if err := os.RemoveAll(path); err != nil {
@@ -2079,8 +3898,15 @@ func (s *SetupService) RecoverStartup(ctx context.Context) error {
 		if err := s.removeStagingRootEntries(); err != nil {
 			return s.recoveryFailure()
 		}
+		if activation, activationErr := setupPathState(s.config.Paths.XkeenActivation); activationErr != nil {
+			return s.recoveryFailure()
+		} else if activation != setupPathAbsent {
+			if err := s.cleanupSetupActivation(); err != nil {
+				return s.recoveryFailure()
+			}
+		}
 		layout, layoutErr := s.inspectLayout()
-		if layoutErr != nil || layout.state != "fresh" {
+		if layoutErr != nil || layout.state != "fresh" && layout.state != "takeover" {
 			return s.recoveryFailure()
 		}
 		s.clearMaintenance()
@@ -2090,50 +3916,136 @@ func (s *SetupService) RecoverStartup(ctx context.Context) error {
 	if err != nil {
 		return s.recoveryFailure()
 	}
-	if journal.Phase == setupPhaseRuntimeVerified && s.runtimeProof(ownedContext) == nil && s.verifyInstalled(prepared) == nil {
-		if err := s.clearJournal(); err != nil || s.removeStagingRootEntries() != nil {
+	if journal.Phase == setupPhaseRuntimeVerified && s.runtimeProof(ownedContext, prepared.candidate.Registry) == nil && s.verifyInstalled(prepared) == nil {
+		if err := s.removeSnapshot(prepared.snapshot); err != nil || s.clearJournal() != nil || s.removeStagingRootEntries() != nil {
 			return s.recoveryFailure()
 		}
 		s.clearMaintenance()
 		return nil
 	}
+	if journal.SourceClass != "fresh" || journal.Phase == setupPhaseLifecycleCommitted || journal.Phase == setupPhaseWritersRetired || journal.Phase == setupPhaseRuntimeStarted || journal.Phase == setupPhaseRuntimeVerified {
+		if err := s.quiesceSetupRuntime(ownedContext); err != nil {
+			return s.recoveryFailure()
+		}
+	}
 	if err := s.rollbackCreated(ownedContext, journal, prepared); err != nil {
 		return s.recoveryFailure()
 	}
-	if err := s.clearJournal(); err != nil || s.removeStagingRootEntries() != nil {
+	if journal.SourceClass != "fresh" && setupSnapshotHasLifecycle(prepared.snapshot) {
+		if err := s.startAndProveRestoredRuntime(ownedContext); err != nil {
+			return s.recoveryFailure()
+		}
+	}
+	if err := s.removeSnapshot(prepared.snapshot); err != nil || s.clearJournal() != nil || s.removeStagingRootEntries() != nil {
 		return s.recoveryFailure()
 	}
 	s.clearMaintenance()
 	return nil
 }
 
-func (s *SetupService) runtimeProof(ctx context.Context) error {
+func setupRuntimeTags(registry nodes.Registry) []string {
+	ordered := registry.SortedNodes()
+	tags := make([]string, 0, len(ordered))
+	for _, node := range ordered {
+		if node.Enabled && !node.Stale && !node.Missing {
+			tags = append(tags, node.OutboundTag)
+		}
+	}
+	return tags
+}
+
+func (s *SetupService) runtimeProof(ctx context.Context, registry nodes.Registry) error {
 	if s.config.Runtime == nil {
 		return ErrSetupRuntimeUnavailable
 	}
-	if err := s.config.Runtime.WaitReady(ctx); err != nil || !s.config.Runtime.ProbeReachable(ctx) || s.config.Runtime.ValidateActiveConfig(ctx) != nil || s.config.Runtime.VerifyEmpty(ctx) != nil {
+	if err := s.config.Runtime.WaitReady(ctx); err != nil || !s.config.Runtime.ProbeReachable(ctx) || s.config.Runtime.ValidateActiveConfig(ctx) != nil {
+		return ErrSetupVerificationFailed
+	}
+	tags := setupRuntimeTags(registry)
+	if len(tags) == 0 {
+		if err := s.config.Runtime.VerifyEmpty(ctx); err != nil {
+			return ErrSetupVerificationFailed
+		}
+		return nil
+	}
+	verifier, ok := s.config.Runtime.(SetupRuntimeVerifier)
+	if !ok {
+		return ErrSetupRuntimeUnavailable
+	}
+	if err := verifier.Verify(ctx, tags); err != nil {
+		return ErrSetupVerificationFailed
+	}
+	return nil
+}
+
+func (s *SetupService) quiesceSetupRuntime(ctx context.Context) error {
+	if s.config.Runtime == nil {
+		return ErrSetupRuntimeUnavailable
+	}
+	quiescer, ok := s.config.Runtime.(SetupRuntimeQuiescer)
+	if !ok {
+		return ErrSetupRuntimeUnavailable
+	}
+	if err := quiescer.Stop(ctx); err != nil {
+		return ErrSetupRuntimeUnavailable
+	}
+	if err := quiescer.VerifyStopped(ctx); err != nil {
+		return ErrSetupVerificationFailed
+	}
+	// C.1 is a separate reachability witness from the process/API checks in
+	// the quiescer. A late verification failure must not restore over a still
+	// reachable previous runtime.
+	if s.config.Runtime.ProbeReachable(ctx) {
 		return ErrSetupVerificationFailed
 	}
 	return nil
 }
 
 func (s *SetupService) preparedFromJournal(journal setupTransactionJournal) (preparedSetup, error) {
-	candidate := setupCandidate{Xray: journal.Candidate.Xray, Geodata: journal.Candidate.Geodata, XKeen: journal.Candidate.XKeen}
+	stageRoot := filepath.Clean(journal.StageDir)
+	stagingRoot := filepath.Clean(s.config.Paths.StagingDir)
+	relative, relErr := filepath.Rel(stagingRoot, stageRoot)
+	if relErr != nil || relative == "." || filepath.Dir(relative) != "." || !strings.HasPrefix(filepath.Base(stageRoot), ".setup-") {
+		return preparedSetup{}, errSetupJournalInvalid
+	}
+	if validXKeenOwner(stageRoot, setupStagingOwner) != nil {
+		return preparedSetup{}, errSetupJournalInvalid
+	}
 	lifecycle, err := setupLifecycleBytes()
 	if err != nil || setupLifecycleDigest(lifecycle) != journal.Candidate.LifecycleSHA256 {
 		return preparedSetup{}, errSetupJournalInvalid
 	}
 	value := appliance.ProductDefault()
-	registry := nodes.NewRegistry()
-	files, err := appliance.RenderCandidateFiles(value, registry)
-	if err != nil {
-		return preparedSetup{}, errSetupJournalInvalid
-	}
 	appBytes, err := appliance.MarshalCanonical(value)
 	if err != nil {
 		return preparedSetup{}, errSetupJournalInvalid
 	}
+	registry := nodes.NewRegistry()
 	nodesBytes, err := nodes.MarshalCanonical(registry)
+	if err != nil {
+		return preparedSetup{}, errSetupJournalInvalid
+	}
+	if journal.SourceClass != "fresh" {
+		if currentApp, appErr := readBoundedSetupFile(s.config.Paths.Appliance, appliance.MaxDocumentSize); appErr == nil {
+			if parsed, parseErr := appliance.Parse(currentApp); parseErr == nil {
+				value, appBytes = parsed, currentApp
+			}
+		}
+		if currentNodes, nodesErr := readBoundedSetupFile(s.config.Paths.Nodes, nodes.MaxRegistryDocument); nodesErr == nil {
+			if parsed, parseErr := nodes.ParseCanonical(currentNodes); parseErr == nil {
+				registry, nodesBytes = parsed, currentNodes
+			}
+		}
+	}
+	authorities := setupAuthorities{registry: registry, registryBytes: nodesBytes, app: value, appBytes: appBytes, profilePresent: true, appPresent: true, policyPresent: true, profileAction: "preserve", policyAction: "preserve"}
+	if journal.SourceClass == "fresh" {
+		authorities.profileAction = "empty"
+		authorities.policyAction = "product-default"
+	}
+	source := authorities.sourceManifest(journal.SourceClass, nil)
+	source.Digest = journal.SourceDigest
+	candidate := setupCandidate{Xray: journal.Candidate.Xray, Geodata: journal.Candidate.Geodata, XKeen: journal.Candidate.XKeen, Lifecycle: lifecycle, Registry: registry, NodesBytes: nodesBytes, Appliance: value, AppBytes: appBytes, Source: source}
+	files, err := appliance.RenderCandidateFiles(value, registry)
 	if err != nil {
 		return preparedSetup{}, errSetupJournalInvalid
 	}
@@ -2157,24 +4069,39 @@ func (s *SetupService) preparedFromJournal(journal setupTransactionJournal) (pre
 		return preparedSetup{}, errSetupJournalInvalid
 	}
 	xkeenMeta := xkeenGenerationMetadata{}
-	if state, stateErr := setupPathState(s.config.Paths.XkeenBinary); stateErr != nil {
-		return preparedSetup{}, errSetupJournalInvalid
-	} else if state != setupPathAbsent {
-		current, readErr := readXKeenGeneration(s.config.Paths.XkeenBinary, s.config.Paths.XkeenModuleDir)
-		if readErr != nil || !strings.EqualFold(current.GenerationSHA256(), xkeenIdentityGeneration(candidate.XKeen)) {
+	stageXkeen := filepath.Join(journal.StageDir, "xkeen")
+	generationPairs := [][2]string{
+		{filepath.Join(stageXkeen, "xkeen"), filepath.Join(stageXkeen, ".xkeen")},
+		{s.config.Paths.XkeenBinary, s.config.Paths.XkeenModuleDir},
+		{s.config.Paths.XkeenBinary, filepath.Join(s.config.Paths.XkeenActivation, "new", ".xkeen")},
+	}
+	for _, pair := range generationPairs {
+		current, readErr := readXKeenGeneration(pair[0], pair[1])
+		if readErr == nil && strings.EqualFold(current.GenerationSHA256(), xkeenIdentityGeneration(candidate.XKeen)) {
+			xkeenMeta = current
+			break
+		}
+	}
+	if !validXKeenGenerationMetadata(xkeenMeta) {
+		if validXKeenGenerationMetadata(journal.Candidate.XKeenGeneration) && strings.EqualFold(journal.Candidate.XKeenGeneration.Generation, xkeenIdentityGeneration(candidate.XKeen)) {
+			xkeenMeta = journal.Candidate.XKeenGeneration
+		} else {
 			return preparedSetup{}, errSetupJournalInvalid
 		}
-		xkeenMeta = current
 	}
 	_, marker, markerErr := markerForGeneration(xkeenIdentityGeneration(candidate.XKeen))
 	if markerErr != nil {
 		return preparedSetup{}, errSetupJournalInvalid
 	}
-	plan, err := makeSetupPlan(setupCandidate{Xray: candidate.Xray, Geodata: candidate.Geodata, XKeen: candidate.XKeen, Lifecycle: lifecycle})
+	plan, err := makeSetupPlan(candidate)
 	if err != nil {
 		return preparedSetup{}, errSetupJournalInvalid
 	}
-	return preparedSetup{candidate: candidate, plan: plan, configFiles: files, appBytes: appBytes, nodesBytes: nodesBytes, xrayMetadata: xrayMeta, geodataMetadata: meta, xkeenMetadata: xkeenMeta, marker: marker, lifecycle: lifecycle}, nil
+	snapshot, snapshotErr := s.readSetupSnapshot(journal)
+	if snapshotErr != nil {
+		return preparedSetup{}, snapshotErr
+	}
+	return preparedSetup{candidate: candidate, plan: plan, stageDir: journal.StageDir, configFiles: files, appBytes: appBytes, nodesBytes: nodesBytes, xrayMetadata: xrayMeta, geodataMetadata: meta, xkeenMetadata: xkeenMeta, marker: marker, lifecycle: lifecycle, snapshot: snapshot}, nil
 }
 
 func (s *SetupService) recoveryFailure() error {

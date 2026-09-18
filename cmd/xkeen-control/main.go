@@ -183,6 +183,7 @@ func main() {
 		XKeen:           componentXKeenService,
 		MutationGate:    componentGate,
 		Policy:          componentPolicy,
+		WriterConflict:  setupService.WriterConflict,
 	})
 	stateDir := getenv("XKEEN_APPLIANCE_IMPORT_STATE_DIR", "/opt/etc/xkeen-control/state")
 	restoreJournalPath := filepath.Join(stateDir, "appliance-import-transaction.json")
@@ -546,14 +547,17 @@ func newSetupService(coordinator *c1.Coordinator, lease *authority.Lease, xrayRe
 	paths.InstallHelper = "/opt/root/install.sh"
 	paths.Appliance = getenv("XKEEN_APPLIANCE_PATH", defaultAppliancePath)
 	paths.Nodes = getenv("XKEEN_NODES_PATH", defaultNodesPath)
+	paths.LegacyOutbounds = getenv("XKEEN_LEGACY_OUTBOUNDS", defaultLegacyPath)
 	paths.ActiveOutbounds = getenv("XKEEN_ACTIVE_OUTBOUNDS", filepath.Join(configDir, "04_outbounds.json"))
 	paths.Journal = getenv("XKEEN_COMPONENT_TRANSACTION_PATH", components.DefaultComponentTransactionJournal)
 	stateDir := getenv("XKEEN_APPLIANCE_IMPORT_STATE_DIR", "/opt/etc/xkeen-control/state")
 	paths.RestoreJournal = filepath.Join(stateDir, "appliance-import-transaction.json")
 	paths.StagingDir = getenv("XKEEN_SETUP_STAGING_DIR", components.DefaultSetupStagingDir)
+	paths.PreviousDir = getenv("XKEEN_SETUP_PREVIOUS_DIR", components.DefaultSetupPreviousDir)
+	paths.XkeenActivation = getenv("XKEEN_SETUP_XKEEN_ACTIVATION", components.DefaultSetupXKeenActivation)
 	activator := nodes.CommandActivator{
 		XrayBinary: paths.XrayBinary, XrayAssetDir: paths.XrayAssetDir, XkeenBinary: paths.XkeenBinary,
-		FixedLifecycleInit: paths.LifecycleInit, APIAddress: getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress),
+		FixedLifecycleInit: paths.LifecycleInit, LegacyLifecycleInit: paths.LegacyLifecycleInit, APIAddress: getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress),
 		ActiveOutboundsPath: paths.ActiveOutbounds, RoutingPath: filepath.Join(paths.XrayConfigDir, "05_routing.json"),
 	}
 	activeRuntime := components.CommandXrayRuntime{ActiveBinary: paths.XrayBinary, ConfigDir: paths.XrayConfigDir, AssetDir: paths.XrayAssetDir}
@@ -566,6 +570,7 @@ func newSetupService(coordinator *c1.Coordinator, lease *authority.Lease, xrayRe
 		Runtime: components.SetupRuntimeFuncs{
 			StartFunc: activator.Start, WaitReadyFunc: activator.WaitReady, ProbeReachableFunc: xrayReader.ProbeReachable,
 			ValidateActiveConfigFunc: activeRuntime.ValidateActiveConfig, VerifyEmptyFunc: activator.VerifyEmptyOutboundTags,
+			StopFunc: activator.Stop, VerifyStoppedFunc: activator.VerifyStopped, VerifyFunc: activator.Verify,
 		},
 		MutationGate: mutationGate, Maintenance: maintenance, Coordinator: coordinator, AuthorityLease: lease,
 		TransactionTimeout: components.DefaultSetupTransactionLimit,

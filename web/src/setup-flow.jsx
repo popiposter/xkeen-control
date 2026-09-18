@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-const SETUP_STATES = new Set(['fresh', 'previewable', 'applying', 'blocked', 'maintenance', 'ready'])
+const SETUP_STATES = new Set(['fresh', 'takeover', 'previewable', 'applying', 'blocked', 'maintenance', 'ready'])
 const SAFE_REASON = /^[a-z][a-z0-9-]{0,63}$/
 const REASON_LABELS = Object.freeze({
   fresh: 'Fresh product layout',
@@ -18,6 +18,13 @@ const REASON_LABELS = Object.freeze({
   'transaction-unproven': 'Setup outcome is not proven',
   'runtime-unavailable': 'The managed runtime is unavailable',
   'verification-failed': 'The installed setup failed verification',
+  'managed-takeover': 'An older managed layout is ready for convergence',
+  'legacy-xkeen-takeover': 'A supported legacy XKeen layout is ready for migration',
+  'policy-unsupported': 'The existing appliance policy is outside the supported schema',
+  'node-authority-invalid': 'The node authority is invalid',
+  'profile-source-unavailable': 'No lossless supported node source is available',
+  'writer-conflict': 'A competing automatic writer is present',
+  'persistent-space-insufficient': 'Persistent space is insufficient for rollback protection',
 })
 
 const requestJSON = async (path, csrfToken, body) => {
@@ -56,6 +63,11 @@ const requestJSON = async (path, csrfToken, body) => {
 }
 
 const shortDigest = (value) => value ? `${String(value).slice(0, 12)}…` : '—'
+const policyLabel = (action) => ({
+  preserve: 'Preserved authority',
+  'adopt-supported': 'Adopt supported policy',
+  'product-default': 'Product default',
+}[action] || 'Typed policy')
 const setupReasonLabel = (value) => {
   const reason = typeof value === 'string' && SAFE_REASON.test(value) ? value : 'maintenance'
   return REASON_LABELS[reason] || 'Setup is unavailable'
@@ -67,7 +79,16 @@ const formatExpiry = (value) => {
 }
 
 const safePlan = (value) => {
-  if (!value || value.schemaVersion !== 1 || value.productDefault !== true || value.emptyRegistry !== true) return null
+  if (!value || value.schemaVersion !== 1) return null
+  if (!['fresh', 'managed-takeover', 'legacy-xkeen-takeover'].includes(value.setupClass)) return null
+  const profileAction = value.profiles?.action
+  const policyAction = value.policy?.action
+  if (!['preserve', 'migrate', 'empty'].includes(profileAction)) return null
+  if (!['preserve', 'adopt-supported', 'product-default'].includes(policyAction)) return null
+  if (value.productDefault !== (policyAction === 'product-default')) return null
+  if (value.emptyRegistry !== (profileAction === 'empty')) return null
+  if (!Number.isSafeInteger(value.profiles?.count) || value.profiles.count < 0 || value.profiles.count > 32) return null
+  if (value.panelPreserved !== true) return null
   if (!value.xray || !value.geodata || !value.xkeen || !value.lifecycle) return null
   return value
 }
@@ -76,7 +97,7 @@ const setupErrorMessage = (error) => {
   switch (error?.code) {
     case 'preview-expired': return 'The setup Preview expired. Prepare a fresh setup plan.'
     case 'preview-stale': return 'The fixed candidate changed. Prepare a fresh setup plan.'
-    case 'layout-blocked': return 'The current layout is not an eligible fresh setup target.'
+    case 'layout-blocked': return 'The current layout is not an eligible Setup target.'
     case 'busy': return 'Another lifecycle transaction is active. Wait for it to finish.'
     case 'component-source-unavailable': return 'Fixed component metadata is unavailable. No retry was started.'
     case 'candidate-rejected': return 'The fixed setup candidate was rejected before activation.'
@@ -98,7 +119,7 @@ export function SetupFlow({ setup, csrfToken, onRefresh, onUnauthorized }) {
   const [result, setResult] = useState(null)
   const currentState = SETUP_STATES.has(setup?.state) ? setup.state : ''
   const plan = useMemo(() => safePlan(preview?.plan), [preview])
-  const eligible = setup?.eligible === true && (currentState === 'fresh' || currentState === 'previewable')
+  const eligible = setup?.eligible === true && (currentState === 'fresh' || currentState === 'takeover' || currentState === 'previewable')
 
   useEffect(() => {
     if (currentState === 'ready' || currentState === 'applying' || currentState === 'blocked' || currentState === 'maintenance') {
@@ -173,7 +194,7 @@ export function SetupFlow({ setup, csrfToken, onRefresh, onUnauthorized }) {
 
   return <section className="panel setup-flow" aria-label="Setup Mode">
     <div className="setup-flow-heading">
-      <div><span className="panel-label">Setup Mode</span><h2>Prepare the managed appliance</h2><p>One server-owned fresh-install transaction creates the product default policy, an empty node registry, and the fixed qualified component set.</p></div>
+      <div><span className="panel-label">Setup Mode</span><h2>Converge the managed appliance</h2><p>One server-owned transaction preserves or losslessly migrates supported authorities, retires reviewed automatic writers, and activates the fixed qualified component set.</p></div>
       <span className={`chip ${eligible ? 'amber' : currentState === 'applying' ? 'blue' : 'neutral'}`}>{currentState}</span>
     </div>
     {currentState === 'blocked' || currentState === 'maintenance'
@@ -183,7 +204,7 @@ export function SetupFlow({ setup, csrfToken, onRefresh, onUnauthorized }) {
         : <>
           {error && <div className="notice" role="alert">{error}</div>}
           {result && <div className="notice success" role="status">Setup completed. The dashboard was refreshed; Nodes is ready for operator import or add.</div>}
-          {!preview && <div className="setup-flow-actions"><div><strong>Fresh layout eligible</strong><small>No component bodies are downloaded during Prepare.</small></div><button type="button" onClick={prepare} disabled={!eligible || Boolean(request)}>{request === 'preview' ? 'Preparing…' : 'Prepare setup'}</button></div>}
+          {!preview && <div className="setup-flow-actions"><div><strong>{currentState === 'takeover' ? 'Takeover eligible' : 'Fresh layout eligible'}</strong><small>No component bodies are downloaded during Prepare.</small></div><button type="button" onClick={prepare} disabled={!eligible || Boolean(request)}>{request === 'preview' ? 'Preparing…' : 'Prepare setup'}</button></div>}
           {preview && plan && <SetupPlan plan={plan} expiresAt={preview.expiresAt} confirming={confirming} busy={Boolean(request)} onCancel={cancel} onConfirm={() => setConfirming(true)} onApply={apply} />}
         </>}
   </section>
@@ -193,12 +214,13 @@ function SetupPlan({ plan, expiresAt, confirming, busy, onCancel, onConfirm, onA
   return <div className="setup-plan" aria-label="Setup plan">
     <div className="setup-plan-summary"><strong>Fixed setup plan</strong><small>Expires {formatExpiry(expiresAt)}</small></div>
     <div className="setup-plan-grid">
-      <div><span>Policy</span><strong>Product default</strong><small>Typed authority · no browser input</small></div>
-      <div><span>Nodes</span><strong>Empty canonical registry</strong><small>Ready for existing Nodes flows</small></div>
+      <div><span>Policy</span><strong>{policyLabel(plan.policy?.action || (plan.productDefault ? 'product-default' : 'preserve'))}</strong><small>Typed authority · no browser input</small></div>
+      <div><span>Nodes</span><strong>{plan.profiles?.count ? `${plan.profiles.count} supported profiles` : (plan.emptyRegistry ? 'Empty canonical registry' : 'Preserved registry')}</strong><small>{plan.profiles?.action || 'Ready for existing Nodes flows'}</small></div>
       <div><span>Xray</span><strong>{plan.xray.version || plan.xray.tag || 'Qualified stable candidate'}</strong><small>{shortDigest(plan.xray.sha256)}</small></div>
       <div><span>Geodata</span><strong>{plan.geodata.items?.length || 0} fixed assets</strong><small>{plan.geodata.generation || 'Qualified complete set'}</small></div>
       <div><span>XKeen</span><strong>{plan.xkeen.version || plan.xkeen.tag || 'Qualified dev candidate'}</strong><small>{shortDigest(plan.xkeen.generationSha256)}</small></div>
       <div><span>Lifecycle</span><strong>{plan.lifecycle.name}</strong><small>Fixed source-owned adapter · {shortDigest(plan.lifecycle.sha256)}</small></div>
+      <div><span>Preserved state</span><strong>{plan.panelPreserved === false ? 'None' : 'Panel compatibility state'}</strong><small>{plan.writers?.length ? `Retires ${plan.writers.length} reviewed writer(s)` : 'Auth, listener, update and selection state untouched'}</small></div>
     </div>
     {confirming && <div className="setup-confirm" role="alert"><strong>Apply this fixed setup now?</strong><small>Apply consumes the one-shot session-bound token and starts the managed runtime once after verification.</small></div>}
     <div className="setup-flow-actions"><button className="ghost" type="button" onClick={onCancel} disabled={busy}>Cancel</button>{confirming ? <button type="button" onClick={onApply} disabled={busy}>{busy ? 'Applying…' : 'Confirm setup'}</button> : <button type="button" onClick={onConfirm} disabled={busy}>Apply setup</button>}</div>

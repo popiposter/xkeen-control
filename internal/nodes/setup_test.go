@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 )
 
 func TestCommandActivatorVerifiesEmptySetupBaseline(t *testing.T) {
@@ -38,5 +40,29 @@ func TestCommandActivatorVerifiesEmptySetupBaseline(t *testing.T) {
 	}
 	if err := activator.VerifyEmptyOutboundTags(context.Background()); err == nil {
 		t.Fatal("unexpected proxy outbound accepted for empty setup")
+	}
+}
+
+func TestCommandActivatorSetupLifecycleFallsBackToKnownLegacyInit(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("init-script execution fixture requires the Linux qualification environment")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "marker")
+	legacy := filepath.Join(dir, "S24xray")
+	if err := os.WriteFile(legacy, []byte("#!/bin/sh\nprintf '%s ' \"$1\" >> \"$XKEEN_SETUP_MARKER\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XKEEN_SETUP_MARKER", marker)
+	activator := CommandActivator{FixedLifecycleInit: filepath.Join(dir, "missing-S05xkeen"), LegacyLifecycleInit: legacy, RestartTimeout: time.Second}
+	if err := activator.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := activator.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(marker)
+	if err != nil || string(contents) != "start stop " {
+		t.Fatalf("legacy setup lifecycle marker = %q, %v", contents, err)
 	}
 }
