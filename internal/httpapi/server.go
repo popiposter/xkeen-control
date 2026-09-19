@@ -29,6 +29,7 @@ const (
 	maxComponentCheckBody    = 4 << 10
 	maxComponentMutationBody = 4 << 10
 	maxComponentPolicyBody   = 4 << 10
+	maxSetupBody             = 1 << 10
 	maxJSONResponse          = 512 << 10
 	csrfRequiredPath         = "/api/v1/session/logout"
 )
@@ -79,6 +80,7 @@ type Server struct {
 	componentChecks    components.CheckService
 	componentMutations ComponentMutationService
 	componentPolicy    ComponentPolicyService
+	setup              components.SetupAPI
 	updates            panelupdate.Service
 	backup             BackupService
 	restore            RestoreService
@@ -104,6 +106,7 @@ type Config struct {
 	ComponentChecks    components.CheckService
 	ComponentMutations ComponentMutationService
 	ComponentPolicy    ComponentPolicyService
+	Setup              components.SetupAPI
 	Updates            panelupdate.Service
 	Backup             BackupService
 	Restore            RestoreService
@@ -113,7 +116,7 @@ func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, updates: config.Updates, backup: config.Backup, restore: config.Restore, restorePreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, updates: config.Updates, backup: config.Backup, restore: config.Restore, restorePreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -132,6 +135,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/v1/session/login", "/api/v1/session/logout", "/api/v1/session",
 		"/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary", "/api/v1/components", "/api/v1/components/check", "/api/v1/components/policy",
 		"/api/v1/components/preview", "/api/v1/components/apply", "/api/v1/components/rollback", "/api/v1/components/cancel",
+		"/api/v1/setup/preview", "/api/v1/setup/apply", "/api/v1/setup/cancel",
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
 		"/api/v1/session/password",
 		"/api/v1/benchmark/run", "/api/v1/performance/manual-node",
@@ -264,6 +268,24 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.cancelComponentMutation(w, r)
+	case "/api/v1/setup/preview":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.previewSetup(w, r)
+	case "/api/v1/setup/apply":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.applySetup(w, r)
+	case "/api/v1/setup/cancel":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.cancelSetup(w, r)
 	case "/api/v1/benchmark/run":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -625,6 +647,9 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if s.componentMutations != nil {
 		s.componentMutations.Invalidate(session.CSRFToken)
 	}
+	if s.setup != nil {
+		s.setup.Invalidate(session.CSRFToken)
+	}
 	s.auth.ClearSessionCookie(w)
 	writeJSON(w, http.StatusOK, struct {
 		Authenticated bool `json:"authenticated"`
@@ -659,6 +684,9 @@ func (s *Server) replacePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.componentMutations != nil {
 		s.componentMutations.InvalidateAll()
+	}
+	if s.setup != nil {
+		s.setup.InvalidateAll()
 	}
 	s.auth.ClearSessionCookie(w)
 	writeJSON(w, http.StatusOK, struct {
@@ -1625,6 +1653,201 @@ func (s *Server) cancelComponentMutation(w http.ResponseWriter, r *http.Request)
 	}{Canceled: true})
 }
 
+func (s *Server) previewSetup(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.setup == nil {
+		writeSetupError(w, components.ErrSetupUnavailable)
+		return
+	}
+	if !s.decodeSetupEmptyRequest(w, r) {
+		return
+	}
+	preview, err := s.setup.Preview(r.Context(), session.CSRFToken)
+	if err != nil {
+		writeSetupError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
+func (s *Server) applySetup(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.setup == nil {
+		writeSetupError(w, components.ErrSetupUnavailable)
+		return
+	}
+	var request components.MutationTokenRequest
+	if !s.decodeSetupTokenRequest(w, r, &request) {
+		return
+	}
+	if err := components.ValidateSetupToken(request.PreviewToken); err != nil {
+		writeSetupError(w, err)
+		return
+	}
+	result, err := s.setup.Apply(r.Context(), session.CSRFToken, request.PreviewToken)
+	if err != nil {
+		writeSetupError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) cancelSetup(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.setup == nil {
+		writeSetupError(w, components.ErrSetupUnavailable)
+		return
+	}
+	var request components.MutationTokenRequest
+	if !s.decodeSetupTokenRequest(w, r, &request) {
+		return
+	}
+	if err := components.ValidateSetupToken(request.PreviewToken); err != nil {
+		writeSetupError(w, err)
+		return
+	}
+	s.setup.Cancel(session.CSRFToken, request.PreviewToken)
+	writeJSON(w, http.StatusOK, struct {
+		Canceled bool `json:"canceled"`
+	}{Canceled: true})
+}
+
+func (s *Server) decodeSetupEmptyRequest(w http.ResponseWriter, r *http.Request) bool {
+	if !setupRequestHeaders(w, r) {
+		return false
+	}
+	if r.ContentLength > maxSetupBody {
+		writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		return false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxSetupBody)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	var value map[string]json.RawMessage
+	if err := decoder.Decode(&value); err != nil || value == nil || len(value) != 0 {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		} else {
+			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid setup request")
+		}
+		return false
+	}
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		} else {
+			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid setup request")
+		}
+		return false
+	}
+	return true
+}
+
+func (s *Server) decodeSetupTokenRequest(w http.ResponseWriter, r *http.Request, value *components.MutationTokenRequest) bool {
+	if !setupRequestHeaders(w, r) {
+		return false
+	}
+	if r.ContentLength > maxSetupBody {
+		writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		return false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxSetupBody)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(value); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		} else {
+			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid setup request")
+		}
+		return false
+	}
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid setup request")
+		return false
+	}
+	return true
+}
+
+func setupRequestHeaders(w http.ResponseWriter, r *http.Request) bool {
+	contentTypes := r.Header.Values("Content-Type")
+	if len(contentTypes) != 1 || strings.TrimSpace(contentTypes[0]) != "application/json" {
+		writeCodedError(w, http.StatusUnsupportedMediaType, "invalid-request", "unsupported media type")
+		return false
+	}
+	if r.URL.RawQuery != "" {
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid setup request")
+		return false
+	}
+	return true
+}
+
+func writeSetupError(w http.ResponseWriter, err error) {
+	var layout *components.SetupLayoutError
+	if errors.As(err, &layout) && layout != nil && layout.ReasonCode != "" {
+		writeCodedErrorWithReason(w, http.StatusConflict, string(layout.ReasonCode), "setup layout is blocked", string(layout.ReasonCode))
+		return
+	}
+	switch {
+	case errors.Is(err, components.ErrSetupPreviewExpired):
+		writeCodedError(w, http.StatusConflict, "preview-expired", "setup preview expired or invalid")
+	case errors.Is(err, components.ErrSetupPreviewStale):
+		writeCodedError(w, http.StatusConflict, "preview-stale", "setup preview is stale")
+	case errors.Is(err, components.ErrSetupBusy):
+		writeCodedError(w, http.StatusConflict, "busy", "setup is busy")
+	case errors.Is(err, components.ErrSetupBlocked):
+		writeCodedError(w, http.StatusConflict, "layout-blocked", "setup layout is blocked")
+	case errors.Is(err, components.ErrSetupSourceUnavailable):
+		writeCodedError(w, http.StatusBadGateway, "component-source-unavailable", "setup metadata unavailable")
+	case errors.Is(err, components.ErrSetupCandidateRejected):
+		writeCodedError(w, http.StatusBadGateway, "candidate-rejected", "setup candidate rejected")
+	case errors.Is(err, components.ErrSetupResourceInsufficient):
+		writeCodedError(w, http.StatusInsufficientStorage, "resource-insufficient", "setup resources are insufficient")
+	case errors.Is(err, components.ErrSetupTransactionRestored):
+		writeCodedError(w, http.StatusInternalServerError, "transaction-restored", "setup failed; fresh state was restored")
+	case errors.Is(err, components.ErrSetupTransactionUnproven):
+		writeCodedError(w, http.StatusServiceUnavailable, "transaction-unproven", "setup outcome is not proven")
+	case errors.Is(err, components.ErrSetupRuntimeUnavailable):
+		writeCodedError(w, http.StatusServiceUnavailable, "runtime-unavailable", "setup runtime is unavailable")
+	case errors.Is(err, components.ErrSetupVerificationFailed):
+		writeCodedError(w, http.StatusServiceUnavailable, "verification-failed", "setup verification failed")
+	case errors.Is(err, components.ErrSetupWriterConflict):
+		writeCodedError(w, http.StatusConflict, "writer-conflict", "a competing automatic writer was detected")
+	case errors.Is(err, components.ErrSetupMaintenance), errors.Is(err, components.ErrSetupRecoveryFailed):
+		writeCodedError(w, http.StatusServiceUnavailable, "maintenance", "setup unavailable during maintenance")
+	case errors.Is(err, components.ErrSetupUnavailable):
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "setup unavailable")
+	default:
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "setup unavailable")
+	}
+}
+
 func writeComponentMutationError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, components.ErrMutationPolicyDisabled), errors.Is(err, components.ErrComponentPolicyDisabled):
@@ -1633,6 +1856,8 @@ func writeComponentMutationError(w http.ResponseWriter, err error) {
 		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid component mutation request")
 	case errors.Is(err, components.ErrMutationBusy):
 		writeCodedError(w, http.StatusConflict, "busy", "component mutation busy")
+	case errors.Is(err, components.ErrMutationWriterConflict):
+		writeCodedError(w, http.StatusConflict, "writer-conflict", "a competing automatic writer was detected")
 	case errors.Is(err, components.ErrMutationPreviewExpired):
 		writeCodedError(w, http.StatusConflict, "preview-expired", "component mutation preview expired or invalid")
 	case errors.Is(err, components.ErrMutationPreviewStale):

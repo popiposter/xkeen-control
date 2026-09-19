@@ -1,7 +1,9 @@
 package nodes
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -267,10 +269,26 @@ type legacyStreamSettings struct {
 		Path    string            `json:"path"`
 		Headers map[string]string `json:"headers"`
 	} `json:"wsSettings"`
+	XHTTPSettings struct {
+		Path string `json:"path"`
+		Host string `json:"host"`
+		Mode string `json:"mode"`
+	} `json:"xhttpSettings"`
 	GRPCSettings struct {
 		ServiceName string `json:"serviceName"`
 		Mode        string `json:"mode"`
 	} `json:"grpcSettings"`
+	FinalMask *struct {
+		TCP []struct {
+			Type     string `json:"type"`
+			Settings struct {
+				Packets  string `json:"packets"`
+				Length   string `json:"length"`
+				Delay    string `json:"delay"`
+				MaxSplit string `json:"maxSplit"`
+			} `json:"settings"`
+		} `json:"tcp"`
+	} `json:"finalmask"`
 }
 
 // MigrateLegacy projects supported VLESS/REALITY entries and ignores fixed
@@ -280,17 +298,23 @@ func MigrateLegacy(contents []byte) (Registry, error) {
 		return Registry{}, errors.New("legacy outbound document exceeds bounded size")
 	}
 	var document legacyDocument
-	if err := json.Unmarshal(contents, &document); err != nil || len(document.Outbounds) == 0 || len(document.Outbounds) > MaxNodes*4 {
+	if err := decodeStrictJSON(contents, &document); err != nil || len(document.Outbounds) == 0 || len(document.Outbounds) > MaxNodes*4 {
 		return Registry{}, errors.New("invalid legacy outbound document")
 	}
 	result := NewRegistry()
 	for index, raw := range document.Outbounds {
 		var outbound legacyOutbound
-		if json.Unmarshal(raw, &outbound) != nil {
+		if decodeStrictJSON(raw, &outbound) != nil {
 			return Registry{}, errors.New("invalid legacy outbound entry")
 		}
 		if !strings.EqualFold(outbound.Protocol, "vless") {
-			continue
+			if isReviewedFixedLegacyOutbound(outbound.Tag, outbound.Protocol) {
+				continue
+			}
+			// A non-VLESS outbound that is not one of the four exact fixed
+			// product entries is profile-like/unknown. Silently discarding it
+			// would make takeover lossy.
+			return Registry{}, errors.New("legacy outbound is unsupported")
 		}
 		address, port, id, encryption, flow, ok := outbound.Settings.connection()
 		if !ok {
@@ -317,18 +341,36 @@ func MigrateLegacy(contents []byte) (Registry, error) {
 			profile.Security = "reality"
 		}
 		if profile.Network == "ws" || profile.Network == "http" || profile.Network == "xhttp" || profile.Network == "splithttp" {
-			profile.Path = outbound.StreamSettings.WSSettings.Path
-			profile.HostHeader = outbound.StreamSettings.WSSettings.Headers["Host"]
+			if profile.Network == "xhttp" || profile.Network == "splithttp" {
+				profile.Path = outbound.StreamSettings.XHTTPSettings.Path
+				profile.HostHeader = outbound.StreamSettings.XHTTPSettings.Host
+				profile.Mode = outbound.StreamSettings.XHTTPSettings.Mode
+			} else {
+				for key := range outbound.StreamSettings.WSSettings.Headers {
+					if key != "Host" {
+						return Registry{}, errors.New("legacy WebSocket headers are unsupported")
+					}
+				}
+				profile.Path = outbound.StreamSettings.WSSettings.Path
+				profile.HostHeader = outbound.StreamSettings.WSSettings.Headers["Host"]
+			}
 		}
 		if profile.Network == "grpc" {
 			profile.ServiceName = outbound.StreamSettings.GRPCSettings.ServiceName
 			profile.Mode = outbound.StreamSettings.GRPCSettings.Mode
 		}
+		if outbound.StreamSettings.FinalMask != nil {
+			if len(outbound.StreamSettings.FinalMask.TCP) != 1 || outbound.StreamSettings.FinalMask.TCP[0].Type != "fragment" {
+				return Registry{}, errors.New("legacy Finalmask is unsupported")
+			}
+			fragment := outbound.StreamSettings.FinalMask.TCP[0].Settings
+			profile.FinalMask = &FinalMask{Fragment: FinalMaskFragment{Packets: fragment.Packets, Length: fragment.Length, Delay: fragment.Delay, MaxSplit: fragment.MaxSplit}}
+		}
 		if err := profile.Validate(); err != nil {
 			return Registry{}, errors.New("legacy VLESS profile is unsupported")
 		}
 		name := legacyName(outbound.Tag, index+1)
-		node, err := NewNode(profile, name, Source{Type: "manual"})
+		node, err := NewNodeWithID(profile, name, Source{Type: "manual"}, legacyNodeID(profile, name, index))
 		if err != nil {
 			return Registry{}, errors.New("legacy node migration failed")
 		}
@@ -341,6 +383,32 @@ func MigrateLegacy(contents []byte) (Registry, error) {
 		return Registry{}, errors.New("migrated registry is invalid")
 	}
 	return result, nil
+}
+
+func isReviewedFixedLegacyOutbound(tag, protocol string) bool {
+	switch tag {
+	case "api", "direct":
+		return protocol == "freedom"
+	case "block":
+		return protocol == "blackhole"
+	case "dns-out":
+		return protocol == "dns"
+	default:
+		return false
+	}
+}
+
+// legacyNodeID is stable for an unchanged source document. Preview and Apply
+// therefore bind the same migrated registry without placing a secret-bearing
+// source URL or credential in the public plan.
+func legacyNodeID(profile VLESS, name string, index int) string {
+	canonical, _ := json.Marshal(struct {
+		Profile VLESS  `json:"profile"`
+		Name    string `json:"name"`
+		Index   int    `json:"index"`
+	}{Profile: profile, Name: name, Index: index})
+	digest := sha256.Sum256(canonical)
+	return "node-" + hex.EncodeToString(digest[:8])
 }
 
 func legacyName(tag string, index int) string {

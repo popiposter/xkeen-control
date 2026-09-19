@@ -51,6 +51,7 @@ var (
 	ErrMutationMaintenance         = errors.New("component mutation is in maintenance")
 	ErrMutationMetadataUnavailable = errors.New("component mutation metadata is unavailable")
 	ErrMutationCandidateRejected   = errors.New("component mutation candidate was rejected")
+	ErrMutationWriterConflict      = errors.New("component mutation is blocked by a competing automatic writer")
 	ErrMutationPolicyDisabled      = ErrComponentPolicyDisabled
 	ErrMutationTransactionFailed   = errors.New("component transaction failed; previous generation restored")
 	ErrMutationTransactionUnproven = errors.New("component transaction failed; outcome is not proven")
@@ -331,6 +332,7 @@ type MutationConfig struct {
 	OperationTimeout time.Duration
 	MutationGate     *ComponentMutationGate
 	Policy           UpdatePolicyGate
+	WriterConflict   func() bool
 	Now              func() time.Time
 	Random           io.Reader
 }
@@ -398,7 +400,7 @@ func NewComponentMutationService(config MutationConfig) *MutationService {
 }
 
 func (s *MutationService) Supports(component ComponentKind, channel string) bool {
-	if s == nil {
+	if s == nil || s.writerConflict() {
 		return false
 	}
 	switch component {
@@ -413,12 +415,19 @@ func (s *MutationService) Supports(component ComponentKind, channel string) bool
 	}
 }
 
+func (s *MutationService) writerConflict() bool {
+	return s != nil && s.config.WriterConflict != nil && s.config.WriterConflict()
+}
+
 func (s *MutationService) Preview(ctx context.Context, binding string, request MutationRequest) (MutationPreview, error) {
 	if s == nil || strings.TrimSpace(binding) == "" {
 		return MutationPreview{}, ErrInvalidMutationRequest
 	}
 	if err := ValidateMutationRequest(request); err != nil {
 		return MutationPreview{}, err
+	}
+	if s.writerConflict() {
+		return MutationPreview{}, ErrMutationWriterConflict
 	}
 	var policyEpoch uint64
 	if request.Operation == MutationOperationUpdate && s.config.Policy != nil {
@@ -471,6 +480,9 @@ func (s *MutationService) Apply(ctx context.Context, binding, token string) (Mut
 	if err != nil {
 		return MutationResult{}, err
 	}
+	if s.writerConflict() {
+		return MutationResult{}, ErrMutationWriterConflict
+	}
 	if s.config.Policy != nil && !s.config.Policy.AllowUpdate(entry.PolicyEpoch) {
 		return MutationResult{}, ErrMutationPolicyDisabled
 	}
@@ -509,6 +521,9 @@ func (s *MutationService) Rollback(ctx context.Context, binding, token string) (
 	entry, err := s.take(binding, token, MutationOperationRollback)
 	if err != nil {
 		return MutationResult{}, err
+	}
+	if s.writerConflict() {
+		return MutationResult{}, ErrMutationWriterConflict
 	}
 	operationContext, releaseOperation, err := s.beginOperation(ctx)
 	if err != nil {

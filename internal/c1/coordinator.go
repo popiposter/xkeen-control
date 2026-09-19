@@ -862,6 +862,34 @@ func (c *Coordinator) SetManualOverride(ctx context.Context, target string) erro
 	return c.supervisor.SetManualOverride(ctx, target)
 }
 
+// ReconcileSetupSelection is called by Setup while it already owns the
+// Coordinator lifecycle barrier. The Supervisor remains the sole typed
+// selection owner; this method deliberately does not hand-edit selection.json
+// or acquire a second lifecycle token.
+func (c *Coordinator) ReconcileSetupSelection(ctx context.Context, enabledTags []string) error {
+	if c == nil || c.supervisor == nil {
+		return nil
+	}
+	return c.supervisor.ReconcileSetupSelection(ctx, enabledTags)
+}
+
+// SetupSelectionSnapshot and RestoreSetupSelection keep Setup's rollback
+// journal on the typed C.1 owner boundary. The coordinator owns no selection
+// file and intentionally delegates both operations to the Supervisor.
+func (c *Coordinator) SetupSelectionSnapshot(ctx context.Context) ([]byte, error) {
+	if c == nil || c.supervisor == nil {
+		return nil, nil
+	}
+	return c.supervisor.SetupSelectionSnapshot(ctx)
+}
+
+func (c *Coordinator) RestoreSetupSelection(ctx context.Context, snapshot []byte) error {
+	if c == nil || c.supervisor == nil {
+		return nil
+	}
+	return c.supervisor.RestoreSetupSelection(ctx, snapshot)
+}
+
 // runSupervisorOperation registers one cancellable supervisor operation under
 // the coordinator. Performance work deliberately does not block admission
 // here: the supervisor may interleave liveness probes between legacy benchmark

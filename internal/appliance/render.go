@@ -18,7 +18,7 @@ import (
 // able to render a complete candidate on a router without a repository
 // checkout. They are fixed product inputs, not editable appliance state.
 //
-//go:embed templates/01_log.json templates/03_inbounds.json templates/06_policy.json templates/08_api.json templates/xkeen.json
+//go:embed templates/01_log.json templates/02_dns.json templates/03_inbounds.json templates/05_routing.json templates/06_policy.json templates/07_observatory.json templates/08_api.json templates/xkeen.json
 var compatibilityTemplates embed.FS
 
 var fixedTemplatePaths = []string{
@@ -180,6 +180,14 @@ func parseActivePolicyBytes(dns, routing, observatory []byte) (Appliance, error)
 		return Appliance{}, errors.New("active policy is outside appliance schema")
 	}
 	return result, nil
+}
+
+// ParseSupportedPolicyFiles strictly adopts the reviewed typed subset from
+// an existing active Xray policy. It is the read-only takeover boundary; the
+// caller still decides whether the returned policy may replace a missing
+// appliance authority.
+func ParseSupportedPolicyFiles(dns, routing, observatory []byte) (Appliance, error) {
+	return parseActivePolicyBytes(dns, routing, observatory)
 }
 
 func parseNetworkGrammar(value string) ([]string, error) {

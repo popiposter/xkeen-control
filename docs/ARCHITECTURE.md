@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the **currently production-qualified architecture**. Slices A/B/C/C.1/D/D.1 are qualified; #4 and #5 are planned product evolution and must not be treated as deployed behavior. Detailed design for active work lives in the active GitHub issue.
+This document describes the **currently production-qualified architecture**. Slices A/B/C/C.1/D/D.1 are qualified; the Issue #81 D.2 G Setup boundary is source-only in this Draft PR, while the remaining #4 and #5 work must not be treated as deployed behavior. Detailed design for active work lives in the active GitHub issue.
 
 ## System goal
 
@@ -208,7 +208,7 @@ Current sequence after completed D.1 is:
 #5 typed visual routing/DNS/XKeen/Xray/panel configuration (planned)
 ```
 
-#4 component lifecycle and #5 visual configuration remain planned rather than deployed. The current authority model above is in force for adopted routers; the explicit repository-derived/legacy compatibility boundary remains in force before successful adoption.
+#4 component lifecycle and #5 visual configuration remain planned rather than deployed. Issue #81 is the source-only D.2 G Setup boundary described below; it does not change the production-qualified status of the current release. The current authority model above is in force for adopted routers; the explicit repository-derived/legacy compatibility boundary remains in force before successful adoption.
 
 ## Architecture invariants
 
