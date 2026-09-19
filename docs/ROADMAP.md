@@ -43,9 +43,9 @@ public source + signed GitHub Releases (#2, done)
         ↓
 local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
-managed XKeen / Xray / geodata lifecycle (#4, active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-F delivered through PRs #69/#71/#73/#75 and Issues #76/#78; D.2 G is the source-only Issue #81 Draft PR and remains unmerged/unqualified; one feature-complete candidate afterward)
+managed XKeen / Xray / geodata lifecycle (#4, active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-F delivered through PRs #69/#71/#73/#75 and Issues #76/#78; D.2 G merged source-only via #81/#82; one feature-complete candidate afterward)
         ↓
-visual typed configuration + transactional render/apply (#5, after #46 and D.2 G)
+visual typed configuration + transactional render/apply (#5, active source work begins with #83 after merged D.2 G)
 ```
 
 ## Delivery sequence
@@ -59,9 +59,9 @@ visual typed configuration + transactional render/apply (#5, after #46 and D.2 G
 | Pre-D — canonical Go module/import identity | Done | Issue #8 / PR #9 | Canonical `github.com/popiposter/xkeen-control` provenance; no runtime behavior change |
 | D — releases/bootstrap/panel self-update | Done | Issue #2 / `v0.1.1` | Public signed Releases, CI/release pipeline, one-command bootstrap, setup mode, transactional panel update/rollback |
 | D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
-| D.2 — component lifecycle | **Active — trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-F complete; G in source-only Draft PR #82** | Issue #4 / current `main` + live `v0.3.0-beta.2` trial | The prior Xray live pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the diagnostic source correction. Issue #81 adds typed fresh installation plus recognized takeover/convergence, including sole-writer and IPv4-only LAN/policy-scoped Hybrid interception ownership with owned-subset rollback, with no release/router/live qualification; G does not independently lead to a release |
+| D.2 — component lifecycle | **Active — trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-F complete; G merged source-only via #81/#82** | Issue #4 / current `main` + live `v0.3.0-beta.2` trial | The prior Xray live pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the diagnostic source correction. Issue #81 / PR #82 deliver typed fresh installation plus recognized takeover/convergence, sole-writer retirement and IPv4-only LAN/policy-scoped Hybrid interception ownership with owned-subset rollback. This remains source-only and does not independently lead to a release |
 | D.3 — foundation A-F (#46) | **Done source-only through Issue #78** | Issue #46 / #68 / #70 / #72 / #74 / #76 / #78 | Selection-first Nodes/atomic batch mutations, exact subscription reconciliation, bounded automatic subscription refresh, fixed one-node diagnostic performance, the single adaptive quality-switch path and the integrated automatic-quality operator UX/source qualification are complete; no release, router access or live qualification is implied |
-| D.3/#5 — remaining visual configuration | Later source scope | Issue #5 | Planned typed routing/DNS/XKeen/Xray/panel/performance UI and deterministic render/apply; not deployed |
+| D.3/#5 — remaining visual configuration | **Active — first child #83** | Issue #5 / #83 | #83 starts with a typed custom-routing policy broker that compiles only a bounded editable projection and reuses the D.1 settings-only transaction/recovery owner; visual Routing UI and broader DNS/Observatory/performance/system editors follow as separate children; not deployed |
 | E — notifications/security hardening | Planned after remaining D.3/#5 source | master issue #1 | Outbound alerts, management-VPN guidance, final attack-surface hardening |
 
 ## Pre-D / Issue #8 — complete
@@ -93,7 +93,7 @@ Safe export excludes secrets by default; secret-bearing export is explicit and e
 
 Pre-adoption compatibility is explicit: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit and unknown/manual drift fails closed.
 
-## D.2 / Issue #4 — active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered; #46 A-F complete, G next
+## D.2 / Issue #4 — active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered; #46 A-F complete; G merged source-only
 
 Phase A merged via PR #23 to `main` `bda9dd0cc7bb142a4cb1468811fff9b5146b1e8e`; source main gained the bounded read-only component inventory and authenticated `GET /api/v1/components` for panel, XKeen, Xray, geodata, KeeneticOS and Entware.
 
@@ -133,17 +133,19 @@ The simplicity decisions in [master issue #1](https://github.com/popiposter/xkee
 
 **Gate 3 and the initial Xray live pair are complete historical evidence.** The live router remains on trial `v0.3.0-beta.2`; production-qualified stable remains `v0.2.0` and its fresh rollback snapshot is retained. The Xray pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the #64 diagnostic source correction. Per operator sequencing, live qualification now pauses: no beta.3/publication/install and no further component mutation while the feature-complete source sequence is implemented and qualified offline.
 
-F3 is delivered by PR #67: bounded persisted `off|notify|manual` component policy with a check-only scheduler/notification hook. It must not introduce automatic component mutation. #46 A-F are delivered by PRs #69/#71/#73/#75 plus Issues #76/#78; D.2 G follows the complete #46 A-F source program: Setup Mode install using only already-qualified typed component primitives, without generic package/command/file surfaces or blanket `opkg upgrade`.
+F3 is delivered by PR #67: bounded persisted `off|notify|manual` component policy with a check-only scheduler/notification hook. It must not introduce automatic component mutation. #46 A-F are delivered by PRs #69/#71/#73/#75 plus Issues #76/#78. D.2 G is delivered source-only by Issue #81 / PR #82: typed Setup fresh/takeover convergence using qualified component primitives, with sole-writer retirement and source-owned Hybrid interception, without generic package/command/file surfaces or blanket `opkg upgrade`.
 
-The sequence is **#46 A-F foundation → D.2 G Setup Mode source → remaining D.3/#5 source → planned E notifications/security hardening → one feature-complete signed candidate plus integrated live qualification**. These source slices do not independently trigger release publication, router install or live qualification. Only after that integrated candidate is installed may live Xray/geodata/XKeen update+rollback qualification resume, restoring each component baseline before the next class and settling all component state before the original stable panel return.
+The sequence is **#46 A-F foundation → D.2 G Setup Mode source (merged #82) → remaining D.3/#5 source (active #83 first) → planned E notifications/security hardening → one feature-complete signed candidate plus integrated live qualification**. These source slices do not independently trigger release publication, router install or live qualification. Only after that integrated candidate is installed may live Xray/geodata/XKeen update+rollback qualification resume, restoring each component baseline before the next class and settling all component state before the original stable panel return.
 
 ## D.3 / Issue #46 foundation — Slices A-F delivered; not deployed
 
 PR #69 delivered Slice A (selection-first Nodes and atomic batch mutations). PR #71 delivered Slice B (exact subscription membership reconciliation). PR #73 delivered Slice C (bounded automatic subscription refresh with non-preemptive background admission). PR #75 delivered Slice D (fixed manual-node down/up diagnostics and bounded progress). Issue #76 delivers Slice E (fresh RTT shortlist, fixed down/up quality generation, deterministic scoring, hysteresis/dwell and the one Coordinator performance owner). Issue #78 delivers Slice F (integrated automatic-quality Overview/Nodes presentation, closed state/reason vocabulary, view-scoped performance polling, legacy-trigger retirement and source qualification). The #46 slices remain source-only and do not deploy to production; no release, router access or live qualification is implied.
 
-## After remaining D.3/#5 source
+## Remaining D.3/#5 source — active from #83
 
-After #46, D.2 G and the remaining D.3/#5 source scope, the planned product E adds outbound notifications and remote-management/security hardening without creating a remote command plane. The panel remains trusted-LAN/management-VPN only.
+Issue #83 is the first #5 child: a backend/API-only typed custom-routing policy broker over the existing appliance v1 authority. It keeps protected routing/balancer state source-owned, derives proxy-DNS domain additions server-side, and reuses the D.1 settings-only transaction/journal/recovery owner rather than creating a second settings transaction. Visual Routing UI and broader DNS/Observatory/performance/system editors follow as separate reviewed children.
+
+After the remaining D.3/#5 source scope, the planned product E adds outbound notifications and remote-management/security hardening without creating a remote command plane. The panel remains trusted-LAN/management-VPN only.
 
 ## Maintenance rule
 
