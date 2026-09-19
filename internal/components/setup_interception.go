@@ -28,10 +28,52 @@ const (
 	setupInterceptionIPv6Policy    = "disabled"
 	setupInterceptionDestination   = "exclude-local"
 
-	setupInterceptionHookMarker     = "xkeen-control-hybrid"
-	setupReviewedLegacyHookMarker   = "XKeen: Auto-generated file. DO NOT EDIT!"
-	setupReviewedLegacyScheduleMark = "XKeen: re-sync deny MAC ipset on schedule start/stop. Auto-generated. DO NOT EDIT!"
+	setupInterceptionHookMarker              = "xkeen-control-hybrid"
+	setupReviewedLegacyHookMarker            = "XKeen: Auto-generated file. DO NOT EDIT!"
+	setupReviewedLegacyScheduleMark          = "XKeen: re-sync deny MAC ipset on schedule start/stop. Auto-generated. DO NOT EDIT!"
+	reviewedUpstreamProxyHookCanonicalSHA256 = "0fe91ae7d5c1e86c0a50f9a5383912ef9bb2959a33f55e87807749ce3836ad2f"
 )
+
+// These are the exact dynamic assignments emitted by the reviewed upstream
+// S05 generator before its substantive proxy hook body. Values are runtime
+// state and are intentionally canonicalized, never trusted as identity.
+var reviewedLegacyProxyInjectedVariables = []string{
+	"name_client", "name_profile", "mode_proxy", "network_redirect", "network_tproxy", "networks",
+	"name_chain", "port_redirect", "port_tproxy", "port_dscp_force_proxy", "port_dscp_force_proxy_redirect",
+	"port_dscp_force_proxy_tproxy", "port_donor", "port_exclude", "policy_mark", "policy_mark_full",
+	"comment_tag", "comment", "custom_mark", "nfqws_mark", "dscp_exclude", "dscp_proxy", "dscp_force_proxy",
+	"dscp_force_proxy_tag", "mode_dscp_force_proxy", "network_dscp_force_proxy", "network_dscp_force_proxy_redirect",
+	"network_dscp_force_proxy_tproxy", "user_policies", "table_redirect", "table_tproxy", "table_mark", "table_id",
+	"file_dns", "arm_cpu", "file_ca", "proxy_dns", "proxy_router", "directory_configs_app", "directory_xray_config",
+	"directory_xray_asset", "iptables_supported", "ip6tables_supported", "arm64_fd", "other_fd", "aghfix", "ipv6_proxy",
+	"ipv4_proxy", "val_exclude_ip6", "val_exclude_ip4", "name_ipset_deny_mac", "url_server", "url_hotspot", "rci_token",
+	"ru_exclude_ipv4", "ru_exclude_ipv6", "gomemlimit_value", "killswitch",
+}
+
+var reviewedLegacyProxyFixedAssignments = map[string]string{
+	"name_client":           "xray",
+	"name_profile":          "xkeen",
+	"mode_proxy":            "Hybrid",
+	"network_redirect":      "tcp",
+	"network_tproxy":        "udp",
+	"networks":              "tcp udp",
+	"name_chain":            "xkeen",
+	"port_redirect":         "61219",
+	"port_tproxy":           "61219",
+	"comment_tag":           "xkeen_rule",
+	"table_redirect":        "nat",
+	"table_tproxy":          "mangle",
+	"table_mark":            "0x111",
+	"table_id":              "111",
+	"name_ipset_deny_mac":   "xkeen_deny_mac",
+	"url_server":            "127.0.0.1:79",
+	"url_hotspot":           "rci/show/ip/hotspot",
+	"ipv4_proxy":            "127.0.0.1",
+	"ipv6_proxy":            "::1",
+	"directory_configs_app": "/opt/etc/xray",
+	"directory_xray_config": "/opt/etc/xray/configs",
+	"directory_xray_asset":  "/opt/etc/xray/dat",
+}
 
 var (
 	ErrSetupInterceptionUnavailable = errors.New("setup interception owner is unavailable")
@@ -277,53 +319,116 @@ func validSetupHybridConfig(files map[string][]byte) bool {
 	return redirect && tproxy
 }
 
-func setupReviewedLegacyNetfilterHook(contents []byte) bool {
+// consumeReviewedLegacyAssignment accepts exactly the shell single-quoted
+// assignment emitted by inject_var in the reviewed upstream S05 generator.
+// The value may span lines (user_policies) and may contain only the reviewed
+// quoted-shell escape sequence for an embedded quote. It is replaced by its variable
+// name before the immutable hook fingerprint is calculated.
+func consumeReviewedLegacyAssignment(lines []string, index int, name string) (int, bool) {
+	if index >= len(lines) || !strings.HasPrefix(lines[index], name+"='") {
+		return index, false
+	}
+	fragment := strings.TrimPrefix(lines[index], name+"='")
+	for {
+		for position := 0; position < len(fragment); position++ {
+			if fragment[position] != '\'' {
+				continue
+			}
+			if position+3 < len(fragment) && fragment[position:position+4] == "'\\''" {
+				position += 3
+				continue
+			}
+			if position != len(fragment)-1 {
+				return index, false
+			}
+			return index + 1, true
+		}
+		index++
+		if index >= len(lines) {
+			return index, false
+		}
+		fragment = lines[index]
+	}
+}
+
+func reviewedLegacyProxyHookFingerprint(contents []byte) (string, bool) {
+	if len(contents) == 0 || len(contents) > setupMaxInterceptionBytes || bytes.IndexByte(contents, 0) >= 0 {
+		return "", false
+	}
 	text := strings.ReplaceAll(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\r", "\n")
-	if len(text) > setupMaxLifecycleBytes || !strings.HasPrefix(text, "#!/bin/sh\n# "+setupReviewedLegacyHookMarker+"\n") {
-		return false
+	if !strings.HasSuffix(text, "\n") {
+		return "", false
 	}
-	lines := strings.Split(text, "\n")
-	if len(lines) < 2 || lines[0] != "#!/bin/sh" || lines[1] != "# "+setupReviewedLegacyHookMarker {
-		return false
+	rawLines := strings.Split(text, "\n")
+	if len(rawLines) < 3 || rawLines[0] != "#!/bin/sh" || rawLines[1] != "# "+setupReviewedLegacyHookMarker {
+		return "", false
 	}
-	assignments := map[string]string{}
-	functions := map[string]bool{}
-	for _, line := range lines[2:] {
-		line = strings.TrimSpace(line)
-		if line == "" {
+
+	// The upstream generator removes comments and blank lines after the fixed
+	// two-line header. Mirror that exact generation step before parsing the
+	// dynamic assignment block and body.
+	lines := make([]string, 0, len(rawLines))
+	lines = append(lines, rawLines[0], rawLines[1])
+	for _, line := range rawLines[2:] {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		if strings.HasPrefix(line, "#") {
-			continue
-		}
-		if strings.HasSuffix(line, "() { :; }") {
-			name := strings.TrimSuffix(line, "() { :; }")
-			if name != "configure_firewall" && name != "clean_firewall" && name != "proxy_start" && name != "proxy_stop" {
-				return false
-			}
-			functions[name] = true
-			continue
-		}
-		if strings.HasPrefix(line, "file_netfilter_hook=") || strings.HasPrefix(line, "file_schedule_hook=") || strings.HasPrefix(line, "name_chain=") {
-			parts := strings.SplitN(line, "=", 2)
-			if len(parts) != 2 || parts[1] == "" || strings.ContainsAny(parts[1], "\\\"';&|$`()<>\t ") {
-				return false
-			}
-			if _, exists := assignments[parts[0]]; exists {
-				return false
-			}
-			assignments[parts[0]] = parts[1]
-			continue
-		}
-		if line == "iptables ip6tables iptables-restore ipset xkeen_rule XKEEN" {
-			continue
-		}
-		return false
+		lines = append(lines, line)
 	}
-	return assignments["file_netfilter_hook"] == "/opt/etc/ndm/netfilter.d/proxy.sh" &&
-		assignments["file_schedule_hook"] == "/opt/etc/ndm/schedule.d/00-xkeen-hotspot-sync.sh" &&
-		assignments["name_chain"] == "xkeen" &&
-		functions["configure_firewall"] && functions["clean_firewall"] && functions["proxy_start"] && functions["proxy_stop"]
+
+	canonical := make([]string, 0, len(lines))
+	canonical = append(canonical, lines[0], lines[1])
+	index := 2
+	for index < len(lines) && !strings.HasPrefix(lines[index], reviewedLegacyProxyInjectedVariables[0]+"='") {
+		canonical = append(canonical, lines[index])
+		index++
+	}
+	for _, name := range reviewedLegacyProxyInjectedVariables {
+		if expected, fixed := reviewedLegacyProxyFixedAssignments[name]; fixed && (index >= len(lines) || lines[index] != name+"='"+expected+"'") {
+			return "", false
+		}
+		var ok bool
+		index, ok = consumeReviewedLegacyAssignment(lines, index, name)
+		if !ok {
+			return "", false
+		}
+		canonical = append(canonical, "__REVIEWED_ASSIGN__:"+name)
+	}
+	if index >= len(lines) || lines[index] != "restart_script() {" {
+		return "", false
+	}
+
+	// user_policies is expanded into this heredoc by the upstream generator;
+	// the reviewed hook identity covers the generator-owned block, not the
+	// router's typed policy values. Keep the delimiters and canonicalize only
+	// that generated data region.
+	for index < len(lines) {
+		line := lines[index]
+		if strings.TrimSpace(line) == "done <<USER_POLICIES_EOF" {
+			canonical = append(canonical, line, "__REVIEWED_USER_POLICIES__")
+			index++
+			for index < len(lines) && strings.TrimSpace(lines[index]) != "USER_POLICIES_EOF" {
+				index++
+			}
+			if index >= len(lines) {
+				return "", false
+			}
+			canonical = append(canonical, lines[index])
+			index++
+			continue
+		}
+		canonical = append(canonical, line)
+		index++
+	}
+	canonicalBytes := []byte(strings.Join(canonical, "\n") + "\n")
+	digest := sha256.Sum256(canonicalBytes)
+	return hex.EncodeToString(digest[:]), true
+}
+
+func setupReviewedLegacyNetfilterHook(contents []byte) bool {
+	digest, ok := reviewedLegacyProxyHookFingerprint(contents)
+	return ok && digest == reviewedUpstreamProxyHookCanonicalSHA256
 }
 
 func setupReviewedLegacyScheduleHook(contents []byte) bool {

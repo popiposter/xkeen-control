@@ -3,6 +3,7 @@ package components
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"os"
@@ -11,9 +12,32 @@ import (
 	"testing"
 )
 
+// This fixture is generated from the exact reviewed upstream S05 generator at
+// reviewedUpstreamS05SourceCommit. It contains the real substantive proxy
+// body after the generator's comment/blank-line cleanup, with only sanitized
+// runtime assignments and an empty policy block.
+//
+//go:embed testdata/reviewed-upstream-proxy.sh
+var reviewedUpstreamProxyHookFixture []byte
+
+func TestReviewedLegacyHookFixtureBindsReviewedUpstreamS05(t *testing.T) {
+	if reviewedUpstreamS05SourceCommit != "da20a5e4d739101f951417754038acaee614631f" || reviewedUpstreamS05SourcePath != "scripts/_xkeen/02_install/07_install_register/04_register_init.sh" || reviewedUpstreamS05SHA256 != "6e2998bd8c471637ed4d0128eebc2d10bf72dc15b1600208601d70f0a1d0ee13" {
+		t.Fatalf("reviewed S05 identity drifted: commit=%s path=%s sha=%s", reviewedUpstreamS05SourceCommit, reviewedUpstreamS05SourcePath, reviewedUpstreamS05SHA256)
+	}
+	digest, ok := reviewedLegacyProxyHookFingerprint(reviewedUpstreamProxyHookFixture)
+	if !ok || digest != reviewedUpstreamProxyHookCanonicalSHA256 {
+		t.Fatalf("reviewed upstream proxy fixture fingerprint = %s ok=%v", digest, ok)
+	}
+}
+
 func reviewedLegacyInterceptionFixtures(t *testing.T, paths SetupPaths) ([]byte, []byte) {
 	t.Helper()
-	hook := []byte("#!/bin/sh\n# XKeen: Auto-generated file. DO NOT EDIT!\nfile_netfilter_hook=/opt/etc/ndm/netfilter.d/proxy.sh\nfile_schedule_hook=/opt/etc/ndm/schedule.d/00-xkeen-hotspot-sync.sh\nname_chain=xkeen\niptables ip6tables iptables-restore ipset xkeen_rule XKEEN\nconfigure_firewall() { :; }\nclean_firewall() { :; }\nproxy_start() { :; }\nproxy_stop() { :; }\n")
+	hook := append([]byte(nil), reviewedUpstreamProxyHookFixture...)
+	for _, marker := range [][]byte{[]byte("iptables-restore"), []byte("ipset"), []byte("configure_route()"), []byte("TPROXY")} {
+		if !bytes.Contains(hook, marker) {
+			t.Fatalf("reviewed upstream proxy fixture lacks substantive marker %q", marker)
+		}
+	}
 	schedule := []byte("#!/bin/sh\n# XKeen: re-sync deny MAC ipset on schedule start/stop. Auto-generated. DO NOT EDIT!\n[ \"$1\" = \"start\" ] || [ \"$1\" = \"stop\" ] || exit 0\n[ -x /opt/etc/ndm/netfilter.d/proxy.sh ] && /opt/etc/ndm/netfilter.d/proxy.sh\n")
 	if err := os.MkdirAll(filepath.Dir(paths.InterceptionHook), 0o700); err != nil {
 		t.Fatal(err)
@@ -188,8 +212,9 @@ func TestSetupReviewedLegacyHookRequiresClosedIdentity(t *testing.T) {
 	}
 	mutations := [][]byte{
 		append(append([]byte(nil), hook...), []byte("rm -rf /\n")...),
-		[]byte(strings.Replace(string(hook), "name_chain=xkeen", "name_chain=operator", 1)),
-		[]byte(strings.Replace(string(hook), "name_chain=xkeen\n", "name_chain=xkeen\nname_chain=xkeen\n", 1)),
+		[]byte(strings.Replace(string(hook), "name_chain='xkeen'", "name_chain_extra='xkeen'", 1)),
+		[]byte(strings.Replace(string(hook), "name_chain='xkeen'", "name_chain='xkeen'\nname_chain='xkeen'", 1)),
+		[]byte(strings.Replace(string(hook), "iptables-restore", "operator-restore", 1)),
 	}
 	for _, mutation := range mutations {
 		if err := os.WriteFile(paths.InterceptionHook, mutation, 0o700); err != nil {

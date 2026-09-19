@@ -503,7 +503,7 @@ func TestSetupFreshResourceAdmissionDoesNotReservePreviousSnapshot(t *testing.T)
 }
 
 func TestSetupReviewedLifecycleSizeBoundAdmitsCurrentUpstreamS05(t *testing.T) {
-	const currentUpstreamS05Bytes = 154485
+	const currentUpstreamS05Bytes = reviewedUpstreamS05SourceBytes
 	if int64(currentUpstreamS05Bytes) > setupMaxLifecycleBytes {
 		t.Fatalf("reviewed current upstream S05 exceeds lifecycle bound: size=%d bound=%d", currentUpstreamS05Bytes, setupMaxLifecycleBytes)
 	}

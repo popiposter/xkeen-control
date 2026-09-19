@@ -1956,8 +1956,11 @@ func setupKnownLifecycleLayout(paths SetupPaths) (bool, error) {
 }
 
 const (
-	reviewedUpstreamS05SHA256 = "6e2998bd8c471637ed4d0128eebc2d10bf72dc15b1600208601d70f0a1d0ee13"
-	reviewedUpstreamS24SHA256 = "4c6f3d8ddcc1e6fc37b8ff2cb577faf4382fcd7f2f8ef17c462c68e83dcdbcbf"
+	reviewedUpstreamS05SourceCommit = "da20a5e4d739101f951417754038acaee614631f"
+	reviewedUpstreamS05SourcePath   = "scripts/_xkeen/02_install/07_install_register/04_register_init.sh"
+	reviewedUpstreamS05SourceBytes  = 167803
+	reviewedUpstreamS05SHA256       = "6e2998bd8c471637ed4d0128eebc2d10bf72dc15b1600208601d70f0a1d0ee13"
+	reviewedUpstreamS24SHA256       = "4c6f3d8ddcc1e6fc37b8ff2cb577faf4382fcd7f2f8ef17c462c68e83dcdbcbf"
 )
 
 // IsReviewedSetupLifecycle is the closed identity predicate shared by Setup
