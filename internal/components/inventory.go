@@ -76,6 +76,7 @@ const (
 	KindXKeen      ComponentKind = "xkeen"
 	KindXray       ComponentKind = "xray"
 	KindGeodata    ComponentKind = "geodata"
+	KindSetup      ComponentKind = "setup"
 	KindKeeneticOS ComponentKind = "keeneticos"
 	KindEntware    ComponentKind = "entware"
 )

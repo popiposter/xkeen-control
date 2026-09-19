@@ -1,0 +1,114 @@
+package nodes
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+	"time"
+)
+
+func TestCommandActivatorVerifiesEmptySetupBaseline(t *testing.T) {
+	dir := t.TempDir()
+	active := filepath.Join(dir, "04_outbounds.json")
+	routing := filepath.Join(dir, "05_routing.json")
+	if err := os.WriteFile(active, []byte(`{"outbounds":[{"tag":"api"},{"tag":"block"},{"tag":"direct"},{"tag":"dns-out"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(routing, []byte(`{"routing":{"balancers":[{"tag":"bal-proxy","selector":["proxy-"],"strategy":{"type":"leastPing"}}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtimeCalls := 0
+	activator := CommandActivator{ActiveOutboundsPath: active, RoutingPath: routing, RuntimeVerifier: func(_ context.Context, _ string, balancer string, expected []string) error {
+		runtimeCalls++
+		if balancer != "bal-proxy" || len(expected) != 0 {
+			return errors.New("unexpected empty setup runtime request")
+		}
+		return nil
+	}}
+	if err := activator.VerifyEmptyOutboundTags(context.Background()); err != nil {
+		t.Fatalf("empty setup baseline rejected: %v", err)
+	}
+	if runtimeCalls != 1 {
+		t.Fatalf("runtime verifier calls = %d, want 1", runtimeCalls)
+	}
+
+	if err := os.WriteFile(active, []byte(`{"outbounds":[{"tag":"api"},{"tag":"block"},{"tag":"direct"},{"tag":"dns-out"},{"tag":"proxy-secret"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := activator.VerifyEmptyOutboundTags(context.Background()); err == nil {
+		t.Fatal("unexpected proxy outbound accepted for empty setup")
+	}
+}
+
+func TestCommandActivatorSetupLifecycleFallsBackToKnownLegacyInit(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("init-script execution fixture requires the Linux qualification environment")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "marker")
+	legacy := filepath.Join(dir, "S24xray")
+	if err := os.WriteFile(legacy, []byte("#!/bin/sh\nprintf '%s ' \"$1\" >> \"$XKEEN_SETUP_MARKER\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XKEEN_SETUP_MARKER", marker)
+	activator := CommandActivator{FixedLifecycleInit: filepath.Join(dir, "missing-S05xkeen"), LegacyLifecycleInit: legacy, SetupLifecycleIdentity: func(path string) bool { return path == legacy }, RestartTimeout: time.Second}
+	if err := activator.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := activator.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(marker)
+	if err != nil || string(contents) != "start stop " {
+		t.Fatalf("legacy setup lifecycle marker = %q, %v", contents, err)
+	}
+}
+
+func TestCommandActivatorRejectsUnreviewedPreTakeoverLifecycle(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("init-script execution fixture requires the Linux qualification environment")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "marker")
+	legacy := filepath.Join(dir, "S24xray")
+	if err := os.WriteFile(legacy, []byte("#!/bin/sh\nprintf executed > \"$XKEEN_SETUP_MARKER\"\n# xray start restart\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XKEEN_SETUP_MARKER", marker)
+	activator := CommandActivator{LegacyLifecycleInit: legacy, SetupLifecycleIdentity: func(path string) bool { return false }, RestartTimeout: time.Second}
+	if err := activator.Start(context.Background()); err == nil {
+		t.Fatal("unreviewed legacy lifecycle was executable")
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unreviewed lifecycle executed: %v", err)
+	}
+}
+
+func TestCommandActivatorDirectlyQuiescesReviewedLegacyWithoutExecutingScript(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("direct process quiesce fixture requires the Linux qualification environment")
+	}
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "marker")
+	legacy := filepath.Join(dir, "S24xray")
+	if err := os.WriteFile(legacy, []byte("#!/bin/sh\nprintf executed > \"$XKEEN_SETUP_MARKER\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XKEEN_SETUP_MARKER", marker)
+	activator := CommandActivator{
+		LegacyLifecycleInit:         legacy,
+		XrayBinary:                  filepath.Join(dir, "xray"),
+		SetupLifecycleIdentity:      func(path string) bool { return path == legacy },
+		SetupLifecycleDirectProcess: func(path string) bool { return path == legacy },
+		RestartTimeout:              time.Second,
+	}
+	if err := activator.Stop(context.Background()); err != nil {
+		t.Fatalf("direct legacy stop failed: %v", err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("reviewed legacy lifecycle executed during takeover: %v", err)
+	}
+}

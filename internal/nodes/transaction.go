@@ -336,17 +336,27 @@ func copyTree(source, destination string) error {
 }
 
 type CommandActivator struct {
-	XrayBinary            string
-	XrayAssetDir          string
-	XkeenBinary           string
-	FixedLifecycleInit    string
-	APIAddress            string
-	ActiveOutboundsPath   string
-	RoutingPath           string
-	RestartTimeout        time.Duration
-	RestartAttemptTimeout time.Duration
-	ReadyTimeout          time.Duration
-	RuntimeVerifier       func(context.Context, string, string, []string) error
+	XrayBinary          string
+	XrayAssetDir        string
+	ConfigDir           string
+	XkeenBinary         string
+	FixedLifecycleInit  string
+	LegacyLifecycleInit string
+	// SetupLifecycleIdentity is required for Setup-only start/stop selection.
+	// Ordinary Restart continues to use the installed fixed lifecycle contract;
+	// Setup must never execute an unqualified pre-takeover init as root.
+	SetupLifecycleIdentity func(string) bool
+	// SetupLifecycleDirectProcess marks a reviewed legacy lifecycle whose
+	// foreign script must not be executed during takeover. Setup uses the
+	// fixed Xray process path instead.
+	SetupLifecycleDirectProcess func(string) bool
+	APIAddress                  string
+	ActiveOutboundsPath         string
+	RoutingPath                 string
+	RestartTimeout              time.Duration
+	RestartAttemptTimeout       time.Duration
+	ReadyTimeout                time.Duration
+	RuntimeVerifier             func(context.Context, string, string, []string) error
 }
 
 func (a CommandActivator) ValidateCandidate(ctx context.Context, configDir string) error {
@@ -417,6 +427,197 @@ func (a CommandActivator) Restart(ctx context.Context) error {
 	return errors.New("Xray restart failed")
 }
 
+// Start is the setup-only lifecycle entry point. Ordinary update/rollback
+// callers continue to use Restart, which preserves their existing fallback
+// contract. Fresh Setup owns one fixed start after all candidates have been
+// durably committed and must not silently turn that start into a restart.
+func (a CommandActivator) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lifecycle := a.setupLifecyclePath()
+	if lifecycle == "" {
+		return errors.New("Xray start failed")
+	}
+	timeout := a.RestartTimeout
+	if timeout <= 0 {
+		timeout = 45 * time.Second
+	}
+	startContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if err := a.runSetupLifecycle(startContext, lifecycle, "start"); err != nil {
+		return errors.New("Xray start failed")
+	}
+	return nil
+}
+
+func (a CommandActivator) Stop(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lifecycle := a.setupLifecyclePath()
+	if lifecycle == "" {
+		return errors.New("Xray stop failed")
+	}
+	timeout := a.RestartTimeout
+	if timeout <= 0 {
+		timeout = 45 * time.Second
+	}
+	stopContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if err := a.runSetupLifecycle(stopContext, lifecycle, "stop"); err != nil {
+		return errors.New("Xray stop failed")
+	}
+	return nil
+}
+
+func (a CommandActivator) setupLifecyclePath() string {
+	if a.SetupLifecycleIdentity == nil {
+		return ""
+	}
+	if a.FixedLifecycleInit != "" {
+		if a.SetupLifecycleIdentity(a.FixedLifecycleInit) {
+			return a.FixedLifecycleInit
+		}
+	}
+	if a.LegacyLifecycleInit != "" {
+		if a.SetupLifecycleIdentity(a.LegacyLifecycleInit) {
+			return a.LegacyLifecycleInit
+		}
+	}
+	return ""
+}
+
+func (a CommandActivator) runSetupLifecycle(ctx context.Context, path, action string) error {
+	if a.SetupLifecycleDirectProcess != nil && a.SetupLifecycleDirectProcess(path) {
+		return a.runDirectSetupLifecycle(ctx, action)
+	}
+	setup := a
+	setup.FixedLifecycleInit = path
+	return setup.runFixedLifecycle(ctx, action)
+}
+
+func (a CommandActivator) runDirectSetupLifecycle(ctx context.Context, action string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if action != "start" && action != "stop" && action != "restart" && action != "status" {
+		return errors.New("Xray lifecycle action failed")
+	}
+	if a.XrayBinary == "" {
+		a.XrayBinary = "xray"
+	}
+	switch action {
+	case "stop":
+		return a.stopManagedXray(ctx)
+	case "restart":
+		if err := a.stopManagedXray(ctx); err != nil {
+			return err
+		}
+		return a.startManagedXray(ctx)
+	case "status":
+		if len(managedXrayPIDs(ctx, a.XrayBinary)) == 0 {
+			return errors.New("Xray is not running")
+		}
+		return nil
+	default:
+		return a.startManagedXray(ctx)
+	}
+}
+
+func (a CommandActivator) startManagedXray(ctx context.Context) error {
+	if len(managedXrayPIDs(ctx, a.XrayBinary)) != 0 {
+		return nil
+	}
+	configDir := a.ConfigDir
+	if configDir == "" && a.ActiveOutboundsPath != "" {
+		configDir = filepath.Dir(a.ActiveOutboundsPath)
+	}
+	if configDir == "" {
+		configDir = "/opt/etc/xray/configs"
+	}
+	command := exec.Command(a.XrayBinary, "run", "-confdir", configDir)
+	command.Env = xrayEnvironment(a.XrayAssetDir)
+	command.Env = xkeenForegroundEnvironmentFor(command.Env)
+	command.Stdout = io.Discard
+	command.Stderr = io.Discard
+	if err := command.Start(); err != nil {
+		return errors.New("Xray start failed")
+	}
+	go func() { _ = command.Wait() }()
+	deadline := time.NewTicker(100 * time.Millisecond)
+	defer deadline.Stop()
+	for {
+		if len(managedXrayPIDs(ctx, a.XrayBinary)) != 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return errors.New("Xray start failed")
+		case <-deadline.C:
+		}
+	}
+}
+
+func (a CommandActivator) stopManagedXray(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	terminate := managedXrayPIDs(ctx, a.XrayBinary)
+	for pid := range terminate {
+		_ = signalXrayPID(pid, false)
+	}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			for pid := range managedXrayPIDs(context.Background(), a.XrayBinary) {
+				_ = signalXrayPID(pid, true)
+			}
+			return errors.New("Xray stop failed")
+		}
+		if len(managedXrayPIDs(ctx, a.XrayBinary)) == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			for pid := range managedXrayPIDs(context.Background(), a.XrayBinary) {
+				_ = signalXrayPID(pid, true)
+			}
+			return errors.New("Xray stop failed")
+		case <-ticker.C:
+		}
+	}
+}
+
+func (a CommandActivator) VerifyStopped(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timeout := a.RestartAttemptTimeout
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+	verifyContext, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if len(xrayPIDSet(verifyContext)) == 0 && !a.apiReachable(verifyContext) {
+			return nil
+		}
+		select {
+		case <-verifyContext.Done():
+			return errors.New("Xray stop could not be proven")
+		case <-ticker.C:
+		}
+	}
+}
+
+func (a CommandActivator) Verify(ctx context.Context, expected []string) error {
+	return a.VerifyOutboundTags(ctx, expected)
+}
+
 func (a CommandActivator) restartViaFixedInit(ctx context.Context) error {
 	info, err := os.Lstat(a.FixedLifecycleInit)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
@@ -448,8 +649,31 @@ func (a CommandActivator) restartViaFixedInit(ctx context.Context) error {
 }
 
 func (a CommandActivator) runFixedLifecycle(ctx context.Context, action string) error {
-	if action != "restart" && action != "start" || a.FixedLifecycleInit == "" {
+	if action != "restart" && action != "start" && action != "stop" && action != "status" || a.FixedLifecycleInit == "" {
 		return errors.New("Xray restart failed")
+	}
+	if action == "stop" || action == "status" {
+		command := exec.Command(a.FixedLifecycleInit, action, "on")
+		command.Env = xkeenForegroundEnvironment()
+		command.Stdout = io.Discard
+		command.Stderr = io.Discard
+		configureCommandProcessGroup(command)
+		if err := command.Start(); err != nil {
+			return errors.New("Xray restart failed")
+		}
+		done := make(chan error, 1)
+		go func() { done <- command.Wait() }()
+		select {
+		case err := <-done:
+			if err != nil {
+				return errors.New("Xray restart failed")
+			}
+			return nil
+		case <-ctx.Done():
+			killCommandProcessGroup(command)
+			drainCommand(done)
+			return errors.New("Xray restart failed")
+		}
 	}
 	previousPIDs := xrayPIDSet(ctx)
 	command := exec.Command(a.FixedLifecycleInit, action, "on")
@@ -483,6 +707,19 @@ func (a CommandActivator) runFixedLifecycle(ctx context.Context, action string) 
 			return errors.New("Xray restart failed")
 		}
 	}
+}
+
+func (a CommandActivator) apiReachable(ctx context.Context) bool {
+	address := a.APIAddress
+	if address == "" {
+		address = "127.0.0.1:10085"
+	}
+	connection, err := (&net.Dialer{Timeout: 150 * time.Millisecond}).DialContext(ctx, "tcp", address)
+	if err != nil {
+		return false
+	}
+	_ = connection.Close()
+	return true
 }
 
 func (a CommandActivator) runXkeenLifecycle(ctx context.Context, action string) error {
@@ -571,6 +808,10 @@ func xrayPIDSet(ctx context.Context) map[string]struct{} {
 
 func xkeenForegroundEnvironment() []string {
 	environment := os.Environ()
+	return xkeenForegroundEnvironmentFor(environment)
+}
+
+func xkeenForegroundEnvironmentFor(environment []string) []string {
 	const foreground = "XKEEN_FOREGROUND=1"
 	for index, entry := range environment {
 		if strings.HasPrefix(entry, "XKEEN_FOREGROUND=") {
@@ -656,6 +897,56 @@ func (a CommandActivator) VerifyOutboundTags(ctx context.Context, expected []str
 	return nil
 }
 
+// VerifyEmptyOutboundTags is intentionally separate from VerifyOutboundTags.
+// The ordinary update/node contract rejects an empty expected set; Setup Mode
+// proves the fixed empty-registry baseline through this narrower method.
+func (a CommandActivator) VerifyEmptyOutboundTags(ctx context.Context) error {
+	if a.ActiveOutboundsPath == "" {
+		return errors.New("active outbound artifact unavailable")
+	}
+	contents, err := ReadBoundedFile(a.ActiveOutboundsPath, MaxLegacyDocument)
+	if err != nil {
+		return errors.New("active outbound artifact unavailable")
+	}
+	var document struct {
+		Outbounds []struct {
+			Tag string `json:"tag"`
+		} `json:"outbounds"`
+	}
+	if err := json.Unmarshal(contents, &document); err != nil {
+		return errors.New("active outbound artifact is invalid")
+	}
+	allowed := map[string]struct{}{"api": {}, "block": {}, "direct": {}, "dns-out": {}}
+	seen := make(map[string]struct{}, len(document.Outbounds))
+	for _, outbound := range document.Outbounds {
+		if _, ok := allowed[outbound.Tag]; !ok {
+			return errors.New("empty-registry outbound artifact contains an unexpected tag")
+		}
+		if _, ok := seen[outbound.Tag]; ok {
+			return errors.New("empty-registry outbound artifact contains a duplicate tag")
+		}
+		seen[outbound.Tag] = struct{}{}
+	}
+	if len(seen) != len(allowed) {
+		return errors.New("empty-registry outbound artifact is incomplete")
+	}
+	routingPath := a.RoutingPath
+	if routingPath == "" {
+		routingPath = filepath.Join(filepath.Dir(a.ActiveOutboundsPath), "05_routing.json")
+	}
+	if err := verifyEmptyBalancerSelector(routingPath, "bal-proxy"); err != nil {
+		return err
+	}
+	verifyRuntime := a.RuntimeVerifier
+	if verifyRuntime == nil {
+		verifyRuntime = verifyEmptyXrayBalancerRuntime
+	}
+	if err := verifyRuntime(ctx, a.APIAddress, "bal-proxy", nil); err != nil {
+		return errors.New("active Xray balancer does not expose the empty-registry baseline")
+	}
+	return nil
+}
+
 func verifyBalancerSelector(path, balancerTag string, expected []string) error {
 	contents, err := ReadBoundedFile(path, MaxLegacyDocument)
 	if err != nil {
@@ -705,6 +996,41 @@ func verifyBalancerSelector(path, balancerTag string, expected []string) error {
 	return nil
 }
 
+func verifyEmptyBalancerSelector(path, balancerTag string) error {
+	contents, err := ReadBoundedFile(path, MaxLegacyDocument)
+	if err != nil {
+		return errors.New("active routing policy unavailable")
+	}
+	var document struct {
+		Routing struct {
+			Balancers []struct {
+				Tag      string   `json:"tag"`
+				Selector []string `json:"selector"`
+				Strategy struct {
+					Type string `json:"type"`
+				} `json:"strategy"`
+			} `json:"balancers"`
+		} `json:"routing"`
+	}
+	if json.Unmarshal(contents, &document) != nil {
+		return errors.New("active routing policy is invalid")
+	}
+	found := 0
+	for _, balancer := range document.Routing.Balancers {
+		if balancer.Tag != balancerTag {
+			continue
+		}
+		found++
+		if !strings.EqualFold(balancer.Strategy.Type, "leastPing") || len(balancer.Selector) != 1 || balancer.Selector[0] != "proxy-" {
+			return errors.New("empty-registry balancer selector contract is invalid")
+		}
+	}
+	if found != 1 {
+		return errors.New("empty-registry balancer selector contract is unavailable")
+	}
+	return nil
+}
+
 func verifyXrayBalancerRuntime(ctx context.Context, address, balancerTag string, expected []string) error {
 	verifyContext, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
@@ -742,4 +1068,22 @@ func validBalancerRuntime(runtime xrayapi.BalancerRuntime, expected []string) bo
 		}
 	}
 	return true
+}
+
+func verifyEmptyXrayBalancerRuntime(ctx context.Context, address, balancerTag string, _ []string) error {
+	verifyContext, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		runtime, err := xrayapi.ReadBalancerRuntime(verifyContext, address, balancerTag, 3*time.Second)
+		if err == nil && len(runtime.PrincipleTargets) == 0 && runtime.Override == "" {
+			return nil
+		}
+		select {
+		case <-verifyContext.Done():
+			return errors.New("empty-registry Xray balancer runtime unavailable")
+		case <-ticker.C:
+		}
+	}
 }
