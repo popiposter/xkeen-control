@@ -14,7 +14,6 @@ _xkeen_secure_rundir() {
 _xkeen_rundir=$(_xkeen_secure_rundir) || exit 1
 [ -f "$_xkeen_rundir/ready" ] || exit 0
 case "${table:-}" in filter|raw) exit 0 ;; esac
-EOL
 name_client='xray'
 name_profile='xkeen'
 mode_proxy='Hybrid'

@@ -31,7 +31,7 @@ const (
 	setupInterceptionHookMarker              = "xkeen-control-hybrid"
 	setupReviewedLegacyHookMarker            = "XKeen: Auto-generated file. DO NOT EDIT!"
 	setupReviewedLegacyScheduleMark          = "XKeen: re-sync deny MAC ipset on schedule start/stop. Auto-generated. DO NOT EDIT!"
-	reviewedUpstreamProxyHookCanonicalSHA256 = "0fe91ae7d5c1e86c0a50f9a5383912ef9bb2959a33f55e87807749ce3836ad2f"
+	reviewedUpstreamProxyHookCanonicalSHA256 = "a4a68d2dcf943d313b9e104d0a8dd1b58443da1a24fef915ccd8f6ade16a70cc"
 )
 
 // These are the exact dynamic assignments emitted by the reviewed upstream

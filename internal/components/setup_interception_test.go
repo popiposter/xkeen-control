@@ -13,9 +13,11 @@ import (
 )
 
 // This fixture is generated from the exact reviewed upstream S05 generator at
-// reviewedUpstreamS05SourceCommit. It contains the real substantive proxy
-// body after the generator's comment/blank-line cleanup, with only sanitized
-// runtime assignments and an empty policy block.
+// reviewedUpstreamS05SourceCommit. It contains the emitted substantive proxy
+// hook after generator-only injection calls have been materialized as
+// assignments, the outer EOL delimiter has been omitted, and comment/blank-
+// line cleanup has been applied, with only sanitized runtime assignments and
+// an empty policy block.
 //
 //go:embed testdata/reviewed-upstream-proxy.sh
 var reviewedUpstreamProxyHookFixture []byte
@@ -23,6 +25,11 @@ var reviewedUpstreamProxyHookFixture []byte
 func TestReviewedLegacyHookFixtureBindsReviewedUpstreamS05(t *testing.T) {
 	if reviewedUpstreamS05SourceCommit != "da20a5e4d739101f951417754038acaee614631f" || reviewedUpstreamS05SourcePath != "scripts/_xkeen/02_install/07_install_register/04_register_init.sh" || reviewedUpstreamS05SHA256 != "6e2998bd8c471637ed4d0128eebc2d10bf72dc15b1600208601d70f0a1d0ee13" {
 		t.Fatalf("reviewed S05 identity drifted: commit=%s path=%s sha=%s", reviewedUpstreamS05SourceCommit, reviewedUpstreamS05SourcePath, reviewedUpstreamS05SHA256)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(string(reviewedUpstreamProxyHookFixture), "\n"), "\n") {
+		if line == "EOL" || line == "SCHEDULE_EOL" || strings.HasPrefix(line, "cat > ") || strings.HasPrefix(line, "inject_var ") {
+			t.Fatalf("reviewed upstream proxy fixture contains generator-only syntax %q", line)
+		}
 	}
 	digest, ok := reviewedLegacyProxyHookFingerprint(reviewedUpstreamProxyHookFixture)
 	if !ok || digest != reviewedUpstreamProxyHookCanonicalSHA256 {
