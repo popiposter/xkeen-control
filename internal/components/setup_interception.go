@@ -21,6 +21,12 @@ const (
 	setupInterceptionGeneration    = "hybrid-v1"
 	setupInterceptionPort          = 61219
 	setupMaxInterceptionBytes      = 256 << 10
+	setupInterceptionLANInterface  = "br0"
+	setupInterceptionMark          = "0x111/0xfff"
+	setupInterceptionTable         = "111"
+	setupInterceptionPriority      = "111"
+	setupInterceptionIPv6Policy    = "disabled"
+	setupInterceptionDestination   = "exclude-local"
 
 	setupInterceptionHookMarker     = "xkeen-control-hybrid"
 	setupReviewedLegacyHookMarker   = "XKeen: Auto-generated file. DO NOT EDIT!"
@@ -36,11 +42,21 @@ var (
 // create. It is deliberately a closed value: there is no caller-selected
 // command, table, chain, port, mark, or policy field.
 type SetupInterceptionGeneration struct {
-	SchemaVersion   int          `json:"schemaVersion"`
-	Owner           string       `json:"owner"`
-	Generation      string       `json:"generation"`
-	TCPRedirectPort int          `json:"tcpRedirectPort"`
-	UDP             TProxyTarget `json:"udpTproxy"`
+	SchemaVersion   int                    `json:"schemaVersion"`
+	Owner           string                 `json:"owner"`
+	Generation      string                 `json:"generation"`
+	Scope           SetupInterceptionScope `json:"scope"`
+	TCPRedirectPort int                    `json:"tcpRedirectPort"`
+	UDP             TProxyTarget           `json:"udpTproxy"`
+}
+
+// SetupInterceptionScope is the one server-owned Keenetic client scope. The
+// values are fixed product policy, not request data: br0 is the typed LAN
+// bridge, LOCAL destinations are excluded, and IPv6 interception stays off.
+type SetupInterceptionScope struct {
+	Interface         string `json:"interface"`
+	DestinationPolicy string `json:"destinationPolicy"`
+	IPv6Policy        string `json:"ipv6Policy"`
 }
 
 // TProxyTarget is a typed description of the fixed UDP flow. It is not a
@@ -54,10 +70,11 @@ type TProxyTarget struct {
 // SetupInterceptionPlan is the safe Preview projection of the target data
 // plane. It exposes only the two fixed flows and the source-owned owner.
 type SetupInterceptionPlan struct {
-	Owner           string `json:"owner"`
-	Generation      string `json:"generation"`
-	TCPRedirectPort int    `json:"tcpRedirectPort"`
-	UDPTProxyPort   int    `json:"udpTproxyPort"`
+	Owner           string                 `json:"owner"`
+	Generation      string                 `json:"generation"`
+	Scope           SetupInterceptionScope `json:"scope"`
+	TCPRedirectPort int                    `json:"tcpRedirectPort"`
+	UDPTProxyPort   int                    `json:"udpTproxyPort"`
 }
 
 // SetupInterceptionEvidence is bounded, typed pre-state. It never contains
@@ -72,6 +89,9 @@ type SetupInterceptionEvidence struct {
 	LegacySchedule bool   `json:"legacySchedule"`
 	LegacyRules    bool   `json:"legacyRules"`
 	LegacyIPSets   bool   `json:"legacyIpSets"`
+	LANScoped      bool   `json:"lanScoped"`
+	PolicyRouting  bool   `json:"policyRouting"`
+	IPv6Disabled   bool   `json:"ipv6Disabled"`
 	Complete       bool   `json:"complete"`
 	Digest         string `json:"digest"`
 }
@@ -94,6 +114,7 @@ func setupHybridInterceptionGeneration() SetupInterceptionGeneration {
 		SchemaVersion:   setupInterceptionSchemaVersion,
 		Owner:           setupInterceptionOwner,
 		Generation:      setupInterceptionGeneration,
+		Scope:           SetupInterceptionScope{Interface: setupInterceptionLANInterface, DestinationPolicy: setupInterceptionDestination, IPv6Policy: setupInterceptionIPv6Policy},
 		TCPRedirectPort: setupInterceptionPort,
 		UDP:             TProxyTarget{Protocol: "udp", Action: "tproxy", Port: setupInterceptionPort},
 	}
@@ -103,12 +124,13 @@ func validSetupInterceptionGeneration(generation SetupInterceptionGeneration) bo
 	return generation.SchemaVersion == setupInterceptionSchemaVersion &&
 		generation.Owner == setupInterceptionOwner &&
 		generation.Generation == setupInterceptionGeneration &&
+		generation.Scope.Interface == setupInterceptionLANInterface && generation.Scope.DestinationPolicy == setupInterceptionDestination && generation.Scope.IPv6Policy == setupInterceptionIPv6Policy &&
 		generation.TCPRedirectPort == setupInterceptionPort &&
 		generation.UDP.Protocol == "udp" && generation.UDP.Action == "tproxy" && generation.UDP.Port == setupInterceptionPort
 }
 
 func setupInterceptionPlan(generation SetupInterceptionGeneration) SetupInterceptionPlan {
-	return SetupInterceptionPlan{Owner: generation.Owner, Generation: generation.Generation, TCPRedirectPort: generation.TCPRedirectPort, UDPTProxyPort: generation.UDP.Port}
+	return SetupInterceptionPlan{Owner: generation.Owner, Generation: generation.Generation, Scope: generation.Scope, TCPRedirectPort: generation.TCPRedirectPort, UDPTProxyPort: generation.UDP.Port}
 }
 
 func setupInterceptionEvidenceDigest(evidence SetupInterceptionEvidence) string {
@@ -129,13 +151,13 @@ func validSetupInterceptionEvidence(evidence SetupInterceptionEvidence) bool {
 		return false
 	}
 	if evidence.Owner == "" {
-		return evidence.Generation == "" && !evidence.Complete && !evidence.LegacyHook && !evidence.LegacySchedule && !evidence.LegacyRules && !evidence.LegacyIPSets && !evidence.TCPRedirect && !evidence.UDPTProxy
+		return evidence.Generation == "" && !evidence.Complete && !evidence.LegacyHook && !evidence.LegacySchedule && !evidence.LegacyRules && !evidence.LegacyIPSets && !evidence.TCPRedirect && !evidence.UDPTProxy && !evidence.LANScoped && !evidence.PolicyRouting && !evidence.IPv6Disabled
 	}
 	if evidence.Owner == setupInterceptionOwner {
-		return evidence.Generation == setupInterceptionGeneration && evidence.Complete && evidence.TCPRedirect && evidence.UDPTProxy && !evidence.LegacyHook && !evidence.LegacySchedule && !evidence.LegacyRules && !evidence.LegacyIPSets
+		return evidence.Generation == setupInterceptionGeneration && evidence.Complete && evidence.TCPRedirect && evidence.UDPTProxy && evidence.LANScoped && evidence.PolicyRouting && evidence.IPv6Disabled && !evidence.LegacyHook && !evidence.LegacySchedule && !evidence.LegacyRules && !evidence.LegacyIPSets
 	}
 	if evidence.Owner == "xkeen-legacy" {
-		return evidence.Generation == "" && !evidence.Complete && !evidence.TCPRedirect && !evidence.UDPTProxy && (evidence.LegacyHook || evidence.LegacySchedule || evidence.LegacyRules || evidence.LegacyIPSets)
+		return evidence.Generation == "" && !evidence.Complete && !evidence.TCPRedirect && !evidence.UDPTProxy && !evidence.LANScoped && !evidence.PolicyRouting && !evidence.IPv6Disabled && (evidence.LegacyHook || evidence.LegacySchedule || evidence.LegacyRules || evidence.LegacyIPSets)
 	}
 	return false
 }
@@ -178,32 +200,35 @@ func parseSetupInterceptionSnapshot(contents []byte) (SetupInterceptionEvidence,
 // exact jump, and exact policy-routing entries. It does not flush a built-in
 // chain or inspect/delete unrelated router firewall state.
 const setupSourceOwnedHybridHook = `#!/bin/sh
-# xkeen-control-hybrid v1; source-owned; fixed TCP redirect + UDP TProxy
+# xkeen-control-hybrid v1; source-owned; fixed LAN-only TCP redirect + UDP TProxy
 set -eu
 
-apply_family() {
+ensure_jump() {
   family="$1"
-  on_ip="$2"
-  "$family" -t nat -N XKEEN_CONTROL_HYBRID 2>/dev/null || true
-  "$family" -t nat -F XKEEN_CONTROL_HYBRID
-  "$family" -t nat -A XKEEN_CONTROL_HYBRID -p tcp -m comment --comment xkeen-control-hybrid -j REDIRECT --to-ports 61219
-  "$family" -t nat -C PREROUTING -p tcp -m comment --comment xkeen-control-hybrid -j XKEEN_CONTROL_HYBRID 2>/dev/null || "$family" -t nat -A PREROUTING -p tcp -m comment --comment xkeen-control-hybrid -j XKEEN_CONTROL_HYBRID
-
-  "$family" -t mangle -N XKEEN_CONTROL_HYBRID 2>/dev/null || true
-  "$family" -t mangle -F XKEEN_CONTROL_HYBRID
-  "$family" -t mangle -A XKEEN_CONTROL_HYBRID -p udp -m socket -m comment --comment xkeen-control-hybrid -j MARK --set-mark 0x111/0xfff
-  "$family" -t mangle -A XKEEN_CONTROL_HYBRID -p udp -m comment --comment xkeen-control-hybrid -j TPROXY --on-ip "$on_ip" --on-port 61219 --tproxy-mark 0x111/0xfff
-  "$family" -t mangle -C PREROUTING -p udp -m comment --comment xkeen-control-hybrid -j XKEEN_CONTROL_HYBRID 2>/dev/null || "$family" -t mangle -A PREROUTING -p udp -m comment --comment xkeen-control-hybrid -j XKEEN_CONTROL_HYBRID
+  table="$2"
+  shift 2
+  if ! "$family" -t "$table" -C "$@" >/dev/null 2>&1; then
+    "$family" -t "$table" -A "$@"
+  fi
 }
 
-apply_family iptables 0.0.0.0
-command -v ip6tables >/dev/null 2>&1 && apply_family ip6tables :: || true
-command -v ip >/dev/null 2>&1 && {
-  ip -4 rule add fwmark 0x111/0xfff table 111 pref 111 2>/dev/null || true
-  ip -4 route add local 0.0.0.0/0 dev lo table 111 2>/dev/null || true
-  ip -6 rule add fwmark 0x111/0xfff table 111 pref 111 2>/dev/null || true
-  ip -6 route add local ::/0 dev lo table 111 2>/dev/null || true
-}
+iptables -t nat -L XKEEN_CONTROL_HYBRID >/dev/null 2>&1 || iptables -t nat -N XKEEN_CONTROL_HYBRID
+iptables -t mangle -L XKEEN_CONTROL_HYBRID >/dev/null 2>&1 || iptables -t mangle -N XKEEN_CONTROL_HYBRID
+iptables -t nat -F XKEEN_CONTROL_HYBRID
+iptables -t mangle -F XKEEN_CONTROL_HYBRID
+iptables -t nat -A XKEEN_CONTROL_HYBRID -i br0 -m addrtype ! --dst-type LOCAL -p tcp -m comment --comment xkeen-control-hybrid -j REDIRECT --to-ports 61219
+iptables -t mangle -A XKEEN_CONTROL_HYBRID -i br0 -m addrtype ! --dst-type LOCAL -p udp -m socket --transparent -m comment --comment xkeen-control-hybrid -j MARK --set-mark 0x111/0xfff
+iptables -t mangle -A XKEEN_CONTROL_HYBRID -i br0 -m addrtype ! --dst-type LOCAL -p udp -m comment --comment xkeen-control-hybrid -j TPROXY --on-ip 0.0.0.0 --on-port 61219 --tproxy-mark 0x111/0xfff
+ensure_jump iptables nat PREROUTING -i br0 -m addrtype ! --dst-type LOCAL -p tcp -m comment --comment xkeen-control-hybrid -j XKEEN_CONTROL_HYBRID
+ensure_jump iptables mangle PREROUTING -i br0 -m addrtype ! --dst-type LOCAL -p udp -m comment --comment xkeen-control-hybrid -j XKEEN_CONTROL_HYBRID
+
+ip -4 link show dev br0 >/dev/null
+if ! ip -4 rule show | grep -F "fwmark 0x111/0xfff lookup 111" >/dev/null 2>&1; then
+  ip -4 rule add fwmark 0x111/0xfff table 111 pref 111
+fi
+if ! ip -4 route show table 111 | grep -F "local 0.0.0.0/0 dev lo" >/dev/null 2>&1; then
+  ip -4 route add local 0.0.0.0/0 dev lo table 111
+fi
 `
 
 const setupSourceOwnedScheduleHook = `#!/bin/sh
@@ -254,15 +279,51 @@ func validSetupHybridConfig(files map[string][]byte) bool {
 
 func setupReviewedLegacyNetfilterHook(contents []byte) bool {
 	text := strings.ReplaceAll(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\r", "\n")
-	return strings.HasPrefix(text, "#!/bin/sh\n# "+setupReviewedLegacyHookMarker) &&
-		strings.Contains(text, "file_netfilter_hook=") &&
-		strings.Contains(text, "file_schedule_hook=") &&
-		strings.Contains(text, "name_chain=") &&
-		strings.Contains(text, "iptables") && strings.Contains(text, "ip6tables") &&
-		strings.Contains(text, "iptables-restore") && strings.Contains(text, "ipset") &&
-		strings.Contains(text, "xkeen_rule") && strings.Contains(text, "configure_firewall()") &&
-		strings.Contains(text, "clean_firewall()") && strings.Contains(text, "proxy_start()") &&
-		strings.Contains(text, "proxy_stop()") && strings.Contains(text, "XKEEN")
+	if len(text) > setupMaxLifecycleBytes || !strings.HasPrefix(text, "#!/bin/sh\n# "+setupReviewedLegacyHookMarker+"\n") {
+		return false
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) < 2 || lines[0] != "#!/bin/sh" || lines[1] != "# "+setupReviewedLegacyHookMarker {
+		return false
+	}
+	assignments := map[string]string{}
+	functions := map[string]bool{}
+	for _, line := range lines[2:] {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasSuffix(line, "() { :; }") {
+			name := strings.TrimSuffix(line, "() { :; }")
+			if name != "configure_firewall" && name != "clean_firewall" && name != "proxy_start" && name != "proxy_stop" {
+				return false
+			}
+			functions[name] = true
+			continue
+		}
+		if strings.HasPrefix(line, "file_netfilter_hook=") || strings.HasPrefix(line, "file_schedule_hook=") || strings.HasPrefix(line, "name_chain=") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) != 2 || parts[1] == "" || strings.ContainsAny(parts[1], "\\\"';&|$`()<>\t ") {
+				return false
+			}
+			if _, exists := assignments[parts[0]]; exists {
+				return false
+			}
+			assignments[parts[0]] = parts[1]
+			continue
+		}
+		if line == "iptables ip6tables iptables-restore ipset xkeen_rule XKEEN" {
+			continue
+		}
+		return false
+	}
+	return assignments["file_netfilter_hook"] == "/opt/etc/ndm/netfilter.d/proxy.sh" &&
+		assignments["file_schedule_hook"] == "/opt/etc/ndm/schedule.d/00-xkeen-hotspot-sync.sh" &&
+		assignments["name_chain"] == "xkeen" &&
+		functions["configure_firewall"] && functions["clean_firewall"] && functions["proxy_start"] && functions["proxy_stop"]
 }
 
 func setupReviewedLegacyScheduleHook(contents []byte) bool {
@@ -295,18 +356,19 @@ func setupInterceptionFileKind(path string, expected, legacy func([]byte) bool) 
 }
 
 type setupInterceptionStateFile struct {
-	SchemaVersion   int    `json:"schemaVersion"`
-	Owner           string `json:"owner"`
-	Generation      string `json:"generation"`
-	TCPRedirectPort int    `json:"tcpRedirectPort"`
-	UDPTProxyPort   int    `json:"udpTproxyPort"`
+	SchemaVersion   int                    `json:"schemaVersion"`
+	Owner           string                 `json:"owner"`
+	Generation      string                 `json:"generation"`
+	Scope           SetupInterceptionScope `json:"scope"`
+	TCPRedirectPort int                    `json:"tcpRedirectPort"`
+	UDPTProxyPort   int                    `json:"udpTproxyPort"`
 }
 
 func setupInterceptionStateBytes(generation SetupInterceptionGeneration) ([]byte, error) {
 	if !validSetupInterceptionGeneration(generation) {
 		return nil, ErrSetupInterceptionConflict
 	}
-	contents, err := json.Marshal(setupInterceptionStateFile{SchemaVersion: setupInterceptionSchemaVersion, Owner: generation.Owner, Generation: generation.Generation, TCPRedirectPort: generation.TCPRedirectPort, UDPTProxyPort: generation.UDP.Port})
+	contents, err := json.Marshal(setupInterceptionStateFile{SchemaVersion: setupInterceptionSchemaVersion, Owner: generation.Owner, Generation: generation.Generation, Scope: generation.Scope, TCPRedirectPort: generation.TCPRedirectPort, UDPTProxyPort: generation.UDP.Port})
 	if err != nil {
 		return nil, ErrSetupInterceptionConflict
 	}
@@ -324,7 +386,7 @@ func parseSetupInterceptionState(contents []byte) (SetupInterceptionGeneration, 
 		return SetupInterceptionGeneration{}, ErrSetupInterceptionConflict
 	}
 	var extra any
-	if decoder.Decode(&extra) != io.EOF || state.Owner != setupInterceptionOwner || state.Generation != setupInterceptionGeneration || state.TCPRedirectPort != setupInterceptionPort || state.UDPTProxyPort != setupInterceptionPort {
+	if decoder.Decode(&extra) != io.EOF || state.Owner != setupInterceptionOwner || state.Generation != setupInterceptionGeneration || state.Scope != setupHybridInterceptionGeneration().Scope || state.TCPRedirectPort != setupInterceptionPort || state.UDPTProxyPort != setupInterceptionPort {
 		return SetupInterceptionGeneration{}, ErrSetupInterceptionConflict
 	}
 	return setupHybridInterceptionGeneration(), nil
@@ -390,6 +452,9 @@ func (o *fileHybridInterceptionOwner) Inspect(context.Context) (SetupInterceptio
 		evidence.Generation = setupInterceptionGeneration
 		evidence.TCPRedirect = true
 		evidence.UDPTProxy = true
+		evidence.LANScoped = true
+		evidence.PolicyRouting = true
+		evidence.IPv6Disabled = true
 		evidence.Complete = hookKind == "source" && scheduleKind == "source" && stateSource
 	}
 	return finalizeSetupInterceptionEvidence(evidence), nil
@@ -613,65 +678,525 @@ func runFixed(ctx context.Context, name string, args ...string) error {
 	return nil
 }
 
+type nativeOwnedChain struct {
+	Family string `json:"family"`
+	Table  string `json:"table"`
+	Name   string `json:"name"`
+}
+
+type nativeOwnedRule struct {
+	Family string   `json:"family"`
+	Table  string   `json:"table"`
+	Chain  string   `json:"chain"`
+	Args   []string `json:"args"`
+}
+
+type nativeOwnedIPSet struct {
+	Name       string     `json:"name"`
+	CreateArgs []string   `json:"createArgs"`
+	Entries    [][]string `json:"entries,omitempty"`
+}
+
+type nativeOwnedPolicyEntry struct {
+	Family string   `json:"family"`
+	Kind   string   `json:"kind"`
+	Args   []string `json:"args"`
+}
+
+// nativeOwnedInterception is deliberately an owned subset, never a save-file
+// image. Restore can therefore add/delete only these typed objects and leave
+// unrelated operator/Keenetic firewall state in place.
+type nativeOwnedInterception struct {
+	Chains []nativeOwnedChain       `json:"chains,omitempty"`
+	Rules  []nativeOwnedRule        `json:"rules,omitempty"`
+	IPSets []nativeOwnedIPSet       `json:"ipsets,omitempty"`
+	Policy []nativeOwnedPolicyEntry `json:"policy,omitempty"`
+}
+
 type nativeHybridSnapshot struct {
 	SchemaVersion int                       `json:"schemaVersion"`
 	Evidence      SetupInterceptionEvidence `json:"evidence"`
-	IPTables      []byte                    `json:"iptables,omitempty"`
-	IP6Tables     []byte                    `json:"ip6tables,omitempty"`
-	IPSets        []byte                    `json:"ipsets,omitempty"`
+	Owned         nativeOwnedInterception   `json:"owned"`
 }
 
-func inspectNativeRules(ctx context.Context) (SetupInterceptionEvidence, []byte, []byte, []byte, error) {
+type nativeInspection struct {
+	Evidence SetupInterceptionEvidence
+	Owned    nativeOwnedInterception
+}
+
+var reviewedLegacyIPSetNames = map[string]bool{
+	"xkeen_deny_mac": true,
+	"ext_exclude":    true,
+	"ext_exclude6":   true,
+	"geo_exclude":    true,
+	"geo_exclude6":   true,
+	"geo_override":   true,
+	"geo_override6":  true,
+	"user_exclude":   true,
+	"user_exclude6":  true,
+}
+
+func nativeTokenValid(value string) bool {
+	return value != "" && len(value) <= 256 && !strings.ContainsAny(value, "\x00\r\n;&|`$<>\\")
+}
+
+func nativeFamilyValid(value string) bool { return value == "iptables" || value == "ip6tables" }
+
+func nativeTableValid(value string) bool {
+	return value == "nat" || value == "mangle" || value == "filter" || value == "raw" || value == "security"
+}
+
+func validNativeOwned(owned nativeOwnedInterception) bool {
+	if len(owned.Chains) > 16 || len(owned.Rules) > 128 || len(owned.IPSets) > len(reviewedLegacyIPSetNames) || len(owned.Policy) > 8 {
+		return false
+	}
+	for _, chain := range owned.Chains {
+		if !nativeFamilyValid(chain.Family) || !nativeTableValid(chain.Table) || !nativeTokenValid(chain.Name) {
+			return false
+		}
+	}
+	for _, rule := range owned.Rules {
+		if !nativeFamilyValid(rule.Family) || !nativeTableValid(rule.Table) || !nativeTokenValid(rule.Chain) || len(rule.Args) == 0 || len(rule.Args) > 64 {
+			return false
+		}
+		for _, arg := range rule.Args {
+			if !nativeTokenValid(arg) {
+				return false
+			}
+		}
+	}
+	for _, set := range owned.IPSets {
+		if !reviewedLegacyIPSetNames[set.Name] || len(set.CreateArgs) == 0 || len(set.CreateArgs) > 32 || len(set.Entries) > 4096 {
+			return false
+		}
+		for _, arg := range set.CreateArgs {
+			if !nativeTokenValid(arg) {
+				return false
+			}
+		}
+		for _, entry := range set.Entries {
+			if len(entry) == 0 || len(entry) > 32 {
+				return false
+			}
+			for _, arg := range entry {
+				if !nativeTokenValid(arg) {
+					return false
+				}
+			}
+		}
+	}
+	for _, entry := range owned.Policy {
+		if (entry.Family != "ipv4" && entry.Family != "ipv6") || (entry.Kind != "rule" && entry.Kind != "route") || len(entry.Args) == 0 || len(entry.Args) > 16 {
+			return false
+		}
+		for _, arg := range entry.Args {
+			if !nativeTokenValid(arg) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func nativeArgsEqual(actual []string, expected ...string) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	for index := range actual {
+		got := strings.ToLower(strings.Trim(actual[index], "\"'"))
+		want := strings.ToLower(expected[index])
+		switch got {
+		case "--to-port":
+			got = "--to-ports"
+		case "--set-mark":
+			got = "--set-xmark"
+		}
+		if strings.HasPrefix(got, "0x111/0xfff/") {
+			got = "0x111/0xfff"
+		}
+		if got != want {
+			return false
+		}
+	}
+	return true
+}
+
+func nativeSourceRuleKind(table, chain string, args []string) string {
+	scope := []string{"-i", setupInterceptionLANInterface, "-m", "addrtype", "!", "--dst-type", "LOCAL"}
+	if table == "nat" && chain == "PREROUTING" && nativeArgsEqual(args, append(scope, "-p", "tcp", "-m", "comment", "--comment", setupInterceptionHookMarker, "-j", "XKEEN_CONTROL_HYBRID")...) {
+		return "nat-jump"
+	}
+	if table == "nat" && chain == "XKEEN_CONTROL_HYBRID" && nativeArgsEqual(args, append(scope, "-p", "tcp", "-m", "comment", "--comment", setupInterceptionHookMarker, "-j", "REDIRECT", "--to-ports", "61219")...) {
+		return "nat-rule"
+	}
+	if table == "mangle" && chain == "PREROUTING" && nativeArgsEqual(args, append(scope, "-p", "udp", "-m", "comment", "--comment", setupInterceptionHookMarker, "-j", "XKEEN_CONTROL_HYBRID")...) {
+		return "mangle-jump"
+	}
+	if table == "mangle" && chain == "XKEEN_CONTROL_HYBRID" && nativeArgsEqual(args, append(scope, "-p", "udp", "-m", "socket", "--transparent", "-m", "comment", "--comment", setupInterceptionHookMarker, "-j", "MARK", "--set-xmark", setupInterceptionMark)...) {
+		return "mark-rule"
+	}
+	if table == "mangle" && chain == "XKEEN_CONTROL_HYBRID" && nativeArgsEqual(args, append(scope, "-p", "udp", "-m", "comment", "--comment", setupInterceptionHookMarker, "-j", "TPROXY", "--on-ip", "0.0.0.0", "--on-port", "61219", "--tproxy-mark", setupInterceptionMark)...) {
+		return "tproxy-rule"
+	}
+	return ""
+}
+
+func nativeArgsContainMarker(args []string) bool {
+	for _, arg := range args {
+		if strings.EqualFold(strings.Trim(arg, "\"'"), setupInterceptionHookMarker) {
+			return true
+		}
+	}
+	return false
+}
+
+func nativeLegacyRule(args []string, chain string) bool {
+	if chain == "xkeen" || chain == "xkeen_force" {
+		return true
+	}
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == "-j" && (strings.EqualFold(args[index+1], "xkeen") || strings.EqualFold(args[index+1], "xkeen_force")) {
+			return true
+		}
+		if args[index] == "--comment" && strings.EqualFold(strings.Trim(args[index+1], "\"'"), "xkeen_rule") {
+			return true
+		}
+	}
+	return false
+}
+
+func nativeContainsXkeen(args []string) bool {
+	for _, arg := range args {
+		if strings.Contains(strings.ToLower(strings.Trim(arg, "\"'")), "xkeen") {
+			return true
+		}
+	}
+	return false
+}
+
+func appendNativeRule(owned *nativeOwnedInterception, family, table, chain string, args []string) {
+	owned.Rules = append(owned.Rules, nativeOwnedRule{Family: family, Table: table, Chain: chain, Args: append([]string(nil), args...)})
+}
+
+func appendNativeChain(owned *nativeOwnedInterception, family, table, name string) {
+	for _, existing := range owned.Chains {
+		if existing.Family == family && existing.Table == table && existing.Name == name {
+			return
+		}
+	}
+	owned.Chains = append(owned.Chains, nativeOwnedChain{Family: family, Table: table, Name: name})
+}
+
+func parseNativeIPTables(family string, contents []byte, owned *nativeOwnedInterception, source map[string]int, legacy *bool) error {
+	table := ""
+	for _, raw := range strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "*") {
+			table = strings.TrimPrefix(line, "*")
+			if !nativeTableValid(table) {
+				return ErrSetupInterceptionConflict
+			}
+			continue
+		}
+		if line == "COMMIT" {
+			table = ""
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 || table == "" {
+			return ErrSetupInterceptionConflict
+		}
+		if strings.HasPrefix(fields[0], ":") {
+			name := strings.TrimPrefix(fields[0], ":")
+			if name == "XKEEN_CONTROL_HYBRID" {
+				if family != "iptables" || (table != "nat" && table != "mangle") || len(fields) != 3 || fields[1] != "-" || fields[2] != "[0:0]" {
+					return ErrSetupInterceptionConflict
+				}
+				appendNativeChain(owned, family, table, name)
+				source[family+":"+table+":chain"]++
+				continue
+			}
+			if name == "xkeen" || name == "xkeen_force" {
+				if len(fields) != 3 || fields[1] != "-" || fields[2] != "[0:0]" {
+					return ErrSetupInterceptionConflict
+				}
+				appendNativeChain(owned, family, table, name)
+				*legacy = true
+				continue
+			}
+			if strings.Contains(strings.ToLower(name), "xkeen") {
+				return ErrSetupInterceptionConflict
+			}
+			continue
+		}
+		if fields[0] != "-A" || len(fields) < 3 || !nativeTokenValid(fields[1]) {
+			return ErrSetupInterceptionConflict
+		}
+		chain := fields[1]
+		args := fields[2:]
+		for _, arg := range args {
+			if !nativeTokenValid(arg) {
+				return ErrSetupInterceptionConflict
+			}
+		}
+		kind := nativeSourceRuleKind(table, chain, args)
+		if kind != "" {
+			if family != "iptables" {
+				return ErrSetupInterceptionConflict
+			}
+			if source[kind] != 0 {
+				return ErrSetupInterceptionConflict
+			}
+			source[kind]++
+			appendNativeRule(owned, family, table, chain, args)
+			continue
+		}
+		if chain == "XKEEN_CONTROL_HYBRID" || nativeArgsContainMarker(args) || strings.Contains(strings.ToLower(line), "xkeen_control_hybrid") {
+			return ErrSetupInterceptionConflict
+		}
+		if nativeLegacyRule(args, chain) {
+			appendNativeRule(owned, family, table, chain, args)
+			*legacy = true
+			continue
+		}
+		if nativeContainsXkeen(args) {
+			return ErrSetupInterceptionConflict
+		}
+	}
+	return nil
+}
+
+func parseNativeIPSets(contents []byte, owned *nativeOwnedInterception, legacy *bool) error {
+	setIndex := make(map[string]int)
+	for _, raw := range strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n") {
+		fields := strings.Fields(strings.TrimSpace(raw))
+		if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
+			continue
+		}
+		for _, field := range fields {
+			if !nativeTokenValid(field) {
+				return ErrSetupInterceptionConflict
+			}
+		}
+		switch fields[0] {
+		case "create":
+			if len(fields) < 3 {
+				return ErrSetupInterceptionConflict
+			}
+			name := fields[1]
+			if !reviewedLegacyIPSetNames[name] {
+				if strings.Contains(strings.ToLower(name), "xkeen") {
+					return ErrSetupInterceptionConflict
+				}
+				continue
+			}
+			if _, exists := setIndex[name]; exists {
+				return ErrSetupInterceptionConflict
+			}
+			setIndex[name] = len(owned.IPSets)
+			owned.IPSets = append(owned.IPSets, nativeOwnedIPSet{Name: name, CreateArgs: append([]string(nil), fields[2:]...)})
+			*legacy = true
+		case "add":
+			if len(fields) < 3 || !reviewedLegacyIPSetNames[fields[1]] {
+				if len(fields) > 1 && strings.Contains(strings.ToLower(fields[1]), "xkeen") {
+					return ErrSetupInterceptionConflict
+				}
+				continue
+			}
+			index, exists := setIndex[fields[1]]
+			if !exists {
+				return ErrSetupInterceptionConflict
+			}
+			owned.IPSets[index].Entries = append(owned.IPSets[index].Entries, append([]string(nil), fields[2:]...))
+		default:
+			if strings.Contains(strings.ToLower(fields[0]), "xkeen") {
+				return ErrSetupInterceptionConflict
+			}
+		}
+	}
+	return nil
+}
+
+func nativePolicyExact(contents []byte, kind string, family string) (nativeOwnedPolicyEntry, bool, error) {
+	var entry nativeOwnedPolicyEntry
+	found := false
+	for _, raw := range strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		for _, field := range fields {
+			if !nativeTokenValid(field) {
+				return nativeOwnedPolicyEntry{}, false, ErrSetupInterceptionConflict
+			}
+		}
+		if kind == "rule" {
+			if len(fields) > 0 && strings.HasSuffix(fields[0], ":") {
+				fields = fields[1:]
+			}
+			marker := false
+			for _, field := range fields {
+				if strings.EqualFold(field, setupInterceptionMark) || strings.EqualFold(field, setupInterceptionTable) {
+					marker = true
+				}
+			}
+			if marker && !nativeArgsEqual(fields, "from", "all", "fwmark", setupInterceptionMark, "lookup", setupInterceptionTable) {
+				return nativeOwnedPolicyEntry{}, false, ErrSetupInterceptionConflict
+			}
+			if nativeArgsEqual(fields, "from", "all", "fwmark", setupInterceptionMark, "lookup", setupInterceptionTable) {
+				if found {
+					return nativeOwnedPolicyEntry{}, false, ErrSetupInterceptionConflict
+				}
+				entry = nativeOwnedPolicyEntry{Family: family, Kind: kind, Args: []string{"fwmark", setupInterceptionMark, "table", setupInterceptionTable, "pref", setupInterceptionPriority}}
+				found = true
+			}
+		} else {
+			prefix := "0.0.0.0/0"
+			if family == "ipv6" {
+				prefix = "::/0"
+			}
+			marker := false
+			for _, field := range fields {
+				if strings.EqualFold(field, prefix) || strings.EqualFold(field, "lo") || strings.EqualFold(field, "111") {
+					marker = true
+				}
+			}
+			if marker && !nativeArgsEqualPrefix(fields, "local", prefix, "dev", "lo") {
+				return nativeOwnedPolicyEntry{}, false, ErrSetupInterceptionConflict
+			}
+			if nativeArgsEqualPrefix(fields, "local", prefix, "dev", "lo") {
+				if found {
+					return nativeOwnedPolicyEntry{}, false, ErrSetupInterceptionConflict
+				}
+				entry = nativeOwnedPolicyEntry{Family: family, Kind: kind, Args: []string{"local", prefix, "dev", "lo", "table", setupInterceptionTable}}
+				found = true
+			}
+		}
+	}
+	return entry, found, nil
+}
+
+func nativeArgsEqualPrefix(actual []string, expected ...string) bool {
+	if len(actual) < len(expected) {
+		return false
+	}
+	for index := range expected {
+		if strings.ToLower(strings.Trim(actual[index], "\"'")) != strings.ToLower(expected[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+func nativeLinkProven(contents []byte) bool {
+	for _, raw := range strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n") {
+		line := strings.TrimSpace(raw)
+		if strings.Contains(line, setupInterceptionLANInterface+":") {
+			return true
+		}
+	}
+	return false
+}
+
+// parseNativeInterceptionState is pure and deterministic. It is used by the
+// native adapter and by fixtures so parser/verification regressions do not
+// require a router or any real firewall mutation.
+func parseNativeInterceptionState(ipv4, ipv6, ipsets, policyRules, policyRoutes, policyRules6, policyRoutes6, link []byte) (SetupInterceptionEvidence, nativeOwnedInterception, error) {
+	owned := nativeOwnedInterception{}
+	source := make(map[string]int)
+	legacy := false
+	if err := parseNativeIPTables("iptables", ipv4, &owned, source, &legacy); err != nil {
+		return SetupInterceptionEvidence{}, nativeOwnedInterception{}, err
+	}
+	if err := parseNativeIPTables("ip6tables", ipv6, &owned, source, &legacy); err != nil {
+		return SetupInterceptionEvidence{}, nativeOwnedInterception{}, err
+	}
+	if err := parseNativeIPSets(ipsets, &owned, &legacy); err != nil {
+		return SetupInterceptionEvidence{}, nativeOwnedInterception{}, err
+	}
+	rule, ruleFound, err := nativePolicyExact(policyRules, "rule", "ipv4")
+	if err != nil {
+		return SetupInterceptionEvidence{}, nativeOwnedInterception{}, err
+	}
+	if ruleFound {
+		owned.Policy = append(owned.Policy, rule)
+		if source["nat-jump"] != 0 || source["mangle-jump"] != 0 {
+			// The policy entry is part of the source generation; it is not a
+			// free-standing generic mark that can be silently adopted.
+		} else {
+			legacy = true
+		}
+	}
+	route, routeFound, err := nativePolicyExact(policyRoutes, "route", "ipv4")
+	if err != nil {
+		return SetupInterceptionEvidence{}, nativeOwnedInterception{}, err
+	}
+	if routeFound {
+		owned.Policy = append(owned.Policy, route)
+		if source["nat-jump"] == 0 && source["mangle-jump"] == 0 {
+			legacy = true
+		}
+	}
+	rule6, rule6Found, err := nativePolicyExact(policyRules6, "rule", "ipv6")
+	if err != nil {
+		return SetupInterceptionEvidence{}, nativeOwnedInterception{}, err
+	}
+	if rule6Found {
+		owned.Policy = append(owned.Policy, rule6)
+		legacy = true
+	}
+	route6, route6Found, err := nativePolicyExact(policyRoutes6, "route", "ipv6")
+	if err != nil {
+		return SetupInterceptionEvidence{}, nativeOwnedInterception{}, err
+	}
+	if route6Found {
+		owned.Policy = append(owned.Policy, route6)
+		legacy = true
+	}
+	if source["nat-jump"] != 0 || source["nat-rule"] != 0 || source["mangle-jump"] != 0 || source["mark-rule"] != 0 || source["tproxy-rule"] != 0 || source["iptables:nat:chain"] != 0 || source["iptables:mangle:chain"] != 0 {
+		if source["iptables:nat:chain"] != 1 || source["iptables:mangle:chain"] != 1 || source["nat-jump"] != 1 || source["nat-rule"] != 1 || source["mangle-jump"] != 1 || source["mark-rule"] != 1 || source["tproxy-rule"] != 1 || !ruleFound || !routeFound || !nativeLinkProven(link) {
+			return SetupInterceptionEvidence{}, nativeOwnedInterception{}, ErrSetupInterceptionConflict
+		}
+		for _, chain := range owned.Chains {
+			if chain.Name == "xkeen" || chain.Name == "xkeen_force" {
+				return SetupInterceptionEvidence{}, nativeOwnedInterception{}, ErrSetupInterceptionConflict
+			}
+		}
+		if legacy {
+			return SetupInterceptionEvidence{}, nativeOwnedInterception{}, ErrSetupInterceptionConflict
+		}
+		evidence := finalizeSetupInterceptionEvidence(SetupInterceptionEvidence{Owner: setupInterceptionOwner, Generation: setupInterceptionGeneration, TCPRedirect: true, UDPTProxy: true, LANScoped: true, PolicyRouting: true, IPv6Disabled: true, Complete: true})
+		return evidence, owned, nil
+	}
+	if legacy {
+		evidence := finalizeSetupInterceptionEvidence(SetupInterceptionEvidence{Owner: "xkeen-legacy", LegacyRules: len(owned.Rules) != 0 || len(owned.Chains) != 0 || len(owned.Policy) != 0, LegacyIPSets: len(owned.IPSets) != 0})
+		return evidence, owned, nil
+	}
+	return finalizeSetupInterceptionEvidence(SetupInterceptionEvidence{}), owned, nil
+}
+
+func optionalNativeOutput(ctx context.Context, name string, args ...string) []byte {
+	contents, err := runFixedOutput(ctx, name, args...)
+	if err != nil {
+		return nil
+	}
+	return contents
+}
+
+func inspectNativeState(ctx context.Context) (nativeInspection, error) {
 	ipv4, err := runFixedOutput(ctx, "iptables-save")
 	if err != nil {
-		return SetupInterceptionEvidence{}, nil, nil, nil, err
+		return nativeInspection{}, err
 	}
-	ipv6, err := runFixedOutput(ctx, "ip6tables-save")
+	evidence, owned, err := parseNativeInterceptionState(ipv4, optionalNativeOutput(ctx, "ip6tables-save"), optionalNativeOutput(ctx, "ipset", "save"), optionalNativeOutput(ctx, "ip", "-4", "rule", "show"), optionalNativeOutput(ctx, "ip", "-4", "route", "show", "table", setupInterceptionTable), optionalNativeOutput(ctx, "ip", "-6", "rule", "show"), optionalNativeOutput(ctx, "ip", "-6", "route", "show", "table", setupInterceptionTable), optionalNativeOutput(ctx, "ip", "-4", "link", "show", "dev", setupInterceptionLANInterface))
 	if err != nil {
-		// IPv6 may be disabled on a supported router; an empty typed output is
-		// not a second ownership source.
-		ipv6 = nil
+		return nativeInspection{}, err
 	}
-	ipsets, err := runFixedOutput(ctx, "ipset", "save")
-	if err != nil {
-		ipsets = nil
-	}
-	all := append(append(append([]byte(nil), ipv4...), ipv6...), ipsets...)
-	if len(all) > setupMaxInterceptionBytes {
-		return SetupInterceptionEvidence{}, nil, nil, nil, ErrSetupInterceptionConflict
-	}
-	evidence := SetupInterceptionEvidence{}
-	for _, line := range strings.Split(strings.ReplaceAll(string(all), "\r\n", "\n"), "\n") {
-		lower := strings.ToLower(strings.TrimSpace(line))
-		if lower == "" {
-			continue
-		}
-		if strings.Contains(lower, setupInterceptionHookMarker) {
-			evidence.TCPRedirect = evidence.TCPRedirect || strings.Contains(lower, "to-ports 61219") || strings.Contains(lower, "redirect")
-			evidence.UDPTProxy = evidence.UDPTProxy || strings.Contains(lower, "tproxy") || strings.Contains(lower, "0x111")
-			continue
-		}
-		if strings.Contains(lower, "xkeen_rule") || strings.Contains(lower, "-n xkeen") || strings.Contains(lower, "-n xkeen_force") || strings.Contains(lower, "xkeen_deny_mac") || strings.Contains(lower, "geo_exclude") || strings.Contains(lower, "user_exclude") || strings.Contains(lower, "geo_override") {
-			evidence.LegacyRules = evidence.LegacyRules || strings.HasPrefix(lower, "-a ") || strings.Contains(lower, "xkeen_rule") || strings.Contains(lower, "-n xkeen")
-			evidence.LegacyIPSets = evidence.LegacyIPSets || strings.Contains(lower, "xkeen_deny_mac") || strings.Contains(lower, "geo_exclude") || strings.Contains(lower, "user_exclude") || strings.Contains(lower, "geo_override")
-			continue
-		}
-		if strings.Contains(lower, "xkeen") {
-			return SetupInterceptionEvidence{}, nil, nil, nil, ErrSetupInterceptionConflict
-		}
-	}
-	if evidence.TCPRedirect || evidence.UDPTProxy {
-		evidence.Owner = setupInterceptionOwner
-		evidence.Generation = setupInterceptionGeneration
-		evidence.Complete = evidence.TCPRedirect && evidence.UDPTProxy
-	}
-	if evidence.LegacyRules || evidence.LegacyIPSets {
-		if evidence.Owner != "" {
-			return SetupInterceptionEvidence{}, nil, nil, nil, ErrSetupInterceptionConflict
-		}
-		evidence.Owner = "xkeen-legacy"
-	}
-	return finalizeSetupInterceptionEvidence(evidence), ipv4, ipv6, ipsets, nil
+	return nativeInspection{Evidence: evidence, Owned: owned}, nil
 }
 
 func mergeNativeInterceptionEvidence(fileEvidence, ruleEvidence SetupInterceptionEvidence) (SetupInterceptionEvidence, error) {
@@ -686,9 +1211,6 @@ func mergeNativeInterceptionEvidence(fileEvidence, ruleEvidence SetupInterceptio
 	}
 	if fileEvidence.Owner == setupInterceptionOwner &&
 		(!fileEvidence.Complete || ruleEvidence.Owner != setupInterceptionOwner || !ruleEvidence.Complete) {
-		// A source-owned hook without the source-owned kernel generation is not
-		// a configured Hybrid interception. Setup must not accept a stale file
-		// as proof that traffic is actually intercepted.
 		return SetupInterceptionEvidence{}, ErrSetupInterceptionConflict
 	}
 	evidence := fileEvidence
@@ -697,6 +1219,9 @@ func mergeNativeInterceptionEvidence(fileEvidence, ruleEvidence SetupInterceptio
 	} else if ruleEvidence.Owner != "" {
 		evidence.TCPRedirect = evidence.TCPRedirect && ruleEvidence.TCPRedirect
 		evidence.UDPTProxy = evidence.UDPTProxy && ruleEvidence.UDPTProxy
+		evidence.LANScoped = evidence.LANScoped && ruleEvidence.LANScoped
+		evidence.PolicyRouting = evidence.PolicyRouting && ruleEvidence.PolicyRouting
+		evidence.IPv6Disabled = evidence.IPv6Disabled && ruleEvidence.IPv6Disabled
 		evidence.LegacyRules = evidence.LegacyRules || ruleEvidence.LegacyRules
 		evidence.LegacyIPSets = evidence.LegacyIPSets || ruleEvidence.LegacyIPSets
 		evidence.Complete = evidence.Complete && ruleEvidence.Complete
@@ -709,15 +1234,44 @@ func (o *nativeHybridInterceptionOwner) Inspect(ctx context.Context) (SetupInter
 	if err != nil {
 		return SetupInterceptionEvidence{}, err
 	}
-	ruleEvidence, _, _, _, err := inspectNativeRules(ctx)
+	native, err := inspectNativeState(ctx)
 	if err != nil {
 		return SetupInterceptionEvidence{}, err
 	}
-	return mergeNativeInterceptionEvidence(fileEvidence, ruleEvidence)
+	return mergeNativeInterceptionEvidence(fileEvidence, native.Evidence)
+}
+
+func nativeOwnedDigest(owned nativeOwnedInterception) string {
+	contents, _ := json.Marshal(owned)
+	return digestSetupBytes(contents)
+}
+
+func parseNativeHybridSnapshot(contents []byte) (nativeHybridSnapshot, error) {
+	if len(contents) == 0 || len(contents) > setupMaxInterceptionSnapshotBytes {
+		return nativeHybridSnapshot{}, ErrSetupInterceptionConflict
+	}
+	var snapshot nativeHybridSnapshot
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.DisallowUnknownFields()
+	var extra any
+	if decoder.Decode(&snapshot) != nil || decoder.Decode(&extra) != io.EOF || snapshot.SchemaVersion != setupInterceptionSchemaVersion || !validSetupInterceptionEvidence(snapshot.Evidence) || !validNativeOwned(snapshot.Owned) {
+		return nativeHybridSnapshot{}, ErrSetupInterceptionConflict
+	}
+	if snapshot.Evidence.Owner == "" && (len(snapshot.Owned.Chains) != 0 || len(snapshot.Owned.Rules) != 0 || len(snapshot.Owned.IPSets) != 0 || len(snapshot.Owned.Policy) != 0) {
+		return nativeHybridSnapshot{}, ErrSetupInterceptionConflict
+	}
+	return snapshot, nil
+}
+
+func setupInterceptionSnapshotEvidence(contents []byte) (SetupInterceptionEvidence, error) {
+	if snapshot, err := parseNativeHybridSnapshot(contents); err == nil {
+		return snapshot.Evidence, nil
+	}
+	return parseSetupInterceptionSnapshot(contents)
 }
 
 func (o *nativeHybridInterceptionOwner) Snapshot(ctx context.Context) ([]byte, error) {
-	evidence, ipv4, ipv6, ipsets, err := inspectNativeRules(ctx)
+	native, err := inspectNativeState(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -725,15 +1279,117 @@ func (o *nativeHybridInterceptionOwner) Snapshot(ctx context.Context) ([]byte, e
 	if err != nil {
 		return nil, err
 	}
-	evidence, err = mergeNativeInterceptionEvidence(fileEvidence, evidence)
+	evidence, err := mergeNativeInterceptionEvidence(fileEvidence, native.Evidence)
 	if err != nil {
 		return nil, err
 	}
-	contents, err := json.Marshal(nativeHybridSnapshot{SchemaVersion: setupInterceptionSchemaVersion, Evidence: evidence, IPTables: ipv4, IP6Tables: ipv6, IPSets: ipsets})
-	if err != nil || len(contents) > setupMaxInterceptionBytes {
+	contents, err := json.Marshal(nativeHybridSnapshot{SchemaVersion: setupInterceptionSchemaVersion, Evidence: evidence, Owned: native.Owned})
+	if err != nil || len(contents) > setupMaxInterceptionSnapshotBytes {
 		return nil, ErrSetupInterceptionConflict
 	}
 	return append(contents, '\n'), nil
+}
+
+func nativePolicyCommandArgs(entry nativeOwnedPolicyEntry, action string) ([]string, error) {
+	if !validNativeOwned(nativeOwnedInterception{Policy: []nativeOwnedPolicyEntry{entry}}) {
+		return nil, ErrSetupInterceptionConflict
+	}
+	family := "-4"
+	if entry.Family == "ipv6" {
+		family = "-6"
+	}
+	args := []string{family}
+	if entry.Kind == "rule" {
+		args = append(args, "rule", action)
+	} else {
+		args = append(args, "route", action)
+	}
+	args = append(args, entry.Args...)
+	return args, nil
+}
+
+func removeNativeOwned(ctx context.Context, owned nativeOwnedInterception) error {
+	if !validNativeOwned(owned) {
+		return ErrSetupInterceptionConflict
+	}
+	// Delete entry-point jumps before chain members, then delete members and
+	// finally chains. This never flushes a built-in chain.
+	for index := len(owned.Rules) - 1; index >= 0; index-- {
+		rule := owned.Rules[index]
+		if rule.Chain != "PREROUTING" {
+			continue
+		}
+		if err := runFixed(ctx, rule.Family, append([]string{"-t", rule.Table, "-D", rule.Chain}, rule.Args...)...); err != nil {
+			return err
+		}
+	}
+	for index := len(owned.Rules) - 1; index >= 0; index-- {
+		rule := owned.Rules[index]
+		if rule.Chain == "PREROUTING" {
+			continue
+		}
+		if err := runFixed(ctx, rule.Family, append([]string{"-t", rule.Table, "-D", rule.Chain}, rule.Args...)...); err != nil {
+			return err
+		}
+	}
+	for index := len(owned.Policy) - 1; index >= 0; index-- {
+		args, err := nativePolicyCommandArgs(owned.Policy[index], "del")
+		if err != nil {
+			return err
+		}
+		if err := runFixed(ctx, "ip", args...); err != nil {
+			return err
+		}
+	}
+	for index := len(owned.IPSets) - 1; index >= 0; index-- {
+		set := owned.IPSets[index]
+		if err := runFixed(ctx, "ipset", "destroy", set.Name); err != nil {
+			return err
+		}
+	}
+	for index := len(owned.Chains) - 1; index >= 0; index-- {
+		chain := owned.Chains[index]
+		if err := runFixed(ctx, chain.Family, "-t", chain.Table, "-X", chain.Name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func restoreNativeOwned(ctx context.Context, owned nativeOwnedInterception) error {
+	if !validNativeOwned(owned) {
+		return ErrSetupInterceptionConflict
+	}
+	for _, set := range owned.IPSets {
+		if err := runFixed(ctx, "ipset", append([]string{"create", set.Name}, append(set.CreateArgs, "-exist")...)...); err != nil {
+			return err
+		}
+		for _, entry := range set.Entries {
+			if err := runFixed(ctx, "ipset", append([]string{"add", set.Name}, entry...)...); err != nil {
+				return err
+			}
+		}
+	}
+	for _, chain := range owned.Chains {
+		if err := runFixed(ctx, chain.Family, "-t", chain.Table, "-N", chain.Name); err != nil {
+			return err
+		}
+	}
+	for _, rule := range owned.Rules {
+		if err := runFixed(ctx, rule.Family, append([]string{"-t", rule.Table, "-A", rule.Chain}, rule.Args...)...); err != nil {
+			return err
+		}
+	}
+	for _, policy := range owned.Policy {
+		args, err := nativePolicyCommandArgs(policy, "add")
+		if err != nil {
+			return err
+		}
+		if err := runFixed(ctx, "ip", args...); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (o *nativeHybridInterceptionOwner) RetireLegacy(ctx context.Context, evidence SetupInterceptionEvidence) error {
@@ -743,62 +1399,34 @@ func (o *nativeHybridInterceptionOwner) RetireLegacy(ctx context.Context, eviden
 	if evidence.Owner != "xkeen-legacy" || !validSetupInterceptionEvidence(evidence) {
 		return ErrSetupInterceptionConflict
 	}
-	for _, family := range []string{"iptables", "ip6tables"} {
-		if err := retireLegacyTaggedRules(ctx, family); err != nil && !errors.Is(err, ErrSetupInterceptionUnavailable) {
-			return err
-		}
-		for _, table := range []string{"nat", "mangle"} {
-			for _, chain := range []string{"xkeen_force", "xkeen"} {
-				_ = runFixed(ctx, family, "-t", table, "-F", chain)
-				_ = runFixed(ctx, family, "-t", table, "-X", chain)
-			}
-		}
-	}
-	for _, set := range []string{"xkeen_deny_mac", "ext_exclude", "ext_exclude6", "geo_exclude", "geo_exclude6", "geo_override", "geo_override6", "user_exclude", "user_exclude6"} {
-		_ = runFixed(ctx, "ipset", "flush", set)
-		_ = runFixed(ctx, "ipset", "destroy", set)
-	}
-	_ = runFixed(ctx, "ip", "-4", "rule", "del", "fwmark", "0x111/0xfff", "table", "111", "pref", "111")
-	_ = runFixed(ctx, "ip", "-4", "route", "del", "local", "0.0.0.0/0", "dev", "lo", "table", "111")
-	_ = runFixed(ctx, "ip", "-6", "rule", "del", "fwmark", "0x111/0xfff", "table", "111", "pref", "111")
-	_ = runFixed(ctx, "ip", "-6", "route", "del", "local", "::/0", "dev", "lo", "table", "111")
-	return o.file.RetireLegacy(ctx, evidence)
-}
-
-func retireLegacyTaggedRules(ctx context.Context, family string) error {
-	contents, err := runFixedOutput(ctx, family+"-save")
+	native, err := inspectNativeState(ctx)
 	if err != nil {
 		return err
 	}
-	table := ""
-	for _, line := range strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "*") {
-			table = strings.TrimPrefix(line, "*")
-			continue
-		}
-		if table == "" || !strings.HasPrefix(line, "-A ") {
-			continue
-		}
-		lower := strings.ToLower(line)
-		if !strings.Contains(lower, "xkeen_rule") && !strings.Contains(lower, "-j xkeen") && !strings.Contains(lower, "-j xkeen_force") {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 3 || fields[0] != "-A" || fields[1] == "" {
-			return ErrSetupInterceptionConflict
-		}
-		args := append([]string{"-t", table, "-D", fields[1]}, fields[2:]...)
-		if err := runFixed(ctx, family, args...); err != nil {
+	if native.Evidence.Owner == setupInterceptionOwner {
+		return ErrSetupInterceptionConflict
+	}
+	if native.Evidence.Owner == "xkeen-legacy" {
+		if err := removeNativeOwned(ctx, native.Owned); err != nil {
 			return err
 		}
 	}
-	return nil
+	return o.file.RetireLegacy(ctx, evidence)
 }
 
 func (o *nativeHybridInterceptionOwner) Apply(ctx context.Context, generation SetupInterceptionGeneration) error {
 	if !validSetupInterceptionGeneration(generation) {
 		return ErrSetupInterceptionConflict
+	}
+	current, err := inspectNativeState(ctx)
+	if err != nil {
+		return err
+	}
+	if current.Evidence.Owner == "xkeen-legacy" {
+		return ErrSetupInterceptionConflict
+	}
+	if _, err := runFixedOutput(ctx, "ip", "-4", "link", "show", "dev", setupInterceptionLANInterface); err != nil {
+		return err
 	}
 	if err := o.file.Apply(ctx, generation); err != nil {
 		return err
@@ -814,75 +1442,49 @@ func (o *nativeHybridInterceptionOwner) Verify(ctx context.Context, generation S
 		return err
 	}
 	evidence, err := o.Inspect(ctx)
-	if err != nil || evidence.Owner != setupInterceptionOwner || !evidence.Complete || !evidence.TCPRedirect || !evidence.UDPTProxy {
+	if err != nil || evidence.Owner != setupInterceptionOwner || !evidence.Complete || !evidence.TCPRedirect || !evidence.UDPTProxy || !evidence.LANScoped || !evidence.PolicyRouting || !evidence.IPv6Disabled {
 		return ErrSetupInterceptionConflict
 	}
 	return nil
 }
 
 func (o *nativeHybridInterceptionOwner) Restore(ctx context.Context, snapshot []byte) error {
+	current, err := inspectNativeState(ctx)
+	if err != nil {
+		return err
+	}
 	if len(snapshot) == 0 {
-		if err := o.removeSourceOwned(ctx); err != nil {
-			return err
+		if current.Evidence.Owner == "xkeen-legacy" {
+			return ErrSetupInterceptionConflict
+		}
+		if current.Evidence.Owner == setupInterceptionOwner {
+			if err := removeNativeOwned(ctx, current.Owned); err != nil {
+				return err
+			}
 		}
 		return o.file.Restore(ctx, nil)
 	}
-	var previous nativeHybridSnapshot
-	decoder := json.NewDecoder(bytes.NewReader(snapshot))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&previous) != nil || previous.SchemaVersion != setupInterceptionSchemaVersion || !validSetupInterceptionEvidence(previous.Evidence) {
+	previous, err := parseNativeHybridSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	if current.Evidence.Owner == "xkeen-legacy" {
 		return ErrSetupInterceptionConflict
 	}
-	if len(previous.IPTables) > setupMaxInterceptionBytes || len(previous.IP6Tables) > setupMaxInterceptionBytes || len(previous.IPSets) > setupMaxInterceptionBytes {
-		return ErrSetupInterceptionConflict
-	}
-	if len(previous.IPTables) != 0 {
-		if err := restoreFixed(ctx, "iptables-restore", previous.IPTables); err != nil {
+	if current.Evidence.Owner == setupInterceptionOwner {
+		if err := removeNativeOwned(ctx, current.Owned); err != nil {
 			return err
 		}
 	}
-	if len(previous.IP6Tables) != 0 {
-		if err := restoreFixed(ctx, "ip6tables-restore", previous.IP6Tables); err != nil {
-			return err
-		}
+	if err := restoreNativeOwned(ctx, previous.Owned); err != nil {
+		return err
 	}
-	if len(previous.IPSets) != 0 {
-		if err := restoreFixed(ctx, "ipset", previous.IPSets, "restore", "-exist"); err != nil {
-			return err
-		}
-	}
-	return o.file.Restore(ctx, snapshotEvidenceOnly(snapshot, previous.Evidence))
+	return o.file.Restore(ctx, setupInterceptionSnapshotEvidenceBytes(previous.Evidence))
 }
 
-func (o *nativeHybridInterceptionOwner) removeSourceOwned(ctx context.Context) error {
-	for _, family := range []string{"iptables", "ip6tables"} {
-		for _, table := range []string{"nat", "mangle"} {
-			_ = runFixed(ctx, family, "-t", table, "-F", "XKEEN_CONTROL_HYBRID")
-			_ = runFixed(ctx, family, "-t", table, "-X", "XKEEN_CONTROL_HYBRID")
-		}
-	}
-	_ = runFixed(ctx, "ip", "-4", "rule", "del", "fwmark", "0x111/0xfff", "table", "111", "pref", "111")
-	_ = runFixed(ctx, "ip", "-4", "route", "del", "local", "0.0.0.0/0", "dev", "lo", "table", "111")
-	_ = runFixed(ctx, "ip", "-6", "rule", "del", "fwmark", "0x111/0xfff", "table", "111", "pref", "111")
-	_ = runFixed(ctx, "ip", "-6", "route", "del", "local", "::/0", "dev", "lo", "table", "111")
-	return nil
-}
-
-func snapshotEvidenceOnly(snapshot []byte, evidence SetupInterceptionEvidence) []byte {
+func setupInterceptionSnapshotEvidenceBytes(evidence SetupInterceptionEvidence) []byte {
 	contents, _ := setupInterceptionSnapshotBytes(evidence)
 	return contents
-}
-
-func restoreFixed(ctx context.Context, name string, contents []byte, args ...string) error {
-	if runtime.GOOS == "windows" {
-		return ErrSetupInterceptionUnavailable
-	}
-	command := exec.CommandContext(ctx, name, args...)
-	command.Stdin = bytes.NewReader(contents)
-	if err := command.Run(); err != nil {
-		return ErrSetupInterceptionUnavailable
-	}
-	return nil
 }
 
 func (o *nativeHybridInterceptionOwner) VerifyRestored(ctx context.Context, snapshot []byte) error {
@@ -891,17 +1493,19 @@ func (o *nativeHybridInterceptionOwner) VerifyRestored(ctx context.Context, snap
 		if err != nil || current.Owner != "" {
 			return ErrSetupInterceptionConflict
 		}
-		return nil
+		return o.file.VerifyRestored(ctx, nil)
 	}
-	var previous nativeHybridSnapshot
-	decoder := json.NewDecoder(bytes.NewReader(snapshot))
-	decoder.DisallowUnknownFields()
-	if decoder.Decode(&previous) != nil || !validSetupInterceptionEvidence(previous.Evidence) {
-		return ErrSetupInterceptionConflict
+	previous, err := parseNativeHybridSnapshot(snapshot)
+	if err != nil {
+		return err
+	}
+	native, err := inspectNativeState(ctx)
+	if err != nil {
+		return err
 	}
 	current, err := o.Inspect(ctx)
-	if err != nil || current.Digest != previous.Evidence.Digest {
+	if err != nil || current.Digest != previous.Evidence.Digest || nativeOwnedDigest(native.Owned) != nativeOwnedDigest(previous.Owned) {
 		return ErrSetupInterceptionConflict
 	}
-	return nil
+	return o.file.VerifyRestored(ctx, setupInterceptionSnapshotEvidenceBytes(previous.Evidence))
 }

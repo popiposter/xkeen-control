@@ -374,12 +374,16 @@ valid `nodes.json`, supported appliance policy, panel-local state and strictly
 migrates reviewed legacy profiles for takeover. It renders the complete staged
 candidate, validates Xray against that staged config and geodata, qualifies the
 XKeen generation and fixed source-owned `S05xkeen`, and converges one typed
-source-owned Keenetic Hybrid interception generation with TCP redirect and UDP
-TProxy before readiness. Reviewed legacy NDM/netfilter/ipset ownership and
-automatic writers are retired only through fixed typed operations; unrelated
-router state is preserved. One shared `setup` journal/recovery path snapshots
-the previous generation, commits the fixed setup-owned paths, starts/proves
-the runtime and interception owner, and restores both on failure or crash.
+source-owned Keenetic Hybrid interception generation with IPv4-only, LAN-input
+`br0`/non-LOCAL policy-scoped TCP redirect and UDP TProxy before readiness;
+IPv6 remains disabled under the current product policy. Native verification
+proves the exact owned chain shape and fwmark/table-111 routing. Reviewed legacy
+NDM/netfilter/ipset ownership and automatic writers are retired only through
+fixed typed operations; unrelated router state is preserved. One shared `setup`
+journal/recovery path snapshots the previous generation's typed interception
+subset in the root-only rollback payload, commits the fixed setup-owned paths,
+starts/proves the runtime and interception owner, and restores both on failure
+or crash.
 Partial, mixed, manual or uncertain layouts are blocked; there is no generic
 repair or command surface. Ordinary component update/rollback contracts remain
 unchanged, including their non-empty outbound verification.

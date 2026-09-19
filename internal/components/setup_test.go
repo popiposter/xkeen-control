@@ -1014,9 +1014,9 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 	if err := ensureXKeenOwnedDirectory(stageDir, setupStagingOwner); err != nil {
 		t.Fatalf("crash stage: %v", err)
 	}
-	interceptionSnapshot, err := service.config.Interception.Snapshot(context.Background())
+	interceptionEvidence, err := service.config.Interception.Inspect(context.Background())
 	if err != nil {
-		t.Fatalf("crash interception snapshot: %v", err)
+		t.Fatalf("crash interception evidence: %v", err)
 	}
 	crashJournal := setupTransactionJournal{
 		SchemaVersion: SetupTransactionSchemaVersion,
@@ -1024,11 +1024,12 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 		Operation:     SetupOperation,
 		Phase:         setupPhaseSnapshotIntent,
 		Previous: setupPreviousRecord{
-			AllAbsent:            false,
-			Class:                "managed-takeover",
-			SnapshotDir:          service.setupSnapshotRoot(),
-			SelectionSnapshot:    []byte("old-selection"),
-			InterceptionSnapshot: interceptionSnapshot,
+			AllAbsent:         false,
+			Class:             "managed-takeover",
+			SnapshotDir:       service.setupSnapshotRoot(),
+			SelectionSnapshot: []byte("old-selection"),
+			InterceptionClass: interceptionEvidence.Owner,
+			InterceptionSHA:   interceptionEvidence.Digest,
 		},
 		Candidate: setupCandidateRecord{
 			Xray:             candidate.Xray,
@@ -1048,9 +1049,23 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 	if err := service.writeJournal(crashJournal); err != nil {
 		t.Fatalf("crash journal intent: %v", err)
 	}
+	journalBytes, err := os.ReadFile(paths.Journal)
+	if err != nil || bytes.Contains(journalBytes, []byte("interceptionSnapshot")) || bytes.Contains(journalBytes, []byte("XKeen: Auto-generated file")) {
+		t.Fatalf("crash journal leaked interception payload: err=%v bytes=%s", err, journalBytes)
+	}
 	snapshot, err := service.captureSetupSnapshot(context.Background(), "managed-takeover", writers)
 	if err != nil {
 		t.Fatalf("crash snapshot: %v", err)
+	}
+	typedInterception := false
+	for _, entry := range snapshot.Manifest.Entries {
+		if entry.Key == "interception-kernel" && entry.Kind == "typed-state" {
+			typedInterception = true
+			break
+		}
+	}
+	if !typedInterception || len(snapshot.InterceptionSnapshot) == 0 {
+		t.Fatalf("crash snapshot did not persist typed interception payload")
 	}
 	crashJournal.Previous.SnapshotSHA = setupSnapshotDigest(snapshot.Manifest)
 	crashJournal.Phase = setupPhaseSelectionReconciled

@@ -21,7 +21,8 @@ boundary adds a closed Setup Mode flow for a later candidate: fresh Setup uses
 one server-owned ProductDefault + empty-registry transaction, while recognized
 managed/legacy layouts use typed takeover/convergence with strict profile and
 policy preservation/migration, previous-generation rollback, sole-writer
-retirement, and source-owned TCP redirect + UDP TProxy Hybrid interception.
+retirement, and source-owned IPv4-only LAN/policy-scoped TCP redirect + UDP
+TProxy Hybrid interception with owned-subset rollback.
 It is source/CI-only in this branch and must not be assumed available in
 `v0.2.0` or used for live qualification.
 

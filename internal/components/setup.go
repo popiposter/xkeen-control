@@ -2298,10 +2298,15 @@ func (s *SetupService) Apply(ctx context.Context, binding, token string) (SetupR
 			}
 		}
 		if s.config.Interception != nil {
-			previous.InterceptionSnapshot, err = s.config.Interception.Snapshot(ownedContext)
-			if err != nil || len(previous.InterceptionSnapshot) == 0 || len(previous.InterceptionSnapshot) > setupMaxInterceptionSnapshotBytes {
+			// The journal stores only the compact class/digest identity. The
+			// owned interception payload is written later into the root-only
+			// previous-generation snapshot, after snapshot-intent is durable.
+			interception, inspectErr := s.config.Interception.Inspect(ownedContext)
+			if inspectErr != nil || !validSetupInterceptionEvidence(interception) {
 				return SetupResult{}, ErrSetupTransactionUnproven
 			}
+			previous.InterceptionClass = interception.Owner
+			previous.InterceptionSHA = interception.Digest
 		}
 	}
 	journal := setupTransactionJournal{SchemaVersion: SetupTransactionSchemaVersion, Component: string(KindSetup), Operation: SetupOperation, Phase: setupPhasePrepared, Previous: previous, SourceClass: prepared.candidate.Source.Class, SourceDigest: prepared.candidate.Source.Digest, StageDir: prepared.stageDir, Candidate: prepared.record()}
@@ -2323,6 +2328,19 @@ func (s *SetupService) Apply(ctx context.Context, binding, token string) (SetupR
 			return SetupResult{}, ErrSetupResourceInsufficient
 		}
 		prepared.snapshot = snapshot
+		if s.config.Interception != nil {
+			if len(snapshot.InterceptionSnapshot) == 0 {
+				_ = s.removeSnapshot(snapshot)
+				_ = s.clearJournal()
+				return SetupResult{}, ErrSetupTransactionUnproven
+			}
+			interception, parseErr := setupInterceptionSnapshotEvidence(snapshot.InterceptionSnapshot)
+			if parseErr != nil || interception.Owner != journal.Previous.InterceptionClass || interception.Digest != journal.Previous.InterceptionSHA {
+				_ = s.removeSnapshot(snapshot)
+				_ = s.clearJournal()
+				return SetupResult{}, ErrSetupTransactionUnproven
+			}
+		}
 		journal.Previous.SnapshotSHA = setupSnapshotDigest(snapshot.Manifest)
 		if err := s.updateJournal(&journal, setupPhaseSnapshotReady, ""); err != nil {
 			_ = s.removeSnapshot(snapshot)
@@ -2812,12 +2830,13 @@ const (
 )
 
 type setupPreviousRecord struct {
-	AllAbsent            bool   `json:"allAbsent"`
-	Class                string `json:"class,omitempty"`
-	SnapshotDir          string `json:"snapshotDir,omitempty"`
-	SnapshotSHA          string `json:"snapshotSha256,omitempty"`
-	SelectionSnapshot    []byte `json:"selectionSnapshot,omitempty"`
-	InterceptionSnapshot []byte `json:"interceptionSnapshot,omitempty"`
+	AllAbsent         bool   `json:"allAbsent"`
+	Class             string `json:"class,omitempty"`
+	SnapshotDir       string `json:"snapshotDir,omitempty"`
+	SnapshotSHA       string `json:"snapshotSha256,omitempty"`
+	SelectionSnapshot []byte `json:"selectionSnapshot,omitempty"`
+	InterceptionClass string `json:"interceptionClass,omitempty"`
+	InterceptionSHA   string `json:"interceptionSha256,omitempty"`
 }
 
 type setupSnapshotEntry struct {
@@ -2840,8 +2859,9 @@ type setupSnapshotManifest struct {
 }
 
 type setupSnapshot struct {
-	Dir      string
-	Manifest setupSnapshotManifest
+	Dir                  string
+	Manifest             setupSnapshotManifest
+	InterceptionSnapshot []byte
 }
 
 type setupCandidateRecord struct {
@@ -2891,13 +2911,18 @@ func validateSetupJournal(journal setupTransactionJournal) error {
 		return errSetupJournalInvalid
 	}
 	if journal.SourceClass == "fresh" {
-		if journal.Previous.SnapshotDir != "" || journal.Previous.SnapshotSHA != "" || len(journal.Previous.SelectionSnapshot) != 0 || len(journal.Previous.InterceptionSnapshot) != 0 {
+		if journal.Previous.SnapshotDir != "" || journal.Previous.SnapshotSHA != "" || len(journal.Previous.SelectionSnapshot) != 0 || journal.Previous.InterceptionClass != "" || journal.Previous.InterceptionSHA != "" {
 			return errSetupJournalInvalid
 		}
-	} else if journal.Phase != setupPhaseSnapshotIntent && !isHexSHA256(journal.Previous.SnapshotSHA) {
-		return errSetupJournalInvalid
+	} else {
+		if journal.Previous.InterceptionClass != "" && journal.Previous.InterceptionClass != setupInterceptionOwner && journal.Previous.InterceptionClass != "xkeen-legacy" {
+			return errSetupJournalInvalid
+		}
+		if journal.Phase != setupPhaseSnapshotIntent && (!isHexSHA256(journal.Previous.SnapshotSHA) || !isHexSHA256(journal.Previous.InterceptionSHA)) {
+			return errSetupJournalInvalid
+		}
 	}
-	if len(journal.Previous.SelectionSnapshot) > setupMaxSelectionBytes || len(journal.Previous.InterceptionSnapshot) > setupMaxInterceptionSnapshotBytes {
+	if len(journal.Previous.SelectionSnapshot) > setupMaxSelectionBytes {
 		return errSetupJournalInvalid
 	}
 	allowed := map[string]struct{}{setupCreatedNodes: {}, setupCreatedAppliance: {}, setupCreatedConfig: {}, setupCreatedGeodata: {}, setupCreatedXray: {}, setupCreatedXKeen: {}, setupCreatedLifecycle: {}, setupCreatedWriters: {}, setupCreatedInterception: {}}
@@ -3617,6 +3642,22 @@ func (s *SetupService) captureSetupSnapshot(ctx context.Context, class string, w
 	}
 	manifest := setupSnapshotManifest{SchemaVersion: SetupTransactionSchemaVersion, Owner: setupSnapshotOwner, Class: class}
 	totalBytes := int64(0)
+	var interceptionSnapshot []byte
+	if s.config.Interception != nil {
+		var snapshotErr error
+		interceptionSnapshot, snapshotErr = s.config.Interception.Snapshot(ctx)
+		if snapshotErr != nil || len(interceptionSnapshot) == 0 || len(interceptionSnapshot) > setupMaxInterceptionSnapshotBytes {
+			_ = os.RemoveAll(root)
+			return setupSnapshot{}, ErrSetupResourceInsufficient
+		}
+		payload := filepath.Join(root, "payload", "interception.json")
+		if err := writeSnapshotPayload(payload, interceptionSnapshot, 0o600); err != nil {
+			_ = os.RemoveAll(root)
+			return setupSnapshot{}, err
+		}
+		manifest.Entries = append(manifest.Entries, setupSnapshotEntry{Key: "interception-kernel", Target: setupInterceptionOwner, Payload: filepath.Base(payload), Kind: "typed-state", Size: int64(len(interceptionSnapshot)), SHA256: digestSetupBytes(interceptionSnapshot)})
+		totalBytes += int64(len(interceptionSnapshot))
+	}
 	for _, target := range s.setupSnapshotTargets(writers) {
 		maxFileBytes, maxRootBytes := setupSnapshotLimits(target)
 		if err := ctx.Err(); err != nil {
@@ -3727,7 +3768,7 @@ func (s *SetupService) captureSetupSnapshot(ctx context.Context, class string, w
 		_ = os.RemoveAll(root)
 		return setupSnapshot{}, err
 	}
-	return setupSnapshot{Dir: root, Manifest: manifest}, nil
+	return setupSnapshot{Dir: root, Manifest: manifest, InterceptionSnapshot: interceptionSnapshot}, nil
 }
 
 func fileMode(path string) os.FileMode {
@@ -3790,10 +3831,33 @@ func (s *SetupService) readSetupSnapshot(journal setupTransactionJournal) (setup
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	decoder.DisallowUnknownFields()
 	var extra any
-	if decoder.Decode(&manifest) != nil || decoder.Decode(&extra) != io.EOF || manifest.SchemaVersion != SetupTransactionSchemaVersion || manifest.Owner != setupSnapshotOwner || len(manifest.Entries) == 0 || len(manifest.Entries) > setupMaxSnapshotEntries || setupSnapshotDigest(manifest) != journal.Previous.SnapshotSHA || validXKeenOwner(root, setupSnapshotOwner) != nil {
+	if decoder.Decode(&manifest) != nil || decoder.Decode(&extra) != io.EOF || manifest.SchemaVersion != SetupTransactionSchemaVersion || manifest.Owner != setupSnapshotOwner || manifest.Class != journal.SourceClass || len(manifest.Entries) == 0 || len(manifest.Entries) > setupMaxSnapshotEntries || setupSnapshotDigest(manifest) != journal.Previous.SnapshotSHA || validXKeenOwner(root, setupSnapshotOwner) != nil {
 		return setupSnapshot{}, errSetupJournalInvalid
 	}
-	return setupSnapshot{Dir: root, Manifest: manifest}, nil
+	var interceptionSnapshot []byte
+	interceptionEntries := 0
+	for _, entry := range manifest.Entries {
+		if entry.Kind != "typed-state" {
+			continue
+		}
+		if entry.Key != "interception-kernel" || entry.Target != setupInterceptionOwner || entry.Relative != "" || entry.Payload == "" || filepath.Base(entry.Payload) != entry.Payload || strings.ContainsAny(entry.Payload, `/\`) || entry.Size < 1 || entry.Size > setupMaxInterceptionSnapshotBytes {
+			return setupSnapshot{}, errSetupJournalInvalid
+		}
+		interceptionEntries++
+		contents, readErr := readBoundedSetupFile(filepath.Join(root, "payload", entry.Payload), setupMaxInterceptionSnapshotBytes)
+		if readErr != nil || int64(len(contents)) != entry.Size || digestSetupBytes(contents) != entry.SHA256 {
+			return setupSnapshot{}, errSetupJournalInvalid
+		}
+		evidence, evidenceErr := setupInterceptionSnapshotEvidence(contents)
+		if evidenceErr != nil || evidence.Owner != journal.Previous.InterceptionClass || evidence.Digest != journal.Previous.InterceptionSHA {
+			return setupSnapshot{}, errSetupJournalInvalid
+		}
+		interceptionSnapshot = contents
+	}
+	if interceptionEntries != 1 {
+		return setupSnapshot{}, errSetupJournalInvalid
+	}
+	return setupSnapshot{Dir: root, Manifest: manifest, InterceptionSnapshot: interceptionSnapshot}, nil
 }
 
 func (s *SetupService) removeSnapshot(snapshot setupSnapshot) error {
@@ -3854,6 +3918,9 @@ func (s *SetupService) restoreSetupSnapshot(snapshot setupSnapshot) error {
 		byKey[target.Key] = target
 	}
 	for _, entry := range snapshot.Manifest.Entries {
+		if entry.Kind == "typed-state" {
+			continue
+		}
 		target, ok := byKey[entry.Key]
 		if !ok && setupSnapshotTargetAllowed(s.config.Paths, entry.Target) {
 			target = setupSnapshotTarget{Key: entry.Key, Path: entry.Target, Recursive: entry.Relative == "" && entry.Kind == "directory"}
@@ -3879,6 +3946,9 @@ func (s *SetupService) restoreSetupSnapshot(snapshot setupSnapshot) error {
 		}
 	}
 	for _, entry := range snapshot.Manifest.Entries {
+		if entry.Kind == "typed-state" {
+			continue
+		}
 		target, ok := byKey[entry.Key]
 		if !ok && setupSnapshotTargetAllowed(s.config.Paths, entry.Target) {
 			target = setupSnapshotTarget{Key: entry.Key, Path: entry.Target, Recursive: entry.Relative == "" && entry.Kind == "directory"}
@@ -4098,8 +4168,8 @@ func (s *SetupService) rollbackCreated(ctx context.Context, journal setupTransac
 		if err := s.restoreSetupSnapshot(snapshot); err != nil {
 			return err
 		}
-		if len(journal.Previous.InterceptionSnapshot) != 0 && s.config.Interception != nil {
-			if err := s.config.Interception.Restore(ctx, journal.Previous.InterceptionSnapshot); err != nil {
+		if len(snapshot.InterceptionSnapshot) != 0 && s.config.Interception != nil {
+			if err := s.config.Interception.Restore(ctx, snapshot.InterceptionSnapshot); err != nil {
 				return err
 			}
 		}
@@ -4183,8 +4253,8 @@ func (s *SetupService) restoreSetupPreviousEnvironment(ctx context.Context, jour
 			return err
 		}
 	}
-	if s.config.Interception != nil && (journal.SourceClass == "fresh" || len(journal.Previous.InterceptionSnapshot) != 0) {
-		if err := s.config.Interception.VerifyRestored(ctx, journal.Previous.InterceptionSnapshot); err != nil {
+	if s.config.Interception != nil && (journal.SourceClass == "fresh" || len(prepared.snapshot.InterceptionSnapshot) != 0) {
+		if err := s.config.Interception.VerifyRestored(ctx, prepared.snapshot.InterceptionSnapshot); err != nil {
 			return err
 		}
 	}
