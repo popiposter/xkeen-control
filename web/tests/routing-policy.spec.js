@@ -15,6 +15,16 @@ const deferred = () => {
   return { promise, resolve }
 }
 
+const deferredPreviewHandler = (release) => async ({ route, entry, state }) => {
+  if (entry.path !== '/api/v1/appliance/policy/preview') return false
+  await release.promise
+  const rules = entry.body.rules
+  const previewToken = `synthetic-routing-preview-${++state.previewNumber}`
+  state.previews.set(previewToken, { rules, noop: false })
+  await json(route, { previewToken, expiresAt: new Date(Date.now() + 300_000).toISOString(), noop: false, diff: diff(rules) })
+  return true
+}
+
 const rule = (name, action = 'proxy') => ({
   name,
   domains: [`domain:${name.toLowerCase()}.example`],
@@ -117,6 +127,12 @@ async function prepare(page, options = {}) {
         state.previews.delete(entry.body.previewToken)
         if (state.applyMode === 'busy') return json(route, { error: 'routing policy is busy', code: 'busy' }, 409)
         if (state.applyMode === 'stale') return json(route, { error: 'routing policy preview is stale', code: 'preview-stale' }, 409)
+        if (state.applyMode === 'expired') return json(route, { error: 'routing policy preview has expired', code: 'preview-expired' }, 409)
+        if (state.applyMode === 'drift') {
+          state.policy = projectionFor('drift-detected')
+          return json(route, { error: 'routing policy drift detected', code: 'drift-detected' }, 409)
+        }
+        if (state.applyMode === 'candidate-rejected') return json(route, { error: 'routing policy candidate rejected', code: 'candidate-rejected' }, 422)
         if (state.applyMode === 'restored') return json(route, { error: 'routing policy failed; previous generation restored', code: 'transaction-restored' }, 500)
         if (state.applyMode === 'unknown') return json(route, { error: 'routing policy outcome is not proven', code: 'transaction-unproven' }, 503)
         if (pending && !pending.noop) state.policy = projectionFor('editable', pending.rules)
@@ -134,6 +150,18 @@ async function openRouting(page) {
   await expect(page.getByRole('button', { name: 'Routing', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Routing', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Typed custom rules' })).toBeVisible()
+}
+
+async function addNamedRule(page, name) {
+  await page.getByRole('button', { name: 'Add rule', exact: true }).click()
+  await page.getByLabel('Rule 1 display name').fill(name)
+}
+
+async function signInAfterSessionChange(page) {
+  await expect(page.getByLabel('Panel password')).toBeVisible()
+  await page.getByLabel('Panel password').fill('synthetic-password')
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Routing', exact: true })).toBeVisible()
 }
 
 const requestsFor = (state, path, method) => state.requests.filter((request) => request.path === path && (!method || request.method === method))
@@ -238,15 +266,7 @@ test('invalidates an in-flight Preview when dirty changes are discarded and refr
   const state = await prepare(page)
   page.__routingIssues = state.issues
   const release = deferred()
-  state.handle = async ({ route, entry, state: current }) => {
-    if (entry.path !== '/api/v1/appliance/policy/preview') return false
-    await release.promise
-    const rules = entry.body.rules
-    const previewToken = `synthetic-routing-preview-${++current.previewNumber}`
-    current.previews.set(previewToken, { rules, noop: false })
-    await json(route, { previewToken, expiresAt: new Date(Date.now() + 300_000).toISOString(), noop: false, diff: diff(rules) })
-    return true
-  }
+  state.handle = deferredPreviewHandler(release)
   await openRouting(page)
   await page.getByRole('button', { name: 'Add rule', exact: true }).click()
   await page.getByLabel('Rule 1 display name').fill('In-flight discarded rule')
@@ -260,6 +280,86 @@ test('invalidates an in-flight Preview when dirty changes are discarded and refr
   await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toHaveCount(0)
   await expect(page.locator('.notice.neutral')).toHaveCount(0)
   expect(requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST')[0].body).toEqual({ previewToken: 'synthetic-routing-preview-1' })
+  expect(requestsFor(state, '/api/v1/appliance/policy/apply', 'POST')).toHaveLength(0)
+})
+
+test('invalidates a completed Preview when the session changes', async ({ page }) => {
+  const state = await prepare(page)
+  page.__routingIssues = state.issues
+  await openRouting(page)
+  await addNamedRule(page, 'Session discarded rule')
+  await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Review routing changes' })).toBeVisible()
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+  await expect(page.getByLabel('Panel password')).toBeVisible()
+  await expect.poll(() => requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST').length).toBe(1)
+  expect(requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST')[0]).toMatchObject({
+    body: { previewToken: 'synthetic-routing-preview-1' },
+    csrf: csrfToken,
+  })
+  await signInAfterSessionChange(page)
+  await page.getByRole('button', { name: 'Routing', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toHaveCount(0)
+  expect(requestsFor(state, '/api/v1/appliance/policy/apply', 'POST')).toHaveLength(0)
+})
+
+test('invalidates an in-flight Preview when the session changes and cancels its late token', async ({ page }) => {
+  const state = await prepare(page)
+  page.__routingIssues = state.issues
+  const release = deferred()
+  state.handle = deferredPreviewHandler(release)
+  await openRouting(page)
+  await addNamedRule(page, 'Late session rule')
+  await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
+  await expect(page.locator('.notice.neutral')).toContainText('Preparing a fresh semantic Preview…')
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+  await expect(page.getByLabel('Panel password')).toBeVisible()
+  release.resolve()
+  await expect.poll(() => requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST').length).toBe(1)
+  expect(requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST')[0]).toMatchObject({
+    body: { previewToken: 'synthetic-routing-preview-1' },
+    csrf: csrfToken,
+  })
+  await signInAfterSessionChange(page)
+  await page.getByRole('button', { name: 'Routing', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toHaveCount(0)
+  expect(requestsFor(state, '/api/v1/appliance/policy/apply', 'POST')).toHaveLength(0)
+})
+
+test('invalidates a completed Preview when navigating away from Routing', async ({ page }) => {
+  const state = await prepare(page)
+  page.__routingIssues = state.issues
+  await openRouting(page)
+  await addNamedRule(page, 'Navigation discarded rule')
+  await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Review routing changes' })).toBeVisible()
+  await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+  await expect(page.locator('.components-heading')).toBeVisible()
+  await expect.poll(() => requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST').length).toBe(1)
+  expect(requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST')[0].body).toEqual({ previewToken: 'synthetic-routing-preview-1' })
+  await page.getByRole('button', { name: 'Routing', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Typed custom rules' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toHaveCount(0)
+  expect(requestsFor(state, '/api/v1/appliance/policy/apply', 'POST')).toHaveLength(0)
+})
+
+test('invalidates an in-flight Preview when navigating away from Routing and cancels its late token', async ({ page }) => {
+  const state = await prepare(page)
+  page.__routingIssues = state.issues
+  const release = deferred()
+  state.handle = deferredPreviewHandler(release)
+  await openRouting(page)
+  await addNamedRule(page, 'Late navigation rule')
+  await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
+  await expect(page.locator('.notice.neutral')).toContainText('Preparing a fresh semantic Preview…')
+  await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+  await expect(page.locator('.components-heading')).toBeVisible()
+  release.resolve()
+  await expect.poll(() => requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST').length).toBe(1)
+  expect(requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST')[0].body).toEqual({ previewToken: 'synthetic-routing-preview-1' })
+  await page.getByRole('button', { name: 'Routing', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Typed custom rules' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toHaveCount(0)
   expect(requestsFor(state, '/api/v1/appliance/policy/apply', 'POST')).toHaveLength(0)
 })
 
@@ -375,6 +475,44 @@ test('treats Apply transport loss as unknown and never replays the consumed toke
   await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toBeEnabled()
 })
 
+const applyErrorCases = [
+  { mode: 'busy', code: 'busy', title: 'Lifecycle is busy', refreshes: false, draft: 'retained' },
+  { mode: 'stale', code: 'preview-stale', title: 'Preview is stale', refreshes: true, draft: 'rebased' },
+  { mode: 'expired', code: 'preview-expired', title: 'Preview expired', refreshes: false, draft: 'retained' },
+  { mode: 'drift', code: 'drift-detected', title: 'Routing policy drift detected', refreshes: true, draft: 'blocked' },
+  { mode: 'candidate-rejected', code: 'candidate-rejected', title: 'Routing candidate rejected', refreshes: false, draft: 'retained' },
+  { mode: 'restored', code: 'transaction-restored', title: 'Routing changes were restored', refreshes: true, draft: 'rebased' },
+  { mode: 'unknown', code: 'transaction-unproven', title: 'Routing outcome is unknown', refreshes: true, draft: 'rebased' },
+]
+
+for (const outcome of applyErrorCases) {
+  test(`maps Apply ${outcome.code} conservatively without replay`, async ({ page }) => {
+    const state = await prepare(page, { applyMode: outcome.mode })
+    page.__routingIssues = state.issues
+    await openRouting(page)
+    await addNamedRule(page, `Matrix ${outcome.code}`)
+    await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
+    await page.getByRole('button', { name: 'Apply routing changes', exact: true }).click()
+    await expect(page.getByTestId('routing-result')).toContainText(outcome.title)
+    expect(requestsFor(state, '/api/v1/appliance/policy/apply', 'POST')).toHaveLength(1)
+    expect(state.previews.has('synthetic-routing-preview-1')).toBe(false)
+    expect(requestsFor(state, '/api/v1/appliance/policy')).toHaveLength(outcome.refreshes ? 2 : 1)
+    await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toHaveCount(0)
+
+    if (outcome.draft === 'retained') {
+      await expect(page.getByLabel('Rule 1 display name')).toHaveValue(`Matrix ${outcome.code}`)
+      await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toBeEnabled()
+    } else if (outcome.draft === 'blocked') {
+      await expect(page.getByText('Routing editing is blocked by protected-state drift.', { exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Add rule', exact: true })).toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toHaveCount(0)
+    } else {
+      await expect(page.getByLabel('Rule 1 display name')).toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toBeEnabled()
+    }
+  })
+}
+
 test('lifecycle maintenance disables new mutation initiation while keeping read-only facts', async ({ page }) => {
   const state = await prepare(page, { lifecycle: { maintenance: true, applying: false } })
   page.__routingIssues = state.issues
@@ -391,6 +529,7 @@ test('keeps preview and draft state out of browser storage and remains usable on
   await page.getByRole('button', { name: 'Add rule', exact: true }).click()
   await page.getByLabel('Rule 1 display name').fill('Mobile rule')
   expect(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } }))).toEqual({ local: {}, session: {} })
+  await page.screenshot({ path: testInfo.outputPath('routing-desktop.png'), fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByRole('heading', { name: 'Typed custom rules' })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('routing-mobile.png'), fullPage: true })
