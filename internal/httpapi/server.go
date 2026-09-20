@@ -12,12 +12,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/popiposter/xkeen-control/internal/appliance"
 	"github.com/popiposter/xkeen-control/internal/auth"
 	"github.com/popiposter/xkeen-control/internal/backup"
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/components"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	"github.com/popiposter/xkeen-control/internal/restore"
+	"github.com/popiposter/xkeen-control/internal/routingpolicy"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
 	panelupdate "github.com/popiposter/xkeen-control/internal/update"
 )
@@ -30,6 +32,7 @@ const (
 	maxComponentMutationBody = 4 << 10
 	maxComponentPolicyBody   = 4 << 10
 	maxSetupBody             = 1 << 10
+	maxRoutingPolicyBody     = 128 << 10
 	maxJSONResponse          = 512 << 10
 	csrfRequiredPath         = "/api/v1/session/logout"
 )
@@ -42,6 +45,15 @@ type BackupService interface {
 type RestoreService interface {
 	PreviewBundle(context.Context, string, []byte, string, restore.Mode) (restore.Preview, error)
 	Apply(context.Context, string, string) (restore.ApplyResult, error)
+	Cancel(string, string)
+	Invalidate(string)
+	InvalidateAll()
+}
+
+type RoutingPolicyService interface {
+	Read(context.Context) (routingpolicy.Projection, error)
+	Preview(context.Context, string, []appliance.CustomRule) (routingpolicy.Preview, error)
+	Apply(context.Context, string, string) (routingpolicy.ApplyResult, error)
 	Cancel(string, string)
 	Invalidate(string)
 	InvalidateAll()
@@ -84,6 +96,7 @@ type Server struct {
 	updates            panelupdate.Service
 	backup             BackupService
 	restore            RestoreService
+	policy             RoutingPolicyService
 	restorePreviewGate chan struct{}
 }
 
@@ -110,13 +123,14 @@ type Config struct {
 	Updates            panelupdate.Service
 	Backup             BackupService
 	Restore            RestoreService
+	Policy             RoutingPolicyService
 }
 
 func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, updates: config.Updates, backup: config.Backup, restore: config.Restore, restorePreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, updates: config.Updates, backup: config.Backup, restore: config.Restore, policy: config.Policy, restorePreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -136,6 +150,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary", "/api/v1/components", "/api/v1/components/check", "/api/v1/components/policy",
 		"/api/v1/components/preview", "/api/v1/components/apply", "/api/v1/components/rollback", "/api/v1/components/cancel",
 		"/api/v1/setup/preview", "/api/v1/setup/apply", "/api/v1/setup/cancel",
+		"/api/v1/appliance/policy", "/api/v1/appliance/policy/preview", "/api/v1/appliance/policy/apply", "/api/v1/appliance/policy/cancel",
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
 		"/api/v1/session/password",
 		"/api/v1/benchmark/run", "/api/v1/performance/manual-node",
@@ -286,6 +301,30 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.cancelSetup(w, r)
+	case "/api/v1/appliance/policy":
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w, http.MethodGet)
+			return
+		}
+		s.readRoutingPolicy(w, r)
+	case "/api/v1/appliance/policy/preview":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.previewRoutingPolicy(w, r)
+	case "/api/v1/appliance/policy/apply":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.applyRoutingPolicy(w, r)
+	case "/api/v1/appliance/policy/cancel":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.cancelRoutingPolicy(w, r)
 	case "/api/v1/benchmark/run":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -650,6 +689,9 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if s.setup != nil {
 		s.setup.Invalidate(session.CSRFToken)
 	}
+	if s.policy != nil {
+		s.policy.Invalidate(session.CSRFToken)
+	}
 	s.auth.ClearSessionCookie(w)
 	writeJSON(w, http.StatusOK, struct {
 		Authenticated bool `json:"authenticated"`
@@ -687,6 +729,9 @@ func (s *Server) replacePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.setup != nil {
 		s.setup.InvalidateAll()
+	}
+	if s.policy != nil {
+		s.policy.InvalidateAll()
 	}
 	s.auth.ClearSessionCookie(w)
 	writeJSON(w, http.StatusOK, struct {
@@ -1731,6 +1776,187 @@ func (s *Server) cancelSetup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, struct {
 		Canceled bool `json:"canceled"`
 	}{Canceled: true})
+}
+
+func (s *Server) readRoutingPolicy(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	if s.policy == nil {
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "routing policy unavailable")
+		return
+	}
+	projection, err := s.policy.Read(r.Context())
+	if err != nil {
+		writeRoutingPolicyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, projection)
+}
+
+func (s *Server) previewRoutingPolicy(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.policy == nil {
+		writeRoutingPolicyError(w, routingpolicy.ErrUnavailable)
+		return
+	}
+	var request routingPolicyRequest
+	if !s.decodeRoutingPolicyRequest(w, r, &request) {
+		return
+	}
+	if request.Rules == nil {
+		writeRoutingPolicyError(w, routingpolicy.ErrInvalidRequest)
+		return
+	}
+	preview, err := s.policy.Preview(r.Context(), session.CSRFToken, *request.Rules)
+	if err != nil {
+		writeRoutingPolicyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
+func (s *Server) applyRoutingPolicy(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.policy == nil {
+		writeRoutingPolicyError(w, routingpolicy.ErrUnavailable)
+		return
+	}
+	var request routingPolicyTokenRequest
+	if !s.decodeRoutingPolicyTokenRequest(w, r, &request) {
+		return
+	}
+	result, err := s.policy.Apply(r.Context(), session.CSRFToken, request.PreviewToken)
+	if err != nil {
+		writeRoutingPolicyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) cancelRoutingPolicy(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.policy == nil {
+		writeRoutingPolicyError(w, routingpolicy.ErrUnavailable)
+		return
+	}
+	var request routingPolicyTokenRequest
+	if !s.decodeRoutingPolicyTokenRequest(w, r, &request) {
+		return
+	}
+	s.policy.Cancel(session.CSRFToken, request.PreviewToken)
+	writeJSON(w, http.StatusOK, struct {
+		Canceled bool `json:"canceled"`
+	}{Canceled: true})
+}
+
+type routingPolicyRequest struct {
+	Rules *[]appliance.CustomRule `json:"rules"`
+}
+
+type routingPolicyTokenRequest struct {
+	PreviewToken string `json:"previewToken"`
+}
+
+func (s *Server) decodeRoutingPolicyRequest(w http.ResponseWriter, r *http.Request, value *routingPolicyRequest) bool {
+	return decodeRoutingPolicyJSON(w, r, value)
+}
+
+func (s *Server) decodeRoutingPolicyTokenRequest(w http.ResponseWriter, r *http.Request, value *routingPolicyTokenRequest) bool {
+	if !decodeRoutingPolicyJSON(w, r, value) {
+		return false
+	}
+	if value.PreviewToken == "" {
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid routing policy request")
+		return false
+	}
+	return true
+}
+
+func decodeRoutingPolicyJSON(w http.ResponseWriter, r *http.Request, value any) bool {
+	contentTypes := r.Header.Values("Content-Type")
+	if len(contentTypes) != 1 || strings.TrimSpace(contentTypes[0]) != "application/json" {
+		writeCodedError(w, http.StatusUnsupportedMediaType, "invalid-request", "unsupported media type")
+		return false
+	}
+	if r.URL.RawQuery != "" {
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid routing policy request")
+		return false
+	}
+	if r.ContentLength > maxRoutingPolicyBody {
+		writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		return false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRoutingPolicyBody)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		} else {
+			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid routing policy request")
+		}
+		return false
+	}
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		} else {
+			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid routing policy request")
+		}
+		return false
+	}
+	return true
+}
+
+func writeRoutingPolicyError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, routingpolicy.ErrInvalidRequest):
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid routing policy request")
+	case errors.Is(err, routingpolicy.ErrCandidateInvalid):
+		writeCodedError(w, http.StatusBadGateway, "candidate-rejected", "routing policy candidate rejected")
+	case errors.Is(err, routingpolicy.ErrDriftDetected):
+		writeCodedError(w, http.StatusConflict, "drift-detected", "routing policy drift detected")
+	case errors.Is(err, routingpolicy.ErrPreviewExpired):
+		writeCodedError(w, http.StatusConflict, "preview-expired", "routing policy preview expired or invalid")
+	case errors.Is(err, routingpolicy.ErrPreviewStale):
+		writeCodedError(w, http.StatusConflict, "preview-stale", "routing policy preview is stale")
+	case errors.Is(err, routingpolicy.ErrBusy):
+		writeCodedError(w, http.StatusConflict, "busy", "routing policy is busy")
+	case errors.Is(err, routingpolicy.ErrTransactionRestored):
+		writeCodedError(w, http.StatusInternalServerError, "transaction-restored", "routing policy failed; previous generation restored")
+	case errors.Is(err, routingpolicy.ErrTransactionUnproven):
+		writeCodedError(w, http.StatusServiceUnavailable, "transaction-unproven", "routing policy outcome is not proven")
+	case errors.Is(err, routingpolicy.ErrUnavailable):
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "routing policy unavailable")
+	default:
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "routing policy unavailable")
+	}
 }
 
 func (s *Server) decodeSetupEmptyRequest(w http.ResponseWriter, r *http.Request) bool {

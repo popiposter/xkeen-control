@@ -75,6 +75,17 @@ func (s *Service) Snapshot() (Appliance, error) {
 	return s.loadAppliance()
 }
 
+// ActiveSnapshot returns the typed managed DNS/routing/Observatory policy
+// currently present in the runtime config directory. It is read-only and is
+// used by typed editors to distinguish an adopted authority from active
+// policy drift before entering the shared restore transaction.
+func (s *Service) ActiveSnapshot() (Appliance, error) {
+	if s == nil {
+		return Appliance{}, errors.New("appliance service unavailable")
+	}
+	return parseActivePolicy(s.config.ConfigDir)
+}
+
 // SnapshotUnderLease is the same typed read for callers that already hold the
 // shared authority lease across a cross-authority snapshot.
 func (s *Service) SnapshotUnderLease() (Appliance, error) {

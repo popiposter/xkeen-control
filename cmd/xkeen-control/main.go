@@ -27,6 +27,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/httpapi"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	"github.com/popiposter/xkeen-control/internal/restore"
+	"github.com/popiposter/xkeen-control/internal/routingpolicy"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
 	panelupdate "github.com/popiposter/xkeen-control/internal/update"
 	"github.com/popiposter/xkeen-control/internal/webassets"
@@ -166,6 +167,10 @@ func main() {
 	nodeManager.SetAutoRefreshStatusProvider(subscriptionRefresher.AutoRefreshStatuses)
 	applianceService := newApplianceService(authorityLease)
 	restoreService := newRestoreService(coordinator, authorityLease)
+	routingPolicyService := routingpolicy.NewService(routingpolicy.Config{
+		Appliance: applianceService,
+		Settings:  restoreService,
+	})
 	componentXrayService := newXrayService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
 	componentGeodataService := newGeodataService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
 	componentXKeenService := newXKeenService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
@@ -330,6 +335,7 @@ func main() {
 		Setup:              setupService,
 		Updates:            updateManager,
 		Restore:            restoreService,
+		Policy:             routingPolicyService,
 		Backup: backup.NewService(backup.Config{
 			Appliance:      applianceService,
 			Nodes:          nodeManager,

@@ -94,6 +94,10 @@ POST /api/v1/components/policy
 POST /api/v1/setup/preview
 POST /api/v1/setup/apply
 POST /api/v1/setup/cancel
+GET  /api/v1/appliance/policy
+POST /api/v1/appliance/policy/preview
+POST /api/v1/appliance/policy/apply
+POST /api/v1/appliance/policy/cancel
 GET  /healthz
 ```
 
@@ -288,7 +292,7 @@ Panel install/update does not install or repair XKeen/Xray and does not rewrite 
 
 Normal polling, update checks and runtime telemetry cause no persistent writes unless the operator deliberately changes policy or applies a release/state mutation.
 
-Persistent writes are purpose-specific and bounded, including auth/listener changes, explicit typed `appliance.json` adoption/restore changes, explicit `nodes.json` mutations plus generated active outbounds, the authenticated component policy at `/opt/etc/xkeen-control/state/component-policy.json`, real stable-selection changes, one compact completed legacy benchmark snapshot, compact panel release/update markers and bounded rollback generations. The Issue #81 Setup source boundary additionally commits the empty authority pair, complete managed config/geodata, exact candidate generations, fixed `S05xkeen` and one bounded shared journal only during explicit Apply; its plan/token remains in RAM. Adaptive generations, manual progress/results and component scheduler timestamps, status, notification dedupe and failures remain in RAM.
+Persistent writes are purpose-specific and bounded, including auth/listener changes, explicit typed `appliance.json` adoption/restore changes, explicit `nodes.json` mutations plus generated active outbounds, the authenticated component policy at `/opt/etc/xkeen-control/state/component-policy.json`, real stable-selection changes, one compact completed legacy benchmark snapshot, compact panel release/update markers and bounded rollback generations. The Issue #81 Setup source boundary additionally commits the empty authority pair, complete managed config/geodata, exact candidate generations, fixed `S05xkeen` and one bounded shared journal only during explicit Apply; its plan/token remains in RAM. The Issue #83 custom-routing preview remains RAM-only and dispatches Apply through that same D.1 settings journal/recovery owner; it never writes `nodes.json` or independently owns generated outbounds. Adaptive generations, manual progress/results and component scheduler timestamps, status, notification dedupe and failures remain in RAM.
 
 No SQLite/Redis/Prometheus/Grafana/growing revision history belongs on the router.
 
@@ -318,6 +322,31 @@ The safe export requires an authenticated same-origin session and contains only 
 Import preview uses strict bounded multipart parsing with one in-flight preview admission and returns only a session-bound, expiring server token plus safe change metadata. Apply and cancel accept that token rather than a replacement mode or candidate payload; the mode and candidate are fixed by preview. Restore Apply is preview-first, typed, authority-coordinated and journaled for interrupted-import recovery. An equivalent settings-only restore is a no-op: it preserves node/generated/runtime state and does not restart Xray/XKeen. Secret-bearing backups must never be uploaded to public GitHub evidence.
 
 D.1 does not expose raw JSON/Xray/XKeen editing, does not clone panel auth/listener/update state and does not install/repair XKeen/Xray. Before successful adoption, the explicit repository-derived/legacy compatibility boundary remains in force; unknown/manual drift fails closed. Component lifecycle remains source-only under #4, and broad visual typed configuration remains planned #5.
+
+## Issue #83 — custom-routing policy broker source boundary
+
+Issue #83 adds a backend/API-only typed projection over the adopted appliance
+v1 policy. The authenticated routes are:
+
+```text
+GET  /api/v1/appliance/policy
+POST /api/v1/appliance/policy/preview
+POST /api/v1/appliance/policy/apply
+POST /api/v1/appliance/policy/cancel
+```
+
+The projection edits only server-owned custom client rules in the single
+region immediately before the protected final direct catch-all. Protected
+routing rules, the `bal-proxy` selector/fallback/leastPing strategy, inbound
+tags and generated Xray fields are never request data. Proxy custom domains
+are added to both source-owned proxy-DNS resolvers from the embedded
+ProductDefault baseline; direct and block domains are not added. The API
+rejects protected/manual drift instead of adopting it, returns only bounded
+semantic facts, and performs Preview candidate validation before storing a
+session-bound one-shot RAM token. Apply reuses the existing Coordinator,
+authority lease, complete render/validation, previous generation, journal,
+restart/readiness, rollback and startup recovery path. This is source/CI-only:
+there is no Routing UI, release, router access or live qualification claim.
 
 Phase A of #4 adds the separate read-only component inventory foundation: an authenticated `GET /api/v1/components` returns a bounded typed projection for panel, XKeen, Xray, geodata, KeeneticOS and Entware. It performs no network discovery, persistence, coordinator/lease work, lifecycle mutation or panel-update-policy changes; later mutation policy remains a separate typed boundary.
 
