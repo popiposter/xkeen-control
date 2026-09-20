@@ -204,6 +204,23 @@ type previewEntry struct {
 	ExpiresAt       time.Time
 }
 
+// SettingsSnapshot is the read-only, authority-bound D.1 settings state used
+// by typed brokers that do not consume a backup bundle. The registry and
+// digest remain internal so callers can only pass the snapshot back through
+// the typed candidate seam.
+type SettingsSnapshot struct {
+	Appliance appliance.Appliance
+	snapshot  authoritySnapshot
+}
+
+// SettingsCandidate is a typed settings-only candidate prepared against one
+// SettingsSnapshot. It has no HTTP token and is consumed by the broker that
+// owns the user-facing preview lifecycle.
+type SettingsCandidate struct {
+	candidate appliance.Appliance
+	snapshot  SettingsSnapshot
+}
+
 type authoritySnapshot struct {
 	applianceExists bool
 	applianceValid  bool
@@ -540,6 +557,85 @@ func (s *Service) PreviewBundle(ctx context.Context, binding string, contents []
 	return s.Preview(ctx, binding, mode, contents, passphrase)
 }
 
+// SnapshotSettings captures the currently adopted appliance and coherent node
+// registry under the same D.1 authority lease used by restore. It performs no
+// writes and does not create a preview token.
+func (s *Service) SnapshotSettings(ctx context.Context) (SettingsSnapshot, error) {
+	if err := s.Ready(); err != nil {
+		return SettingsSnapshot{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	snapshot, err := s.captureAuthorities(ctx)
+	if err != nil {
+		return SettingsSnapshot{}, err
+	}
+	if len(snapshotBlockers(snapshot)) != 0 {
+		return SettingsSnapshot{}, ErrUnavailable
+	}
+	return SettingsSnapshot{Appliance: snapshot.appliance, snapshot: snapshot}, nil
+}
+
+// PrepareSettingsCandidate validates a typed appliance candidate against the
+// captured settings snapshot and runs the complete existing Xray candidate
+// validation. The returned value is intentionally not persisted and contains
+// no independent journal/recovery state.
+func (s *Service) PrepareSettingsCandidate(ctx context.Context, snapshot SettingsSnapshot, candidate appliance.Appliance) (SettingsCandidate, error) {
+	if err := s.Ready(); err != nil {
+		return SettingsCandidate{}, err
+	}
+	if !snapshot.snapshot.applianceValid || !snapshot.snapshot.nodesValid || !sameAppliance(snapshot.Appliance, snapshot.snapshot.appliance) {
+		return SettingsCandidate{}, ErrCompatibilityBlocked
+	}
+	if err := candidate.Validate(); err != nil {
+		return SettingsCandidate{}, ErrCandidateInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := s.verifyCurrent(ctx, snapshot.snapshot); err != nil {
+		return SettingsCandidate{}, ErrCompatibilityBlocked
+	}
+	files, err := appliance.RenderCandidateFiles(candidate, snapshot.snapshot.registry)
+	if err != nil {
+		return SettingsCandidate{}, ErrCandidateInvalid
+	}
+	if err := s.validateCandidate(ctx, files); err != nil {
+		return SettingsCandidate{}, ErrCandidateInvalid
+	}
+	cloned, err := cloneAppliance(candidate)
+	if err != nil {
+		return SettingsCandidate{}, ErrCandidateInvalid
+	}
+	return SettingsCandidate{candidate: cloned, snapshot: snapshot}, nil
+}
+
+// ApplySettingsCandidate dispatches a prepared typed candidate through the
+// existing coordinator, authority lease, journal, activation and recovery
+// owner. It is the only settings-only transaction seam for D.1 restore and
+// later typed policy brokers.
+func (s *Service) ApplySettingsCandidate(ctx context.Context, candidate SettingsCandidate) (ApplyResult, error) {
+	if err := s.Ready(); err != nil {
+		return ApplyResult{}, err
+	}
+	if !candidate.snapshot.snapshot.applianceValid || !candidate.snapshot.snapshot.nodesValid {
+		return ApplyResult{}, ErrCompatibilityBlocked
+	}
+	entry := previewEntry{
+		Mode:        SettingsOnly,
+		Appliance:   candidate.candidate,
+		Registry:    candidate.snapshot.snapshot.registry,
+		HasRegistry: true,
+		BaseDigest:  candidate.snapshot.snapshot.digest,
+		Changes: ChangeSummary{
+			ApplianceChanged: !sameAppliance(candidate.snapshot.snapshot.appliance, candidate.candidate),
+		},
+	}
+	defer zeroPreview(&entry)
+	return s.applyPrepared(ctx, entry)
+}
+
 // Apply consumes a valid preview token after an exact authority re-check and
 // performs the combined logical-authority/runtime transaction.
 func (s *Service) Apply(ctx context.Context, binding, token string) (ApplyResult, error) {
@@ -566,8 +662,9 @@ func (s *Service) Apply(ctx context.Context, binding, token string) (ApplyResult
 		return ApplyResult{}, ErrCompatibilityBlocked
 	}
 
-	// The coordinator is deliberately acquired before the authority lease.
-	// It remains the sole owner of runtime lifecycle exclusion.
+	// Preserve D.1 bundle-preview semantics: a non-blocked preview remains
+	// available if lifecycle admission is currently busy. It is consumed only
+	// after the coordinator and authority lease have been acquired.
 	admissionContext, cancelAdmission := context.WithTimeout(ctx, s.config.AuthorityWaitTimeout)
 	defer cancelAdmission()
 	releaseCoordinator, err := s.beginCoordinator(admissionContext)
@@ -586,10 +683,36 @@ func (s *Service) Apply(ctx context.Context, binding, token string) (ApplyResult
 		return ApplyResult{}, ErrPreviewExpired
 	}
 	defer zeroPreview(&entry)
-	// The entry is now one-shot. Any subsequent failure is handled by the
-	// persistent previous-generation protocol and cannot be retried with stale
-	// candidate state.
+	return s.applyPreparedAdmitted(admissionContext, entry)
+}
 
+func (s *Service) applyPrepared(ctx context.Context, entry previewEntry) (ApplyResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// The coordinator is deliberately acquired before the authority lease.
+	// It remains the sole owner of runtime lifecycle exclusion for both D.1
+	// restore and typed settings brokers.
+	admissionContext, cancelAdmission := context.WithTimeout(ctx, s.config.AuthorityWaitTimeout)
+	defer cancelAdmission()
+	releaseCoordinator, err := s.beginCoordinator(admissionContext)
+	if err != nil {
+		return ApplyResult{}, ErrAuthorityBusy
+	}
+	defer releaseCoordinator()
+	releaseAuthority, err := s.config.AuthorityLease.Acquire(admissionContext, s.config.AuthorityWaitTimeout)
+	if err != nil {
+		return ApplyResult{}, ErrAuthorityBusy
+	}
+	defer releaseAuthority()
+	return s.applyPreparedAdmitted(admissionContext, entry)
+}
+
+func (s *Service) applyPreparedAdmitted(admissionContext context.Context, entry previewEntry) (ApplyResult, error) {
+	// The entry is one-shot for bundle previews and is consumed before this
+	// helper is called for typed candidates. Any subsequent failure is handled
+	// by the persistent previous-generation protocol and cannot be retried with
+	// stale candidate state.
 	snapshot, err := s.captureAuthoritiesUnderLease()
 	if err != nil || snapshot.digest != entry.BaseDigest {
 		return ApplyResult{}, ErrPreviewStale
@@ -976,6 +1099,16 @@ func (s *Service) writeGenerated(files map[string][]byte, inject bool) error {
 		contents, ok := files[item.name]
 		if !ok {
 			return ErrCandidateInvalid
+		}
+		if item.name == "xray/04_outbounds.json" {
+			if existing, err := readRegularFile(item.path, nodes.MaxRegistryDocument); err == nil && bytes.Equal(existing, contents) {
+				if inject {
+					if err := s.inject(item.stage); err != nil {
+						return err
+					}
+				}
+				continue
+			}
 		}
 		if err := writeAtomicInExistingDir(item.path, contents, 0o600, s.syncDirectory); err != nil {
 			return err

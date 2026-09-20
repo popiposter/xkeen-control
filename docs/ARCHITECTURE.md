@@ -208,7 +208,7 @@ Current sequence after completed D.1 is:
 #5 typed visual routing/DNS/XKeen/Xray/panel configuration (planned)
 ```
 
-#4 component lifecycle and #5 visual configuration remain planned rather than deployed. Issue #81 is the source-only D.2 G Setup boundary described below; it does not change the production-qualified status of the current release. The current authority model above is in force for adopted routers; the explicit repository-derived/legacy compatibility boundary remains in force before successful adoption.
+#4 component lifecycle and #5 visual configuration remain planned rather than deployed. Issue #81 is the source-only D.2 G Setup boundary described below; Issue #83 is the first source-only #5 backend/API boundary for typed custom-routing policy over the existing D.1 settings transaction; neither changes the production-qualified status of the current release. The current authority model above is in force for adopted routers; the explicit repository-derived/legacy compatibility boundary remains in force before successful adoption.
 
 ## Architecture invariants
 

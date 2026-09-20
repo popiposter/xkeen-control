@@ -461,6 +461,41 @@ func TestSafeSettingsOnlyApplyPreservesNodesAndTrueNoopDoesNotRestart(t *testing
 	}
 }
 
+func TestTypedSettingsCandidateSeamUsesSharedTransactionAndPreservesOutbounds(t *testing.T) {
+	fixture := newRestoreFixture(t)
+	_, originalNodes, originalOutbounds := authorityBytes(t, fixture)
+	snapshot, err := fixture.service.SnapshotSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := changedAppliance(fixture.appliance)
+	prepared, err := fixture.service.PrepareSettingsCandidate(context.Background(), snapshot, candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := fixture.service.ApplySettingsCandidate(context.Background(), prepared)
+	if err != nil || result.Mode != SettingsOnly || result.Classification != "applied" || result.Noop {
+		t.Fatalf("typed settings candidate apply = %+v, %v", result, err)
+	}
+	gotNodes, err := os.ReadFile(fixture.nodesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotNodes, originalNodes) {
+		t.Fatal("typed settings candidate rewrote nodes authority")
+	}
+	gotOutbounds, err := os.ReadFile(fixture.outboundsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotOutbounds, originalOutbounds) {
+		t.Fatal("typed settings candidate changed generated outbounds")
+	}
+	if _, err := os.Stat(filepath.Join(fixture.stateDir, "appliance-import-transaction.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("shared settings journal remains: %v", err)
+	}
+}
+
 func TestReplaceMergeUseStableIDsAndRejectConflicts(t *testing.T) {
 	fixture := newRestoreFixture(t)
 	imported := cloneTestRegistry(t, fixture.registry)
