@@ -4,8 +4,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -22,6 +24,13 @@ const (
 var (
 	ErrCustomPolicyDrift   = errors.New("custom routing policy drift detected")
 	ErrInvalidCustomPolicy = errors.New("custom routing policy is invalid")
+)
+
+var (
+	customDomainExtFilenamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+	customDomainExtTagPattern      = regexp.MustCompile(`^[A-Za-z0-9._!-]{1,128}$`)
+	customDomainExtAssetsOnce      sync.Once
+	customDomainExtAssets          map[string]struct{}
 )
 
 type CustomRuleAction string
@@ -202,7 +211,10 @@ func validateCustomRule(rule CustomRule) error {
 		utf8.RuneCountInString(rule.Name) > MaxCustomNameRunes {
 		return ErrInvalidCustomPolicy
 	}
-	if err := validateUniqueExpressions(rule.Domains, "domain"); err != nil {
+	if len(rule.Domains) > MaxListItems {
+		return ErrInvalidCustomPolicy
+	}
+	if err := validateUniqueValues(rule.Domains, validateCustomDomainExpression); err != nil {
 		return err
 	}
 	if len(rule.IPs) > MaxListItems {
@@ -259,11 +271,49 @@ func validateCustomRule(rule CustomRule) error {
 	return nil
 }
 
-func validateUniqueExpressions(values []string, kind string) error {
-	if len(values) > MaxListItems {
+func validateCustomDomainExpression(value string) error {
+	if !strings.HasPrefix(value, "ext:") {
+		return validateMatchExpression(value, "domain")
+	}
+	parts := strings.Split(strings.TrimPrefix(value, "ext:"), ":")
+	if len(parts) != 2 || !customDomainExtFilenamePattern.MatchString(parts[0]) || !customDomainExtTagPattern.MatchString(parts[1]) {
 		return ErrInvalidCustomPolicy
 	}
-	return validateUniqueValues(values, func(value string) error { return validateMatchExpression(value, kind) })
+	if _, ok := managedCustomDomainExtAssets()[parts[0]]; !ok {
+		return ErrInvalidCustomPolicy
+	}
+	return nil
+}
+
+func managedCustomDomainExtAssets() map[string]struct{} {
+	customDomainExtAssetsOnce.Do(func() {
+		// The embedded product default is the appliance policy's source-owned
+		// managed geosite catalog. Deriving the names from it keeps this broker
+		// closed to operator-selected files without duplicating component data.
+		assets := make(map[string]struct{})
+		baseline := ProductDefault()
+		add := func(expression string) {
+			if !strings.HasPrefix(expression, "ext:") {
+				return
+			}
+			parts := strings.Split(strings.TrimPrefix(expression, "ext:"), ":")
+			if len(parts) == 2 && customDomainExtFilenamePattern.MatchString(parts[0]) && customDomainExtTagPattern.MatchString(parts[1]) {
+				assets[parts[0]] = struct{}{}
+			}
+		}
+		for _, rule := range baseline.Routing.Rules {
+			for _, expression := range rule.Domain {
+				add(expression)
+			}
+		}
+		for _, server := range baseline.DNS.Servers {
+			for _, expression := range server.Domains {
+				add(expression)
+			}
+		}
+		customDomainExtAssets = assets
+	})
+	return customDomainExtAssets
 }
 
 func validateUniqueValues(values []string, validate func(string) error) error {
@@ -513,11 +563,21 @@ func normalizeCustomRule(rule CustomRule) CustomRule {
 	rule.Protocols = append([]string{}, rule.Protocols...)
 	rule.Networks = append([]string{}, rule.Networks...)
 	rule.Ports = append([]PortRange{}, rule.Ports...)
+	sort.Strings(rule.Domains)
+	sort.Strings(rule.IPs)
+	sort.Strings(rule.Protocols)
+	sort.Strings(rule.Networks)
 	for index := range rule.Ports {
 		if rule.Ports[index].To == 0 {
 			rule.Ports[index].To = rule.Ports[index].From
 		}
 	}
+	sort.Slice(rule.Ports, func(left, right int) bool {
+		if rule.Ports[left].From != rule.Ports[right].From {
+			return rule.Ports[left].From < rule.Ports[right].From
+		}
+		return rule.Ports[left].To < rule.Ports[right].To
+	})
 	return rule
 }
 

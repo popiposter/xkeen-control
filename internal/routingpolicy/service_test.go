@@ -115,6 +115,81 @@ func TestNoopPolicyApplyDoesNotWriteOrRestart(t *testing.T) {
 	}
 }
 
+func TestMatchMemberPermutationsAreNoopAndDoNotRestart(t *testing.T) {
+	root := t.TempDir()
+	configDir := filepath.Join(root, "xray")
+	xkeenPath := filepath.Join(root, "xkeen", "xkeen.json")
+	appliancePath := filepath.Join(root, "control", "config", "appliance.json")
+	nodesPath := filepath.Join(root, "control", "secrets", "nodes.json")
+	outboundsPath := filepath.Join(configDir, "04_outbounds.json")
+	writePolicyTestFiles(t, root, configDir, xkeenPath, appliancePath, nodesPath, outboundsPath)
+	activator := &policyTestActivator{}
+	restoreService := newPolicyRestoreService(root, configDir, xkeenPath, appliancePath, nodesPath, outboundsPath, activator)
+	service := NewService(Config{Appliance: appliance.NewService(appliance.Config{ConfigDir: configDir}), Settings: restoreService})
+
+	canonical := []appliance.CustomRule{{
+		Name:      "set rule",
+		Domains:   []string{"domain:b.example", "domain:a.example"},
+		IPs:       []string{"192.0.2.0/24", "10.0.0.0/8"},
+		Protocols: []string{"tls", "http"},
+		Networks:  []string{"udp", "tcp"},
+		Ports:     []appliance.PortRange{{From: 443, To: 443}, {From: 80, To: 80}},
+		Action:    appliance.CustomRuleDirect,
+	}}
+	preview, err := service.Preview(context.Background(), "session-a", canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Noop {
+		t.Fatal("first custom-rule preview was unexpectedly a no-op")
+	}
+	if _, err := service.Apply(context.Background(), "session-a", preview.Token); err != nil {
+		t.Fatal(err)
+	}
+	if activator.restarts != 1 {
+		t.Fatalf("first apply restarts = %d, want 1", activator.restarts)
+	}
+	beforeAppliance, err := os.ReadFile(appliancePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeRouting, err := os.ReadFile(filepath.Join(configDir, "05_routing.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeDNS, err := os.ReadFile(filepath.Join(configDir, "02_dns.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	permuted := []appliance.CustomRule{{
+		Name:      "set rule",
+		Domains:   []string{"domain:a.example", "domain:b.example"},
+		IPs:       []string{"10.0.0.0/8", "192.0.2.0/24"},
+		Protocols: []string{"http", "tls"},
+		Networks:  []string{"tcp", "udp"},
+		Ports:     []appliance.PortRange{{From: 80, To: 80}, {From: 443, To: 443}},
+		Action:    appliance.CustomRuleDirect,
+	}}
+	permutedPreview, err := service.Preview(context.Background(), "session-a", permuted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !permutedPreview.Noop || permutedPreview.Diff.RestartRequired || len(permutedPreview.Diff.Changed) != 0 || len(permutedPreview.Diff.Reordered) != 0 {
+		t.Fatalf("permuted preview = %+v", permutedPreview)
+	}
+	result, err := service.Apply(context.Background(), "session-a", permutedPreview.Token)
+	if err != nil || !result.Noop || result.Classification != "no-op" || activator.restarts != 1 {
+		t.Fatalf("permuted apply = %+v, %v, restarts=%d", result, err, activator.restarts)
+	}
+	afterAppliance, _ := os.ReadFile(appliancePath)
+	afterRouting, _ := os.ReadFile(filepath.Join(configDir, "05_routing.json"))
+	afterDNS, _ := os.ReadFile(filepath.Join(configDir, "02_dns.json"))
+	if !bytes.Equal(beforeAppliance, afterAppliance) || !bytes.Equal(beforeRouting, afterRouting) || !bytes.Equal(beforeDNS, afterDNS) {
+		t.Fatal("permuted no-op apply changed persistent policy files")
+	}
+}
+
 func TestPolicyPreviewBecomesStaleAfterAuthorityChange(t *testing.T) {
 	root := t.TempDir()
 	configDir := filepath.Join(root, "xray")

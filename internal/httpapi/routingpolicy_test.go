@@ -20,6 +20,7 @@ type httpRoutingPolicyStub struct {
 	preview           routingpolicy.Preview
 	apply             routingpolicy.ApplyResult
 	previewRules      []appliance.CustomRule
+	previewAccepted   int
 	previewBinding    string
 	applyBinding      string
 	applyToken        string
@@ -34,8 +35,12 @@ func (stub *httpRoutingPolicyStub) Read(context.Context) (routingpolicy.Projecti
 }
 
 func (stub *httpRoutingPolicyStub) Preview(_ context.Context, binding string, rules []appliance.CustomRule) (routingpolicy.Preview, error) {
+	if err := appliance.ValidateCustomRules(rules); err != nil {
+		return routingpolicy.Preview{}, routingpolicy.ErrInvalidRequest
+	}
 	stub.previewBinding = binding
 	stub.previewRules = rules
+	stub.previewAccepted++
 	return stub.preview, nil
 }
 
@@ -91,6 +96,15 @@ func TestRoutingPolicyHTTPIsTypedAuthenticatedCSRFBoundAndSessionInvalidated(t *
 	}
 	response.Body.Close()
 
+	acceptedBeforeInvalid := stub.previewAccepted
+	response = postJSON(t, client, server.URL+"/api/v1/appliance/policy/preview", map[string]any{
+		"rules": []map[string]any{{"name": "path-like", "domains": []string{"ext:/tmp/operator-controlled.dat:tag"}, "action": "proxy"}},
+	}, login.CSRFToken)
+	if response.StatusCode != http.StatusBadRequest || stub.previewAccepted != acceptedBeforeInvalid {
+		t.Fatalf("policy path-like ext response = %d accepted=%d want=%d body=%s", response.StatusCode, stub.previewAccepted, acceptedBeforeInvalid, readBody(response))
+	}
+	response.Body.Close()
+
 	response = postJSON(t, client, server.URL+"/api/v1/appliance/policy/preview", map[string]any{
 		"rules": []map[string]any{{"name": "typed", "action": "direct", "ruleTag": "forbidden"}},
 	}, login.CSRFToken)
@@ -111,7 +125,7 @@ func TestRoutingPolicyHTTPIsTypedAuthenticatedCSRFBoundAndSessionInvalidated(t *
 	response.Body.Close()
 
 	validBody := map[string]any{"rules": []map[string]any{{
-		"name": "typed", "domains": []string{"domain:example.com"}, "ips": []string{}, "protocols": []string{}, "networks": []string{}, "ports": []map[string]int{}, "action": "proxy",
+		"name": "typed", "domains": []string{"ext:geosite_v2fly.dat:discord"}, "ips": []string{}, "protocols": []string{}, "networks": []string{}, "ports": []map[string]int{}, "action": "proxy",
 	}}}
 	response = postJSON(t, client, server.URL+"/api/v1/appliance/policy/preview", validBody, login.CSRFToken)
 	if response.StatusCode != http.StatusOK || stub.previewBinding != login.CSRFToken || len(stub.previewRules) != 1 || stub.previewRules[0].Name != "typed" {

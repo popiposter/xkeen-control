@@ -106,3 +106,53 @@ func TestCustomPolicyRejectsInvalidRequestValues(t *testing.T) {
 		}
 	}
 }
+
+func TestCustomDomainExtExpressionsAreBoundToManagedGeodata(t *testing.T) {
+	managed := []CustomRule{{Name: "managed geosite", Domains: []string{"ext:geosite_v2fly.dat:discord"}, Action: CustomRuleProxy}}
+	if _, err := CompileCustomRules(ProductDefault(), managed); err != nil {
+		t.Fatalf("managed geodata expression rejected: %v", err)
+	}
+	for _, expression := range []string{
+		"ext:/tmp/operator-controlled.dat:tag",
+		"ext:../../operator-controlled.dat:tag",
+		"ext:geosite_v2fly.dat:../tag",
+		"ext:geoip_v2fly.dat:ru",
+		"ext:geosite_v2fly.dat:tag/with-slash",
+	} {
+		rules := []CustomRule{{Name: "invalid geosite", Domains: []string{expression}, Action: CustomRuleProxy}}
+		if err := ValidateCustomRules(rules); err == nil {
+			t.Fatalf("path-like or unmanaged geodata expression accepted: %q", expression)
+		}
+	}
+}
+
+func TestNormalizeCustomRuleCanonicalizesOnlyMatchMemberOrder(t *testing.T) {
+	rule := CustomRule{
+		Name:      "ordered rule",
+		Domains:   []string{"domain:b.example", "domain:a.example"},
+		IPs:       []string{"192.0.2.0/24", "10.0.0.0/8"},
+		Protocols: []string{"tls", "http"},
+		Networks:  []string{"udp", "tcp"},
+		Ports:     []PortRange{{From: 443, To: 443}, {From: 80, To: 80}},
+		Action:    CustomRuleDirect,
+	}
+	normalized := normalizeCustomRule(rule)
+	if got, want := normalized.Domains, []string{"domain:a.example", "domain:b.example"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalized domains = %v, want %v", got, want)
+	}
+	if got, want := normalized.IPs, []string{"10.0.0.0/8", "192.0.2.0/24"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalized IPs = %v, want %v", got, want)
+	}
+	if got, want := normalized.Protocols, []string{"http", "tls"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalized protocols = %v, want %v", got, want)
+	}
+	if got, want := normalized.Networks, []string{"tcp", "udp"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalized networks = %v, want %v", got, want)
+	}
+	if got, want := normalized.Ports, []PortRange{{From: 80, To: 80}, {From: 443, To: 443}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalized ports = %v, want %v", got, want)
+	}
+	if normalized.Name != rule.Name || normalized.Action != rule.Action {
+		t.Fatalf("ordered rule identity/action changed: %+v", normalized)
+	}
+}
