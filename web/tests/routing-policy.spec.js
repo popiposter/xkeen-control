@@ -217,6 +217,69 @@ test('requires explicit discard for dirty Refresh and rebases immediately when c
   await expect.poll(() => requestsFor(state, '/api/v1/appliance/policy').length).toBe(3)
 })
 
+test('invalidates a completed Preview when dirty changes are discarded and refreshed', async ({ page }) => {
+  const state = await prepare(page)
+  page.__routingIssues = state.issues
+  await openRouting(page)
+  await page.getByRole('button', { name: 'Add rule', exact: true }).click()
+  await page.getByLabel('Rule 1 display name').fill('Discarded rule')
+  await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Review routing changes' })).toBeVisible()
+  await page.getByRole('button', { name: 'Refresh policy', exact: true }).click()
+  await page.getByRole('button', { name: 'Discard changes and refresh', exact: true }).click()
+  await expect.poll(() => requestsFor(state, '/api/v1/appliance/policy').length).toBe(2)
+  await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toHaveCount(0)
+  await expect.poll(() => requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST').length).toBe(1)
+  expect(requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST')[0].body).toEqual({ previewToken: 'synthetic-routing-preview-1' })
+  expect(requestsFor(state, '/api/v1/appliance/policy/apply', 'POST')).toHaveLength(0)
+})
+
+test('invalidates an in-flight Preview when dirty changes are discarded and refreshed', async ({ page }) => {
+  const state = await prepare(page)
+  page.__routingIssues = state.issues
+  const release = deferred()
+  state.handle = async ({ route, entry, state: current }) => {
+    if (entry.path !== '/api/v1/appliance/policy/preview') return false
+    await release.promise
+    const rules = entry.body.rules
+    const previewToken = `synthetic-routing-preview-${++current.previewNumber}`
+    current.previews.set(previewToken, { rules, noop: false })
+    await json(route, { previewToken, expiresAt: new Date(Date.now() + 300_000).toISOString(), noop: false, diff: diff(rules) })
+    return true
+  }
+  await openRouting(page)
+  await page.getByRole('button', { name: 'Add rule', exact: true }).click()
+  await page.getByLabel('Rule 1 display name').fill('In-flight discarded rule')
+  await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
+  await expect(page.locator('.notice.neutral')).toContainText('Preparing a fresh semantic Preview…')
+  await page.getByRole('button', { name: 'Refresh policy', exact: true }).click()
+  await page.getByRole('button', { name: 'Discard changes and refresh', exact: true }).click()
+  await expect.poll(() => requestsFor(state, '/api/v1/appliance/policy').length).toBe(2)
+  release.resolve()
+  await expect.poll(() => requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST').length).toBe(1)
+  await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toHaveCount(0)
+  await expect(page.locator('.notice.neutral')).toHaveCount(0)
+  expect(requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST')[0].body).toEqual({ previewToken: 'synthetic-routing-preview-1' })
+  expect(requestsFor(state, '/api/v1/appliance/policy/apply', 'POST')).toHaveLength(0)
+})
+
+test('keeps the name editor focused during sequential keyboard editing', async ({ page }) => {
+  const state = await prepare(page)
+  page.__routingIssues = state.issues
+  await openRouting(page)
+  await page.getByRole('button', { name: 'Add rule', exact: true }).click()
+  const input = page.getByLabel('Rule 1 display name')
+  await input.click()
+  await input.selectText()
+  for (const character of 'Keyboard name') {
+    await input.press(character === ' ' ? 'Space' : character)
+    await expect(input).toBeFocused()
+  }
+  await expect(input).toHaveValue('Keyboard name')
+  await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
+  expect(requestsFor(state, '/api/v1/appliance/policy/preview', 'POST')[0].body.rules[0].name).toBe('Keyboard name')
+})
+
 for (const editability of ['drift-detected', 'unavailable']) {
   test(`fails closed for ${editability} projections`, async ({ page }) => {
     const state = await prepare(page, { editability })

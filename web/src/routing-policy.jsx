@@ -135,7 +135,8 @@ const validApplyResult = (value) => value && typeof value === 'object'
   && validDiff(value.diff)
 
 const clonePorts = (ports) => ports.map((port) => ({ from: port.from, to: port.to }))
-const cloneRule = (rule) => ({
+const cloneRule = (rule, clientId = '') => ({
+  ...(clientId ? { clientId } : {}),
   name: rule.name,
   domains: [...rule.domains],
   ips: [...rule.ips],
@@ -144,7 +145,7 @@ const cloneRule = (rule) => ({
   ports: clonePorts(rule.ports),
   action: rule.action,
 })
-const cloneRules = (rules) => rules.map(cloneRule)
+const cloneRules = (rules, clientIdForRule = () => '') => rules.map((rule) => cloneRule(rule, clientIdForRule()))
 
 const newRuleName = (rules) => {
   const base = 'New routing rule'
@@ -154,7 +155,8 @@ const newRuleName = (rules) => {
   return `${base} ${suffix}`
 }
 
-const makeNewRule = (rules) => ({
+const makeNewRule = (rules, clientId) => ({
+  clientId,
   name: newRuleName(rules),
   domains: [],
   ips: [],
@@ -164,6 +166,7 @@ const makeNewRule = (rules) => ({
   action: 'proxy',
 })
 
+// clientId is render-only and intentionally omitted from the broker DTO.
 const serializeRule = (rule) => ({
   name: String(rule.name || ''),
   domains: Array.isArray(rule.domains) ? rule.domains.map((value) => String(value)) : [],
@@ -256,6 +259,7 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
   const csrfRef = useRef(csrfToken)
   const sessionCSRFRef = useRef(csrfToken)
   const activeRef = useRef(active)
+  const clientRuleId = useRef(0)
 
   draftRef.current = draft
   projectionRef.current = projection.value
@@ -265,9 +269,19 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
   const lifecycleKnown = lifecycleReady(lifecycle)
   const lifecycleBlocked = !lifecycleKnown || lifecycle.maintenance || lifecycle.applying
   const outcomeRequiresFreshRead = Boolean(result?.requiresFreshRead)
+  const nextClientRuleId = useCallback(() => `routing-rule-${clientRuleId.current++}`, [])
+  const invalidateLivePreview = useCallback(() => {
+    requestSequence.current++
+    const token = previewRef.current?.previewToken
+    previewRef.current = null
+    setPreview(null)
+    setRequestState((current) => current?.kind === 'preview' ? { ...current, canceled: true } : current)
+    safeCancel(token, csrfRef.current)
+  }, [])
 
   const loadPolicy = useCallback(async ({ force = false, rebase = true } = {}) => {
     if (policyGate.current || (!force && hasLoaded.current)) return false
+    if (rebase) invalidateLivePreview()
     policyGate.current = true
     const epoch = sessionEpoch.current
     setProjection((current) => ({ ...current, loading: true, error: '' }))
@@ -280,7 +294,7 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
       if (value.editability === 'editable' && (rebase || !draftInitialized.current)) {
         draftInitialized.current = true
         dirtyRef.current = false
-        setDraftState(cloneRules(value.rules))
+        setDraftState(cloneRules(value.rules, nextClientRuleId))
         setDirty(false)
       }
       setResult((current) => current?.requiresFreshRead ? { ...current, requiresFreshRead: false } : current)
@@ -294,7 +308,7 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
     } finally {
       policyGate.current = false
     }
-  }, [onUnauthorized, result?.requiresFreshRead])
+  }, [invalidateLivePreview, nextClientRuleId, onUnauthorized, result?.requiresFreshRead])
 
   const activate = useCallback(() => loadPolicy(), [loadPolicy])
 
@@ -309,7 +323,10 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
   }, [])
 
   const updateRule = useCallback((index, patch) => updateDraft((current) => current.map((rule, position) => position === index ? { ...rule, ...patch } : rule)), [updateDraft])
-  const addRule = useCallback(() => updateDraft((current) => [...current, makeNewRule(current)]), [updateDraft])
+  const addRule = useCallback(() => {
+    const clientId = nextClientRuleId()
+    updateDraft((current) => [...current, makeNewRule(current, clientId)])
+  }, [nextClientRuleId, updateDraft])
   const removeRule = useCallback((index) => updateDraft((current) => current.filter((_, position) => position !== index)), [updateDraft])
   const moveRule = useCallback((index, direction) => updateDraft((current) => {
     const target = index + direction
@@ -381,15 +398,6 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
     if (reason === 'expired') {
       setResult({ tone: 'warning', title: 'Preview expired', message: 'The unsent one-shot token was discarded. Create a fresh Preview to continue.', outcome: 'expired' })
     }
-  }, [])
-
-  const invalidateLivePreview = useCallback(() => {
-    requestSequence.current++
-    const token = previewRef.current?.previewToken
-    previewRef.current = null
-    setPreview(null)
-    setRequestState((current) => current?.kind === 'preview' ? { ...current, canceled: true } : current)
-    safeCancel(token, csrfRef.current)
   }, [])
 
   const submitPreview = useCallback(async () => {
@@ -554,7 +562,7 @@ export function RoutingPolicySection({ controller, lifecycle }) {
       <section className="panel routing-editor" aria-label="Custom routing rule editor">
         <div className="routing-editor-heading"><div><span className="panel-label">Custom region</span><h2>Ordered rules {dirty && <span className="chip amber">Unsaved</span>}</h2><p>List order is significant. Match members are sent as typed expressions; the server remains the validation and canonicalization authority.</p></div><button type="button" onClick={controller.addRule} disabled={editorDisabled}>Add rule</button></div>
         {draft.length === 0 && <div className="routing-empty">No custom rules. Add a rule before the protected final direct catch-all.</div>}
-        <div className="routing-rule-list">{draft.map((rule, index) => <RoutingRuleEditor key={`${index}-${rule.name}`} rule={rule} index={index} total={draft.length} disabled={editorDisabled} onChange={(patch) => controller.updateRule(index, patch)} onRemove={() => controller.removeRule(index)} onMove={(direction) => controller.moveRule(index, direction)} />)}</div>
+        <div className="routing-rule-list">{draft.map((rule, index) => <RoutingRuleEditor key={rule.clientId} rule={rule} index={index} total={draft.length} disabled={editorDisabled} onChange={(patch) => controller.updateRule(index, patch)} onRemove={() => controller.removeRule(index)} onMove={(direction) => controller.moveRule(index, direction)} />)}</div>
         <div className="routing-editor-actions"><div>{controller.lifecycleBlocked && <small className="routing-disabled-note">Lifecycle readiness is unavailable or maintenance/applying is active; new mutation requests are disabled.</small>}{controller.outcomeRequiresFreshRead && <small className="routing-disabled-note">Refresh the policy and verify the outcome before creating another Preview.</small>}</div><button type="button" onClick={controller.previewDraft} disabled={previewDisabled}>{requestState?.kind === 'preview' ? 'Preparing Preview…' : 'Preview changes'}</button></div>
       </section>
     </>}
