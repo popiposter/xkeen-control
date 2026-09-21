@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the **currently production-qualified architecture**. Slices A/B/C/C.1/D/D.1 are qualified; the Issue #81 D.2 G Setup boundary is source-only in this Draft PR, while the remaining #4 and #5 work must not be treated as deployed behavior. Detailed design for active work lives in the active GitHub issue.
+This document describes the **currently production-qualified architecture**. Slices A/B/C/C.1/D/D.1 are qualified; later D.2/D.3/#5 capabilities on source main, including Setup and visual Routing, remain source/CI-only and must not be treated as deployed behavior. Detailed design for active work lives in the active GitHub issue.
 
 ## System goal
 
@@ -208,7 +208,7 @@ Current sequence after completed D.1 is:
 #5 typed visual routing/DNS/XKeen/Xray/panel configuration (planned)
 ```
 
-#4 component lifecycle and #5 visual configuration remain planned rather than deployed. Issue #81 is the source-only D.2 G Setup boundary described below; Issue #83 is the first source-only #5 backend/API boundary for typed custom-routing policy over the existing D.1 settings transaction; neither changes the production-qualified status of the current release. The current authority model above is in force for adopted routers; the explicit repository-derived/legacy compatibility boundary remains in force before successful adoption.
+#4 component lifecycle and #5 visual configuration remain not deployed. Issue #81 / PR #82 deliver the source-only D.2 G Setup boundary; Issue #83 / PR #84 deliver the source-only typed custom-routing broker and Issue #85 / PR #86 its visual Routing workspace over the existing D.1 settings transaction. Issue #87 is the active source-only DNS + Observatory backend boundary and must preserve compatibility with that Routing state. None of these changes the production-qualified status of the current release. The current authority model above is in force for adopted routers; the explicit repository-derived/legacy compatibility boundary remains in force before successful adoption.
 
 ## Architecture invariants
 
