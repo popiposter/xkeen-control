@@ -345,8 +345,16 @@ rejects protected/manual drift instead of adopting it, returns only bounded
 semantic facts, and performs Preview candidate validation before storing a
 session-bound one-shot RAM token. Apply reuses the existing Coordinator,
 authority lease, complete render/validation, previous generation, journal,
-restart/readiness, rollback and startup recovery path. This is source/CI-only:
-there is no Routing UI, release, router access or live qualification claim.
+restart/readiness, rollback and startup recovery path. Issue #85 adds the
+source-only visual Routing workspace over these unchanged routes. Its
+Dashboard-scoped controller loads the policy lazily on Routing entry and by
+explicit refresh only; it does not add policy polling to the dashboard
+collector. The workspace exposes only typed custom-rule editing plus
+read-only protected/DNS/Observatory facts, semantic Preview, and token-only
+Apply/Cancel. It adds no backend route, broker/transaction/authority
+semantics, raw configuration surface, DNS or Observatory mutation, or
+browser-storage state. This remains source/CI-only: it is not deployed and
+makes no release, router-access or live-qualification claim.
 
 Phase A of #4 adds the separate read-only component inventory foundation: an authenticated `GET /api/v1/components` returns a bounded typed projection for panel, XKeen, Xray, geodata, KeeneticOS and Entware. It performs no network discovery, persistence, coordinator/lease work, lifecycle mutation or panel-update-policy changes; later mutation policy remains a separate typed boundary.
 

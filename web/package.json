@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "check": "vite build",
-    "test:components-ui": "playwright test"
+    "test:components-ui": "playwright test",
+    "test:routing-ui": "playwright test tests/routing-policy.spec.js"
   },
   "dependencies": {
     "flag-icons": "7.5.0",

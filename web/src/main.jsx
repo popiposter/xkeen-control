@@ -2,6 +2,7 @@ import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'r
 import { createRoot } from 'react-dom/client'
 import './styles.css'
 import { ComponentLifecycleNotices, ComponentsUpdatesSection, useComponentsController } from './components-updates.jsx'
+import { RoutingLifecycleNotice, RoutingPolicySection, useRoutingController } from './routing-policy.jsx'
 import { SetupFlow } from './setup-flow.jsx'
 
 import flagAE from 'flag-icons/flags/4x3/ae.svg'
@@ -424,10 +425,12 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const registryNodes = nodes.nodes || []
   const nodesByTag = useMemo(() => new Map(registryNodes.map((node) => [node.outboundTag || node.tag, node])), [registryNodes])
   const componentController = useComponentsController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized })
+  const routingController = useRoutingController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'routing' })
   const openComponents = useCallback(() => {
     setSection('components')
     void componentController.loadInventory()
   }, [componentController.loadInventory])
+  const openRouting = useCallback(() => setSection('routing'), [])
   const lifecycleBlocked = componentController.lifecycleMutationBlocked
   const manualLifecycleBlocked = !status.lifecycle || status.lifecycle.maintenance || status.lifecycle.applying
   const manualRunning = performance?.manual?.state === 'running'
@@ -466,14 +469,17 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     <nav className="section-nav" aria-label="Dashboard sections">
       <button type="button" className={section === 'overview' ? 'active' : ''} onClick={() => setSection('overview')}>Overview</button>
       <button type="button" className={section === 'nodes' ? 'active' : ''} onClick={() => setSection('nodes')}>Nodes <span>{nodes.total || 0}</span></button>
+      <button type="button" className={section === 'routing' ? 'active' : ''} onClick={openRouting}>Routing</button>
       <button type="button" className={section === 'components' ? 'active' : ''} onClick={openComponents}>Components / Updates</button>
       <button type="button" className={section === 'system' ? 'active' : ''} onClick={() => setSection('system')}>System</button>
       <button type="button" className={section === 'backup' ? 'active' : ''} onClick={() => setSection('backup')}>Backup &amp; Restore</button>
     </nav>
     <ComponentLifecycleNotices controller={componentController} lifecycle={status.lifecycle} onOpenComponents={openComponents} />
+    <RoutingLifecycleNotice controller={routingController} active={section === 'routing'} onOpenRouting={openRouting} />
     {error && <Notice message={error} />}
     {section === 'overview' && <Overview status={status} performance={performance} nodeTotal={nodes.total || 0} nodesByTag={nodesByTag} csrfToken={session.csrfToken} onRefresh={onRefresh} onUnauthorized={onUnauthorized} />}
     {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} performance={performance} manualOverride={status.selection?.manualOverride || ''} benchmarkRunning={Boolean(status.benchmark?.controlPlane?.running)} csrf={session.csrfToken} onRefresh={onRefresh} onPerformanceRefresh={onPerformanceRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} manualLifecycleBlocked={manualLifecycleBlocked} />}
+    {section === 'routing' && <RoutingPolicySection controller={routingController} lifecycle={status.lifecycle} />}
     {section === 'components' && <ComponentsUpdatesSection controller={componentController} lifecycle={status.lifecycle} onOpenSystem={() => setSection('system')} />}
     {section === 'system' && <SystemSection status={status} config={config} nodesByTag={nodesByTag} update={update} onCheckUpdate={onCheckUpdate} />}
     {section === 'backup' && <BackupRestoreSection csrf={session.csrfToken} restoreState={restoreState} setRestoreState={setRestoreState} onRefresh={onRefresh} onUnauthorized={onUnauthorized} lifecycleBlocked={lifecycleBlocked} />}
