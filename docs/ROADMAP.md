@@ -143,7 +143,7 @@ PR #69 delivered Slice A (selection-first Nodes and atomic batch mutations). PR 
 
 ## Remaining D.3/#5 source — active via #87 after merged #83/#85
 
-Issue #83 / PR #84 deliver the typed custom-routing broker and Issue #85 / PR #86 the source-only visual Routing workspace. Issue #87 is now the active child: it establishes one shared managed-policy envelope so supported Routing and DNS/Observatory state can coexist in the same appliance authority, then adds a closed backend/API DNS + Observatory broker over the existing D.1 settings transaction owner. A separate visual DNS/Observatory workspace follows before performance/selection and System/panel children.
+Issue #83 / PR #84 deliver the typed custom-routing broker and Issue #85 / PR #86 the source-only visual Routing workspace. Issue #87 is now the active child: it establishes one shared managed-policy envelope so supported Routing and DNS/Observatory state can coexist in the same appliance authority, then adds a closed backend/API DNS + Observatory broker over the existing D.1 settings transaction owner. The broker exposes only opaque ProductDefault resolver IDs, bounded typed DNS settings and 1..5 minute Observatory cadence. A separate visual DNS/Observatory workspace follows before performance/selection and System/panel children.
 
 After the remaining D.3/#5 source scope, the planned product E adds outbound notifications and remote-management/security hardening without creating a remote command plane. The panel remains trusted-LAN/management-VPN only.
 

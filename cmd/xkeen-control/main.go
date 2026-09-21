@@ -24,6 +24,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/components"
 	"github.com/popiposter/xkeen-control/internal/configview"
+	"github.com/popiposter/xkeen-control/internal/dnsobservatory"
 	"github.com/popiposter/xkeen-control/internal/httpapi"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	"github.com/popiposter/xkeen-control/internal/restore"
@@ -168,6 +169,10 @@ func main() {
 	applianceService := newApplianceService(authorityLease)
 	restoreService := newRestoreService(coordinator, authorityLease)
 	routingPolicyService := routingpolicy.NewService(routingpolicy.Config{
+		Appliance: applianceService,
+		Settings:  restoreService,
+	})
+	dnsObservatoryService := dnsobservatory.NewService(dnsobservatory.Config{
 		Appliance: applianceService,
 		Settings:  restoreService,
 	})
@@ -336,6 +341,7 @@ func main() {
 		Updates:            updateManager,
 		Restore:            restoreService,
 		Policy:             routingPolicyService,
+		DNSObservatory:     dnsObservatoryService,
 		Backup: backup.NewService(backup.Config{
 			Appliance:      applianceService,
 			Nodes:          nodeManager,

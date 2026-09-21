@@ -109,6 +109,17 @@ Xray is first-match. Explicit proxy exceptions must beat broad DIRECT classifica
 
 Explicit proxy-policy domains use redundant DoH through `bal-proxy`. Unmatched domains fall through to Keenetic/system DNS. `disableFallbackIfMatch=true` prevents explicitly proxied domains from silently leaking to local/direct DNS when both policy resolvers fail; `serveStale=true` provides bounded cache resilience.
 
+Issue #87 establishes one shared managed-policy envelope over the appliance v1
+DNS, Routing and Observatory projections. The Routing and DNS/Observatory
+brokers classify that envelope together: protected routing/safety fields,
+source-owned resolver definitions, fixed localhost fallback and Observatory
+identity remain server-owned, while DNS exposes only ProductDefault-derived
+opaque resolver IDs, bounded cache/fallback/parallel settings and 1..5 minute
+Observatory cadence. Proxy resolver domains are always rebuilt from the
+ProductDefault baseline plus the current proxy-rule projection; browsers never
+supply resolver URLs or domain lists. Both brokers dispatch settings Apply
+through the existing D.1 transaction journal/recovery owner.
+
 ## Stable selection and liveness
 
 `xkeen-control` is the only managed stable `bal-proxy` override writer. Legacy XKeen Speed Balancer/watchdog writers are disabled.

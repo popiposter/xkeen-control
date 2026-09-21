@@ -17,6 +17,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/backup"
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/components"
+	"github.com/popiposter/xkeen-control/internal/dnsobservatory"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	"github.com/popiposter/xkeen-control/internal/restore"
 	"github.com/popiposter/xkeen-control/internal/routingpolicy"
@@ -33,6 +34,7 @@ const (
 	maxComponentPolicyBody   = 4 << 10
 	maxSetupBody             = 1 << 10
 	maxRoutingPolicyBody     = 128 << 10
+	maxDNSObservatoryBody    = 16 << 10
 	maxJSONResponse          = 512 << 10
 	csrfRequiredPath         = "/api/v1/session/logout"
 )
@@ -54,6 +56,15 @@ type RoutingPolicyService interface {
 	Read(context.Context) (routingpolicy.Projection, error)
 	Preview(context.Context, string, []appliance.CustomRule) (routingpolicy.Preview, error)
 	Apply(context.Context, string, string) (routingpolicy.ApplyResult, error)
+	Cancel(string, string)
+	Invalidate(string)
+	InvalidateAll()
+}
+
+type DNSObservatoryService interface {
+	Read(context.Context) (dnsobservatory.Projection, error)
+	Preview(context.Context, string, appliance.DNSSettings, appliance.ObservatorySettings) (dnsobservatory.Preview, error)
+	Apply(context.Context, string, string) (dnsobservatory.ApplyResult, error)
 	Cancel(string, string)
 	Invalidate(string)
 	InvalidateAll()
@@ -97,6 +108,7 @@ type Server struct {
 	backup             BackupService
 	restore            RestoreService
 	policy             RoutingPolicyService
+	dnsObservatory     DNSObservatoryService
 	restorePreviewGate chan struct{}
 }
 
@@ -124,13 +136,14 @@ type Config struct {
 	Backup             BackupService
 	Restore            RestoreService
 	Policy             RoutingPolicyService
+	DNSObservatory     DNSObservatoryService
 }
 
 func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, updates: config.Updates, backup: config.Backup, restore: config.Restore, policy: config.Policy, restorePreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, updates: config.Updates, backup: config.Backup, restore: config.Restore, policy: config.Policy, dnsObservatory: config.DNSObservatory, restorePreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -151,6 +164,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/components/preview", "/api/v1/components/apply", "/api/v1/components/rollback", "/api/v1/components/cancel",
 		"/api/v1/setup/preview", "/api/v1/setup/apply", "/api/v1/setup/cancel",
 		"/api/v1/appliance/policy", "/api/v1/appliance/policy/preview", "/api/v1/appliance/policy/apply", "/api/v1/appliance/policy/cancel",
+		"/api/v1/appliance/dns-observatory", "/api/v1/appliance/dns-observatory/preview", "/api/v1/appliance/dns-observatory/apply", "/api/v1/appliance/dns-observatory/cancel",
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
 		"/api/v1/session/password",
 		"/api/v1/benchmark/run", "/api/v1/performance/manual-node",
@@ -325,6 +339,30 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.cancelRoutingPolicy(w, r)
+	case "/api/v1/appliance/dns-observatory":
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w, http.MethodGet)
+			return
+		}
+		s.readDNSObservatory(w, r)
+	case "/api/v1/appliance/dns-observatory/preview":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.previewDNSObservatory(w, r)
+	case "/api/v1/appliance/dns-observatory/apply":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.applyDNSObservatory(w, r)
+	case "/api/v1/appliance/dns-observatory/cancel":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.cancelDNSObservatory(w, r)
 	case "/api/v1/benchmark/run":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -692,6 +730,9 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if s.policy != nil {
 		s.policy.Invalidate(session.CSRFToken)
 	}
+	if s.dnsObservatory != nil {
+		s.dnsObservatory.Invalidate(session.CSRFToken)
+	}
 	s.auth.ClearSessionCookie(w)
 	writeJSON(w, http.StatusOK, struct {
 		Authenticated bool `json:"authenticated"`
@@ -732,6 +773,9 @@ func (s *Server) replacePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.policy != nil {
 		s.policy.InvalidateAll()
+	}
+	if s.dnsObservatory != nil {
+		s.dnsObservatory.InvalidateAll()
 	}
 	s.auth.ClearSessionCookie(w)
 	writeJSON(w, http.StatusOK, struct {
@@ -1871,11 +1915,117 @@ func (s *Server) cancelRoutingPolicy(w http.ResponseWriter, r *http.Request) {
 	}{Canceled: true})
 }
 
+func (s *Server) readDNSObservatory(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	if s.dnsObservatory == nil {
+		writeDNSObservatoryError(w, dnsobservatory.ErrUnavailable)
+		return
+	}
+	projection, err := s.dnsObservatory.Read(r.Context())
+	if err != nil {
+		writeDNSObservatoryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, projection)
+}
+
+func (s *Server) previewDNSObservatory(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.dnsObservatory == nil {
+		writeDNSObservatoryError(w, dnsobservatory.ErrUnavailable)
+		return
+	}
+	var request dnsObservatoryRequest
+	if !decodeDNSObservatoryJSON(w, r, &request) {
+		return
+	}
+	preview, err := s.dnsObservatory.Preview(r.Context(), session.CSRFToken, request.DNS, request.Observatory)
+	if err != nil {
+		writeDNSObservatoryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
+func (s *Server) applyDNSObservatory(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.dnsObservatory == nil {
+		writeDNSObservatoryError(w, dnsobservatory.ErrUnavailable)
+		return
+	}
+	var request dnsObservatoryTokenRequest
+	if !decodeDNSObservatoryJSON(w, r, &request) {
+		return
+	}
+	if request.PreviewToken == "" {
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid DNS and Observatory policy request")
+		return
+	}
+	result, err := s.dnsObservatory.Apply(r.Context(), session.CSRFToken, request.PreviewToken)
+	if err != nil {
+		writeDNSObservatoryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) cancelDNSObservatory(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.dnsObservatory == nil {
+		writeDNSObservatoryError(w, dnsobservatory.ErrUnavailable)
+		return
+	}
+	var request dnsObservatoryTokenRequest
+	if !decodeDNSObservatoryJSON(w, r, &request) {
+		return
+	}
+	if request.PreviewToken == "" {
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid DNS and Observatory policy request")
+		return
+	}
+	s.dnsObservatory.Cancel(session.CSRFToken, request.PreviewToken)
+	writeJSON(w, http.StatusOK, struct {
+		Canceled bool `json:"canceled"`
+	}{Canceled: true})
+}
+
 type routingPolicyRequest struct {
 	Rules *[]appliance.CustomRule `json:"rules"`
 }
 
 type routingPolicyTokenRequest struct {
+	PreviewToken string `json:"previewToken"`
+}
+
+type dnsObservatoryRequest struct {
+	DNS         appliance.DNSSettings         `json:"dns"`
+	Observatory appliance.ObservatorySettings `json:"observatory"`
+}
+
+type dnsObservatoryTokenRequest struct {
 	PreviewToken string `json:"previewToken"`
 }
 
@@ -1934,6 +2084,46 @@ func decodeRoutingPolicyJSON(w http.ResponseWriter, r *http.Request, value any) 
 	return true
 }
 
+func decodeDNSObservatoryJSON(w http.ResponseWriter, r *http.Request, value any) bool {
+	contentTypes := r.Header.Values("Content-Type")
+	if len(contentTypes) != 1 || strings.TrimSpace(contentTypes[0]) != "application/json" {
+		writeCodedError(w, http.StatusUnsupportedMediaType, "invalid-request", "unsupported media type")
+		return false
+	}
+	if r.URL.RawQuery != "" {
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid DNS and Observatory policy request")
+		return false
+	}
+	if r.ContentLength > maxDNSObservatoryBody {
+		writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		return false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxDNSObservatoryBody)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		} else {
+			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid DNS and Observatory policy request")
+		}
+		return false
+	}
+	var extra json.RawMessage
+	if err := decoder.Decode(&extra); err != io.EOF {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		} else {
+			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid DNS and Observatory policy request")
+		}
+		return false
+	}
+	return true
+}
+
 func writeRoutingPolicyError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, routingpolicy.ErrInvalidRequest):
@@ -1956,6 +2146,31 @@ func writeRoutingPolicyError(w http.ResponseWriter, err error) {
 		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "routing policy unavailable")
 	default:
 		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "routing policy unavailable")
+	}
+}
+
+func writeDNSObservatoryError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, dnsobservatory.ErrInvalidRequest):
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid DNS and Observatory policy request")
+	case errors.Is(err, dnsobservatory.ErrCandidateInvalid):
+		writeCodedError(w, http.StatusBadGateway, "candidate-rejected", "DNS and Observatory candidate rejected")
+	case errors.Is(err, dnsobservatory.ErrDriftDetected):
+		writeCodedError(w, http.StatusConflict, "drift-detected", "DNS and Observatory policy drift detected")
+	case errors.Is(err, dnsobservatory.ErrPreviewExpired):
+		writeCodedError(w, http.StatusConflict, "preview-expired", "DNS and Observatory preview expired or invalid")
+	case errors.Is(err, dnsobservatory.ErrPreviewStale):
+		writeCodedError(w, http.StatusConflict, "preview-stale", "DNS and Observatory preview is stale")
+	case errors.Is(err, dnsobservatory.ErrBusy):
+		writeCodedError(w, http.StatusConflict, "busy", "DNS and Observatory policy is busy")
+	case errors.Is(err, dnsobservatory.ErrTransactionRestored):
+		writeCodedError(w, http.StatusInternalServerError, "transaction-restored", "DNS and Observatory policy failed; previous generation restored")
+	case errors.Is(err, dnsobservatory.ErrTransactionUnproven):
+		writeCodedError(w, http.StatusServiceUnavailable, "transaction-unproven", "DNS and Observatory policy outcome is not proven")
+	case errors.Is(err, dnsobservatory.ErrUnavailable):
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "DNS and Observatory policy unavailable")
+	default:
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "DNS and Observatory policy unavailable")
 	}
 }
 

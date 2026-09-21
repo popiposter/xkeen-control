@@ -356,6 +356,31 @@ semantics, raw configuration surface, DNS or Observatory mutation, or
 browser-storage state. This remains source/CI-only: it is not deployed and
 makes no release, router-access or live-qualification claim.
 
+## Issue #87 — shared DNS + Observatory broker source boundary
+
+Issue #87 adds the backend/API-only DNS and Observatory projection over the
+same adopted appliance v1 authority:
+
+```text
+GET  /api/v1/appliance/dns-observatory
+POST /api/v1/appliance/dns-observatory/preview
+POST /api/v1/appliance/dns-observatory/apply
+POST /api/v1/appliance/dns-observatory/cancel
+```
+
+The authenticated projection exposes only ProductDefault-derived opaque
+resolver IDs and safe labels, typed fallback/cache/stale/parallel settings,
+bounded proxy-domain counts and a 1..5 whole-minute Observatory cadence.
+Resolver addresses, tags, resolver domains, raw policy/configuration and node
+or subscription material are never request or response data. The shared
+classifier preserves supported DNS/Observatory state across Routing previews
+and preserves custom Routing rules across DNS/Observatory previews. Preview
+renders and validates a complete candidate before storing a session-bound,
+one-shot RAM token; Apply uses the existing Coordinator, authority lease,
+previous generation, journal, restart/readiness, rollback and startup recovery
+path. This remains source/CI-only and does not add a visual DNS workspace,
+performance settings, a new persistence owner or a live-router qualification.
+
 Phase A of #4 adds the separate read-only component inventory foundation: an authenticated `GET /api/v1/components` returns a bounded typed projection for panel, XKeen, Xray, geodata, KeeneticOS and Entware. It performs no network discovery, persistence, coordinator/lease work, lifecycle mutation or panel-update-policy changes; later mutation policy remains a separate typed boundary.
 
 The Phase B source-main boundary adds an authenticated, same-origin/CSRF-bound `POST /api/v1/components/check` for explicit trusted metadata checks of only Xray, XKeen and the fixed product geodata catalog. Results are bounded and RAM-only; no artifact bytes are downloaded, no component or router state is changed, and no production-release or live-qualification claim follows from the source implementation.

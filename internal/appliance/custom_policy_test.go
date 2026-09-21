@@ -2,6 +2,7 @@ package appliance
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -81,7 +82,7 @@ func TestCustomPolicyRejectsProtectedAndManualDrift(t *testing.T) {
 			return value
 		}},
 		{name: "DNS safety drift", mutate: func(value Appliance) Appliance {
-			value.DNS.DisableFallback = !value.DNS.DisableFallback
+			value.DNS.DisableFallbackIfMatch = !value.DNS.DisableFallbackIfMatch
 			return value
 		}},
 	}
@@ -154,5 +155,108 @@ func TestNormalizeCustomRuleCanonicalizesOnlyMatchMemberOrder(t *testing.T) {
 	}
 	if normalized.Name != rule.Name || normalized.Action != rule.Action {
 		t.Fatalf("ordered rule identity/action changed: %+v", normalized)
+	}
+}
+
+func TestManagedPolicyDecompilesClosedDNSAndObservatoryDefaults(t *testing.T) {
+	managed, err := DecompileManagedPolicy(ProductDefault())
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := DNSResolverCatalog()
+	if len(catalog) != len(managed.DNS.ProxyResolverIDs) || len(catalog) < 1 {
+		t.Fatalf("resolver catalog = %+v settings = %+v", catalog, managed.DNS)
+	}
+	if managed.DNS.FallbackMode != FallbackModeSystem || !managed.DNS.CacheEnabled || !managed.DNS.ServeStale || managed.DNS.StaleTTLSeconds != 3600 || !managed.DNS.ParallelQueries {
+		t.Fatalf("default DNS settings = %+v", managed.DNS)
+	}
+	if managed.Observatory.ProbeIntervalMinutes != 5 {
+		t.Fatalf("default Observatory settings = %+v", managed.Observatory)
+	}
+	for _, option := range catalog {
+		if option.ID == "" || option.Label == "" || strings.Contains(option.ID, "https") || strings.Contains(option.Label, "dns-query") {
+			t.Fatalf("unsafe resolver catalog option = %+v", option)
+		}
+	}
+}
+
+func TestDNSObservatoryCompileSupportsOneResolverAndPreservesRouting(t *testing.T) {
+	base := ProductDefault()
+	catalog := DNSResolverCatalog()
+	settings := DNSSettings{
+		ProxyResolverIDs: []string{catalog[0].ID},
+		FallbackMode:     FallbackModeDisabled,
+		CacheEnabled:     true,
+		ServeStale:       true,
+		StaleTTLSeconds:  120,
+		ParallelQueries:  false,
+	}
+	observatory := ObservatorySettings{ProbeIntervalMinutes: 2}
+	withDNS, err := CompileDNSObservatory(base, settings, observatory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managed, err := DecompileManagedPolicy(withDNS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(managed.DNS, settings) || !reflect.DeepEqual(managed.Observatory, observatory) {
+		t.Fatalf("compiled settings = DNS %+v Observatory %+v", managed.DNS, managed.Observatory)
+	}
+	if len(withDNS.DNS.Servers) != 2 || withDNS.DNS.Servers[1].Address != "localhost" {
+		t.Fatalf("DNS server shape = %+v", withDNS.DNS.Servers)
+	}
+	rules := []CustomRule{{Name: "preserve proxy", Domains: []string{"domain:preserve.example"}, Action: CustomRuleProxy}}
+	withRouting, err := CompileCustomRules(withDNS, rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterRouting, err := DecompileManagedPolicy(withRouting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(afterRouting.DNS, settings) || !reflect.DeepEqual(afterRouting.Observatory, observatory) {
+		t.Fatalf("routing compile changed DNS/Observatory: DNS %+v Observatory %+v", afterRouting.DNS, afterRouting.Observatory)
+	}
+	if afterRouting.ProxyDNSDerivedDomainCount != 1 || len(withRouting.DNS.Servers[0].Domains) <= len(base.DNS.Servers[0].Domains) {
+		t.Fatalf("routing-derived DNS domains = %d servers = %+v", afterRouting.ProxyDNSDerivedDomainCount, withRouting.DNS.Servers)
+	}
+	withDNSAgain, err := CompileDNSObservatory(withRouting, settings, observatory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routingBefore := withRouting.Routing
+	routingAfter, err := DecompileManagedPolicy(withDNSAgain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(routingBefore, withDNSAgain.Routing) || !reflect.DeepEqual(routingAfter.Rules, afterRouting.Rules) {
+		t.Fatal("DNS compile changed custom routing rules")
+	}
+}
+
+func TestDNSObservatoryClosedValidation(t *testing.T) {
+	catalog := DNSResolverCatalog()
+	valid := DNSSettings{ProxyResolverIDs: []string{catalog[0].ID}, FallbackMode: FallbackModeSystem, CacheEnabled: true, ServeStale: true, StaleTTLSeconds: 60, ParallelQueries: true}
+	invalid := []DNSSettings{
+		{ProxyResolverIDs: []string{}, FallbackMode: FallbackModeSystem},
+		{ProxyResolverIDs: []string{catalog[0].ID, catalog[0].ID}, FallbackMode: FallbackModeSystem},
+		{ProxyResolverIDs: []string{"operator-url"}, FallbackMode: FallbackModeSystem},
+		{ProxyResolverIDs: []string{catalog[0].ID}, FallbackMode: FallbackModeSystem, CacheEnabled: false, ServeStale: true},
+		{ProxyResolverIDs: []string{catalog[0].ID}, FallbackMode: FallbackModeSystem, CacheEnabled: true, ServeStale: false, StaleTTLSeconds: 1},
+		{ProxyResolverIDs: []string{catalog[0].ID}, FallbackMode: FallbackModeSystem, CacheEnabled: true, ServeStale: true, StaleTTLSeconds: 86401},
+	}
+	for _, value := range invalid {
+		if err := ValidateDNSSettings(value); err == nil {
+			t.Fatalf("invalid DNS settings accepted: %+v", value)
+		}
+	}
+	if err := ValidateDNSSettings(valid); err != nil {
+		t.Fatal(err)
+	}
+	for _, minutes := range []int{0, 6} {
+		if err := ValidateObservatorySettings(ObservatorySettings{ProbeIntervalMinutes: minutes}); err == nil {
+			t.Fatalf("invalid Observatory interval accepted: %d", minutes)
+		}
 	}
 }

@@ -1,11 +1,13 @@
 package appliance
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -19,11 +21,23 @@ const (
 	MaxCustomRules      = 64
 	MaxCustomNameBytes  = (MaxRuleTag - len(CustomRuleTagPrefix)) / 2
 	MaxCustomNameRunes  = 48
+
+	FallbackModeSystem   = "system"
+	FallbackModeDisabled = "disabled"
+
+	MinStaleTTLSeconds = 60
+	MaxStaleTTLSeconds = 24 * 60 * 60
+
+	MinObservatoryIntervalMinutes = 1
+	MaxObservatoryIntervalMinutes = 5
 )
 
 var (
 	ErrCustomPolicyDrift   = errors.New("custom routing policy drift detected")
 	ErrInvalidCustomPolicy = errors.New("custom routing policy is invalid")
+	ErrManagedPolicyDrift  = errors.New("managed appliance policy drift detected")
+	ErrInvalidDNSSettings  = errors.New("DNS settings are invalid")
+	ErrInvalidObservatory  = errors.New("Observatory settings are invalid")
 )
 
 var (
@@ -66,6 +80,41 @@ type CustomPolicy struct {
 	ProxyDNSDerivedDomainCount  int
 }
 
+// DNSSettings is the closed DNS projection accepted by the DNS/Observatory
+// broker. Resolver IDs identify only source-owned ProductDefault definitions;
+// addresses, tags and domains never cross the broker boundary.
+type DNSSettings struct {
+	ProxyResolverIDs []string `json:"proxyResolverIds"`
+	FallbackMode     string   `json:"fallbackMode"`
+	CacheEnabled     bool     `json:"cacheEnabled"`
+	ServeStale       bool     `json:"serveStale"`
+	StaleTTLSeconds  int      `json:"staleTTLSeconds"`
+	ParallelQueries  bool     `json:"parallelQueries"`
+}
+
+// ObservatorySettings is the only editable Observatory projection in this
+// slice. Runtime URL, selector and concurrency remain source-owned.
+type ObservatorySettings struct {
+	ProbeIntervalMinutes int `json:"probeIntervalMinutes"`
+}
+
+// DNSResolverOption is the safe selectable resolver catalog entry. The ID is
+// an opaque request identifier and the label contains no endpoint material.
+type DNSResolverOption struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+// ManagedPolicy is the common classified envelope shared by the Routing and
+// DNS/Observatory brokers. It contains typed projections only; protected
+// source-owned fields remain validated by the classifier and are not exposed
+// as request data.
+type ManagedPolicy struct {
+	CustomPolicy
+	DNS         DNSSettings
+	Observatory ObservatorySettings
+}
+
 type customRuleEnvelope struct {
 	typeName    string
 	inboundTags []string
@@ -93,80 +142,112 @@ func ValidateCustomRules(rules []CustomRule) error {
 	return nil
 }
 
-// DecompileCustomPolicy accepts only the current source-owned envelope. Any
-// protected drift, manual extra rule, malformed reserved tag or DNS
-// asymmetry is rejected rather than normalized into editable state.
+// DecompileCustomPolicy returns the routing projection from the shared managed
+// appliance-policy envelope. Keeping this wrapper preserves the Issue #83 API
+// while making DNS/Observatory compatibility common to both brokers.
 func DecompileCustomPolicy(value Appliance) (CustomPolicy, error) {
-	if err := value.Validate(); err != nil {
+	managed, err := DecompileManagedPolicy(value)
+	if err != nil {
 		return CustomPolicy{}, ErrCustomPolicyDrift
+	}
+	return managed.CustomPolicy, nil
+}
+
+// DecompileManagedPolicy accepts only the closed source-owned envelope. Any
+// protected drift, manual extra rule, malformed reserved tag, DNS asymmetry or
+// unsupported Observatory cadence is rejected rather than normalized into
+// editable state.
+func DecompileManagedPolicy(value Appliance) (ManagedPolicy, error) {
+	if err := value.Validate(); err != nil {
+		return ManagedPolicy{}, ErrManagedPolicyDrift
 	}
 	baseline := ProductDefault()
 	if err := baseline.Validate(); err != nil {
-		return CustomPolicy{}, ErrCustomPolicyDrift
+		return ManagedPolicy{}, ErrManagedPolicyDrift
 	}
+	rules, prefixCount, err := decompileCustomRouting(value, baseline)
+	if err != nil {
+		return ManagedPolicy{}, err
+	}
+	proxyResolvers, baselineDomains, derivedDomains, err := validateCustomDNS(value.DNS, baseline.DNS, rules)
+	if err != nil {
+		return ManagedPolicy{}, ErrManagedPolicyDrift
+	}
+	dns, err := decompileDNSSettings(value.DNS, baseline.DNS, rules)
+	if err != nil {
+		return ManagedPolicy{}, ErrManagedPolicyDrift
+	}
+	observatory, err := decompileObservatorySettings(value.Observatory, baseline.Observatory)
+	if err != nil {
+		return ManagedPolicy{}, ErrManagedPolicyDrift
+	}
+	return ManagedPolicy{
+		CustomPolicy: CustomPolicy{
+			Rules:                       cloneCustomRules(rules),
+			ProtectedRuleCount:          len(baseline.Routing.Rules),
+			ProtectedPrefixRuleCount:    prefixCount,
+			CustomRegionRuleCount:       len(rules),
+			ProxyDNSResolverCount:       proxyResolvers,
+			ProxyDNSBaselineDomainCount: baselineDomains,
+			ProxyDNSDerivedDomainCount:  derivedDomains,
+		},
+		DNS:         dns,
+		Observatory: observatory,
+	}, nil
+}
+
+func decompileCustomRouting(value, baseline Appliance) ([]CustomRule, int, error) {
 	if value.SchemaVersion != baseline.SchemaVersion ||
 		value.Routing.DomainStrategy != baseline.Routing.DomainStrategy ||
 		value.Routing.DomainMatcher != baseline.Routing.DomainMatcher ||
 		!reflect.DeepEqual(value.Routing.Balancers, baseline.Routing.Balancers) {
-		return CustomPolicy{}, ErrCustomPolicyDrift
+		return nil, 0, ErrCustomPolicyDrift
 	}
 	envelope, err := customRuleEnvelopeFor(baseline)
 	if err != nil {
-		return CustomPolicy{}, ErrCustomPolicyDrift
+		return nil, 0, ErrCustomPolicyDrift
 	}
 
 	if len(baseline.Routing.Rules) < 1 {
-		return CustomPolicy{}, ErrCustomPolicyDrift
+		return nil, 0, ErrCustomPolicyDrift
 	}
 	prefixCount := len(baseline.Routing.Rules) - 1
 	if len(value.Routing.Rules) < prefixCount+1 {
-		return CustomPolicy{}, ErrCustomPolicyDrift
+		return nil, 0, ErrCustomPolicyDrift
 	}
 	for index := 0; index < prefixCount; index++ {
 		if !reflect.DeepEqual(value.Routing.Rules[index], baseline.Routing.Rules[index]) {
-			return CustomPolicy{}, ErrCustomPolicyDrift
+			return nil, 0, ErrCustomPolicyDrift
 		}
 	}
 	if !reflect.DeepEqual(value.Routing.Rules[len(value.Routing.Rules)-1], baseline.Routing.Rules[len(baseline.Routing.Rules)-1]) {
-		return CustomPolicy{}, ErrCustomPolicyDrift
+		return nil, 0, ErrCustomPolicyDrift
 	}
 
 	rules := make([]CustomRule, 0, len(value.Routing.Rules)-prefixCount-1)
 	for _, runtimeRule := range value.Routing.Rules[prefixCount : len(value.Routing.Rules)-1] {
 		decoded, err := decodeCustomRuntimeRule(runtimeRule, envelope)
 		if err != nil {
-			return CustomPolicy{}, ErrCustomPolicyDrift
+			return nil, 0, ErrCustomPolicyDrift
 		}
 		rules = append(rules, decoded)
 	}
 	if err := ValidateCustomRules(rules); err != nil {
-		return CustomPolicy{}, ErrCustomPolicyDrift
+		return nil, 0, ErrCustomPolicyDrift
 	}
-
-	proxyResolvers, baselineDomains, derivedDomains, err := validateCustomDNS(value.DNS, baseline.DNS, rules)
-	if err != nil {
-		return CustomPolicy{}, ErrCustomPolicyDrift
-	}
-	return CustomPolicy{
-		Rules:                       cloneCustomRules(rules),
-		ProtectedRuleCount:          len(baseline.Routing.Rules),
-		ProtectedPrefixRuleCount:    prefixCount,
-		CustomRegionRuleCount:       len(rules),
-		ProxyDNSResolverCount:       proxyResolvers,
-		ProxyDNSBaselineDomainCount: baselineDomains,
-		ProxyDNSDerivedDomainCount:  derivedDomains,
-	}, nil
+	return rules, prefixCount, nil
 }
 
 // CompileCustomRules replaces only the authorized custom region and rebuilds
 // proxy-DNS domains from the embedded baseline plus the complete candidate
-// list. It never incrementally patches the currently observed DNS list.
+// list. Supported DNS/Observatory settings remain unchanged.
 func CompileCustomRules(value Appliance, rules []CustomRule) (Appliance, error) {
 	if err := ValidateCustomRules(rules); err != nil {
 		return Appliance{}, err
 	}
-	if _, err := DecompileCustomPolicy(value); err != nil {
-		return Appliance{}, err
+	managed, err := DecompileManagedPolicy(value)
+	if err != nil {
+		return Appliance{}, ErrCustomPolicyDrift
 	}
 	baseline := ProductDefault()
 	envelope, err := customRuleEnvelopeFor(baseline)
@@ -194,15 +275,62 @@ func CompileCustomRules(value Appliance, rules []CustomRule) (Appliance, error) 
 	candidate.Routing.DomainMatcher = baseline.Routing.DomainMatcher
 	candidate.Routing.Rules = routingRules
 	candidate.Routing.Balancers = cloneBalancers(baseline.Routing.Balancers)
-	candidate.DNS = rebuildCustomDNS(baseline.DNS, normalized)
+	candidate.DNS, err = compileManagedDNS(baseline.DNS, managed.DNS, normalized)
+	if err != nil {
+		return Appliance{}, ErrInvalidCustomPolicy
+	}
 	candidate = normalize(candidate)
 	if err := candidate.Validate(); err != nil {
 		return Appliance{}, ErrInvalidCustomPolicy
 	}
-	if _, err := DecompileCustomPolicy(candidate); err != nil {
+	if _, err := DecompileManagedPolicy(candidate); err != nil {
 		return Appliance{}, ErrInvalidCustomPolicy
 	}
 	return candidate, nil
+}
+
+// CompileDNSObservatory preserves the complete classified custom-routing
+// projection and changes only the closed DNS/Observatory editable fields.
+func CompileDNSObservatory(value Appliance, dns DNSSettings, observatory ObservatorySettings) (Appliance, error) {
+	if err := ValidateDNSSettings(dns); err != nil {
+		return Appliance{}, err
+	}
+	if err := ValidateObservatorySettings(observatory); err != nil {
+		return Appliance{}, err
+	}
+	managed, err := DecompileManagedPolicy(value)
+	if err != nil {
+		return Appliance{}, err
+	}
+	baseline := ProductDefault()
+	candidate, err := cloneAppliance(value)
+	if err != nil {
+		return Appliance{}, ErrInvalidDNSSettings
+	}
+	candidate.DNS, err = compileManagedDNS(baseline.DNS, dns, managed.Rules)
+	if err != nil {
+		return Appliance{}, ErrInvalidDNSSettings
+	}
+	candidate.Observatory = ObservatoryPolicy{
+		SubjectSelector: cloneStrings(baseline.Observatory.SubjectSelector),
+		ProbeInterval:   strconv.Itoa(observatory.ProbeIntervalMinutes) + "m",
+	}
+	candidate = normalize(candidate)
+	if err := candidate.Validate(); err != nil {
+		return Appliance{}, ErrInvalidDNSSettings
+	}
+	if _, err := DecompileManagedPolicy(candidate); err != nil {
+		return Appliance{}, ErrInvalidDNSSettings
+	}
+	return candidate, nil
+}
+
+func cloneAppliance(value Appliance) (Appliance, error) {
+	contents, err := MarshalCanonical(value)
+	if err != nil {
+		return Appliance{}, err
+	}
+	return Parse(contents)
 }
 
 func validateCustomRule(rule CustomRule) error {
@@ -432,121 +560,312 @@ func decodeCustomRuleName(tag string) (string, error) {
 	return name, nil
 }
 
-func validateCustomDNS(current, baseline DNSPolicy, rules []CustomRule) (int, int, int, error) {
-	if len(current.Servers) != len(baseline.Servers) {
-		return 0, 0, 0, ErrCustomPolicyDrift
+type managedResolverDefinition struct {
+	option DNSResolverOption
+	server DNSServer
+}
+
+func DNSResolverCatalog() []DNSResolverOption {
+	definitions, err := managedResolverDefinitions(ProductDefault().DNS)
+	if err != nil {
+		return []DNSResolverOption{}
 	}
-	currentWithoutServers := current
-	currentWithoutServers.Servers = nil
-	baselineWithoutServers := baseline
-	baselineWithoutServers.Servers = nil
-	if !reflect.DeepEqual(currentWithoutServers, baselineWithoutServers) {
-		return 0, 0, 0, ErrCustomPolicyDrift
+	result := make([]DNSResolverOption, 0, len(definitions))
+	for _, definition := range definitions {
+		result = append(result, definition.option)
 	}
-	derived := make(map[string]struct{})
-	for _, rule := range rules {
-		if rule.Action != CustomRuleProxy {
-			continue
+	return result
+}
+
+// ResolverCatalog is an explicit alias for callers that do not need to know
+// that the catalog is DNS-specific at the source boundary.
+func ResolverCatalog() []DNSResolverOption {
+	return DNSResolverCatalog()
+}
+
+func ValidateDNSSettings(settings DNSSettings) error {
+	definitions, err := managedResolverDefinitions(ProductDefault().DNS)
+	if err != nil {
+		return ErrInvalidDNSSettings
+	}
+	return validateDNSSettingsAgainst(definitions, settings)
+}
+
+func ValidateObservatorySettings(settings ObservatorySettings) error {
+	if settings.ProbeIntervalMinutes < MinObservatoryIntervalMinutes || settings.ProbeIntervalMinutes > MaxObservatoryIntervalMinutes {
+		return ErrInvalidObservatory
+	}
+	return nil
+}
+
+func validateDNSSettingsAgainst(definitions []managedResolverDefinition, settings DNSSettings) error {
+	if len(settings.ProxyResolverIDs) < 1 || len(settings.ProxyResolverIDs) > len(definitions) {
+		return ErrInvalidDNSSettings
+	}
+	known := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		known[definition.option.ID] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(settings.ProxyResolverIDs))
+	for _, id := range settings.ProxyResolverIDs {
+		if _, ok := known[id]; !ok {
+			return ErrInvalidDNSSettings
 		}
-		for _, domain := range rule.Domains {
-			derived[domain] = struct{}{}
+		if _, ok := seen[id]; ok {
+			return ErrInvalidDNSSettings
+		}
+		seen[id] = struct{}{}
+	}
+	switch settings.FallbackMode {
+	case FallbackModeSystem, FallbackModeDisabled:
+	default:
+		return ErrInvalidDNSSettings
+	}
+	if !settings.CacheEnabled {
+		if settings.ServeStale || settings.StaleTTLSeconds != 0 {
+			return ErrInvalidDNSSettings
+		}
+	} else if !settings.ServeStale {
+		if settings.StaleTTLSeconds != 0 {
+			return ErrInvalidDNSSettings
+		}
+	} else if settings.StaleTTLSeconds < MinStaleTTLSeconds || settings.StaleTTLSeconds > MaxStaleTTLSeconds {
+		return ErrInvalidDNSSettings
+	}
+	return nil
+}
+
+func managedResolverDefinitions(baseline DNSPolicy) ([]managedResolverDefinition, error) {
+	if len(baseline.Servers) < 2 {
+		return nil, ErrManagedPolicyDrift
+	}
+	last := baseline.Servers[len(baseline.Servers)-1]
+	if last.Address != "localhost" || len(last.Domains) != 0 || last.SkipFallback || last.Tag != "" || last.QueryStrategy != "" {
+		return nil, ErrManagedPolicyDrift
+	}
+	definitions := make([]managedResolverDefinition, 0, len(baseline.Servers)-1)
+	seenIDs := make(map[string]struct{}, len(baseline.Servers))
+	for index, server := range baseline.Servers[:len(baseline.Servers)-1] {
+		if server.Tag != "dns-proxy" || !server.SkipFallback || server.QueryStrategy != "UseIPv4" || server.Address == "localhost" {
+			return nil, ErrManagedPolicyDrift
+		}
+		id := resolverID(server)
+		if _, exists := seenIDs[id]; exists {
+			return nil, ErrManagedPolicyDrift
+		}
+		seenIDs[id] = struct{}{}
+		definitions = append(definitions, managedResolverDefinition{
+			option: DNSResolverOption{ID: id, Label: "Proxy resolver " + strconv.Itoa(index+1)},
+			server: cloneDNSServer(server),
+		})
+	}
+	if len(definitions) == 0 {
+		return nil, ErrManagedPolicyDrift
+	}
+	return definitions, nil
+}
+
+func resolverID(server DNSServer) string {
+	digest := sha256.Sum256([]byte(server.Address + "\x00" + server.Tag))
+	return "resolver-" + hex.EncodeToString(digest[:6])
+}
+
+func decompileDNSSettings(current, baseline DNSPolicy, rules []CustomRule) (DNSSettings, error) {
+	settings, _, _, _, err := classifyManagedDNS(current, baseline, rules)
+	return settings, err
+}
+
+func classifyManagedDNS(current, baseline DNSPolicy, rules []CustomRule) (DNSSettings, int, int, int, error) {
+	if current.QueryStrategy != baseline.QueryStrategy || current.DisableFallbackIfMatch != baseline.DisableFallbackIfMatch || current.UseSystemHosts != baseline.UseSystemHosts {
+		return DNSSettings{}, 0, 0, 0, ErrManagedPolicyDrift
+	}
+	definitions, err := managedResolverDefinitions(baseline)
+	if err != nil {
+		return DNSSettings{}, 0, 0, 0, err
+	}
+	if len(current.Servers) < 2 || len(current.Servers) > len(definitions)+1 {
+		return DNSSettings{}, 0, 0, 0, ErrManagedPolicyDrift
+	}
+	if !reflect.DeepEqual(current.Servers[len(current.Servers)-1], baseline.Servers[len(baseline.Servers)-1]) {
+		return DNSSettings{}, 0, 0, 0, ErrManagedPolicyDrift
+	}
+	baselineDomains, baselineDomainSet, err := baselineProxyDomains(definitions)
+	if err != nil {
+		return DNSSettings{}, 0, 0, 0, err
+	}
+	_, derivedDomainSet := customProxyDomains(rules)
+	additional := make([]string, 0, len(derivedDomainSet))
+	for domain := range derivedDomainSet {
+		if _, exists := baselineDomainSet[domain]; !exists {
+			additional = append(additional, domain)
 		}
 	}
-	baselineDomainSet := make(map[string]struct{})
-	proxyTag := ""
-	for _, server := range baseline.Servers {
-		if server.Tag == "" {
-			continue
-		}
-		if proxyTag != "" && proxyTag != server.Tag {
-			return 0, 0, 0, ErrCustomPolicyDrift
-		}
-		proxyTag = server.Tag
-		for _, domain := range server.Domains {
-			if _, exists := baselineDomainSet[domain]; exists {
-				continue
-			}
-			baselineDomainSet[domain] = struct{}{}
-		}
+	sort.Strings(additional)
+	expectedDomains := append(append([]string{}, baselineDomains...), additional...)
+
+	byIdentity := make(map[string]managedResolverDefinition, len(definitions))
+	for _, definition := range definitions {
+		byIdentity[resolverIdentity(definition.server)] = definition
 	}
-	if proxyTag == "" {
-		return 0, 0, 0, ErrCustomPolicyDrift
+	selected := make([]string, 0, len(current.Servers)-1)
+	seen := make(map[string]struct{}, len(current.Servers)-1)
+	for _, actual := range current.Servers[:len(current.Servers)-1] {
+		definition, exists := byIdentity[resolverIdentity(actual)]
+		if !exists || !reflect.DeepEqual(actual.Domains, expectedDomains) {
+			return DNSSettings{}, 0, 0, 0, ErrManagedPolicyDrift
+		}
+		if _, exists := seen[definition.option.ID]; exists {
+			return DNSSettings{}, 0, 0, 0, ErrManagedPolicyDrift
+		}
+		seen[definition.option.ID] = struct{}{}
+		selected = append(selected, definition.option.ID)
 	}
-	proxyResolvers := 0
-	for index, expected := range baseline.Servers {
-		actual := current.Servers[index]
-		if expected.Tag != proxyTag {
-			if !reflect.DeepEqual(actual, expected) {
-				return 0, 0, 0, ErrCustomPolicyDrift
-			}
-			continue
-		}
-		proxyResolvers++
-		expectedDomains := append([]string(nil), expected.Domains...)
-		additional := make([]string, 0, len(derived))
-		for domain := range derived {
-			if _, isBaseline := baselineDomainSet[domain]; !isBaseline {
-				additional = append(additional, domain)
-			}
-		}
-		sort.Strings(additional)
-		expectedDomains = append(expectedDomains, additional...)
-		withoutDomains := expected
-		withoutDomains.Domains = nil
-		actualWithoutDomains := actual
-		actualWithoutDomains.Domains = nil
-		if !reflect.DeepEqual(actualWithoutDomains, withoutDomains) || !reflect.DeepEqual(actual.Domains, expectedDomains) {
-			return 0, 0, 0, ErrCustomPolicyDrift
-		}
+	settings := DNSSettings{
+		ProxyResolverIDs: selected,
+		FallbackMode:     FallbackModeSystem,
+		CacheEnabled:     !current.DisableCache,
+		ServeStale:       current.ServeStale,
+		StaleTTLSeconds:  current.ServeExpiredTTL,
+		ParallelQueries:  current.EnableParallelQuery,
 	}
-	if proxyResolvers == 0 {
-		return 0, 0, 0, ErrCustomPolicyDrift
+	if current.DisableFallback {
+		settings.FallbackMode = FallbackModeDisabled
+	}
+	if err := validateDNSSettingsAgainst(definitions, settings); err != nil {
+		return DNSSettings{}, 0, 0, 0, ErrManagedPolicyDrift
 	}
 	derivedCount := 0
-	for domain := range derived {
+	for domain := range derivedDomainSet {
 		if _, isBaseline := baselineDomainSet[domain]; !isBaseline {
 			derivedCount++
 		}
 	}
-	return proxyResolvers, len(baselineDomainSet), derivedCount, nil
+	return settings, len(selected), len(baselineDomainSet), derivedCount, nil
 }
 
-func rebuildCustomDNS(baseline DNSPolicy, rules []CustomRule) DNSPolicy {
-	result := cloneDNSPolicy(baseline)
-	derived := make(map[string]struct{})
+func baselineProxyDomains(definitions []managedResolverDefinition) ([]string, map[string]struct{}, error) {
+	ordered := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, definition := range definitions {
+		for _, domain := range definition.server.Domains {
+			if _, exists := seen[domain]; exists {
+				continue
+			}
+			seen[domain] = struct{}{}
+			ordered = append(ordered, domain)
+		}
+	}
+	if len(ordered) == 0 {
+		return nil, nil, ErrManagedPolicyDrift
+	}
+	return ordered, seen, nil
+}
+
+func customProxyDomains(rules []CustomRule) ([]string, map[string]struct{}) {
+	ordered := make([]string, 0)
+	seen := make(map[string]struct{})
 	for _, rule := range rules {
 		if rule.Action != CustomRuleProxy {
 			continue
 		}
 		for _, domain := range rule.Domains {
-			derived[domain] = struct{}{}
-		}
-	}
-	baselineDomainSet := make(map[string]struct{})
-	proxyTag := ""
-	for _, server := range baseline.Servers {
-		if server.Tag == "" {
-			continue
-		}
-		proxyTag = server.Tag
-		for _, domain := range server.Domains {
-			baselineDomainSet[domain] = struct{}{}
-		}
-	}
-	for index, server := range result.Servers {
-		if server.Tag != proxyTag {
-			continue
-		}
-		additional := make([]string, 0, len(derived))
-		for domain := range derived {
-			if _, exists := baselineDomainSet[domain]; !exists {
-				additional = append(additional, domain)
+			if _, exists := seen[domain]; exists {
+				continue
 			}
+			seen[domain] = struct{}{}
+			ordered = append(ordered, domain)
 		}
-		sort.Strings(additional)
-		result.Servers[index].Domains = append(append([]string(nil), server.Domains...), additional...)
 	}
-	return result
+	return ordered, seen
+}
+
+func validateCustomDNS(current, baseline DNSPolicy, rules []CustomRule) (int, int, int, error) {
+	_, resolverCount, baselineCount, derivedCount, err := classifyManagedDNS(current, baseline, rules)
+	return resolverCount, baselineCount, derivedCount, err
+}
+
+func compileManagedDNS(baseline DNSPolicy, settings DNSSettings, rules []CustomRule) (DNSPolicy, error) {
+	definitions, err := managedResolverDefinitions(baseline)
+	if err != nil {
+		return DNSPolicy{}, ErrInvalidDNSSettings
+	}
+	if err := validateDNSSettingsAgainst(definitions, settings); err != nil {
+		return DNSPolicy{}, err
+	}
+	baselineDomains, _, err := baselineProxyDomains(definitions)
+	if err != nil {
+		return DNSPolicy{}, ErrInvalidDNSSettings
+	}
+	_, derivedDomainSet := customProxyDomains(rules)
+	additional := make([]string, 0, len(derivedDomainSet))
+	baselineDomainSet := make(map[string]struct{}, len(baselineDomains))
+	for _, domain := range baselineDomains {
+		baselineDomainSet[domain] = struct{}{}
+	}
+	for domain := range derivedDomainSet {
+		if _, exists := baselineDomainSet[domain]; !exists {
+			additional = append(additional, domain)
+		}
+	}
+	sort.Strings(additional)
+	expectedDomains := append(append([]string{}, baselineDomains...), additional...)
+	byID := make(map[string]managedResolverDefinition, len(definitions))
+	for _, definition := range definitions {
+		byID[definition.option.ID] = definition
+	}
+	result := DNSPolicy{
+		QueryStrategy:          baseline.QueryStrategy,
+		DisableCache:           !settings.CacheEnabled,
+		ServeStale:             settings.ServeStale,
+		ServeExpiredTTL:        settings.StaleTTLSeconds,
+		DisableFallback:        settings.FallbackMode == FallbackModeDisabled,
+		DisableFallbackIfMatch: baseline.DisableFallbackIfMatch,
+		EnableParallelQuery:    settings.ParallelQueries,
+		UseSystemHosts:         baseline.UseSystemHosts,
+		Servers:                make([]DNSServer, 0, len(settings.ProxyResolverIDs)+1),
+	}
+	for _, id := range settings.ProxyResolverIDs {
+		definition, exists := byID[id]
+		if !exists {
+			return DNSPolicy{}, ErrInvalidDNSSettings
+		}
+		server := cloneDNSServer(definition.server)
+		server.Domains = append([]string{}, expectedDomains...)
+		result.Servers = append(result.Servers, server)
+	}
+	result.Servers = append(result.Servers, cloneDNSServer(baseline.Servers[len(baseline.Servers)-1]))
+	return result, nil
+}
+
+func decompileObservatorySettings(current, baseline ObservatoryPolicy) (ObservatorySettings, error) {
+	if !reflect.DeepEqual(current.SubjectSelector, baseline.SubjectSelector) {
+		return ObservatorySettings{}, ErrManagedPolicyDrift
+	}
+	minutes, ok := parseObservatoryMinutes(current.ProbeInterval)
+	if !ok {
+		return ObservatorySettings{}, ErrManagedPolicyDrift
+	}
+	return ObservatorySettings{ProbeIntervalMinutes: minutes}, nil
+}
+
+func parseObservatoryMinutes(value string) (int, bool) {
+	if len(value) < 2 || !strings.HasSuffix(value, "m") {
+		return 0, false
+	}
+	minutes, err := strconv.Atoi(strings.TrimSuffix(value, "m"))
+	if err != nil || strconv.Itoa(minutes)+"m" != value || minutes < MinObservatoryIntervalMinutes || minutes > MaxObservatoryIntervalMinutes {
+		return 0, false
+	}
+	return minutes, true
+}
+
+func resolverIdentity(server DNSServer) string {
+	return server.Address + "\x00" + server.Tag + "\x00" + strconv.FormatBool(server.SkipFallback) + "\x00" + server.QueryStrategy
+}
+
+func cloneDNSServer(server DNSServer) DNSServer {
+	server.Domains = append([]string{}, server.Domains...)
+	return server
 }
 
 func normalizeCustomRules(rules []CustomRule) []CustomRule {
@@ -583,6 +902,10 @@ func normalizeCustomRule(rule CustomRule) CustomRule {
 
 func cloneCustomRules(rules []CustomRule) []CustomRule {
 	return normalizeCustomRules(rules)
+}
+
+func cloneStrings(values []string) []string {
+	return append([]string{}, values...)
 }
 
 func cloneRoutingRules(rules []RoutingRule) []RoutingRule {
