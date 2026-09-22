@@ -192,6 +192,21 @@ test('adds, removes, and moves resolvers while serializing exact ordered opaque 
   expect(Object.keys(requestsFor(state, '/api/v1/appliance/dns-observatory/preview', 'POST')[0].body).sort()).toEqual(['dns', 'observatory'])
 })
 
+test('retains keyboard focus on a resolver reorder control across repeated moves', async ({ page }) => {
+  const state = await prepare(page); page.__dnsIssues = state.issues
+  await openDNS(page)
+  await page.getByRole('button', { name: 'Add Proxy resolver 3' }).click()
+  const moveUp = page.getByRole('button', { name: 'Move resolver up: Proxy resolver 3' })
+  await moveUp.focus()
+  await moveUp.press('Enter')
+  await expect(moveUp).toBeFocused()
+  await moveUp.press('Enter')
+  await page.getByRole('button', { name: 'Preview DNS changes' }).click()
+  expect(requestsFor(state, '/api/v1/appliance/dns-observatory/preview', 'POST')[0].body.dns.proxyResolverIds).toEqual([
+    'synthetic-resolver-c', 'synthetic-resolver-a', 'synthetic-resolver-b',
+  ])
+})
+
 test('prevents an empty resolver selection', async ({ page }) => {
   const state = await prepare(page); page.__dnsIssues = state.issues
   await openDNS(page)
@@ -420,6 +435,101 @@ test('Routing and DNS peer Preview invalidation cancels late peer tokens without
   await page.getByRole('button', { name: 'DNS', exact: true }).click()
   await expect(page.getByLabel('Parallel queries')).not.toBeChecked()
   await expect(page.getByRole('region', { name: 'DNS Preview confirmation' })).toHaveCount(0)
+})
+
+test('an unproven DNS Apply re-invalidates Routing and blocks both workspaces until the DNS fresh read succeeds', async ({ page }) => {
+  const state = await prepare(page); page.__dnsIssues = state.issues
+  const releaseApply = deferred()
+  const releaseFreshRead = deferred()
+  let dnsReads = 0
+  state.handle = async ({ route, entry }) => {
+    if (entry.path === '/api/v1/appliance/dns-observatory') {
+      dnsReads++
+      if (dnsReads === 2) await releaseFreshRead.promise
+      await json(route, state.policy)
+      return true
+    }
+    if (entry.path === '/api/v1/appliance/dns-observatory/apply') {
+      await releaseApply.promise
+      await json(route, { error: 'synthetic safe error', code: 'transaction-unproven' }, 503)
+      return true
+    }
+    return false
+  }
+
+  await openDNS(page)
+  await makeChange(page)
+  await page.getByRole('button', { name: 'Preview DNS changes' }).click()
+  await page.getByRole('button', { name: 'Apply DNS changes' }).click()
+  await page.getByRole('button', { name: 'Routing', exact: true }).click()
+  await page.getByRole('button', { name: 'Add rule', exact: true }).click()
+  await page.getByLabel('Rule 1 display name').fill('Preserved after DNS uncertainty')
+  await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toBeVisible()
+
+  releaseApply.resolve()
+  await expect.poll(() => requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST').length).toBe(1)
+  await expect.poll(() => dnsReads).toBe(2)
+  await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toHaveCount(0)
+  await expect(page.getByLabel('Rule 1 display name')).toHaveValue('Preserved after DNS uncertainty')
+  await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await expect(page.getByLabel('Parallel queries')).not.toBeChecked()
+  await expect(page.getByRole('button', { name: 'Preview DNS changes' })).toBeDisabled()
+
+  releaseFreshRead.resolve()
+  await expect(page.getByRole('button', { name: 'Preview DNS changes' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Routing', exact: true }).click()
+  await expect(page.getByLabel('Rule 1 display name')).toHaveValue('Preserved after DNS uncertainty')
+  await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toBeEnabled()
+})
+
+test('an unknown Routing Apply re-invalidates DNS and blocks both workspaces until the Routing fresh read succeeds', async ({ page }) => {
+  const state = await prepare(page); page.__dnsIssues = state.issues
+  const releaseApply = deferred()
+  const releaseFreshRead = deferred()
+  let routingReads = 0
+  state.handle = async ({ route, entry }) => {
+    if (entry.path === '/api/v1/appliance/policy') {
+      routingReads++
+      if (routingReads === 2) await releaseFreshRead.promise
+      await json(route, routingProjection())
+      return true
+    }
+    if (entry.path === '/api/v1/appliance/policy/apply') {
+      await releaseApply.promise
+      await route.abort('connectionfailed')
+      return true
+    }
+    return false
+  }
+
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Routing', exact: true }).click()
+  await page.getByRole('button', { name: 'Add rule', exact: true }).click()
+  await page.getByLabel('Rule 1 display name').fill('Routing outcome pending')
+  await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
+  await page.getByRole('button', { name: 'Apply routing changes' }).click()
+  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await makeChange(page)
+  await page.getByRole('button', { name: 'Preview DNS changes' }).click()
+  await expect(page.getByRole('region', { name: 'DNS Preview confirmation' })).toBeVisible()
+
+  releaseApply.resolve()
+  await expect.poll(() => requestsFor(state, '/api/v1/appliance/dns-observatory/cancel', 'POST').length).toBe(1)
+  await expect.poll(() => routingReads).toBe(2)
+  await expect(page.getByRole('region', { name: 'DNS Preview confirmation' })).toHaveCount(0)
+  await expect(page.getByLabel('Parallel queries')).not.toBeChecked()
+  await expect(page.getByRole('button', { name: 'Preview DNS changes' })).toBeDisabled()
+  await page.getByRole('button', { name: 'Routing', exact: true }).click()
+  await expect(page.getByLabel('Rule 1 display name')).toHaveValue('Routing outcome pending')
+  await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toBeDisabled()
+
+  releaseFreshRead.resolve()
+  await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await expect(page.getByLabel('Parallel queries')).not.toBeChecked()
+  await expect(page.getByRole('button', { name: 'Preview DNS changes' })).toBeEnabled()
 })
 
 test('stores no DNS draft or token state and remains usable at desktop and mobile widths', async ({ page }, testInfo) => {

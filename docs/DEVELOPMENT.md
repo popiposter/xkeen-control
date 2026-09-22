@@ -232,8 +232,9 @@ focused Chromium suite covers lazy loading, safe resolver labels and locked
 facts, ordered resolver editing, canonical cache/stale behavior, Observatory
 cadence, dirty refresh, read-only drift/unavailable states, semantic Preview,
 token-only one-shot Apply/Cancel, conservative error outcomes, session and
-navigation races, narrow Routing peer-Preview invalidation, browser-storage
-absence, and desktop/mobile rendering:
+navigation races, narrow symmetric Routing/DNS peer-Preview invalidation and
+unknown-outcome fresh-read gating, keyboard-stable resolver reordering,
+browser-storage absence, and desktop/mobile rendering:
 
 ```sh
 cd web

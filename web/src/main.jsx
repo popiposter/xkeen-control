@@ -428,12 +428,24 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const componentController = useComponentsController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized })
   const routingControllerRef = useRef(null)
   const dnsControllerRef = useRef(null)
+  const [unprovenPolicyReads, setUnprovenPolicyReads] = useState({ routing: false, dns: false })
   const invalidateRoutingPreview = useCallback(() => routingControllerRef.current?.invalidateLivePreview(), [])
   const invalidateDNSPreview = useCallback(() => dnsControllerRef.current?.invalidateLivePreview(), [])
   const refreshRoutingPeer = useCallback(() => { void routingControllerRef.current?.refreshPeerProjection() }, [])
   const refreshDNSPeer = useCallback(() => { void dnsControllerRef.current?.refreshPeerProjection() }, [])
-  const routingController = useRoutingController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'routing', onBeforeApply: invalidateDNSPreview, onApplied: refreshDNSPeer })
-  const dnsController = useDNSObservatoryController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'dns', onBeforeApply: invalidateRoutingPreview, onApplied: refreshRoutingPeer })
+  const markRoutingApplyUnproven = useCallback(() => {
+    setUnprovenPolicyReads((current) => ({ ...current, routing: true }))
+    invalidateDNSPreview()
+  }, [invalidateDNSPreview])
+  const markDNSApplyUnproven = useCallback(() => {
+    setUnprovenPolicyReads((current) => ({ ...current, dns: true }))
+    invalidateRoutingPreview()
+  }, [invalidateRoutingPreview])
+  const clearRoutingApplyUnproven = useCallback(() => setUnprovenPolicyReads((current) => current.routing ? { ...current, routing: false } : current), [])
+  const clearDNSApplyUnproven = useCallback(() => setUnprovenPolicyReads((current) => current.dns ? { ...current, dns: false } : current), [])
+  const appliancePolicyUncertain = unprovenPolicyReads.routing || unprovenPolicyReads.dns
+  const routingController = useRoutingController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'routing', appliancePolicyUncertain, onBeforeApply: invalidateDNSPreview, onApplied: refreshDNSPeer, onUnprovenApply: markRoutingApplyUnproven, onFreshReadAfterUnprovenApply: clearRoutingApplyUnproven })
+  const dnsController = useDNSObservatoryController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'dns', appliancePolicyUncertain, onBeforeApply: invalidateRoutingPreview, onApplied: refreshRoutingPeer, onUnprovenApply: markDNSApplyUnproven, onFreshReadAfterUnprovenApply: clearDNSApplyUnproven })
   routingControllerRef.current = routingController
   dnsControllerRef.current = dnsController
   const openComponents = useCallback(() => {
@@ -449,6 +461,10 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const performancePolling = (section === 'overview' && adaptiveRunning)
     || (section === 'nodes' && (manualRunning || adaptiveRunning))
   const performancePollInFlight = useRef(false)
+
+  useEffect(() => {
+    setUnprovenPolicyReads({ routing: false, dns: false })
+  }, [session.csrfToken])
 
   useEffect(() => {
     if (!performancePolling || !onPerformanceRefresh) return undefined

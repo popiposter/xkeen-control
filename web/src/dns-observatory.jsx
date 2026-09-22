@@ -178,7 +178,7 @@ const applyErrorResult = (cause) => {
   }
 }
 
-export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthorized, active = true, onBeforeApply, onApplied }) {
+export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthorized, active = true, appliancePolicyUncertain = false, onBeforeApply, onApplied, onUnprovenApply, onFreshReadAfterUnprovenApply }) {
   const [projection, setProjection] = useState({ value: null, observedAt: '', loading: false, error: '' })
   const [draft, setDraft] = useState(null)
   const [dirty, setDirty] = useState(false)
@@ -202,6 +202,8 @@ export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthoriz
   const csrfRef = useRef(csrfToken)
   const sessionCSRFRef = useRef(csrfToken)
   const activeRef = useRef(active)
+  const unprovenReadGeneration = useRef(0)
+  const unprovenReadPending = useRef(false)
 
   draftRef.current = draft
   projectionRef.current = projection.value
@@ -225,6 +227,7 @@ export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthoriz
     if (rebase) invalidateLivePreview()
     readGate.current = true
     const epoch = sessionEpoch.current
+    const uncertaintyGeneration = unprovenReadGeneration.current
     setProjection((current) => ({ ...current, loading: true, error: '' }))
     try {
       const value = await requestJSON('/api/v1/appliance/dns-observatory')
@@ -247,6 +250,10 @@ export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthoriz
         setDirty(false)
       }
       setResult((current) => current?.requiresFreshRead ? { ...current, requiresFreshRead: false } : current)
+      if (unprovenReadPending.current && uncertaintyGeneration === unprovenReadGeneration.current) {
+        unprovenReadPending.current = false
+        onFreshReadAfterUnprovenApply?.()
+      }
       return true
     } catch (cause) {
       if (epoch !== sessionEpoch.current) return false
@@ -257,7 +264,7 @@ export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthoriz
     } finally {
       readGate.current = false
     }
-  }, [invalidateLivePreview, onUnauthorized])
+  }, [invalidateLivePreview, onFreshReadAfterUnprovenApply, onUnauthorized])
 
   const activate = useCallback(() => loadPolicy(), [loadPolicy])
   const refreshPeerProjection = useCallback(() => {
@@ -311,7 +318,7 @@ export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthoriz
     && draft.observatory.probeIntervalMinutes <= projection.value.observatory.maxIntervalMinutes)
 
   const previewDraft = useCallback(async () => {
-    if (previewGate.current || submitGate.current || previewRef.current || pending || lifecycleBlocked || outcomeRequiresFreshRead || projectionRef.current?.editability !== 'editable') return false
+    if (previewGate.current || submitGate.current || previewRef.current || pending || lifecycleBlocked || outcomeRequiresFreshRead || appliancePolicyUncertain || projectionRef.current?.editability !== 'editable') return false
     const currentDraft = draftRef.current
     if (!currentDraft || !validDNSSettings(currentDraft.dns, projectionRef.current.dns.resolverCatalog)) return false
     previewGate.current = true
@@ -343,7 +350,7 @@ export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthoriz
       previewGate.current = false
       setRequestState((current) => current?.id === id ? null : current)
     }
-  }, [csrfToken, lifecycleBlocked, loadPolicy, onUnauthorized, outcomeRequiresFreshRead, pending])
+  }, [appliancePolicyUncertain, csrfToken, lifecycleBlocked, loadPolicy, onUnauthorized, outcomeRequiresFreshRead, pending])
 
   const cancelPreview = useCallback((reason = 'canceled') => {
     requestSequence.current++
@@ -357,7 +364,7 @@ export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthoriz
 
   const submitPreview = useCallback(async () => {
     const current = previewRef.current
-    if (!current || current.noop || submitGate.current || lifecycleBlocked || outcomeRequiresFreshRead) return false
+    if (!current || current.noop || submitGate.current || lifecycleBlocked || outcomeRequiresFreshRead || appliancePolicyUncertain) return false
     submitGate.current = true
     onBeforeApply?.()
     const epoch = sessionEpoch.current
@@ -387,6 +394,11 @@ export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthoriz
       const mapped = applyErrorResult(cause)
       setResult(mapped)
       refreshAfter = Boolean(mapped.refreshAfter)
+      if (mapped.outcome === 'unknown') {
+        unprovenReadGeneration.current++
+        unprovenReadPending.current = true
+        onUnprovenApply?.()
+      }
     } finally {
       if (isCurrentSession()) {
         setPending(null)
@@ -398,7 +410,7 @@ export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthoriz
       if (!refreshed && isCurrentSession()) setRefreshError('The outcome is preserved, but the subsequent DNS policy refresh failed.')
     }
     return true
-  }, [csrfToken, lifecycleBlocked, loadPolicy, onApplied, onBeforeApply, onUnauthorized, outcomeRequiresFreshRead])
+  }, [appliancePolicyUncertain, csrfToken, lifecycleBlocked, loadPolicy, onApplied, onBeforeApply, onUnauthorized, onUnprovenApply, outcomeRequiresFreshRead])
 
   useEffect(() => {
     if (!preview?.expiresAt) return undefined
@@ -421,6 +433,8 @@ export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthoriz
     draftInitialized.current = false
     dirtyRef.current = false
     draftRef.current = null
+    unprovenReadGeneration.current++
+    unprovenReadPending.current = false
     setProjection({ value: null, observedAt: '', loading: false, error: '' })
     setDraft(null)
     setDirty(false)
@@ -447,10 +461,10 @@ export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthoriz
 
   return useMemo(() => ({
     projection, draft, dirty, draftValid, refreshConfirmation, requestState, preview, pending, result, refreshError,
-    lifecycleKnown, lifecycleBlocked, outcomeRequiresFreshRead, activate, loadPolicy, refreshPeerProjection,
+    lifecycleKnown, lifecycleBlocked, appliancePolicyUncertain, outcomeRequiresFreshRead, activate, loadPolicy, refreshPeerProjection,
     invalidateLivePreview, requestRefresh, discardAndRefresh, cancelRefresh, updateDNS, addResolver, removeResolver,
     moveResolver, setCacheEnabled, setServeStale, setObservatoryInterval, previewDraft, cancelPreview, submitPreview,
-  }), [activate, addResolver, cancelPreview, cancelRefresh, dirty, discardAndRefresh, draft, draftValid, invalidateLivePreview, lifecycleBlocked, lifecycleKnown, loadPolicy, moveResolver, outcomeRequiresFreshRead, pending, preview, previewDraft, projection, refreshConfirmation, refreshError, removeResolver, requestRefresh, requestState, result, setCacheEnabled, setObservatoryInterval, setServeStale, submitPreview, updateDNS, refreshPeerProjection])
+  }), [activate, addResolver, appliancePolicyUncertain, cancelPreview, cancelRefresh, dirty, discardAndRefresh, draft, draftValid, invalidateLivePreview, lifecycleBlocked, lifecycleKnown, loadPolicy, moveResolver, outcomeRequiresFreshRead, pending, preview, previewDraft, projection, refreshConfirmation, refreshError, removeResolver, requestRefresh, requestState, result, setCacheEnabled, setObservatoryInterval, setServeStale, submitPreview, updateDNS, refreshPeerProjection])
 }
 
 export function DNSLifecycleNotice({ controller, active, onOpenDNS }) {
@@ -469,7 +483,7 @@ export function DNSObservatorySection({ controller }) {
   const { projection, draft, dirty, refreshConfirmation, requestState, preview, pending, result, refreshError } = controller
   const value = projection.value
   const editable = value?.editability === 'editable' && draft
-  const editorDisabled = !editable || controller.lifecycleBlocked || controller.outcomeRequiresFreshRead || Boolean(preview) || Boolean(pending) || requestState?.kind === 'preview'
+  const editorDisabled = !editable || controller.lifecycleBlocked || controller.outcomeRequiresFreshRead || controller.appliancePolicyUncertain || Boolean(preview) || Boolean(pending) || requestState?.kind === 'preview'
   const availableResolvers = editable ? value.dns.resolverCatalog.filter((item) => !draft.dns.proxyResolverIds.includes(item.id)) : []
   const labelFor = (id) => value?.dns?.resolverCatalog.find((item) => item.id === id)?.label || 'Unknown resolver selection'
 
@@ -491,20 +505,20 @@ export function DNSObservatorySection({ controller }) {
     {editable && <section className="panel dns-editor" aria-label="DNS and Observatory editor">
       <div className="dns-editor-heading"><div><span className="panel-label">Editable policy</span><h2>Resolvers and runtime behavior {dirty && <span className="chip amber">Unsaved</span>}</h2></div></div>
       <div className="dns-editor-grid">
-        <fieldset className="dns-resolvers"><legend>Ordered proxy resolvers</legend><div className="dns-resolver-list">{draft.dns.proxyResolverIds.map((id, index) => <div className="dns-resolver-row" key={`${id}-${index}`}><strong>{labelFor(id)}</strong><div><button className="ghost" type="button" aria-label={`Move resolver up: ${labelFor(id)}`} onClick={() => controller.moveResolver(index, -1)} disabled={editorDisabled || index === 0}>Move up</button><button className="ghost" type="button" aria-label={`Move resolver down: ${labelFor(id)}`} onClick={() => controller.moveResolver(index, 1)} disabled={editorDisabled || index === draft.dns.proxyResolverIds.length - 1}>Move down</button><button className="ghost danger-action" type="button" aria-label={`Remove resolver: ${labelFor(id)}`} onClick={() => controller.removeResolver(index)} disabled={editorDisabled || draft.dns.proxyResolverIds.length <= 1}>Remove</button></div></div>)}</div>{availableResolvers.length > 0 && <div className="dns-resolver-add"><span>Available safe catalog</span>{availableResolvers.map((item) => <button className="ghost" type="button" key={item.id} onClick={() => controller.addResolver(item.id)} disabled={editorDisabled}>Add {item.label}</button>)}</div>}<small>At least one resolver must remain selected. Only server-provided labels are displayed.</small></fieldset>
+        <fieldset className="dns-resolvers"><legend>Ordered proxy resolvers</legend><div className="dns-resolver-list">{draft.dns.proxyResolverIds.map((id, index) => <div className="dns-resolver-row" key={id}><strong>{labelFor(id)}</strong><div><button className="ghost" type="button" aria-label={`Move resolver up: ${labelFor(id)}`} onClick={() => controller.moveResolver(index, -1)} disabled={editorDisabled || index === 0}>Move up</button><button className="ghost" type="button" aria-label={`Move resolver down: ${labelFor(id)}`} onClick={() => controller.moveResolver(index, 1)} disabled={editorDisabled || index === draft.dns.proxyResolverIds.length - 1}>Move down</button><button className="ghost danger-action" type="button" aria-label={`Remove resolver: ${labelFor(id)}`} onClick={() => controller.removeResolver(index)} disabled={editorDisabled || draft.dns.proxyResolverIds.length <= 1}>Remove</button></div></div>)}</div>{availableResolvers.length > 0 && <div className="dns-resolver-add"><span>Available safe catalog</span>{availableResolvers.map((item) => <button className="ghost" type="button" key={item.id} onClick={() => controller.addResolver(item.id)} disabled={editorDisabled}>Add {item.label}</button>)}</div>}<small>At least one resolver must remain selected. Only server-provided labels are displayed.</small></fieldset>
         <fieldset><legend>Fallback</legend><label>Fallback mode<select aria-label="DNS fallback mode" value={draft.dns.fallbackMode} disabled={editorDisabled} onChange={(event) => controller.updateDNS({ fallbackMode: event.target.value })}><option value="system">System fallback enabled</option><option value="disabled">System fallback disabled</option></select></label><small>The fixed localhost fallback object remains present and source-owned; this mode controls whether it is used.</small></fieldset>
         <fieldset><legend>Cache and stale answers</legend><label className="dns-toggle"><input aria-label="Cache enabled" type="checkbox" checked={draft.dns.cacheEnabled} disabled={editorDisabled} onChange={(event) => controller.setCacheEnabled(event.target.checked)} /> Cache enabled</label><label className="dns-toggle"><input aria-label="Serve stale" type="checkbox" checked={draft.dns.serveStale} disabled={editorDisabled || !draft.dns.cacheEnabled} onChange={(event) => controller.setServeStale(event.target.checked)} /> Serve stale</label><label>Stale TTL seconds<input aria-label="Stale TTL seconds" type="number" min={MIN_STALE_TTL_SECONDS} max={MAX_STALE_TTL_SECONDS} step="1" value={draft.dns.staleTTLSeconds} disabled={editorDisabled || !draft.dns.cacheEnabled || !draft.dns.serveStale} onChange={(event) => controller.updateDNS({ staleTTLSeconds: Number(event.target.value) })} /></label></fieldset>
         <fieldset><legend>Query behavior</legend><label className="dns-toggle"><input aria-label="Parallel queries" type="checkbox" checked={draft.dns.parallelQueries} disabled={editorDisabled} onChange={(event) => controller.updateDNS({ parallelQueries: event.target.checked })} /> Parallel queries</label></fieldset>
         <fieldset><legend>Observatory cadence</legend><label>RTT sampling interval<select aria-label="Observatory cadence" value={draft.observatory.probeIntervalMinutes} disabled={editorDisabled} onChange={(event) => controller.setObservatoryInterval(event.target.value)}>{Array.from({ length: value.observatory.maxIntervalMinutes - value.observatory.minIntervalMinutes + 1 }, (_, offset) => value.observatory.minIntervalMinutes + offset).map((minutes) => <option key={minutes} value={minutes}>{minutes} minute{minutes === 1 ? '' : 's'}</option>)}</select></label><small>This cadence controls Observatory RTT sampling. The faster active-liveness plane remains separate.</small></fieldset>
       </div>
       {!controller.draftValid && <div className="notice warning" role="alert">Keep at least one resolver selected and use a whole stale TTL from 60 to 86400 seconds when Serve stale is enabled.</div>}
-      <div className="dns-editor-actions"><div>{controller.lifecycleBlocked && <small className="dns-disabled-note">Lifecycle readiness is unavailable or maintenance/applying is active; new mutation requests are disabled.</small>}{controller.outcomeRequiresFreshRead && <small className="dns-disabled-note">Refresh and inspect the policy before creating another Preview.</small>}</div><button type="button" onClick={controller.previewDraft} disabled={editorDisabled || projection.loading || !controller.draftValid}>{requestState?.kind === 'preview' ? 'Preparing Preview…' : 'Preview DNS changes'}</button></div>
+      <div className="dns-editor-actions"><div>{controller.lifecycleBlocked && <small className="dns-disabled-note">Lifecycle readiness is unavailable or maintenance/applying is active; new mutation requests are disabled.</small>}{controller.outcomeRequiresFreshRead && <small className="dns-disabled-note">Refresh and inspect the policy before creating another Preview.</small>}{controller.appliancePolicyUncertain && <small className="dns-disabled-note">An appliance-policy Apply has an unknown outcome. New mutations remain blocked until its controller completes a fresh read.</small>}</div><button type="button" onClick={controller.previewDraft} disabled={editorDisabled || projection.loading || !controller.draftValid}>{requestState?.kind === 'preview' ? 'Preparing Preview…' : 'Preview DNS changes'}</button></div>
     </section>}
 
     {requestState?.kind === 'preview' && <div className="notice neutral" role="status">{requestState.canceled ? 'Discarding the late DNS Preview response…' : 'Preparing a fresh DNS semantic Preview…'} {!requestState.canceled && <button className="inline-link" type="button" onClick={() => controller.cancelPreview()}>Cancel Preview</button>}</div>}
     {pending && <div className="operation-running dns-operation" role="status" aria-live="polite"><span className="spinner" aria-hidden="true"></span><div><strong>DNS Apply is running</strong><p>No progress percentage is available. The broker may need its bounded transaction and recovery window.</p></div></div>}
     {result && <div className={`operation-result dns-result ${result.tone}`} role={result.tone === 'error' ? 'alert' : 'status'} data-testid="dns-result"><div><strong>{result.title}</strong><p>{result.message}</p></div></div>}
-    {preview && <DNSPreview preview={preview} labelFor={labelFor} busy={Boolean(pending)} applyDisabled={controller.lifecycleBlocked || controller.outcomeRequiresFreshRead} onCancel={() => controller.cancelPreview()} onConfirm={controller.submitPreview} />}
+    {preview && <DNSPreview preview={preview} labelFor={labelFor} busy={Boolean(pending)} applyDisabled={controller.lifecycleBlocked || controller.outcomeRequiresFreshRead || controller.appliancePolicyUncertain} onCancel={() => controller.cancelPreview()} onConfirm={controller.submitPreview} />}
   </div>
 }
 

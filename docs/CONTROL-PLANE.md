@@ -394,10 +394,12 @@ Preview posts the complete typed DNS + Observatory DTO and renders only the
 server semantic diff. Apply and Cancel post only the one-shot RAM token. A
 Dashboard-owned controller preserves an in-flight Apply across navigation,
 never replays an uncertain request, and retains unknown/unproven outcomes until
-the operator refreshes. Routing and DNS controllers only coordinate by
-invalidating the peer's completed or in-flight Preview before Apply; peer drafts
-are not merged, submitted or discarded. The backend shared authority digest
-remains the final stale-prevention boundary.
+the affected controller completes a successful fresh read. Routing and DNS
+controllers only coordinate by invalidating the peer's completed or in-flight
+Preview before Apply and again after an unknown/unproven Apply outcome. While
+that outcome awaits its fresh read, both workspaces block new Preview/Apply;
+peer drafts are not merged, submitted or discarded. The backend shared
+authority digest remains the final stale-prevention boundary.
 
 The workspace adds no browser storage, backend field/route, persistence,
 transaction/recovery owner, performance/selection control, release, router

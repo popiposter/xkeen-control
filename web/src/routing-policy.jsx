@@ -235,7 +235,7 @@ const applyErrorResult = (cause) => {
   }
 }
 
-export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, active = true, onBeforeApply, onApplied }) {
+export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, active = true, appliancePolicyUncertain = false, onBeforeApply, onApplied, onUnprovenApply, onFreshReadAfterUnprovenApply }) {
   const [projection, setProjection] = useState({ value: null, observedAt: '', loading: false, error: '' })
   const [draft, setDraftState] = useState([])
   const [dirty, setDirty] = useState(false)
@@ -259,6 +259,8 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
   const csrfRef = useRef(csrfToken)
   const sessionCSRFRef = useRef(csrfToken)
   const activeRef = useRef(active)
+  const unprovenReadGeneration = useRef(0)
+  const unprovenReadPending = useRef(false)
   const clientRuleId = useRef(0)
 
   draftRef.current = draft
@@ -284,6 +286,7 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
     if (rebase) invalidateLivePreview()
     policyGate.current = true
     const epoch = sessionEpoch.current
+    const uncertaintyGeneration = unprovenReadGeneration.current
     setProjection((current) => ({ ...current, loading: true, error: '' }))
     try {
       const value = await requestJSON('/api/v1/appliance/policy')
@@ -298,6 +301,10 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
         setDirty(false)
       }
       setResult((current) => current?.requiresFreshRead ? { ...current, requiresFreshRead: false } : current)
+      if (unprovenReadPending.current && uncertaintyGeneration === unprovenReadGeneration.current) {
+        unprovenReadPending.current = false
+        onFreshReadAfterUnprovenApply?.()
+      }
       return true
     } catch (cause) {
       if (epoch !== sessionEpoch.current) return false
@@ -308,7 +315,7 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
     } finally {
       policyGate.current = false
     }
-  }, [invalidateLivePreview, nextClientRuleId, onUnauthorized, result?.requiresFreshRead])
+  }, [invalidateLivePreview, nextClientRuleId, onFreshReadAfterUnprovenApply, onUnauthorized, result?.requiresFreshRead])
 
   const activate = useCallback(() => loadPolicy(), [loadPolicy])
   const refreshPeerProjection = useCallback(() => {
@@ -359,7 +366,7 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
   const cancelRefresh = useCallback(() => setRefreshConfirmation(false), [])
 
   const previewDraft = useCallback(async () => {
-    if (previewGate.current || submitGuard.current || previewRef.current || pending || lifecycleBlocked || outcomeRequiresFreshRead || projectionRef.current?.editability !== 'editable') return false
+    if (previewGate.current || submitGuard.current || previewRef.current || pending || lifecycleBlocked || outcomeRequiresFreshRead || appliancePolicyUncertain || projectionRef.current?.editability !== 'editable') return false
     previewGate.current = true
     const id = ++requestSequence.current
     const epoch = sessionEpoch.current
@@ -390,7 +397,7 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
       previewGate.current = false
       setRequestState((current) => current?.id === id ? null : current)
     }
-  }, [csrfToken, lifecycleBlocked, loadPolicy, onUnauthorized, outcomeRequiresFreshRead, pending])
+  }, [appliancePolicyUncertain, csrfToken, lifecycleBlocked, loadPolicy, onUnauthorized, outcomeRequiresFreshRead, pending])
 
   const cancelPreview = useCallback((reason = 'canceled') => {
     requestSequence.current++
@@ -406,7 +413,7 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
 
   const submitPreview = useCallback(async () => {
     const current = previewRef.current
-    if (!current || current.noop || submitGuard.current || lifecycleBlocked || outcomeRequiresFreshRead) return false
+    if (!current || current.noop || submitGuard.current || lifecycleBlocked || outcomeRequiresFreshRead || appliancePolicyUncertain) return false
     submitGuard.current = true
     onBeforeApply?.()
     const epoch = sessionEpoch.current
@@ -439,6 +446,11 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
       setResult(mapped)
       refreshAfter = Boolean(mapped.refreshAfter)
       rebase = true
+      if (mapped.outcome === 'unknown') {
+        unprovenReadGeneration.current++
+        unprovenReadPending.current = true
+        onUnprovenApply?.()
+      }
     } finally {
       if (isCurrentSession()) {
         setPending(null)
@@ -451,7 +463,7 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
       if (!refreshed) setRefreshError('The routing outcome is preserved, but the subsequent policy refresh failed.')
     }
     return true
-  }, [csrfToken, lifecycleBlocked, loadPolicy, onApplied, onBeforeApply, onUnauthorized, outcomeRequiresFreshRead])
+  }, [appliancePolicyUncertain, csrfToken, lifecycleBlocked, loadPolicy, onApplied, onBeforeApply, onUnauthorized, onUnprovenApply, outcomeRequiresFreshRead])
 
   useEffect(() => {
     if (!preview?.expiresAt) return undefined
@@ -473,6 +485,8 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
     hasLoaded.current = false
     draftInitialized.current = false
     dirtyRef.current = false
+    unprovenReadGeneration.current++
+    unprovenReadPending.current = false
     setProjection({ value: null, observedAt: '', loading: false, error: '' })
     setDraftState([])
     setDirty(false)
@@ -509,6 +523,7 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
     refreshError,
     lifecycleKnown,
     lifecycleBlocked,
+    appliancePolicyUncertain,
     outcomeRequiresFreshRead,
     loadPolicy,
     refreshPeerProjection,
@@ -525,7 +540,7 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
     previewDraft,
     cancelPreview,
     submitPreview,
-  }), [activate, addRule, cancelPreview, cancelRefresh, discardAndRefresh, dirty, draft, invalidateLivePreview, lifecycleBlocked, lifecycleKnown, loadPolicy, moveRule, outcomeRequiresFreshRead, pending, preview, previewDraft, projection, refreshConfirmation, refreshError, refreshPeerProjection, removeRule, requestRefresh, requestState, result, submitPreview, updateDraft, updateRule])
+  }), [activate, addRule, appliancePolicyUncertain, cancelPreview, cancelRefresh, discardAndRefresh, dirty, draft, invalidateLivePreview, lifecycleBlocked, lifecycleKnown, loadPolicy, moveRule, outcomeRequiresFreshRead, pending, preview, previewDraft, projection, refreshConfirmation, refreshError, refreshPeerProjection, removeRule, requestRefresh, requestState, result, submitPreview, updateDraft, updateRule])
 }
 
 export function RoutingLifecycleNotice({ controller, onOpenRouting, active }) {
@@ -543,7 +558,7 @@ export function RoutingPolicySection({ controller, lifecycle }) {
   const { projection, draft, dirty, refreshConfirmation, requestState, preview, pending, result, refreshError } = controller
   const value = projection.value
   const editable = value?.editability === 'editable'
-  const editorDisabled = !editable || controller.lifecycleBlocked || controller.outcomeRequiresFreshRead || Boolean(preview) || Boolean(pending) || requestState?.kind === 'preview'
+  const editorDisabled = !editable || controller.lifecycleBlocked || controller.outcomeRequiresFreshRead || controller.appliancePolicyUncertain || Boolean(preview) || Boolean(pending) || requestState?.kind === 'preview'
   const previewDisabled = editorDisabled || projection.loading
 
   useEffect(() => {
@@ -571,14 +586,14 @@ export function RoutingPolicySection({ controller, lifecycle }) {
         <div className="routing-editor-heading"><div><span className="panel-label">Custom region</span><h2>Ordered rules {dirty && <span className="chip amber">Unsaved</span>}</h2><p>List order is significant. Match members are sent as typed expressions; the server remains the validation and canonicalization authority.</p></div><button type="button" onClick={controller.addRule} disabled={editorDisabled}>Add rule</button></div>
         {draft.length === 0 && <div className="routing-empty">No custom rules. Add a rule before the protected final direct catch-all.</div>}
         <div className="routing-rule-list">{draft.map((rule, index) => <RoutingRuleEditor key={rule.clientId} rule={rule} index={index} total={draft.length} disabled={editorDisabled} onChange={(patch) => controller.updateRule(index, patch)} onRemove={() => controller.removeRule(index)} onMove={(direction) => controller.moveRule(index, direction)} />)}</div>
-        <div className="routing-editor-actions"><div>{controller.lifecycleBlocked && <small className="routing-disabled-note">Lifecycle readiness is unavailable or maintenance/applying is active; new mutation requests are disabled.</small>}{controller.outcomeRequiresFreshRead && <small className="routing-disabled-note">Refresh the policy and verify the outcome before creating another Preview.</small>}</div><button type="button" onClick={controller.previewDraft} disabled={previewDisabled}>{requestState?.kind === 'preview' ? 'Preparing Preview…' : 'Preview changes'}</button></div>
+        <div className="routing-editor-actions"><div>{controller.lifecycleBlocked && <small className="routing-disabled-note">Lifecycle readiness is unavailable or maintenance/applying is active; new mutation requests are disabled.</small>}{controller.outcomeRequiresFreshRead && <small className="routing-disabled-note">Refresh the policy and verify the outcome before creating another Preview.</small>}{controller.appliancePolicyUncertain && <small className="routing-disabled-note">An appliance-policy Apply has an unknown outcome. New mutations remain blocked until its controller completes a fresh read.</small>}</div><button type="button" onClick={controller.previewDraft} disabled={previewDisabled}>{requestState?.kind === 'preview' ? 'Preparing Preview…' : 'Preview changes'}</button></div>
       </section>
     </>}
 
     {requestState?.kind === 'preview' && <div className="notice neutral" role="status">{requestState.canceled ? 'Discarding the late Preview response…' : 'Preparing a fresh semantic Preview…'} {!requestState.canceled && <button className="inline-link" type="button" onClick={() => controller.cancelPreview()}>Cancel Preview</button>}</div>}
     {pending && <div className="operation-running routing-operation" role="status" aria-live="polite"><span className="spinner" aria-hidden="true"></span><div><strong>Routing Apply is running</strong><p>No progress percentage is available. The broker may need its bounded transaction and recovery window.</p></div></div>}
     {result && <RoutingResult result={result} refreshError={refreshError} />}
-    {preview && <RoutingPreview preview={preview} busy={Boolean(pending)} applyDisabled={controller.lifecycleBlocked || controller.outcomeRequiresFreshRead} onCancel={() => controller.cancelPreview()} onConfirm={controller.submitPreview} />}
+    {preview && <RoutingPreview preview={preview} busy={Boolean(pending)} applyDisabled={controller.lifecycleBlocked || controller.outcomeRequiresFreshRead || controller.appliancePolicyUncertain} onCancel={() => controller.cancelPreview()} onConfirm={controller.submitPreview} />}
   </div>
 }
 
