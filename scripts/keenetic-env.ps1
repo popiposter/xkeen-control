@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
-    [Parameter()]
-    [string]$EnvFile = (Join-Path (Split-Path -Parent $PSScriptRoot) '.env.keenetic')
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$EnvFile
 )
 
 & {
@@ -10,10 +11,20 @@ param(
     Set-StrictMode -Version Latest
     $ErrorActionPreference = 'Stop'
 
+    $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..') -ErrorAction Stop).Path
+
     function Read-KeeneticEnvironmentFile {
         param([Parameter(Mandatory = $true)][string]$Path)
 
+        if (-not [IO.Path]::IsPathFullyQualified($Path)) {
+            throw 'Keenetic environment path must be an explicit absolute host path'
+        }
         $resolved = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+        $comparison = if ($IsWindows -or $env:OS -eq 'Windows_NT') { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+        $repositoryPrefix = $repositoryRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if ($resolved.Equals($repositoryRoot, $comparison) -or $resolved.StartsWith($repositoryPrefix, $comparison)) {
+            throw 'Keenetic environment must live outside the repository checkout'
+        }
         $item = Get-Item -LiteralPath $resolved -Force -ErrorAction Stop
         if ($item.PSIsContainer -or $item.LinkType -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) -or $item.Length -le 0 -or $item.Length -gt 4096) {
             throw 'Keenetic environment must be a small regular non-link file'
@@ -55,10 +66,22 @@ param(
         return [pscustomobject]@{ Path = $resolved; Values = $values }
     }
 
-    function Require-KeeneticToken {
-        param([string]$Value, [string]$Name)
-        if ([String]::IsNullOrWhiteSpace($Value) -or $Value -match '[\x00-\x20\x7f]') {
-            throw "Keenetic SSH $Name is empty or contains whitespace/control characters"
+    function Require-KeeneticHost {
+        param([string]$Value)
+        if ([String]::IsNullOrEmpty($Value) -or $Value.Length -gt 253) {
+            throw 'Keenetic SSH host must contain 1..253 ASCII hostname characters'
+        }
+        foreach ($label in $Value.Split('.')) {
+            if ($label.Length -lt 1 -or $label.Length -gt 63 -or $label -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$') {
+                throw 'Keenetic SSH host must use 1..63 character alphanumeric/hyphen labels'
+            }
+        }
+    }
+
+    function Require-KeeneticUser {
+        param([string]$Value)
+        if ($Value -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$') {
+            throw 'Keenetic SSH user must contain 1..32 option-safe ASCII characters'
         }
     }
 
@@ -85,9 +108,10 @@ param(
     $hostValue = $values['KEENETIC_SSH_HOST']
     $portValue = $values['KEENETIC_SSH_PORT']
     $userValue = $values['KEENETIC_SSH_USER']
-    Require-KeeneticToken -Value $hostValue -Name 'host'
-    Require-KeeneticToken -Value $userValue -Name 'user'
-    if ($portValue -notmatch '^[0-9]+$' -or [int]$portValue -lt 1 -or [int]$portValue -gt 65535) {
+    Require-KeeneticHost -Value $hostValue
+    Require-KeeneticUser -Value $userValue
+    $portNumber = 0
+    if ($portValue -notmatch '^[0-9]+$' -or -not [int]::TryParse($portValue, [ref]$portNumber) -or $portNumber -lt 1 -or $portNumber -gt 65535) {
         throw 'Keenetic SSH port is outside 1..65535'
     }
 

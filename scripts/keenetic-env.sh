@@ -16,19 +16,61 @@ keenetic_env_trim() {
 	printf '%s' "$value"
 }
 
+keenetic_env_file_size() {
+	local path=$1 result
+	if result=$(stat -c '%s' -- "$path" 2>/dev/null); then
+		:
+	elif result=$(stat -f '%z' -- "$path" 2>/dev/null); then
+		:
+	else
+		return 1
+	fi
+	[[ "$result" =~ ^[0-9]+$ ]] || return 1
+	printf '%s' "$result"
+}
+
+keenetic_env_valid_host() {
+	local value=$1 remainder label LC_ALL=C
+	((${#value} >= 1 && ${#value} <= 253)) || return 1
+	remainder=$value
+	while [[ "$remainder" == *.* ]]; do
+		label=${remainder%%.*}
+		[[ "$label" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]] || return 1
+		remainder=${remainder#*.}
+	done
+	[[ "$remainder" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]
+}
+
+keenetic_env_valid_user() {
+	local value=$1 LC_ALL=C
+	((${#value} >= 1 && ${#value} <= 32)) || return 1
+	[[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$ ]]
+}
+
 keenetic_env_main() {
-	local repository env_file line trimmed key value
+	local repository env_file env_directory line trimmed key value
 	local host_value='' port_value='' user_value='' password_value='' identity_value=''
 	local host_seen=0 port_seen=0 user_seen=0 password_seen=0 identity_seen=0
 	local line_count=0 size mode directory candidate
 
 	repository=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P) || return 1
-	env_file=${KEENETIC_ENV_FILE:-$repository/.env.keenetic}
+	if [[ -z "${KEENETIC_ENV_FILE:-}" || "$KEENETIC_ENV_FILE" != /* ]]; then
+		keenetic_env_error 'KEENETIC_ENV_FILE must be an explicit absolute host path'
+		return 1
+	fi
+	env_file=$KEENETIC_ENV_FILE
 	if [[ ! -f "$env_file" || -L "$env_file" ]]; then
 		keenetic_env_error 'input must be a small regular non-link file'
 		return 1
 	fi
-	size=$(wc -c < "$env_file") || return 1
+	env_directory=$(cd -- "$(dirname -- "$env_file")" && pwd -P) || return 1
+	env_file=$env_directory/$(basename -- "$env_file")
+	case "$env_file" in
+		"$repository"|"$repository"/*)
+			keenetic_env_error 'input must live outside the repository checkout'
+			return 1 ;;
+	esac
+	size=$(keenetic_env_file_size "$env_file") || return 1
 	if ((size <= 0 || size > 4096)); then
 		keenetic_env_error 'input must be a small regular non-link file'
 		return 1
@@ -91,8 +133,12 @@ keenetic_env_main() {
 		keenetic_env_error 'input is missing required SSH identity'
 		return 1
 	fi
-	if [[ -z "$host_value" || "$host_value" =~ [[:space:][:cntrl:]] || -z "$user_value" || "$user_value" =~ [[:space:][:cntrl:]] ]]; then
-		keenetic_env_error 'host or user is empty or contains whitespace/control characters'
+	if ! keenetic_env_valid_host "$host_value"; then
+		keenetic_env_error 'host must use 1..253 ASCII characters in 1..63 character alphanumeric/hyphen labels'
+		return 1
+	fi
+	if ! keenetic_env_valid_user "$user_value"; then
+		keenetic_env_error 'user must contain 1..32 option-safe ASCII characters'
 		return 1
 	fi
 	if [[ ! "$port_value" =~ ^[0-9]+$ ]] || ((10#$port_value < 1 || 10#$port_value > 65535)); then
@@ -115,7 +161,7 @@ keenetic_env_main() {
 			keenetic_env_error 'identity file must be a small regular non-link file'
 			return 1
 		fi
-		size=$(wc -c < "$candidate") || return 1
+		size=$(keenetic_env_file_size "$candidate") || return 1
 		if ((size <= 0 || size > 65536)); then
 			keenetic_env_error 'identity file must be a small regular non-link file'
 			return 1
@@ -144,9 +190,9 @@ keenetic_env_main() {
 }
 
 if keenetic_env_main; then
-	unset -f keenetic_env_main keenetic_env_trim keenetic_env_error
+	unset -f keenetic_env_main keenetic_env_valid_user keenetic_env_valid_host keenetic_env_file_size keenetic_env_trim keenetic_env_error
 	return 0
 else
-	unset -f keenetic_env_main keenetic_env_trim keenetic_env_error
+	unset -f keenetic_env_main keenetic_env_valid_user keenetic_env_valid_host keenetic_env_file_size keenetic_env_trim keenetic_env_error
 	return 1
 fi

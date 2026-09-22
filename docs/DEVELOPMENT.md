@@ -312,7 +312,19 @@ pwsh -NoProfile -File scripts/test-keenetic-env.ps1
 bash scripts/test-keenetic-env.sh
 ```
 
-They exercise the closed host/port/user/authentication schema, bounded regular-file handling, stale-variable cleanup and secret-free output. The fixtures create only temporary placeholder values and never open an SSH connection. Both run from the helper lane of `dev-check`; the real ignored file is neither read nor mounted into Docker.
+They exercise the closed bounded host/port/user/authentication grammar,
+external-path enforcement, metadata-only private-identity validation,
+regular-file handling, stale-variable cleanup and secret-free output. The
+fixtures create only temporary placeholder values and never open an SSH
+connection. Both run from the helper lane of `dev-check`.
+
+The real credential environment and private identity must live in an
+operator-owned host path outside every repository checkout. PowerShell receives
+that absolute path through `-EnvFile`; Bash receives it through the host-only
+`KEENETIC_ENV_FILE` selector. Repo-local `.env.keenetic*` ignores are only
+defense-in-depth. Because real credentials are external, ordinary Docker build
+contexts and the `.:/workspace` qualification bind mount cannot read, send or
+mount them.
 
 Build/test first, then copy/use only the exact release/artifact/scripts required for the bounded smoke. Snapshot affected state, use repository/typed transactions, sanitize evidence and remove temporary uploads/tunnels afterward.
 

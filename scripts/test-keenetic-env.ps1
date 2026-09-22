@@ -40,6 +40,29 @@ function Assert-Rejected {
     }
 }
 
+function Assert-RejectedPath {
+    param([string]$Name, [string]$Path)
+    $accepted = $true
+    try {
+        . $loader -EnvFile $Path
+    } catch {
+        $accepted = $false
+    }
+    if ($accepted) {
+        throw "path rejection fixture was accepted: $Name"
+    }
+}
+
+function Assert-AcceptedTarget {
+    param([string]$Name, [string]$HostValue, [string]$UserValue)
+    $path = Join-Path $temporary ("accept-{0}.env" -f $Name)
+    Write-Fixture -Path $path -Contents "KEENETIC_SSH_HOST=$HostValue`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=$UserValue`nKEENETIC_SSH_PASSWORD=synthetic-secret-value`n"
+    $output = @(. $loader -EnvFile $path 2>&1)
+    if ($output.Count -ne 0 -or $env:KEENETIC_SSH_TARGET -ne "$UserValue@$HostValue") {
+        throw "accepted grammar fixture did not load: $Name"
+    }
+}
+
 try {
     [void][IO.Directory]::CreateDirectory($temporary)
     $identity = Join-Path $temporary 'keys\operator-key'
@@ -83,13 +106,33 @@ KEENETIC_SSH_IDENTITY_FILE="keys/operator-key"
         throw 'combined authentication fixture did not load'
     }
 
+    $maximumHost = ('a' * 63) + '.' + ('b' * 63) + '.' + ('c' * 63) + '.' + ('d' * 61)
+    Assert-AcceptedTarget -Name 'punctuation' -HostValue 'router-1.lab.example' -UserValue 'operator_1.test-user'
+    Assert-AcceptedTarget -Name 'bounds' -HostValue $maximumHost -UserValue ('u' * 32)
+
     $base = "KEENETIC_SSH_HOST=router.example`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=root`nKEENETIC_SSH_PASSWORD=synthetic-secret-value`n"
     Assert-Rejected -Name 'unknown' -Contents ($base + "UNSUPPORTED=value`n")
     Assert-Rejected -Name 'duplicate' -Contents ($base + "KEENETIC_SSH_HOST=other.example`n")
     Assert-Rejected -Name 'missing-user' -Contents "KEENETIC_SSH_HOST=router.example`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_PASSWORD=synthetic-secret-value`n"
     Assert-Rejected -Name 'invalid-port' -Contents ($base.Replace('KEENETIC_SSH_PORT=22', 'KEENETIC_SSH_PORT=70000'))
     Assert-Rejected -Name 'no-auth' -Contents "KEENETIC_SSH_HOST=router.example`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=root`n"
+    foreach ($case in @(
+        @{ Name = 'host-leading-dash'; Host = '-router.example'; User = 'root' },
+        @{ Name = 'host-trailing-dash'; Host = 'router-.example'; User = 'root' },
+        @{ Name = 'host-empty-label'; Host = 'router..example'; User = 'root' },
+        @{ Name = 'host-underscore'; Host = 'router_name.example'; User = 'root' },
+        @{ Name = 'host-at'; Host = 'router@example'; User = 'root' },
+        @{ Name = 'host-label-long'; Host = (('a' * 64) + '.example'); User = 'root' },
+        @{ Name = 'host-too-long'; Host = ($maximumHost + 'e'); User = 'root' },
+        @{ Name = 'user-leading-dash'; Host = 'router.example'; User = '-root' },
+        @{ Name = 'user-at'; Host = 'router.example'; User = 'root@router' },
+        @{ Name = 'user-space'; Host = 'router.example'; User = 'root user' },
+        @{ Name = 'user-too-long'; Host = 'router.example'; User = ('u' * 33) }
+    )) {
+        Assert-Rejected -Name $case.Name -Contents "KEENETIC_SSH_HOST=$($case.Host)`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=$($case.User)`nKEENETIC_SSH_PASSWORD=synthetic-secret-value`n"
+    }
     Assert-Rejected -Name 'oversize' -Contents ('A' * 4097)
+    Assert-RejectedPath -Name 'checkout-local' -Path (Join-Path $root '.env.keenetic.example')
 
     $directoryInput = Join-Path $temporary 'directory-input'
     [void][IO.Directory]::CreateDirectory($directoryInput)
