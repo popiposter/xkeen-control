@@ -447,6 +447,7 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
       refreshAfter = Boolean(mapped.refreshAfter)
       rebase = true
       if (mapped.outcome === 'unknown') {
+        rebase = false
         unprovenReadGeneration.current++
         unprovenReadPending.current = true
         onUnprovenApply?.()

@@ -242,7 +242,7 @@ export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthoriz
         draftRef.current = next
         setDraft(next)
         setDirty(false)
-      } else if (value.editability !== 'editable') {
+      } else if (value.editability !== 'editable' && rebase) {
         draftInitialized.current = false
         dirtyRef.current = false
         draftRef.current = null
@@ -375,6 +375,7 @@ export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthoriz
     setResult(null)
     setRefreshError('')
     let refreshAfter = false
+    let rebase = true
     const isCurrentSession = () => epoch === sessionEpoch.current && csrfRef.current === csrfToken
     try {
       const value = await postJSON('/api/v1/appliance/dns-observatory/apply', csrfToken, { previewToken: token })
@@ -395,6 +396,7 @@ export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthoriz
       setResult(mapped)
       refreshAfter = Boolean(mapped.refreshAfter)
       if (mapped.outcome === 'unknown') {
+        rebase = false
         unprovenReadGeneration.current++
         unprovenReadPending.current = true
         onUnprovenApply?.()
@@ -406,7 +408,7 @@ export function useDNSObservatoryController({ csrfToken, lifecycle, onUnauthoriz
       }
     }
     if (refreshAfter && isCurrentSession()) {
-      const refreshed = await loadPolicy({ force: true, rebase: true })
+      const refreshed = await loadPolicy({ force: true, rebase })
       if (!refreshed && isCurrentSession()) setRefreshError('The outcome is preserved, but the subsequent DNS policy refresh failed.')
     }
     return true

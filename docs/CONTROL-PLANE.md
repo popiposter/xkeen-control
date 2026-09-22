@@ -398,7 +398,9 @@ the affected controller completes a successful fresh read. Routing and DNS
 controllers only coordinate by invalidating the peer's completed or in-flight
 Preview before Apply and again after an unknown/unproven Apply outcome. While
 that outcome awaits its fresh read, both workspaces block new Preview/Apply;
-peer drafts are not merged, submitted or discarded. The backend shared
+the resolving read updates safe source-owned facts without rebasing either
+workspace draft or dirty state. Drafts are not merged, submitted or discarded;
+explicit Refresh/Discard retains its rebasing behavior. The backend shared
 authority digest remains the final stale-prevention boundary.
 
 The workspace adds no browser storage, backend field/route, persistence,

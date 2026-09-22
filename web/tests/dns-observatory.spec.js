@@ -442,11 +442,15 @@ test('an unproven DNS Apply re-invalidates Routing and blocks both workspaces un
   const releaseApply = deferred()
   const releaseFreshRead = deferred()
   let dnsReads = 0
+  const freshDNSProjection = {
+    ...state.policy,
+    dns: { ...state.policy.dns, proxyDomainCounts: { ...state.policy.dns.proxyDomainCounts, derived: 7 } },
+  }
   state.handle = async ({ route, entry }) => {
     if (entry.path === '/api/v1/appliance/dns-observatory') {
       dnsReads++
       if (dnsReads === 2) await releaseFreshRead.promise
-      await json(route, state.policy)
+      await json(route, dnsReads === 2 ? freshDNSProjection : state.policy)
       return true
     }
     if (entry.path === '/api/v1/appliance/dns-observatory/apply') {
@@ -479,6 +483,9 @@ test('an unproven DNS Apply re-invalidates Routing and blocks both workspaces un
 
   releaseFreshRead.resolve()
   await expect(page.getByRole('button', { name: 'Preview DNS changes' })).toBeEnabled()
+  await expect(page.getByLabel('Parallel queries')).not.toBeChecked()
+  await expect(page.getByRole('region', { name: 'DNS and Observatory editor' }).getByText('Unsaved')).toBeVisible()
+  await expect(page.getByRole('region', { name: 'DNS source-owned facts' }).getByText('7', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Routing', exact: true }).click()
   await expect(page.getByLabel('Rule 1 display name')).toHaveValue('Preserved after DNS uncertainty')
   await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toBeEnabled()
@@ -489,11 +496,13 @@ test('an unknown Routing Apply re-invalidates DNS and blocks both workspaces unt
   const releaseApply = deferred()
   const releaseFreshRead = deferred()
   let routingReads = 0
+  const freshRoutingProjection = routingProjection()
+  freshRoutingProjection.protected.prefixRuleCount = 6
   state.handle = async ({ route, entry }) => {
     if (entry.path === '/api/v1/appliance/policy') {
       routingReads++
       if (routingReads === 2) await releaseFreshRead.promise
-      await json(route, routingProjection())
+      await json(route, routingReads === 2 ? freshRoutingProjection : routingProjection())
       return true
     }
     if (entry.path === '/api/v1/appliance/policy/apply') {
@@ -527,6 +536,9 @@ test('an unknown Routing Apply re-invalidates DNS and blocks both workspaces unt
 
   releaseFreshRead.resolve()
   await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toBeEnabled()
+  await expect(page.getByLabel('Rule 1 display name')).toHaveValue('Routing outcome pending')
+  await expect(page.getByRole('region', { name: 'Custom routing rule editor' }).getByText('Unsaved')).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Routing source-owned facts' }).getByText('6', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'DNS', exact: true }).click()
   await expect(page.getByLabel('Parallel queries')).not.toBeChecked()
   await expect(page.getByRole('button', { name: 'Preview DNS changes' })).toBeEnabled()
