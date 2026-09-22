@@ -7,6 +7,16 @@ $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $compose = Join-Path $repo 'docker-compose.dev.yml'
 $mode = if ($Full) { '--full' } else { '--fast' }
+$exactHead = $null
+
+if ($Full) {
+    . (Join-Path $PSScriptRoot 'dev-check-git.ps1')
+    $exactHead = Assert-XKeenNormalCleanHead -Repository $repo -Stage 'before qualification'
+    & (Join-Path $PSScriptRoot 'test-dev-check-gate.ps1')
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+}
 
 $lanes = [ordered]@{ Go = 1; Helpers = 1; Web = 1; Artifact = 1 }
 if (-not $Full) {
@@ -49,4 +59,15 @@ if ($checkExit -ne 0) {
 }
 
 git -C $repo diff --check
-exit $LASTEXITCODE
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
+if ($Full) {
+    $headAfter = Assert-XKeenNormalCleanHead -Repository $repo -ExpectedHead $exactHead -Stage 'after qualification'
+    if ($headAfter -ne $exactHead) {
+        throw "exact HEAD changed during qualification: before=$exactHead after=$headAfter"
+    }
+}
+
+exit 0

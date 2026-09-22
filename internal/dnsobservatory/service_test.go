@@ -112,6 +112,13 @@ func TestIndependentBrokerPreviewsDoNotMergeAndRoutingApplyPreservesDNS(t *testi
 	if err != nil || current.Editability != EditabilityEditable || len(current.DNS.ProxyResolverIDs) != 2 || current.Observatory.ProbeIntervalMinutes != 5 {
 		t.Fatalf("routing apply changed DNS projection = %+v, %v", current, err)
 	}
+	reverseRoutingPreview, err := routingService.Preview(context.Background(), "session-b", []appliance.CustomRule{
+		{Name: "route", Domains: []string{"domain:route.example"}, Action: appliance.CustomRuleProxy},
+		{Name: "future-route", Domains: []string{"domain:future.example"}, Action: appliance.CustomRuleDirect},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	dnsPreview, err = dnsService.Preview(context.Background(), "session-a", dnsSettings, appliance.ObservatorySettings{ProbeIntervalMinutes: 4})
 	if err != nil {
 		t.Fatal(err)
@@ -122,6 +129,28 @@ func TestIndependentBrokerPreviewsDoNotMergeAndRoutingApplyPreservesDNS(t *testi
 	current, err = dnsService.Read(context.Background())
 	if err != nil || current.Observatory.ProbeIntervalMinutes != 4 || len(current.DNS.ProxyResolverIDs) != 2 {
 		t.Fatalf("DNS settings after second apply = %+v, %v", current, err)
+	}
+	authorityBeforeStaleRouting, err := os.ReadFile(fixture.appliancePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartsBeforeStaleRouting := fixture.activator.restarts
+	if _, err := routingService.Apply(context.Background(), "session-b", reverseRoutingPreview.Token); err != routingpolicy.ErrPreviewStale {
+		t.Fatalf("routing preview after DNS apply = %v, want %v", err, routingpolicy.ErrPreviewStale)
+	}
+	authorityAfterStaleRouting, err := os.ReadFile(fixture.appliancePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(authorityBeforeStaleRouting, authorityAfterStaleRouting) {
+		t.Fatal("stale routing apply overwrote appliance authority")
+	}
+	if fixture.activator.restarts != restartsBeforeStaleRouting {
+		t.Fatalf("stale routing apply restarted runtime: before=%d after=%d", restartsBeforeStaleRouting, fixture.activator.restarts)
+	}
+	current, err = dnsService.Read(context.Background())
+	if err != nil || current.Observatory.ProbeIntervalMinutes != 4 || len(current.DNS.ProxyResolverIDs) != 2 {
+		t.Fatalf("stale routing apply changed DNS settings = %+v, %v", current, err)
 	}
 	routingProjection, err := routingService.Read(context.Background())
 	if err != nil || len(routingProjection.Rules) != 1 || routingProjection.DNS.DerivedDomainCount != 1 {

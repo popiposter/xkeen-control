@@ -20,6 +20,8 @@ lockfile-pinned Playwright Chromium and OS dependencies
 
 Exact versions may change deliberately in `Dockerfile.dev`; release evidence must use the repository-pinned environment rather than an arbitrary host toolchain.
 
+Use one normal repository checkout and dedicated branches. Do not create or use Git worktrees for implementation, review fixes or qualification in this repository.
+
 ## Local qualification tiers
 
 During iteration, run the focused fixture for the changed subsystem and the fast proportional check:
@@ -28,13 +30,15 @@ During iteration, run the focused fixture for the changed subsystem and the fast
 pwsh -NoProfile -File scripts/dev-check.ps1
 ```
 
-Fast mode classifies the branch/worktree diff against `origin/main`. It runs only affected Go, helper/build or web lanes, always checks public hygiene and host diff whitespace, and does not run race, the complete browser suite or dependency audit.
+Fast mode classifies the branch and local checkout diff against `origin/main`. It runs only affected Go, helper/build or web lanes, always checks public hygiene and host diff whitespace, and does not run race, the complete browser suite or dependency audit.
 
 After the candidate is final, run one exact-HEAD full gate:
 
 ```powershell
 pwsh -NoProfile -File scripts/dev-check.ps1 -Full
 ```
+
+Full mode must run from the normal branch checkout. It fails before Docker work unless the worktree and index are clean, including non-ignored untracked files; it prints the exact HEAD before qualification and requires the same clean HEAD afterward.
 
 Full mode covers each qualification class once:
 

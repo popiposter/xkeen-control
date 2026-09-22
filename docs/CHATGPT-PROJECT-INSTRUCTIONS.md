@@ -29,7 +29,8 @@ For each non-trivial new slice:
 - architect the solution before implementation;
 - create/update a detailed GitHub issue with goal, current state, decisions, scope/non-goals, security/resource invariants, tests, Keenetic qualification, rollback and acceptance criteria;
 - then give Codex a short prompt: repo + issue number + only extra execution constraints;
-- Codex starts from current main, uses a dedicated branch + Draft PR, does not merge, runs documented qualification and records exact-HEAD sanitized evidence.
+- Codex starts from current main in one normal clone, uses a dedicated branch + Draft PR, does not merge, runs documented qualification and records exact-HEAD sanitized evidence;
+- Git worktrees are prohibited for implementation, review fixes and qualification in this repository; switch branches in the normal clone instead.
 
 Review exact current PR HEAD/diff/code against the issue. Put concrete `P1`/`P2` findings directly in the PR with failure mode and required result. Keep PR Draft while blocking findings remain. Small obvious safe fixes may be made directly; architectural changes go back into the issue first.
 

@@ -48,7 +48,8 @@ For a non-trivial new slice, the architecture/review agent first investigates cu
 Implementation agents:
 
 - start from current remote `main`;
-- use a dedicated branch and one Draft PR;
+- use one normal repository checkout, a dedicated branch and one Draft PR;
+- never create or use Git worktrees for implementation, review fixes or qualification in this repository;
 - implement the issue contract rather than inventing a competing architecture;
 - keep unrelated refactors out of the PR;
 - record exact HEAD and exact qualification evidence;
