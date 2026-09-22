@@ -211,7 +211,7 @@ Persistent writes are tied to real explicit state changes and bounded generation
 
 `docs/ROADMAP.md` is the sole sequencing/status authority; do not copy its volatile issue order here.
 
-#4 component lifecycle and #5 visual configuration remain not deployed. Issue #81 / PR #82 deliver the source-only D.2 G Setup boundary; Issue #83 / PR #84 deliver the source-only typed custom-routing broker and Issue #85 / PR #86 its visual Routing workspace over the existing D.1 settings transaction. Issue #87 is the active source-only DNS + Observatory backend boundary and must preserve compatibility with that Routing state. None of these changes the production-qualified status of the current release. The current authority model above is in force for adopted routers; the explicit repository-derived/legacy compatibility boundary remains in force before successful adoption.
+#4 component lifecycle and #5 visual configuration remain not deployed. Issue #81 / PR #82 deliver the source-only D.2 G Setup boundary; Issue #83 / PR #84 deliver the source-only typed custom-routing broker and Issue #85 / PR #86 its visual Routing workspace over the existing D.1 settings transaction. Issue #87 / PR #88 deliver the source-only shared DNS + Observatory backend boundary compatible with that Routing state; Issue #89 is the active visual DNS + Observatory child over the unchanged broker. None of these changes the production-qualified status of the current release. The current authority model above is in force for adopted routers; the explicit repository-derived/legacy compatibility boundary remains in force before successful adoption.
 
 ## Architecture invariants
 
