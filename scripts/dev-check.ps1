@@ -39,6 +39,13 @@ if (-not $Full) {
     }
 }
 
+if ($lanes.Helpers) {
+    & (Join-Path $PSScriptRoot 'test-keenetic-env.ps1')
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+}
+
 docker compose -f $compose build dev
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
