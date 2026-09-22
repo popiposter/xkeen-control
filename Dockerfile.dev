@@ -6,6 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/usr/local/go/bin:/go/bin:$PATH \
     CGO_ENABLED=1 \
     GOTOOLCHAIN=local \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     npm_config_update_notifier=false \
     npm_config_fund=false
 
@@ -20,5 +21,14 @@ RUN apt-get update \
         jq \
         openssh-client \
     && rm -rf /var/lib/apt/lists/*
+
+# Browser and OS dependencies are image inputs, not per-test setup. Rebuilding
+# this layer is required only when the pinned frontend dependency graph changes.
+COPY web/package.json web/package-lock.json /tmp/xkeen-playwright/
+RUN cd /tmp/xkeen-playwright \
+    && npm ci --ignore-scripts \
+    && npx playwright install --with-deps chromium \
+    && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH" \
+    && rm -rf /tmp/xkeen-playwright
 
 WORKDIR /workspace

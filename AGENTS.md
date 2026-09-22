@@ -20,7 +20,7 @@ Then inspect the affected code/files before loading more documentation.
 | --- | --- |
 | New architecture / new slice | `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`; use `docs/DEVELOPMENT-PROCESS.md` only for workflow details |
 | Go control plane / API / UI | `docs/CONTROL-PLANE.md` plus the active issue |
-| Build, CI, release, packaging | `docs/DEVELOPMENT.md` plus the active issue |
+| Build, local qualification, release, packaging | `docs/DEVELOPMENT.md` plus the active issue |
 | Production deploy / mutation / rollback | `docs/OPERATIONS.md`; add `docs/FRESH-KEENETIC.md` only for bootstrap/fresh-install work |
 | Routing / DNS / Xray policy | `docs/ARCHITECTURE.md` plus the exact relevant `config/` files |
 | Docs-only change | the documents being changed and any authority they explicitly claim to summarize |
@@ -32,7 +32,7 @@ If code, issue and an authority document conflict, stop broad implementation, de
 
 ## 2. Repository invariants
 
-- Git, public issues/PRs, CI and release artifacts are secretless. Never commit or print production VLESS URLs, UUIDs, REALITY keys, short IDs, subscription URLs/tokens, passwords, SSH credentials or secret-bearing backups.
+- Git, public issues/PRs, qualification logs and release artifacts are secretless. Never commit or print production VLESS URLs, UUIDs, REALITY keys, short IDs, subscription URLs/tokens, passwords, SSH credentials or secret-bearing backups.
 - `/opt/etc/xkeen-control/secrets/nodes.json` is the authoritative production node/subscription registry. Active `04_outbounds.json` is generated runtime output, not a second authority.
 - After a successful typed D.1 `appliance adopt`, `/opt/etc/xkeen-control/config/appliance.json` is the local authority for supported non-secret appliance policy; deterministic managed `02_dns.json`, `05_routing.json` and `07_observatory.json` derive from it, while `04_outbounds.json` derives from `/opt/etc/xkeen-control/secrets/nodes.json`. Before adoption, an existing router retains the explicit repository-derived/legacy policy boundary; adoption must prove compatibility and fail closed on unknown/manual drift. Node-only mutations must not silently regenerate unrelated appliance policy.
 - High-churn/transient state belongs in RAM or `/tmp`; persistent router writes must be explicit and bounded.
@@ -48,7 +48,8 @@ For a non-trivial new slice, the architecture/review agent first investigates cu
 Implementation agents:
 
 - start from current remote `main`;
-- use a dedicated branch and one Draft PR;
+- use one normal repository checkout, a dedicated branch and one Draft PR;
+- never create or use Git worktrees for implementation, review fixes or qualification in this repository;
 - implement the issue contract rather than inventing a competing architecture;
 - keep unrelated refactors out of the PR;
 - record exact HEAD and exact qualification evidence;
@@ -58,15 +59,21 @@ The implementation prompt should normally be only repository + issue number + an
 
 ## 4. Build / test contract
 
-For code, frontend, build, packaging or operational-script changes, use the supported Docker/Linux qualification described in `docs/DEVELOPMENT.md`.
+For code, frontend, build, packaging or operational-script changes, use the supported local Docker/Linux qualification described in `docs/DEVELOPMENT.md`. Ordinary PR/main GitHub Actions CI is intentionally absent; exact local evidence is the development gate.
 
-Primary Windows-host command:
+Fast proportional Windows-host command for iteration:
 
 ```powershell
 pwsh -NoProfile -File scripts/dev-check.ps1
 ```
 
-Run focused fixtures for the subsystem changed in addition to the full check. Do not claim checks that were skipped.
+Final exact-HEAD qualification for code/build changes:
+
+```powershell
+pwsh -NoProfile -File scripts/dev-check.ps1 -Full
+```
+
+Run focused fixtures while iterating. Do not repeat the full gate after every edit, do not claim checks that were skipped, and do not reuse full evidence after HEAD changes.
 
 For docs-only changes, do not run expensive application qualification by ritual. Check links/references, Markdown/content consistency and `git diff --check`; run code/build tests only if the docs change generated/embedded/build-controlled artifacts.
 
@@ -104,4 +111,4 @@ Confirm the issue is closed/completed, update `docs/ROADMAP.md` and master issue
 
 ## 8. Current direction
 
-Do not memorize sequencing from this file; `docs/ROADMAP.md` is authoritative. The product direction after D.1 is an installable XKeen/Xray appliance manager: signed releases/bootstrap/self-update, portable local appliance state and backup/restore, then managed component lifecycle (#4) and typed visual configuration (#5). D.1 is production-qualified; #4 is the current product slice and #5 remains planned.
+Do not memorize sequencing from this file; `docs/ROADMAP.md` is the sole sequencing/status authority. Distinguish source-only delivered slices from the production-qualified `v0.2.0` generation.

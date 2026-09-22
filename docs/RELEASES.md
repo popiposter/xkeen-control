@@ -84,10 +84,11 @@ Development qualification uses:
 bash scripts/test-release.sh
 ```
 
-and the documented full command:
+Fast iteration and final full qualification use:
 
 ```powershell
 pwsh -NoProfile -File scripts/dev-check.ps1
+pwsh -NoProfile -File scripts/dev-check.ps1 -Full
 ```
 
 Production qualification completed for `v0.1.1` on the exact released source. The bounded live sequence was:
@@ -98,6 +99,6 @@ legacy exact -> v0.1.1 adoption -> exact legacy rollback -> v0.1.1 re-adoption
 
 Every completed transition passed generic health, exact version/source/channel and single PID-file-backed process checks. Bounded non-secret fingerprints for auth/listener/node/Xray/XKeen/selection/benchmark state remained unchanged. No blanket package upgrade, reboot, credential rotation, component install/repair, KeeneticOS update or sustained benchmark was used.
 
-D.1 production qualification completed for signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. The protected CI and release flow passed the accepted D.1 qualification floor, and the published release contains the exact seven-file release set with a signed manifest. Bounded live qualification verified the signed panel, typed appliance adoption/validation, safe and encrypted export boundaries, settings-only restore preview/apply equivalence, and appliance/node/generated-policy/runtime coherence. Evidence is recorded with sanitized versions, bounded counts, state transitions and non-secret hashes; secret-bearing backups and live node material are excluded.
+D.1 production qualification completed for signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. The protected release flow passed the accepted D.1 qualification floor, and the published release contains the exact seven-file release set with a signed manifest. Bounded live qualification verified the signed panel, typed appliance adoption/validation, safe and encrypted export boundaries, settings-only restore preview/apply equivalence, and appliance/node/generated-policy/runtime coherence. Evidence is recorded with sanitized versions, bounded counts, state transitions and non-secret hashes; secret-bearing backups and live node material are excluded.
 
-The qualified D.1 release does not add component lifecycle controls or visual typed configuration. Those remain planned behavior for the current/next #4 slice and planned #5 slice respectively.
+The qualified D.1 release does not add component lifecycle controls or visual typed configuration. Later #4/#5 functionality exists in source but remains outside the deployed production-qualified generation; `docs/ROADMAP.md` owns current sequencing.

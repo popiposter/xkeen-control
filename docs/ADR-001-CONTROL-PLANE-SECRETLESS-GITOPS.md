@@ -70,7 +70,7 @@ typed visual configuration -> deterministic render/apply
 
 ### Software authority — Issue #2
 
-This public GitHub repository is software source/CI/release authority. Routers will consume signed immutable releases, not mutable Git configuration. Signed release/bootstrap/update behavior remains planned until #2 is implemented and qualified.
+This public GitHub repository is the software source/release authority. Development qualification is local, while protected GitHub Actions is reserved for manual signed publication. Routers consume signed immutable releases, not mutable Git configuration. Issue #2 implemented and production-qualified release/bootstrap/update behavior.
 
 ### Router configuration authority — Issues #3 and #5
 

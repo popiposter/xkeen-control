@@ -178,12 +178,12 @@ func (s *Service) Read(ctx context.Context) (Projection, error) {
 		result.Editability = EditabilityDriftDetected
 		return result, nil
 	}
-	classified, err := appliance.DecompileCustomPolicy(snapshot.Appliance)
+	classified, err := appliance.DecompileManagedPolicy(snapshot.Appliance)
 	if err != nil {
 		result.Editability = EditabilityDriftDetected
 		return result, nil
 	}
-	return makeProjection(snapshot.Appliance, classified, EditabilityEditable), nil
+	return makeProjection(snapshot.Appliance, classified.CustomPolicy, EditabilityEditable), nil
 }
 
 // Preview validates, compiles and candidate-validates one complete typed
@@ -206,10 +206,11 @@ func (s *Service) Preview(ctx context.Context, binding string, rules []appliance
 	if err != nil || !sameAppliance(snapshot.Appliance, active) {
 		return Preview{}, ErrDriftDetected
 	}
-	before, err := appliance.DecompileCustomPolicy(snapshot.Appliance)
+	beforeManaged, err := appliance.DecompileManagedPolicy(snapshot.Appliance)
 	if err != nil {
 		return Preview{}, ErrDriftDetected
 	}
+	before := beforeManaged.CustomPolicy
 	candidate, err := appliance.CompileCustomRules(snapshot.Appliance, rules)
 	if err != nil {
 		if errors.Is(err, appliance.ErrCustomPolicyDrift) {
@@ -221,10 +222,11 @@ func (s *Service) Preview(ctx context.Context, binding string, rules []appliance
 	if err != nil {
 		return Preview{}, mapPreviewError(err)
 	}
-	after, err := appliance.DecompileCustomPolicy(candidate)
+	afterManaged, err := appliance.DecompileManagedPolicy(candidate)
 	if err != nil {
 		return Preview{}, ErrCandidateInvalid
 	}
+	after := afterManaged.CustomPolicy
 	diff := makeDiff(before, after)
 	noop := sameAppliance(snapshot.Appliance, candidate)
 	diff.RestartRequired = !noop

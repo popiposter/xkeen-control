@@ -94,6 +94,7 @@ func TestAdoptionDoesNotReplaceAuthorityCreatedDuringValidation(t *testing.T) {
 }
 
 func TestRenderRejectsUnboundedAndExistingOutputWithoutMutation(t *testing.T) {
+	requireTransactionalFilesystemSemantics(t)
 	fixture := newApplianceFixture(t)
 	validator := &recordingValidator{}
 	fixture.service = NewService(Config{

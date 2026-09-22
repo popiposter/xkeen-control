@@ -53,7 +53,7 @@ Do not paste the issue into chat again.
 - use Draft while implementation/review is incomplete;
 - PR body references/closes the issue where appropriate;
 - record base/current HEAD, actual checks, artifact identity and explicit skips;
-- do not describe local Docker qualification as hosted CI.
+- record local Docker qualification as local evidence; ordinary hosted PR/main CI is intentionally absent.
 
 This repository is public. PR bodies/comments/logs are public surfaces and production evidence must be sanitized.
 
@@ -100,11 +100,11 @@ Immediately:
 
 ## Public repository / release discipline
 
-`popiposter/xkeen-control` is already the public source/CI/release authority. The historical `popiposter/xkeen-keenetic` repository is private quarantine/history only and its Git history must never be imported here.
+`popiposter/xkeen-control` is the public source/release authority. Development qualification is local; the protected manual Release workflow is the only GitHub Actions workflow. The historical `popiposter/xkeen-keenetic` repository is private quarantine/history only and its Git history must never be imported here.
 
 - no production secrets in commits, issues, PRs, Actions or artifacts;
 - no raw router configuration/registry dumps;
-- no production credentials in CI/release jobs;
+- no production credentials in local qualification or release jobs;
 - release inputs are source + synthetic fixtures only;
 - signed immutable release artifacts are introduced by Issue #2;
 - router-specific settings remain local and are never auto-synchronized from public Git.
@@ -133,7 +133,7 @@ Avoid volatile duplication:
 - `ARCHITECTURE.md` — current production architecture;
 - `ROADMAP.md` — sequencing/status;
 - this file — workflow;
-- `DEVELOPMENT.md` — build/test/CI contract;
+- `DEVELOPMENT.md` — build/test/local-qualification contract;
 - `OPERATIONS.md` / `FRESH-KEENETIC.md` — production/runbook;
 - `CONTROL-PLANE.md` — current control-plane runtime/API;
 - active issue — detailed in-progress architecture.

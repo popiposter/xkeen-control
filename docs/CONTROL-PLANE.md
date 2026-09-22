@@ -2,7 +2,7 @@
 
 `xkeen-control` is the lightweight management process around XKeen + Xray. Xray remains the traffic data plane; the panel owns typed local operations, safe projections, stable selection, signed panel lifecycle and bounded coordination.
 
-This document describes the **current production-qualified runtime** after D.1 / Issue #3. Signed stable `v0.2.0` is the qualified `linux/arm64` release; #4 is the current/next product slice and #5 remains planned. Neither #4 nor #5 behavior is deployed.
+This document describes the **current production-qualified runtime** after D.1 / Issue #3. Signed stable `v0.2.0` is the qualified `linux/arm64` release. Later #4/#5 work exists in source but is not deployed; `docs/ROADMAP.md` owns current source sequencing.
 
 ## Current runtime shape
 
@@ -116,7 +116,7 @@ complete filtered result, including pages beyond the visible 25-row page, and
 uses one selection toolbar for batch state/remove previews and single-node
 manual override or profile replacement. These routes reuse the existing
 session-bound Preview, BaseDigest, token-only Apply/Cancel, Coordinator,
-authority lease and full-registry transaction boundary. Slice A is source/CI
+authority lease and full-registry transaction boundary. Slice A is source-qualified
 behavior; it is not production-qualified or deployed.
 
 Source-main Slice B / Issue #70 makes the existing explicit subscription
@@ -132,7 +132,7 @@ Apply/Cancel, Coordinator, authority lease and full-registry transaction remain
 the only mutation boundary. The safe preview lists ordinary added/updated/
 removed changes; exact-refresh removals identify the provider snapshot in the
 UI, while the manual-delete reappearance warning remains limited to explicit
-manual node deletion. Slice B is source/CI behavior; it is not deployed or
+manual node deletion. Slice B is source-qualified behavior; it is not deployed or
 production-qualified.
 
 Source-main Slice C / Issue #72 adds one purpose-built, in-process refresher
@@ -163,7 +163,7 @@ automatic commit. Authoritative `enabled: false` projects `disabled` immediately
 even if the refresher's bounded rescan has not observed the change. The UI is
 status-only: explicit Refresh/Edit/Enable/Disable/Remove controls remain, with
 no cadence setting, scheduler-run endpoint or extra polling loop. Slice C is
-source/CI-only and does not imply release, router access, provider access or
+source-qualified only and does not imply release, router access, provider access or
 production qualification.
 
 Source-main Slice D / Issue #74 (PR #75) adds one fixed `manual-node`
@@ -177,7 +177,7 @@ projection on cached historical data so active polling does not force heavy
 Xray/XKeen/config reads. The browser posts only a safe node ID, and the
 server resolves the current canonical tag. Manual diagnostics never change
 selection, manual override or the persisted legacy benchmark. Slice D is
-source/CI-only and is not deployed or production-qualified.
+source-qualified only and is not deployed or production-qualified.
 
 Source-main Slice E / Issue #76 adds the only healthy automatic quality-switch
 path: a fixed three-hour, process-local adaptive generation fed by the existing
@@ -196,7 +196,7 @@ switches on latency alone; active liveness, manual override and native
 longer automatic and explicit `/api/v1/benchmark/run` remains a snapshot-only
 compatibility diagnostic. Adaptive status is bounded/RAM-only on the existing
 authenticated performance response; there is no new URL, configuration or
-run-now surface. Slice E is source/CI-only and is not deployed or
+run-now surface. Slice E is source-qualified only and is not deployed or
 production-qualified.
 
 Source-main Slice F / Issue #78 completes the #46 foundation presentation and
@@ -217,7 +217,7 @@ path about once per second only on mounted Overview or Nodes views; manual
 diagnostic polling remains Nodes-only, and terminal/navigation transitions stop
 the extra poll. No new endpoint, persistent state, browser storage, scheduler,
 traffic budget, selection algorithm, Coordinator/ProbeRouter ownership or
-mutation API is introduced. Slice F is source/CI-only and is not deployed or
+mutation API is introduced. Slice F is source-qualified only and is not deployed or
 production-qualified.
 
 Current panel lifecycle endpoints are:
@@ -321,7 +321,7 @@ The safe export requires an authenticated same-origin session and contains only 
 
 Import preview uses strict bounded multipart parsing with one in-flight preview admission and returns only a session-bound, expiring server token plus safe change metadata. Apply and cancel accept that token rather than a replacement mode or candidate payload; the mode and candidate are fixed by preview. Restore Apply is preview-first, typed, authority-coordinated and journaled for interrupted-import recovery. An equivalent settings-only restore is a no-op: it preserves node/generated/runtime state and does not restart Xray/XKeen. Secret-bearing backups must never be uploaded to public GitHub evidence.
 
-D.1 does not expose raw JSON/Xray/XKeen editing, does not clone panel auth/listener/update state and does not install/repair XKeen/Xray. Before successful adoption, the explicit repository-derived/legacy compatibility boundary remains in force; unknown/manual drift fails closed. Component lifecycle remains source-only under #4, and broad visual typed configuration remains planned #5.
+D.1 does not expose raw JSON/Xray/XKeen editing, does not clone panel auth/listener/update state and does not install/repair XKeen/Xray. Before successful adoption, the explicit repository-derived/legacy compatibility boundary remains in force; unknown/manual drift fails closed. Component lifecycle and typed visual policy work remain source-only outside the deployed D.1 generation.
 
 ## Issue #83 — custom-routing policy broker source boundary
 
@@ -353,8 +353,33 @@ collector. The workspace exposes only typed custom-rule editing plus
 read-only protected/DNS/Observatory facts, semantic Preview, and token-only
 Apply/Cancel. It adds no backend route, broker/transaction/authority
 semantics, raw configuration surface, DNS or Observatory mutation, or
-browser-storage state. This remains source/CI-only: it is not deployed and
+browser-storage state. This remains source-qualified only: it is not deployed and
 makes no release, router-access or live-qualification claim.
+
+## Issue #87 — shared DNS + Observatory broker source boundary
+
+Issue #87 adds the backend/API-only DNS and Observatory projection over the
+same adopted appliance v1 authority:
+
+```text
+GET  /api/v1/appliance/dns-observatory
+POST /api/v1/appliance/dns-observatory/preview
+POST /api/v1/appliance/dns-observatory/apply
+POST /api/v1/appliance/dns-observatory/cancel
+```
+
+The authenticated projection exposes only ProductDefault-derived opaque
+resolver IDs and safe labels, typed fallback/cache/stale/parallel settings,
+bounded proxy-domain counts and a 1..5 whole-minute Observatory cadence.
+Resolver addresses, tags, resolver domains, raw policy/configuration and node
+or subscription material are never request or response data. The shared
+classifier preserves supported DNS/Observatory state across Routing previews
+and preserves custom Routing rules across DNS/Observatory previews. Preview
+renders and validates a complete candidate before storing a session-bound,
+one-shot RAM token; Apply uses the existing Coordinator, authority lease,
+previous generation, journal, restart/readiness, rollback and startup recovery
+path. This remains source-qualified only and does not add a visual DNS workspace,
+performance settings, a new persistence owner or a live-router qualification.
 
 Phase A of #4 adds the separate read-only component inventory foundation: an authenticated `GET /api/v1/components` returns a bounded typed projection for panel, XKeen, Xray, geodata, KeeneticOS and Entware. It performs no network discovery, persistence, coordinator/lease work, lifecycle mutation or panel-update-policy changes; later mutation policy remains a separate typed boundary.
 
@@ -425,7 +450,7 @@ Partial, mixed, manual or uncertain layouts are blocked; there is no generic
 repair or command surface. Ordinary component update/rollback contracts remain
 unchanged, including their non-empty outbound verification.
 
-This is source/CI behavior only. It is not a release, router-install,
+This is source-qualified behavior only. It is not a release, router-install,
 production-candidate or live-Setup qualification claim.
 
 ## Phase F3 — bounded component policy and check-only scheduler
@@ -453,7 +478,7 @@ The scheduler starts its first cycle only after a full cadence, skips during
 unavailable/maintenance/applying lifecycle states, uses no catch-up loop or
 persistent status writes, and may call only a typed in-process notification
 hook with safe projected fields. Policy changes invalidate existing update
-previews below the HTTP/UI layer. F3 is source/CI-only: it adds no release
+previews below the HTTP/UI layer. F3 is source-qualified only: it adds no release
 dispatch, router access, production mutation, live qualification or external
 notification transport.
 

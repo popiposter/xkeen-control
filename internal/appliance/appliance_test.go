@@ -62,6 +62,7 @@ func TestApplianceStrictValidationRejectsUnknownFieldsAndBadPorts(t *testing.T) 
 }
 
 func TestAdoptionWritesOnlyApplianceAuthorityAndVerifyDetectsDrift(t *testing.T) {
+	requireTransactionalFilesystemSemantics(t)
 	fixture := newApplianceFixture(t)
 	before := fixture.snapshotActive()
 	validator := &recordingValidator{}
@@ -103,6 +104,13 @@ func TestAdoptionWritesOnlyApplianceAuthorityAndVerifyDetectsDrift(t *testing.T)
 	}
 	if err := fixture.service.Adopt(context.Background()); err == nil {
 		t.Fatal("second adoption unexpectedly replaced appliance authority")
+	}
+}
+
+func requireTransactionalFilesystemSemantics(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("requires Unix hard-link and directory-sync semantics; covered by Docker/Linux appliance qualification")
 	}
 }
 

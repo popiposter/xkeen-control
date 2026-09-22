@@ -1,6 +1,6 @@
 # Fresh Keenetic / restore
 
-This document describes the current qualified panel bootstrap and D.1 portable restore boundaries, and separates them from destructive Entware/KeeneticOS provisioning and the planned D.2 component lifecycle work.
+This document describes the current qualified panel bootstrap and D.1 portable restore boundaries, and separates them from destructive Entware/KeeneticOS provisioning and later source-only D.2/D.3 work that is not deployed.
 
 Target currently qualified in production: Keenetic `linux/arm64`, KeeneticOS 5+, Entware/Open Package, XKeen + Xray. Signed stable `v0.2.0` is the current production-qualified panel release for that target.
 
@@ -23,7 +23,7 @@ managed/legacy layouts use typed takeover/convergence with strict profile and
 policy preservation/migration, previous-generation rollback, sole-writer
 retirement, and source-owned IPv4-only LAN/policy-scoped TCP redirect + UDP
 TProxy Hybrid interception with owned-subset rollback.
-It is source/CI-only in this branch and must not be assumed available in
+It is source-qualified only in this branch and must not be assumed available in
 `v0.2.0` or used for live qualification.
 
 Do not run blanket `opkg upgrade` as a routine product bootstrap step. Install/update only prerequisites intentionally required by the active procedure. The historical repository `bootstrap.sh` is deliberately not part of the public product path because it predates the bounded installer architecture and used blanket package upgrade behavior.
@@ -137,7 +137,7 @@ The deploy builds a complete candidate under `/tmp`, renders outbounds from `nod
 
 It also preserves C.1 ownership: legacy XKeen Speed Balancer/watchdog/full-benchmark writers stay disabled and the control plane owns stable selection/liveness/daily benchmark scheduling.
 
-Repository deployment is an advanced development/operator path, not the D.2 component lifecycle implementation. In particular, current repository geodata scripts must not be treated as equivalent to the planned typed #4 update/rollback manager.
+Repository deployment is an advanced development/operator path, not the D.2 component lifecycle implementation. In particular, current repository geodata scripts must not be treated as equivalent to the source-only typed #4 update/rollback manager.
 
 ## Verification
 
@@ -161,14 +161,14 @@ Default management endpoint is loopback:
 
 Use an SSH tunnel or one explicitly configured private LAN bind. Do not expose the panel to WAN or wildcard address.
 
-## Current/next component lifecycle — Issue #4
+## Source-only component lifecycle — Issue #4
 
-D.2 / Issue #4 is the current product slice and remains **not deployed** in
-`v0.2.0`. Issue #81's Setup installation/takeover implementation is
-source/CI-only; it does not authorize release publication, router access, real
-candidate traffic, or live Setup Apply.
+D.2 / Issue #4 work exists in source and remains **not deployed** in `v0.2.0`.
+Issue #81's Setup installation/takeover implementation is source-qualified only;
+it does not authorize release publication, router access, real candidate traffic,
+or live Setup Apply. `docs/ROADMAP.md` owns current sequencing.
 
-It will add typed capability-aware inventory and bounded lifecycle operations for XKeen, Xray and required geodata while preserving the D.1 appliance/node authorities and the shared lifecycle coordinator. The product path must not expose a shell, generic package manager, arbitrary URL downloader or blanket `opkg upgrade` behavior.
+The source includes typed capability-aware inventory and bounded lifecycle operations for XKeen, Xray and required geodata while preserving the D.1 appliance/node authorities and the shared lifecycle coordinator. The product path must not expose a shell, generic package manager, arbitrary URL downloader or blanket `opkg upgrade` behavior.
 
 Until the feature-complete #4 candidate is signed-released and live-qualified,
 the panel's Setup state is not an operational installation authorization. The

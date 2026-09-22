@@ -1,6 +1,6 @@
 # Operations
 
-This runbook describes the **currently production-qualified** control-plane generation. Slice D / Issue #2 remains complete, and D.1 / Issue #3 is production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86` for `linux/arm64`. #4 is the current/next product slice and #5 remains planned; neither component lifecycle nor visual configuration behavior is deployed.
+This runbook describes the **currently production-qualified** control-plane generation. Slice D / Issue #2 remains complete, and D.1 / Issue #3 is production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86` for `linux/arm64`. Later #4/#5 work exists in source but is not deployed; `docs/ROADMAP.md` owns current source sequencing.
 
 Production is a live router. Prefer typed/repository transactions over ad-hoc edits.
 
@@ -206,7 +206,8 @@ panel back. Panel rollback does not restore component binaries or geodata.
 Bound resource collection and account for staging, retained copies and RAM-backed
 `/tmp`; do not add a monitoring agent or infer flash writes from hashes alone.
 No forced kill, power-loss, reboot, sustained benchmark or generic repair belongs
-to the live trial. #5 and automated component lifecycle remain later work.
+to the live trial. D.3/#5 and automated component lifecycle are outside this
+historical live-trial protocol regardless of current source sequencing.
 
 ### Q1 record and finite observation boundary
 
@@ -382,9 +383,9 @@ tools, or otherwise mutate the appliance to make the default observable.
 ### Gate 2 — freeze, publish, then separately authorize panel installation
 
 After Q0 review/merge, on the host run `git fetch origin main`,
-`git rev-parse origin/main` and `gh run list --workflow ci.yml --commit <SHA>`;
-inspect the successful run's actual checkout/tree. Freeze that reviewed current
-SHA, not the earlier F2 merge. Check proposed tag availability with
+`git rev-parse origin/main`, check out that exact reviewed tree and run
+`pwsh -NoProfile -File scripts/dev-check.ps1 -Full`; retain the sanitized local
+receipt. Freeze that reviewed current SHA, not the earlier F2 merge. Check proposed tag availability with
 `git ls-remote --tags origin refs/tags/v<version>` and
 `gh release view v<version> --repo popiposter/xkeen-control` (distinguish not
 found from access/network failure). `0.3.0-beta.1` is an example only, not an
@@ -513,7 +514,7 @@ then the already-authorized panel rollback and Gate 2 identity verification.
 Panel rollback cannot undo component updates and must not run over an unresolved
 component journal. Keeping/reapplying the trial panel, stable promotion or
 additional attempts require a new decision. Mark each class separately
-PASS/BLOCKED/NOT RUN; keep #4 open, #5 inactive, and F3/G deferred.
+PASS/BLOCKED/NOT RUN; do not infer current source sequencing from this historical gate.
 
 ### Gate 5 — resource admission and bounded measurements for every pair
 

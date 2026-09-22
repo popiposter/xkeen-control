@@ -7,8 +7,9 @@ import (
 )
 
 // Deliberately narrow contract for the existing workflow, not a YAML interpreter.
-func releaseBrowserBoundary(workflow string) bool {
+func releaseQualificationBoundary(workflow, devCheck string) bool {
 	workflow = strings.ReplaceAll(workflow, "\r\n", "\n")
+	devCheck = strings.ReplaceAll(devCheck, "\r\n", "\n")
 	_, jobs, ok := strings.Cut(workflow, "\njobs:\n  build:\n")
 	if !ok {
 		return false
@@ -17,30 +18,40 @@ func releaseBrowserBoundary(workflow string) bool {
 	if !ok || !strings.HasPrefix(publish, "    needs: build\n") {
 		return false
 	}
-	install := strings.Index(build, "\n          npm --prefix web ci --ignore-scripts\n")
-	browser := strings.Index(build, "\n          (cd web && npx playwright install --with-deps chromium && npm run test:components-ui)\n")
+	full := strings.Index(build, "\n          bash scripts/dev-check.sh --full\n")
 	handoff := strings.Index(build, "\n      - name: Assemble unsigned deterministic release inputs\n")
-	return install >= 0 && browser > install && handoff > browser &&
+	install := strings.Index(devCheck, "\tnpm --prefix web ci --ignore-scripts --prefer-offline\n")
+	browser := strings.Index(devCheck, "\t\tnpm --prefix web run test:ui\n")
+	return full >= 0 && handoff > full && install >= 0 && browser > install &&
+		strings.Contains(build, "XKEEN_PLAYWRIGHT_INSTALL: \"1\"") &&
 		!strings.Contains(build, "continue-on-error:") && !strings.Contains(build, "environment:") &&
-		!strings.Contains(publish, "playwright") && !strings.Contains(publish, "test:components-ui")
+		!strings.Contains(build[full:handoff], "|| true") &&
+		!strings.Contains(devCheck[install:browser+len("\t\tnpm --prefix web run test:ui\n")], "|| true") &&
+		!strings.Contains(publish, "playwright") && !strings.Contains(publish, "test:ui")
 }
 
-func TestReleaseBrowserBuildBoundary(t *testing.T) {
+func TestReleaseQualificationBoundary(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/release.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	workflow := string(data)
-	if !releaseBrowserBoundary(workflow) {
-		t.Fatal("release build must run the pinned F2 Chromium suite after npm ci and before unsigned handoff; publish must depend on build")
+	devCheckData, err := os.ReadFile("../../scripts/dev-check.sh")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for name, mutated := range map[string]string{
-		"removed suite": strings.ReplaceAll(workflow, "npm run test:components-ui", "true"),
-		"ignored failure": strings.ReplaceAll(workflow, "npm run test:components-ui)", "npm run test:components-ui) || true"),
-		"detached publish": strings.ReplaceAll(workflow, "needs: build", "needs: []"),
+	workflow := string(data)
+	devCheck := string(devCheckData)
+	if !releaseQualificationBoundary(workflow, devCheck) {
+		t.Fatal("release build must run the shared full qualification with pinned Chromium before unsigned handoff; publish must depend on build")
+	}
+	for name, pair := range map[string][2]string{
+		"removed full gate":     {strings.ReplaceAll(workflow, "bash scripts/dev-check.sh --full", "true"), devCheck},
+		"ignored full failure":  {strings.ReplaceAll(workflow, "bash scripts/dev-check.sh --full", "bash scripts/dev-check.sh --full || true"), devCheck},
+		"removed browser suite": {workflow, strings.ReplaceAll(devCheck, "npm --prefix web run test:ui", "true")},
+		"detached publish":      {strings.ReplaceAll(workflow, "needs: build", "needs: []"), devCheck},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if releaseBrowserBoundary(mutated) {
+			if releaseQualificationBoundary(pair[0], pair[1]) {
 				t.Fatal("regression accepted unsafe workflow")
 			}
 		})
