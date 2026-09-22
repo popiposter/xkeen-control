@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the **currently production-qualified architecture**. Slices A/B/C/C.1/D/D.1 are qualified; later D.2/D.3/#5 capabilities on source main, including Setup and visual Routing, remain source-qualified only and must not be treated as deployed behavior. Detailed design for active work lives in the active GitHub issue.
+This document describes the **currently production-qualified architecture**. Slices A/B/C/C.1/D/D.1 are qualified; later D.2/D.3/#5 capabilities on source main, including Setup, visual Routing and visual DNS/Observatory, remain source-qualified only and must not be treated as deployed behavior. Detailed design for active work lives in the active GitHub issue.
 
 ## System goal
 
