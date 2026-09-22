@@ -225,6 +225,25 @@ desktop/mobile screenshots from synthetic fixtures. The pinned development
 image already contains Chromium; full local and protected release qualification
 run this suite off-router.
 
+## Issue #89 DNS + Observatory UI focused suite
+
+The visual DNS workspace uses only synthetic intercepted API responses. Its
+focused Chromium suite covers lazy loading, safe resolver labels and locked
+facts, ordered resolver editing, canonical cache/stale behavior, Observatory
+cadence, dirty refresh, read-only drift/unavailable states, semantic Preview,
+token-only one-shot Apply/Cancel, conservative error outcomes, session and
+navigation races, narrow symmetric Routing/DNS peer-Preview invalidation and
+unknown-outcome fresh-read gating, keyboard-stable resolver reordering,
+browser-storage absence, and desktop/mobile rendering:
+
+```sh
+cd web
+npm run test:dns-ui
+```
+
+It does not contact resolver providers, read production policy, access a router
+or perform a live mutation. The aggregate full gate runs it through `test:ui`.
+
 ## Issue #3 Phase B focused fixtures
 
 The typed backup/export qualification fixture is:

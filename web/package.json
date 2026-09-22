@@ -9,6 +9,7 @@
     "test:ui": "playwright test",
     "test:backup-restore-ui": "playwright test tests/backup-restore.spec.js",
     "test:components-ui": "playwright test tests/components-session.spec.js tests/components-updates.spec.js",
+    "test:dns-ui": "playwright test tests/dns-observatory.spec.js",
     "test:nodes-ui": "playwright test tests/nodes.spec.js",
     "test:performance-ui": "playwright test tests/performance-ui.spec.js",
     "test:routing-ui": "playwright test tests/routing-policy.spec.js",

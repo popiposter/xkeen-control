@@ -381,6 +381,32 @@ previous generation, journal, restart/readiness, rollback and startup recovery
 path. This remains source-qualified only and does not add a visual DNS workspace,
 performance settings, a new persistence owner or a live-router qualification.
 
+## Issue #89 — visual DNS + Observatory workspace source boundary
+
+Issue #89 adds the Dashboard-scoped visual DNS workspace over the unchanged #87
+routes. DNS is loaded lazily on first entry and by explicit refresh; it is not
+part of the five-second Dashboard polling loop. The browser edits only ordered
+opaque resolver selections, fallback/cache/stale/parallel settings and the
+bounded Observatory cadence. Locked query strategy, leak prevention, the fixed
+system-fallback object and bounded proxy-domain counts remain read-only facts.
+
+Preview posts the complete typed DNS + Observatory DTO and renders only the
+server semantic diff. Apply and Cancel post only the one-shot RAM token. A
+Dashboard-owned controller preserves an in-flight Apply across navigation,
+never replays an uncertain request, and retains unknown/unproven outcomes until
+the affected controller completes a successful fresh read. Routing and DNS
+controllers only coordinate by invalidating the peer's completed or in-flight
+Preview before Apply and again after an unknown/unproven Apply outcome. While
+that outcome awaits its fresh read, both workspaces block new Preview/Apply;
+the resolving read updates safe source-owned facts without rebasing either
+workspace draft or dirty state. Drafts are not merged, submitted or discarded;
+explicit Refresh/Discard retains its rebasing behavior. The backend shared
+authority digest remains the final stale-prevention boundary.
+
+The workspace adds no browser storage, backend field/route, persistence,
+transaction/recovery owner, performance/selection control, release, router
+access or live qualification.
+
 Phase A of #4 adds the separate read-only component inventory foundation: an authenticated `GET /api/v1/components` returns a bounded typed projection for panel, XKeen, Xray, geodata, KeeneticOS and Entware. It performs no network discovery, persistence, coordinator/lease work, lifecycle mutation or panel-update-policy changes; later mutation policy remains a separate typed boundary.
 
 The Phase B source-main boundary adds an authenticated, same-origin/CSRF-bound `POST /api/v1/components/check` for explicit trusted metadata checks of only Xray, XKeen and the fixed product geodata catalog. Results are bounded and RAM-only; no artifact bytes are downloaded, no component or router state is changed, and no production-release or live-qualification claim follows from the source implementation.

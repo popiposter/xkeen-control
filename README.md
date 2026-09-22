@@ -4,7 +4,7 @@
 
 Manage VPN nodes and subscriptions, understand what Xray is doing, keep the active proxy stable, run bounded performance checks, and apply changes transactionally — from one small Go binary with an embedded web UI.
 
-> **Status:** D.1 / Issue #3 is production-qualified on Keenetic `linux/arm64` in signed stable release `v0.2.0`, built from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. Later D.2 component/setup and D.3 Routing work is merged source-only; the shared DNS + Observatory broker is active in #87. None of that later source is deployed. See `docs/ROADMAP.md` for current sequencing.
+> **Status:** D.1 / Issue #3 is production-qualified on Keenetic `linux/arm64` in signed stable release `v0.2.0`, built from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. Later D.2 component/setup and D.3 Routing work is merged source-only; the visual DNS + Observatory workspace is active in #89. None of that later source is deployed. See `docs/ROADMAP.md` for current sequencing.
 
 ## Why this project
 
@@ -75,7 +75,7 @@ The historical repository `popiposter/xkeen-keenetic` is private quarantine/hist
 | **D / #2 — done** | Public signed releases, one-command bootstrap, setup mode, transactional panel self-update/rollback |
 | **D.1 / #3 — done** | Production-qualified local typed appliance state, portable backup/import/export, optional encrypted VPN-secret backup |
 | **D.2 / #4 — source-only** | Component lifecycle, bounded policy and typed Setup source delivered; not deployed |
-| **D.3 / #5 — active source work** | Routing broker/UI merged source-only; shared DNS + Observatory broker active in #87; not deployed |
+| **D.3 / #5 — active source work** | Routing broker/UI and the shared DNS + Observatory broker are merged source-only; visual DNS + Observatory is active in #89; not deployed |
 | **E** | Notifications, management-VPN guidance and final attack-surface hardening |
 
 The authoritative sequence is always [ROADMAP.md](docs/ROADMAP.md).

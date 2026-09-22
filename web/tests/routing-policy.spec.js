@@ -482,7 +482,7 @@ const applyErrorCases = [
   { mode: 'drift', code: 'drift-detected', title: 'Routing policy drift detected', refreshes: true, draft: 'blocked' },
   { mode: 'candidate-rejected', code: 'candidate-rejected', title: 'Routing candidate rejected', refreshes: false, draft: 'retained' },
   { mode: 'restored', code: 'transaction-restored', title: 'Routing changes were restored', refreshes: true, draft: 'rebased' },
-  { mode: 'unknown', code: 'transaction-unproven', title: 'Routing outcome is unknown', refreshes: true, draft: 'rebased' },
+  { mode: 'unknown', code: 'transaction-unproven', title: 'Routing outcome is unknown', refreshes: true, draft: 'retained' },
 ]
 
 for (const outcome of applyErrorCases) {
