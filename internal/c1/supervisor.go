@@ -40,15 +40,16 @@ type SelectionStatus struct {
 }
 
 type Supervisor struct {
-	policy      Policy
-	xray        xrayapi.Reader
-	api         xrayapi.RoutingController
-	nodes       NodeReader
-	probe       *ProbeRouter
-	selection   SelectionStore
-	engine      *PolicyEngine
-	activeProbe ActiveProbe
-	clock       func() time.Time
+	policy            Policy
+	performancePolicy PerformancePolicy
+	xray              xrayapi.Reader
+	api               xrayapi.RoutingController
+	nodes             NodeReader
+	probe             *ProbeRouter
+	selection         SelectionStore
+	engine            *PolicyEngine
+	activeProbe       ActiveProbe
+	clock             func() time.Time
 
 	// policyMu serializes policy-engine state, liveness counters and runtime
 	// selection decisions. Benchmark samples use the same ProbeRouter lease,
@@ -70,7 +71,7 @@ func NewSupervisor(policy Policy, reader xrayapi.Reader, api xrayapi.RoutingCont
 	}
 	record, _ := store.Load()
 	return &Supervisor{
-		policy: policy, xray: reader, api: api, nodes: nodes, probe: probe, selection: store,
+		policy: policy, performancePolicy: DefaultPerformancePolicy(), xray: reader, api: api, nodes: nodes, probe: probe, selection: store,
 		engine: NewPolicyEngine(policy), record: record, clock: func() time.Time { return time.Now().UTC() },
 		status: SelectionStatus{Enabled: policy.Enabled, State: "starting", StableTarget: record.Target, ManualOverride: record.ManualOverride, StableSince: record.StableSince, LastSwitchReason: record.LastSwitchReason, LastSwitchAt: record.LastSwitchAt},
 	}
@@ -801,17 +802,21 @@ func (s *Supervisor) PrepareAdaptiveGeneration(ctx context.Context, generation u
 		return AdaptiveGeneration{}, AdaptiveReasonInsufficientCandidates
 	}
 	sortAdaptiveCandidates(eligible)
-	shortlist := append([]AdaptiveCandidateInput(nil), eligible[:minInt(len(eligible), AdaptiveShortlistLimit)]...)
-	currentInShortlist := false
-	for _, candidate := range shortlist {
+	challengerLimit := s.performancePolicy.AdaptiveChallengerLimit
+	if challengerLimit < MinAdaptiveChallengerLimit || challengerLimit > MaxAdaptiveChallengerLimit {
+		challengerLimit = AdaptiveShortlistLimit
+	}
+	shortlist := make([]AdaptiveCandidateInput, 0, minInt(len(eligible), challengerLimit+1))
+	for _, candidate := range eligible {
 		if candidate.Tag == stable {
-			currentInShortlist = true
+			continue
+		}
+		shortlist = append(shortlist, candidate)
+		if len(shortlist) == challengerLimit {
 			break
 		}
 	}
-	if !currentInShortlist {
-		shortlist = append(shortlist, adaptiveCandidateFor(eligible, stable))
-	}
+	shortlist = append(shortlist, adaptiveCandidateFor(eligible, stable))
 	if len(shortlist) > AdaptiveMaxCandidates {
 		shortlist = shortlist[:AdaptiveMaxCandidates]
 	}
@@ -921,11 +926,11 @@ func (s *Supervisor) ApplyAdaptive(ctx context.Context, generation AdaptiveGener
 		return decision, nil
 	}
 	now := s.clock()
-	if stableSince.IsZero() || now.Sub(stableSince) < s.policy.MinimumDwell {
+	if stableSince.IsZero() || now.Sub(stableSince) < s.performancePolicy.minimumDwell() {
 		decision.ReasonCode = AdaptiveReasonMinimumDwell
 		return decision, nil
 	}
-	if !finitePositive(winnerScore) || !finitePositive(currentScore) || winnerScore < currentScore*AdaptiveQualityHysteresis {
+	if !finitePositive(winnerScore) || !finitePositive(currentScore) || winnerScore < currentScore*s.performancePolicy.qualityHysteresis() {
 		decision.ReasonCode = AdaptiveReasonHysteresis
 		return decision, nil
 	}

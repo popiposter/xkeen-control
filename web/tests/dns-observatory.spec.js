@@ -158,8 +158,8 @@ test.afterEach(async ({ page }) => {
 test('places DNS immediately after Routing, loads lazily, and never polls it', async ({ page }) => {
   const state = await prepare(page); page.__dnsIssues = state.issues
   await page.goto('/')
-  await expect(page.locator('.section-nav button')).toHaveCount(7)
-  expect(await page.locator('.section-nav button').allTextContents()).toEqual(['Overview', 'Nodes 0', 'Routing', 'DNS', 'Components / Updates', 'System', 'Backup & Restore'])
+  await expect(page.locator('.section-nav button')).toHaveCount(8)
+  expect(await page.locator('.section-nav button').allTextContents()).toEqual(['Overview', 'Nodes 0', 'Routing', 'DNS', 'Performance', 'Components / Updates', 'System', 'Backup & Restore'])
   expect(requestsFor(state, '/api/v1/appliance/dns-observatory')).toHaveLength(0)
   await page.getByRole('button', { name: 'DNS', exact: true }).click()
   await expect.poll(() => requestsFor(state, '/api/v1/appliance/dns-observatory').length).toBe(1)

@@ -426,6 +426,7 @@ func DefaultSetupPaths() SetupPaths {
 			"/opt/etc/xkeen-control/state/update-policy.json",
 			"/opt/etc/xkeen-control/state/selection.json",
 			"/opt/etc/xkeen-control/state/component-policy.json",
+			"/opt/etc/xkeen-control/state/performance-policy.json",
 		},
 	}
 }

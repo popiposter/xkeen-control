@@ -12,6 +12,7 @@
     "test:dns-ui": "playwright test tests/dns-observatory.spec.js",
     "test:nodes-ui": "playwright test tests/nodes.spec.js",
     "test:performance-ui": "playwright test tests/performance-ui.spec.js",
+    "test:performance-policy-ui": "playwright test tests/performance-policy.spec.js",
     "test:routing-ui": "playwright test tests/routing-policy.spec.js",
     "test:setup-ui": "playwright test tests/setup.spec.js"
   },
