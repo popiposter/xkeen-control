@@ -6,9 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "check": "vite build",
-    "test:components-ui": "playwright test",
-    "test:routing-ui": "playwright test tests/routing-policy.spec.js"
+    "test:ui": "playwright test",
+    "test:backup-restore-ui": "playwright test tests/backup-restore.spec.js",
+    "test:components-ui": "playwright test tests/components-session.spec.js tests/components-updates.spec.js",
+    "test:nodes-ui": "playwright test tests/nodes.spec.js",
+    "test:performance-ui": "playwright test tests/performance-ui.spec.js",
+    "test:routing-ui": "playwright test tests/routing-policy.spec.js",
+    "test:setup-ui": "playwright test tests/setup.spec.js"
   },
   "dependencies": {
     "flag-icons": "7.5.0",

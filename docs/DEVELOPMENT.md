@@ -1,6 +1,6 @@
 # Development and qualification
 
-This is the build/test/CI authority. Workflow/roles live in `DEVELOPMENT-PROCESS.md`; production mutation rules live in `OPERATIONS.md` and the active issue.
+This is the local build/test and protected-release authority. Workflow/roles live in `DEVELOPMENT-PROCESS.md`; production mutation rules live in `OPERATIONS.md` and the active issue.
 
 ## Supported developer environment
 
@@ -15,27 +15,36 @@ Debian build-essential / cgo tools
 Git
 jq
 OpenSSH client
+lockfile-pinned Playwright Chromium and OS dependencies
 ```
 
 Exact versions may change deliberately in `Dockerfile.dev`; release evidence must use the repository-pinned environment rather than an arbitrary host toolchain.
 
-## Full local qualification
+## Local qualification tiers
 
-From PowerShell in repository root:
+During iteration, run the focused fixture for the changed subsystem and the fast proportional check:
 
 ```powershell
 pwsh -NoProfile -File scripts/dev-check.ps1
 ```
 
-This is the default floor for code, frontend, build, packaging and operational-script changes. It covers the repository's current equivalent of:
+Fast mode classifies the branch/worktree diff against `origin/main`. It runs only affected Go, helper/build or web lanes, always checks public hygiene and host diff whitespace, and does not run race, the complete browser suite or dependency audit.
+
+After the candidate is final, run one exact-HEAD full gate:
+
+```powershell
+pwsh -NoProfile -File scripts/dev-check.ps1 -Full
+```
+
+Full mode covers each qualification class once:
 
 ```text
 uncached Go tests where configured
 go vet ./...
 go test -race ./...
-focused shell/runtime fixtures
+unique shell/runtime fixtures without repeating package tests
 npm ci
-frontend checks + production build
+one frontend production build + complete Playwright suite
 npm audit at repository threshold
 tracked embedded-asset consistency
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 build
@@ -43,7 +52,7 @@ artifact SHA-256
 host git diff --check
 ```
 
-Run additional focused fixtures for the subsystem changed. Do not claim a check that was skipped.
+Do not run the full gate after every edit and do not reuse its evidence after HEAD changes. A focused helper may intentionally repeat its package subset when used alone; the aggregate full gate suppresses those duplicate package invocations and retains only each helper's unique shell/integration assertions. Do not claim a check that was skipped.
 
 For docs-only changes, use proportional checks (references/links/content consistency + diff hygiene) instead of automatically running expensive code builds.
 
@@ -53,7 +62,7 @@ For docs-only changes, use proportional checks (references/links/content consist
 docker compose -f docker-compose.dev.yml run --rm dev bash
 ```
 
-The repository is bind-mounted; Go/npm caches and `web/node_modules` use Docker volumes so the Windows worktree is not polluted by Linux dependencies.
+The repository is bind-mounted; Go/npm caches and `web/node_modules` use Docker volumes so the Windows worktree is not polluted by Linux dependencies. Playwright Chromium is baked into the pinned image, so ordinary runs do not download the browser or install OS packages again.
 
 ## Release artifact
 
@@ -85,21 +94,24 @@ Stable release `v0.1.1` from source `8f15246099538426ef08163b832c3aa6f73e8265` c
 When frontend source changes:
 
 1. run the documented frontend build;
-2. update tracked embedded output;
-3. run full qualification;
-4. verify generated assets contain no secrets/local paths.
+2. explicitly update tracked embedded output with `bash scripts/update-webassets.sh` inside the development container;
+3. review the generated diff;
+4. run the focused UI spec while iterating and the final full gate once;
+5. verify generated assets contain no secrets/local paths.
 
-## Public GitHub Actions
+`scripts/dev-check.sh` and `scripts/verify-webassets.sh` only compare generated output; qualification never rewrites tracked assets.
 
-PR/main CI is current repository behavior. It runs on standard GitHub-hosted Linux runners with read-only repository contents permission and covers Go/vet/race, focused shell/runtime fixtures, frontend install/check/build/audit, embedded-asset consistency, static `linux/arm64` build and repository/public-hygiene checks.
+## Local CI and protected GitHub Release
 
-Do not use `pull_request_target` to execute PR code with privileged secrets. PR/main CI receives no production release signing key and no router credentials/configuration.
+Ordinary PR/main GitHub Actions CI is intentionally absent. Local Docker/Linux qualification is the development gate, and PR evidence must bind the exact tested HEAD to the actual focused/full commands and results. Never present local evidence as hosted CI.
+
+Do not add `pull_request_target` or another automatic workflow to execute PR code with privileged secrets. Local qualification receives no production release signing key and no router credentials/configuration.
 
 The protected manual Release workflow:
 
 - takes explicit `version`, `channel` and full `source_ref` inputs;
 - checks that `source_ref` equals the exact checkout and current remote `main`;
-- runs full release qualification, including the lockfile-pinned, single-worker Chromium `test:components-ui` suite after `npm ci` and before unsigned assembly; a failure blocks `publish` through `needs: build`;
+- runs `scripts/dev-check.sh --full`, including the lockfile-pinned, single-worker Chromium `test:ui` suite, before unsigned assembly; a failure blocks `publish` through `needs: build`;
 - assembles unsigned deterministic assets in the unprivileged build job;
 - transfers only secretless release inputs to the protected `release` environment;
 - verifies the protected public key matches the compiled/source-pinned trust anchor;
@@ -170,11 +182,11 @@ startup recovery. Phase E2 independently pins the real `2.0.1/Beta` catalog
 entry's exact archive SHA-256, GNU-tar member manifest and canonical generation
 digest for the installable fixed identity.
 
-Phase E2 qualification keeps repository CI deterministic/offline. The reviewed
+Phase E2 qualification keeps local and release qualification deterministic/offline. The reviewed
 `2.0.1/Beta` catalog entry pins the exact archive SHA-256, GNU-tar member
 manifest and canonical generation digest; any one-time immutable upstream
 retrieval/content-equivalence check remains separate review evidence and must
-not turn `test-components.sh` or normal PR CI into a moving-network test. No
+not turn `test-components.sh` or normal qualification into a moving-network test. No
 Phase E2 production mutation or temporary operator mutation surface is
 authorized.
 
@@ -198,7 +210,6 @@ production cookies, HAR files or component tokens. Run it after `npm ci` with:
 
 ```sh
 cd web
-npx playwright install --with-deps chromium
 npm run test:components-ui
 ```
 
@@ -206,8 +217,8 @@ The suite covers lazy inventory, explicit Check/Preview, token-only one-shot
 Apply/Rollback, navigation and dashboard refresh during a delayed synchronous
 request, cancellation/expiry/session invalidation, conservative unknown
 outcomes, lifecycle maintenance, browser-storage absence, keyboard focus and
-desktop/mobile screenshots from synthetic fixtures. Full developer
-qualification and hosted CI install the pinned Playwright Chromium build and
+desktop/mobile screenshots from synthetic fixtures. The pinned development
+image already contains Chromium; full local and protected release qualification
 run this suite off-router.
 
 ## Issue #3 Phase B focused fixtures
@@ -238,10 +249,26 @@ The bounded import HTTP/UI adapter qualification is covered by the HTTP package 
 go test -count=1 ./internal/httpapi
 bash scripts/test-backup.sh
 bash scripts/test-restore.sh
-bash scripts/test-restore-ui.sh
+npm --prefix web run test:backup-restore-ui
 ```
 
 The HTTP regressions cover authenticated same-origin/CSRF routes, strict query/multipart/body limits, hostile filenames without temporary uploads, preview single-flight admission, logout/password/in-flight session invalidation, token-only Apply/Cancel, fixed safe error mappings and response secret scanning. The frontend check covers the first-class Backup & Restore flows and tracked embedded assets. These tests use synthetic data and do not mutate a production Keenetic.
+
+## Qualification inventory
+
+| Entry point | Unique purpose | Aggregate full behavior |
+| --- | --- | --- |
+| `go test -count=1 ./...` | Complete normal Go package suite | Once |
+| `go test -race ./...` | Cross-package race detection | Full only, once |
+| `test-c1.sh`, `test-backup.sh`, `test-restore.sh`, `test-setup.sh` | Convenient focused package subsets | Not repeated after the complete Go suite |
+| `test-components.sh` | Focused component packages/race plus prohibited-surface assertions | Aggregate uses `--fixtures-only` |
+| `test-release.sh` | Focused release packages plus bootstrap/updater/legacy integration | Aggregate uses `--fixtures-only` |
+| `test-appliance.sh` | Binary-level appliance/deploy candidate integration | Retained when helpers/build paths change |
+| `test-benchmark-policy.sh`, `test-xkeen-foreground.sh` | Legacy-writer retirement and foreground runtime shell contracts | Retained when helpers/build paths change |
+| Playwright per-area scripts | Focused behavioral UI iteration | `test:ui` once in full mode |
+| `npm-audit.sh` | Bounded high-severity dependency audit with transient endpoint retries | Full only |
+
+Legacy bridge fixtures remain required while the published `v0.1.1` adoption path is supported. Age or a `legacy` name alone is not a deletion criterion; remove a test only when its supported invariant is retired or equivalent unique behavior is demonstrably covered elsewhere.
 
 ## Fresh-checkout expectation
 
@@ -249,7 +276,7 @@ A fresh clone/checkout of PR HEAD must be sufficient for documented qualificatio
 
 ## Router SSH boundary
 
-Router qualification is host-side and issue-authorized. Never mount router credentials/private keys, production registry files or subscription credentials into the development container or CI.
+Router qualification is host-side and issue-authorized. Never mount router credentials/private keys, production registry files or subscription credentials into the development container or release workflow.
 
 Build/test first, then copy/use only the exact release/artifact/scripts required for the bounded smoke. Snapshot affected state, use repository/typed transactions, sanitize evidence and remove temporary uploads/tunnels afterward.
 

@@ -4,7 +4,7 @@
 
 Manage VPN nodes and subscriptions, understand what Xray is doing, keep the active proxy stable, run bounded performance checks, and apply changes transactionally — from one small Go binary with an embedded web UI.
 
-> **Status:** D.1 / Issue #3 is production-qualified on Keenetic `linux/arm64` in signed stable release `v0.2.0`, built from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. Historical `v0.1.1` remains the first Slice D release; #4 is the next/current product slice, while its component lifecycle and all #5 visual configuration remain planned rather than deployed.
+> **Status:** D.1 / Issue #3 is production-qualified on Keenetic `linux/arm64` in signed stable release `v0.2.0`, built from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. Later D.2 component/setup and D.3 Routing work is merged source-only; the shared DNS + Observatory broker is active in #87. None of that later source is deployed. See `docs/ROADMAP.md` for current sequencing.
 
 ## Why this project
 
@@ -66,7 +66,7 @@ Existing managed installs use the installed binary's pinned-signature self-updat
 
 See [Releases](docs/RELEASES.md), [Operations](docs/OPERATIONS.md) and [Fresh Keenetic](docs/FRESH-KEENETIC.md).
 
-The historical repository `popiposter/xkeen-keenetic` is private quarantine/history only. `popiposter/xkeen-control` is the public source/CI/release authority; old Git history must never be imported here.
+The historical repository `popiposter/xkeen-keenetic` is private quarantine/history only. `popiposter/xkeen-control` is the public source/release authority; ordinary qualification runs locally and the protected manual GitHub workflow is reserved for releases. Old Git history must never be imported here.
 
 ## Product roadmap
 
@@ -74,15 +74,15 @@ The historical repository `popiposter/xkeen-keenetic` is private quarantine/hist
 | --- | --- |
 | **D / #2 — done** | Public signed releases, one-command bootstrap, setup mode, transactional panel self-update/rollback |
 | **D.1 / #3 — done** | Production-qualified local typed appliance state, portable backup/import/export, optional encrypted VPN-secret backup |
-| **D.2 / #4 — current/next** | Planned XKeen/Xray/geodata versions, compatibility-aware update policies, schedules and rollback; not deployed |
-| **D.3 / #5 — planned** | Planned visual typed configuration for routing, DNS, XKeen/Xray, performance and panel settings; not deployed |
+| **D.2 / #4 — source-only** | Component lifecycle, bounded policy and typed Setup source delivered; not deployed |
+| **D.3 / #5 — active source work** | Routing broker/UI merged source-only; shared DNS + Observatory broker active in #87; not deployed |
 | **E** | Notifications, management-VPN guidance and final attack-surface hardening |
 
 The authoritative sequence is always [ROADMAP.md](docs/ROADMAP.md).
 
 ## Security model
 
-This repository and public releases are **secretless**. Router-specific credentials remain local. Never put production VLESS URLs, UUIDs, REALITY key material, subscription tokens, passwords, SSH credentials or secret-bearing backups into issues, PRs, logs or CI artifacts.
+This repository and public releases are **secretless**. Router-specific credentials remain local. Never put production VLESS URLs, UUIDs, REALITY key material, subscription tokens, passwords, SSH credentials or secret-bearing backups into issues, PRs, qualification logs or release artifacts.
 
 The panel is for trusted management access only; direct WAN exposure and generic shell/file-manager APIs are out of scope.
 
@@ -90,10 +90,16 @@ Read [SECURITY.md](SECURITY.md) before production or release work.
 
 ## Development
 
-The supported full qualification command is:
+The fast proportional local check is:
 
 ```powershell
 pwsh -NoProfile -File scripts/dev-check.ps1
+```
+
+The final exact-HEAD local gate for code/build changes is:
+
+```powershell
+pwsh -NoProfile -File scripts/dev-check.ps1 -Full
 ```
 
 It covers the current Go tests/vet/race checks, frontend install/check/build/audit, Linux `arm64` build and host diff hygiene. See [Development](docs/DEVELOPMENT.md).

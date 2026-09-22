@@ -2,7 +2,16 @@
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-go test -count=1 ./internal/release ./internal/update ./internal/auth ./internal/httpapi ./internal/nodes ./cmd/xkeen-control ./cmd/xkeen-release
+fixtures_only=false
+if [ "${1:-}" = "--fixtures-only" ]; then
+	fixtures_only=true
+	shift
+fi
+[ "$#" -eq 0 ] || { echo "usage: $0 [--fixtures-only]" >&2; exit 2; }
+
+if [ "$fixtures_only" = false ]; then
+	go test -count=1 ./internal/release ./internal/update ./internal/auth ./internal/httpapi ./internal/nodes ./cmd/xkeen-control ./cmd/xkeen-release
+fi
 if grep -Eq 'xkeen[[:space:]]+-i' "$ROOT/scripts/install.sh"; then
 	echo 'upstream interactive installer must not be invoked' >&2
 	exit 1

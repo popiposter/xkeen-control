@@ -17,7 +17,7 @@ For any repository task:
 
 Then inspect the affected code/files and open **only task-relevant docs**. Do not preload the whole docs directory.
 
-Use `docs/ARCHITECTURE.md` + `docs/ROADMAP.md` for new architecture/sequencing; `docs/CONTROL-PLANE.md` for Go/API/UI; `docs/DEVELOPMENT.md` for build/CI/release; `docs/OPERATIONS.md` for production mutation; `docs/FRESH-KEENETIC.md` only for bootstrap/fresh-install work; `docs/DEVELOPMENT-PROCESS.md` only when process details are actually needed.
+Use `docs/ARCHITECTURE.md` + `docs/ROADMAP.md` for new architecture/sequencing; `docs/CONTROL-PLANE.md` for Go/API/UI; `docs/DEVELOPMENT.md` for build/local qualification/release; `docs/OPERATIONS.md` for production mutation; `docs/FRESH-KEENETIC.md` only for bootstrap/fresh-install work; `docs/DEVELOPMENT-PROCESS.md` only when process details are actually needed.
 
 If issue, code and docs conflict, determine factual current state and fix the stale authority before broad implementation.
 
@@ -41,9 +41,9 @@ When the operator writes `мержи`, re-check approved HEAD, mergeability and 
 
 ## Non-negotiable invariants
 
-- Git, public issues/PRs, CI and releases are secretless. Never expose production VLESS URLs, UUIDs, REALITY keys, short IDs, subscription URLs/tokens, passwords, SSH credentials or secret-bearing backups.
+- Git, public issues/PRs, qualification logs and releases are secretless. Never expose production VLESS URLs, UUIDs, REALITY keys, short IDs, subscription URLs/tokens, passwords, SSH credentials or secret-bearing backups.
 - `/opt/etc/xkeen-control/secrets/nodes.json` is authoritative node/subscription secret state; active `04_outbounds.json` is generated runtime output.
-- Current routing/DNS/Observatory policy remains repository-derived until the local appliance-state migration is implemented; node-only operations must not silently alter unrelated policy.
+- After typed D.1 appliance adoption, `appliance.json` is the local authority for supported routing/DNS/Observatory policy; before adoption the explicit repository-derived/legacy boundary remains. Node-only operations must not silently alter unrelated policy.
 - High-churn state is RAM or `/tmp`; persistent flash writes are explicit and bounded.
 - No generic shell/PTY/command/file-manager/raw-config API.
 - UI is loopback / exact trusted LAN / management VPN only, never direct WAN/wildcard.
@@ -52,21 +52,23 @@ When the operator writes `мержи`, re-check approved HEAD, mergeability and 
 
 ## Build / production safety
 
-Primary full qualification for code/build changes:
+Use focused fixtures plus the fast proportional local check while iterating:
 
 `pwsh -NoProfile -File scripts/dev-check.ps1`
 
-Use focused fixtures for the changed subsystem. Docs-only changes should use proportional docs/link/diff checks rather than ritual full builds.
+Use one final exact-HEAD local gate for code/build changes:
+
+`pwsh -NoProfile -File scripts/dev-check.ps1 -Full`
+
+Ordinary PR/main GitHub Actions CI is intentionally absent; do not rerun the full local gate after every edit. Docs-only changes use proportional docs/link/diff checks.
 
 Production Keenetic is live. Use bounded snapshots and repository/typed transactional paths. Unless the active issue explicitly authorizes it, do not run `opkg upgrade`, reboot, credential rotation, a full `xkeen -sbt`/sustained benchmark, or unbounded logs/downloads.
 
 ## Product direction
 
-Always read `docs/ROADMAP.md` for actual sequencing. Current program after C.1 is:
+Always read `docs/ROADMAP.md` for actual sequencing; do not duplicate volatile slice status in project instructions.
 
-`#2 releases/bootstrap/panel self-update → #3 local appliance state + backup/import/export → #4 XKeen/Xray/geodata lifecycle → #5 typed visual configuration → E notifications/security hardening`.
-
-`popiposter/xkeen-control` is the public software source/CI/release authority. Historical `popiposter/xkeen-keenetic` remains private quarantine/history only and its Git history must never be imported. Router-specific settings and operational secrets remain local. Do not describe planned #2–#5 behavior as already deployed.
+`popiposter/xkeen-control` is the public software source/release authority. Development qualification is local; GitHub Actions is reserved for protected manual release publication. Historical `popiposter/xkeen-keenetic` remains private quarantine/history only and its Git history must never be imported. Router-specific settings and operational secrets remain local. Distinguish merged source-only behavior from the production-qualified deployed generation.
 
 ## Style
 

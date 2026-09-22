@@ -27,7 +27,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_ref }}
           fetch-depth: 0
@@ -49,51 +49,20 @@ jobs:
             echo "release source must be the current reviewed main commit" >&2
             exit 1
           }
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Full release qualification
+        env:
+          XKEEN_PLAYWRIGHT_INSTALL: "1"
         run: |
-          fixture_workspace="$(readlink -f "$GITHUB_WORKSPACE")"
-          if [ -e /workspace ] || [ -L /workspace ]; then
-            test "$(readlink -f /workspace)" = "$fixture_workspace" || {
-              echo "fixture workspace path is not the checked-out repository" >&2
-              exit 1
-            }
-          else
-            sudo ln -s "$fixture_workspace" /workspace
-          fi
-          go test -count=1 ./...
-          go vet ./...
-          go test -race ./...
-          bash -n scripts/*.sh
-          bash scripts/test-benchmark-policy.sh
-          bash scripts/test-c1.sh
-          bash scripts/test-xkeen-foreground.sh
-          bash scripts/test-components.sh
-          bash scripts/test-appliance.sh
-          bash scripts/test-backup.sh
-          bash scripts/test-restore.sh
-          bash scripts/test-restore-ui.sh
-          bash scripts/test-release.sh
-          bash scripts/test-public-hygiene.sh
-          npm --prefix web ci --ignore-scripts
-          npm --prefix web run check
-          (cd web && npx playwright install --with-deps chromium && npm run test:components-ui)
-          npm --prefix web audit --audit-level=high
-          npm --prefix web run build
-          diff -ru --strip-trailing-cr web/dist internal/webassets/dist
-          mkdir -p dist
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -buildvcs=false \
-            -ldflags='-s -w -X github.com/popiposter/xkeen-control/internal/buildinfo.Version=dev -X github.com/popiposter/xkeen-control/internal/buildinfo.Commit=dev -X github.com/popiposter/xkeen-control/internal/buildinfo.Channel=development' \
-            -o dist/xkeen-control-linux-arm64 ./cmd/xkeen-control
-          git diff --check
+          bash scripts/dev-check.sh --full
       - name: Assemble unsigned deterministic release inputs
         env:
           VERSION: ${{ inputs.version }}
@@ -101,7 +70,7 @@ jobs:
           RELEASE_BUILD_MODE: unsigned
         run: ./scripts/release-build.sh
       - name: Upload secretless release handoff
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unsigned-release-${{ inputs.source_ref }}
           path: |
@@ -120,12 +89,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_ref }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -141,7 +110,7 @@ jobs:
           }
           go build -trimpath -o "$RUNNER_TEMP/xkeen-release" ./cmd/xkeen-release
       - name: Download and verify unsigned handoff
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: unsigned-release-${{ inputs.source_ref }}
           path: dist/release

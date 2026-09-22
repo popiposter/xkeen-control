@@ -24,3 +24,15 @@ fi
 if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 	git -C "$ROOT" diff --check
 fi
+
+workflows="$(find "$ROOT/.github/workflows" -maxdepth 1 -type f -printf '%f\n' | sort)"
+if [ "$workflows" != "release.yml" ]; then
+	echo "only the protected manual release workflow may run on GitHub Actions" >&2
+	printf '%s\n' "$workflows" >&2
+	exit 1
+fi
+grep -Fq 'workflow_dispatch:' "$ROOT/.github/workflows/release.yml"
+if grep -Eq '^[[:space:]]+(pull_request|push):' "$ROOT/.github/workflows/release.yml"; then
+	echo "release workflow must remain manual-only" >&2
+	exit 1
+fi

@@ -1,6 +1,6 @@
 # Security
 
-`xkeen-control` is designed so the source repository, issues/PRs, CI logs and release artifacts can be public **without containing router credentials**.
+`xkeen-control` is designed so the source repository, issues/PRs, qualification logs and release artifacts can be public **without containing router credentials**.
 
 ## Secret boundary
 
@@ -35,7 +35,7 @@ Treat GitHub issues, PRs, Actions logs/artifacts and release metadata as public 
 
 ## Repository-history boundary
 
-`popiposter/xkeen-control` is the public source/CI/release authority.
+`popiposter/xkeen-control` is the public source/release authority. Development qualification is local; the only GitHub Actions workflow is the protected, manually dispatched release workflow.
 
 It was initialized on 2026-08-21 from the validated secretless source tree of the former private repository at:
 
@@ -49,7 +49,7 @@ The former `popiposter/xkeen-keenetic` repository remains private historical/qua
 
 Old clones, archives, reflogs or external copies of the historical repository can still contain former credentials and must be discarded or protected. Rotate provider credentials if their confidentiality is uncertain.
 
-Before accepting migration or release changes, verify that current public history, current tree, issues, CI configuration and release inputs remain secretless.
+Before accepting migration or release changes, verify that current public history, current tree, issues, local qualification tooling, release workflow configuration and release inputs remain secretless.
 
 ## Releases and update supply chain
 
@@ -86,13 +86,13 @@ D.1 / Issue #3 is production-qualified in signed stable `v0.2.0`. Safe export ex
 
 Restore is authenticated same-origin/CSRF, preview-first, session-bound, bounded and typed. Apply uses the authority lease, transaction journal and recovery path, validates a complete candidate, and does not expose raw config/filesystem/archive/command surfaces. An equivalent settings-only restore is a no-op: it preserves `nodes.json`, generated runtime policy and the running Xray/XKeen state without an unnecessary restart.
 
-Successful typed `appliance adopt` establishes the local non-secret appliance authority and deterministic managed policy. Before adoption, routers retain the explicit repository-derived/legacy compatibility boundary; there is no implicit adoption, and unknown/manual drift fails closed. Component lifecycle in #4 and visual configuration in #5 remain planned rather than deployed.
+Successful typed `appliance adopt` establishes the local non-secret appliance authority and deterministic managed policy. Before adoption, routers retain the explicit repository-derived/legacy compatibility boundary; there is no implicit adoption, and unknown/manual drift fails closed. Later #4/#5 functionality exists in source but remains outside the production-qualified deployed generation.
 
-## CI and diagnostics
+## Qualification and diagnostics
 
 - Tests use synthetic fixtures only.
 - Workflows must never dump complete environments or production configuration.
-- Router SSH credentials/private keys must never be mounted into CI.
+- Router SSH credentials/private keys must never be mounted into local qualification or release jobs.
 - Secret-bearing backups must never be uploaded as artifacts.
 - Prefer sanitized public production evidence: versions, bounded counts, state transitions and non-secret hashes rather than live endpoint details.
 - Enable and keep secret scanning/push protection where repository features permit it; prevention is preferred to history cleanup.

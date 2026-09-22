@@ -3,12 +3,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
-    image: xkeen-keenetic-dev:local
+    image: xkeen-control-dev:local
     working_dir: /workspace
     environment:
       CGO_ENABLED: "1"
       GOTOOLCHAIN: local
       npm_config_cache: /root/.npm
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
     volumes:
       - .:/workspace
       - xkeen-go-mod:/go/pkg/mod

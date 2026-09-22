@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the **currently production-qualified architecture**. Slices A/B/C/C.1/D/D.1 are qualified; later D.2/D.3/#5 capabilities on source main, including Setup and visual Routing, remain source/CI-only and must not be treated as deployed behavior. Detailed design for active work lives in the active GitHub issue.
+This document describes the **currently production-qualified architecture**. Slices A/B/C/C.1/D/D.1 are qualified; later D.2/D.3/#5 capabilities on source main, including Setup and visual Routing, remain source-qualified only and must not be treated as deployed behavior. Detailed design for active work lives in the active GitHub issue.
 
 ## System goal
 
@@ -207,23 +207,15 @@ RAM or `/tmp` holds sessions/rate limits, status caches, RTT/liveness windows, p
 
 Persistent writes are tied to real explicit state changes and bounded generations: auth/listener settings, typed `appliance.json` adoption/restore changes, `nodes.json`, generated active outbounds, stable-selection changes, one compact benchmark snapshot, one previous panel generation and compact panel release/update policy markers. No growing metrics or update-history database belongs on the router.
 
-## Planned product evolution — not current runtime
+## Source evolution beyond the deployed runtime
 
-Current sequence after completed D.1 is:
-
-```text
-#3 local appliance state + portable backup/import/export (done / v0.2.0)
- ↓
-#4 managed XKeen/Xray/geodata lifecycle (current/next; planned)
- ↓
-#5 typed visual routing/DNS/XKeen/Xray/panel configuration (planned)
-```
+`docs/ROADMAP.md` is the sole sequencing/status authority; do not copy its volatile issue order here.
 
 #4 component lifecycle and #5 visual configuration remain not deployed. Issue #81 / PR #82 deliver the source-only D.2 G Setup boundary; Issue #83 / PR #84 deliver the source-only typed custom-routing broker and Issue #85 / PR #86 its visual Routing workspace over the existing D.1 settings transaction. Issue #87 is the active source-only DNS + Observatory backend boundary and must preserve compatibility with that Routing state. None of these changes the production-qualified status of the current release. The current authority model above is in force for adopted routers; the explicit repository-derived/legacy compatibility boundary remains in force before successful adoption.
 
 ## Architecture invariants
 
-- public source/releases/issues/CI are secretless;
+- public source/releases/issues/qualification evidence are secretless;
 - GitHub Releases are software authority, never router configuration authority;
 - local `nodes.json` remains the node/subscription secret authority until an explicit migration;
 - after successful typed appliance adoption, local `appliance.json` is the authority for supported non-secret policy; pre-adoption routers retain the explicit repository-derived/legacy compatibility boundary;
