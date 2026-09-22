@@ -2,6 +2,7 @@ import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'r
 import { createRoot } from 'react-dom/client'
 import './styles.css'
 import { ComponentLifecycleNotices, ComponentsUpdatesSection, useComponentsController } from './components-updates.jsx'
+import { DNSLifecycleNotice, DNSObservatorySection, useDNSObservatoryController } from './dns-observatory.jsx'
 import { RoutingLifecycleNotice, RoutingPolicySection, useRoutingController } from './routing-policy.jsx'
 import { SetupFlow } from './setup-flow.jsx'
 
@@ -425,12 +426,22 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const registryNodes = nodes.nodes || []
   const nodesByTag = useMemo(() => new Map(registryNodes.map((node) => [node.outboundTag || node.tag, node])), [registryNodes])
   const componentController = useComponentsController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized })
-  const routingController = useRoutingController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'routing' })
+  const routingControllerRef = useRef(null)
+  const dnsControllerRef = useRef(null)
+  const invalidateRoutingPreview = useCallback(() => routingControllerRef.current?.invalidateLivePreview(), [])
+  const invalidateDNSPreview = useCallback(() => dnsControllerRef.current?.invalidateLivePreview(), [])
+  const refreshRoutingPeer = useCallback(() => { void routingControllerRef.current?.refreshPeerProjection() }, [])
+  const refreshDNSPeer = useCallback(() => { void dnsControllerRef.current?.refreshPeerProjection() }, [])
+  const routingController = useRoutingController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'routing', onBeforeApply: invalidateDNSPreview, onApplied: refreshDNSPeer })
+  const dnsController = useDNSObservatoryController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'dns', onBeforeApply: invalidateRoutingPreview, onApplied: refreshRoutingPeer })
+  routingControllerRef.current = routingController
+  dnsControllerRef.current = dnsController
   const openComponents = useCallback(() => {
     setSection('components')
     void componentController.loadInventory()
   }, [componentController.loadInventory])
   const openRouting = useCallback(() => setSection('routing'), [])
+  const openDNS = useCallback(() => setSection('dns'), [])
   const lifecycleBlocked = componentController.lifecycleMutationBlocked
   const manualLifecycleBlocked = !status.lifecycle || status.lifecycle.maintenance || status.lifecycle.applying
   const manualRunning = performance?.manual?.state === 'running'
@@ -470,16 +481,19 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
       <button type="button" className={section === 'overview' ? 'active' : ''} onClick={() => setSection('overview')}>Overview</button>
       <button type="button" className={section === 'nodes' ? 'active' : ''} onClick={() => setSection('nodes')}>Nodes <span>{nodes.total || 0}</span></button>
       <button type="button" className={section === 'routing' ? 'active' : ''} onClick={openRouting}>Routing</button>
+      <button type="button" className={section === 'dns' ? 'active' : ''} onClick={openDNS}>DNS</button>
       <button type="button" className={section === 'components' ? 'active' : ''} onClick={openComponents}>Components / Updates</button>
       <button type="button" className={section === 'system' ? 'active' : ''} onClick={() => setSection('system')}>System</button>
       <button type="button" className={section === 'backup' ? 'active' : ''} onClick={() => setSection('backup')}>Backup &amp; Restore</button>
     </nav>
     <ComponentLifecycleNotices controller={componentController} lifecycle={status.lifecycle} onOpenComponents={openComponents} />
     <RoutingLifecycleNotice controller={routingController} active={section === 'routing'} onOpenRouting={openRouting} />
+    <DNSLifecycleNotice controller={dnsController} active={section === 'dns'} onOpenDNS={openDNS} />
     {error && <Notice message={error} />}
     {section === 'overview' && <Overview status={status} performance={performance} nodeTotal={nodes.total || 0} nodesByTag={nodesByTag} csrfToken={session.csrfToken} onRefresh={onRefresh} onUnauthorized={onUnauthorized} />}
     {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} performance={performance} manualOverride={status.selection?.manualOverride || ''} benchmarkRunning={Boolean(status.benchmark?.controlPlane?.running)} csrf={session.csrfToken} onRefresh={onRefresh} onPerformanceRefresh={onPerformanceRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} manualLifecycleBlocked={manualLifecycleBlocked} />}
     {section === 'routing' && <RoutingPolicySection controller={routingController} lifecycle={status.lifecycle} />}
+    {section === 'dns' && <DNSObservatorySection controller={dnsController} />}
     {section === 'components' && <ComponentsUpdatesSection controller={componentController} lifecycle={status.lifecycle} onOpenSystem={() => setSection('system')} />}
     {section === 'system' && <SystemSection status={status} config={config} nodesByTag={nodesByTag} update={update} onCheckUpdate={onCheckUpdate} />}
     {section === 'backup' && <BackupRestoreSection csrf={session.csrfToken} restoreState={restoreState} setRestoreState={setRestoreState} onRefresh={onRefresh} onUnauthorized={onUnauthorized} lifecycleBlocked={lifecycleBlocked} />}

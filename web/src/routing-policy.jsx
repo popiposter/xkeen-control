@@ -235,7 +235,7 @@ const applyErrorResult = (cause) => {
   }
 }
 
-export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, active = true }) {
+export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, active = true, onBeforeApply, onApplied }) {
   const [projection, setProjection] = useState({ value: null, observedAt: '', loading: false, error: '' })
   const [draft, setDraftState] = useState([])
   const [dirty, setDirty] = useState(false)
@@ -311,6 +311,10 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
   }, [invalidateLivePreview, nextClientRuleId, onUnauthorized, result?.requiresFreshRead])
 
   const activate = useCallback(() => loadPolicy(), [loadPolicy])
+  const refreshPeerProjection = useCallback(() => {
+    if (!activeRef.current) return false
+    return loadPolicy({ force: true, rebase: !dirtyRef.current })
+  }, [loadPolicy])
 
   const updateDraft = useCallback((updater) => {
     setDraftState((current) => {
@@ -404,6 +408,7 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
     const current = previewRef.current
     if (!current || current.noop || submitGuard.current || lifecycleBlocked || outcomeRequiresFreshRead) return false
     submitGuard.current = true
+    onBeforeApply?.()
     const epoch = sessionEpoch.current
     const token = current.previewToken
     const operation = { startedAt: new Date().toISOString() }
@@ -426,6 +431,7 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
         outcome: 'success',
       })
       refreshAfter = true
+      onApplied?.()
     } catch (cause) {
       if (!isCurrentSession()) return false
       if (cause.status === 401) onUnauthorized()
@@ -445,7 +451,7 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
       if (!refreshed) setRefreshError('The routing outcome is preserved, but the subsequent policy refresh failed.')
     }
     return true
-  }, [csrfToken, lifecycleBlocked, loadPolicy, onUnauthorized, outcomeRequiresFreshRead])
+  }, [csrfToken, lifecycleBlocked, loadPolicy, onApplied, onBeforeApply, onUnauthorized, outcomeRequiresFreshRead])
 
   useEffect(() => {
     if (!preview?.expiresAt) return undefined
@@ -505,6 +511,8 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
     lifecycleBlocked,
     outcomeRequiresFreshRead,
     loadPolicy,
+    refreshPeerProjection,
+    invalidateLivePreview,
     activate,
     requestRefresh,
     discardAndRefresh,
@@ -517,7 +525,7 @@ export function useRoutingController({ csrfToken, lifecycle, onUnauthorized, act
     previewDraft,
     cancelPreview,
     submitPreview,
-  }), [activate, addRule, cancelPreview, cancelRefresh, discardAndRefresh, dirty, draft, lifecycleBlocked, lifecycleKnown, loadPolicy, moveRule, outcomeRequiresFreshRead, pending, preview, previewDraft, projection, refreshConfirmation, refreshError, removeRule, requestRefresh, requestState, result, submitPreview, updateDraft, updateRule])
+  }), [activate, addRule, cancelPreview, cancelRefresh, discardAndRefresh, dirty, draft, invalidateLivePreview, lifecycleBlocked, lifecycleKnown, loadPolicy, moveRule, outcomeRequiresFreshRead, pending, preview, previewDraft, projection, refreshConfirmation, refreshError, refreshPeerProjection, removeRule, requestRefresh, requestState, result, submitPreview, updateDraft, updateRule])
 }
 
 export function RoutingLifecycleNotice({ controller, onOpenRouting, active }) {
