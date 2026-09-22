@@ -1919,6 +1919,10 @@ func (s *Server) readDNSObservatory(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireSession(w, r); !ok {
 		return
 	}
+	if r.URL.RawQuery != "" {
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid DNS and Observatory policy request")
+		return
+	}
 	if s.dnsObservatory == nil {
 		writeDNSObservatoryError(w, dnsobservatory.ErrUnavailable)
 		return

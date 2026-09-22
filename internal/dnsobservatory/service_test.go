@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/popiposter/xkeen-control/internal/appliance"
 	"github.com/popiposter/xkeen-control/internal/authority"
@@ -125,6 +126,80 @@ func TestIndependentBrokerPreviewsDoNotMergeAndRoutingApplyPreservesDNS(t *testi
 	routingProjection, err := routingService.Read(context.Background())
 	if err != nil || len(routingProjection.Rules) != 1 || routingProjection.DNS.DerivedDomainCount != 1 {
 		t.Fatalf("routing after DNS apply = %+v, %v", routingProjection, err)
+	}
+}
+
+func TestDNSObservatoryNoopApplyDoesNotWriteOrRestart(t *testing.T) {
+	fixture := newBrokerFixture(t)
+	service := NewService(Config{Appliance: appliance.NewService(appliance.Config{ConfigDir: fixture.configDir}), Settings: fixture.restore})
+	managed, err := appliance.DecompileManagedPolicy(appliance.ProductDefault())
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{
+		fixture.appliancePath,
+		filepath.Join(fixture.configDir, "02_dns.json"),
+		filepath.Join(fixture.configDir, "05_routing.json"),
+		filepath.Join(fixture.configDir, "07_observatory.json"),
+		fixture.nodesPath,
+		fixture.outboundsPath,
+	}
+	before := make(map[string][]byte, len(paths))
+	for _, path := range paths {
+		before[path], err = os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	preview, err := service.Preview(context.Background(), "session-a", managed.DNS, managed.Observatory)
+	if err != nil || !preview.Noop || preview.Diff.RestartRequired {
+		t.Fatalf("no-op preview = %+v, %v", preview, err)
+	}
+	result, err := service.Apply(context.Background(), "session-a", preview.Token)
+	if err != nil || !result.Noop || result.Classification != "no-op" || fixture.activator.restarts != 0 {
+		t.Fatalf("no-op apply = %+v, %v, restarts=%d", result, err, fixture.activator.restarts)
+	}
+	for _, path := range paths {
+		after, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if !bytes.Equal(before[path], after) {
+			t.Fatalf("no-op apply changed %s", filepath.Base(path))
+		}
+	}
+}
+
+func TestDNSObservatoryPreviewIsSessionBoundExpiringAndOneShot(t *testing.T) {
+	fixture := newBrokerFixture(t)
+	now := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	service := NewService(Config{
+		Appliance:  appliance.NewService(appliance.Config{ConfigDir: fixture.configDir}),
+		Settings:   fixture.restore,
+		PreviewTTL: time.Minute,
+		Now:        func() time.Time { return now },
+	})
+	managed, err := appliance.DecompileManagedPolicy(appliance.ProductDefault())
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := service.Preview(context.Background(), "session-a", managed.DNS, managed.Observatory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Apply(context.Background(), "session-b", preview.Token); err != ErrPreviewExpired {
+		t.Fatalf("cross-session apply = %v", err)
+	}
+	if _, err := service.Apply(context.Background(), "session-a", preview.Token); err != ErrPreviewExpired {
+		t.Fatalf("invalidated cross-session token replay = %v", err)
+	}
+	preview, err = service.Preview(context.Background(), "session-a", managed.DNS, managed.Observatory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	if _, err := service.Apply(context.Background(), "session-a", preview.Token); err != ErrPreviewExpired {
+		t.Fatalf("expired apply = %v", err)
 	}
 }
 

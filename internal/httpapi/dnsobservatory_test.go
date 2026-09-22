@@ -94,9 +94,15 @@ func TestDNSObservatoryHTTPIsTypedAuthenticatedCSRFBoundAndSessionInvalidated(t 
 		t.Fatalf("DNS/Observatory GET = %d, %v", response.StatusCode, err)
 	}
 	body := readBody(response)
-	if strings.Contains(body, "https://") || strings.Contains(body, "domain:") || strings.Contains(body, "dns-query") {
+	if strings.Contains(body, "https://") || strings.Contains(body, "domain:") || strings.Contains(body, "dns-query") || strings.Contains(body, "subjectSelector") {
 		t.Fatalf("DNS/Observatory projection contains raw endpoint/domain data: %s", body)
 	}
+
+	response, err = client.Get(server.URL + "/api/v1/appliance/dns-observatory?raw=true")
+	if err != nil || response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("DNS/Observatory GET query = %d, %v", response.StatusCode, err)
+	}
+	response.Body.Close()
 
 	validBody := map[string]any{
 		"dns": map[string]any{
@@ -117,6 +123,36 @@ func TestDNSObservatoryHTTPIsTypedAuthenticatedCSRFBoundAndSessionInvalidated(t 
 	}
 	response.Body.Close()
 
+	response = postJSON(t, client, server.URL+"/api/v1/appliance/dns-observatory/preview?raw=true", validBody, login.CSRFToken)
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("DNS/Observatory preview query = %d", response.StatusCode)
+	}
+	response.Body.Close()
+
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/appliance/dns-observatory/preview", strings.NewReader(`{"dns":{},"observatory":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "text/plain")
+	request.Header.Set(auth.CSRFHeader, login.CSRFToken)
+	response, err = client.Do(request)
+	if err != nil || response.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("DNS/Observatory invalid content type = %d, %v", response.StatusCode, err)
+	}
+	response.Body.Close()
+
+	request, err = http.NewRequest(http.MethodPost, server.URL+"/api/v1/appliance/dns-observatory/preview", strings.NewReader(strings.Repeat(" ", maxDNSObservatoryBody+1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(auth.CSRFHeader, login.CSRFToken)
+	response, err = client.Do(request)
+	if err != nil || response.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("DNS/Observatory oversized body = %d, %v", response.StatusCode, err)
+	}
+	response.Body.Close()
+
 	response = postJSON(t, client, server.URL+"/api/v1/appliance/dns-observatory/preview", validBody, login.CSRFToken)
 	if response.StatusCode != http.StatusOK || stub.previewBinding != login.CSRFToken || stub.previewDNS.ProxyResolverIDs[0] != "resolver-a" || stub.previewObservatory.ProbeIntervalMinutes != 5 {
 		t.Fatalf("DNS/Observatory preview = %d binding=%q dns=%+v observatory=%+v body=%s", response.StatusCode, stub.previewBinding, stub.previewDNS, stub.previewObservatory, readBody(response))
@@ -134,7 +170,7 @@ func TestDNSObservatoryHTTPIsTypedAuthenticatedCSRFBoundAndSessionInvalidated(t 
 	}
 	response.Body.Close()
 
-	request, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/appliance/dns-observatory/preview", strings.NewReader(`{"dns":{},"observatory":{}} {}`))
+	request, err = http.NewRequest(http.MethodPost, server.URL+"/api/v1/appliance/dns-observatory/preview", strings.NewReader(`{"dns":{},"observatory":{}} {}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,6 +179,12 @@ func TestDNSObservatoryHTTPIsTypedAuthenticatedCSRFBoundAndSessionInvalidated(t 
 	response, err = client.Do(request)
 	if err != nil || response.StatusCode != http.StatusBadRequest {
 		t.Fatalf("DNS/Observatory trailing JSON = %d, %v", response.StatusCode, err)
+	}
+	response.Body.Close()
+
+	response = postJSON(t, client, server.URL+"/api/v1/appliance/dns-observatory/cancel", map[string]string{"previewToken": "synthetic-dns-observatory-token"}, login.CSRFToken)
+	if response.StatusCode != http.StatusOK || stub.cancelBinding != login.CSRFToken || stub.cancelToken != "synthetic-dns-observatory-token" {
+		t.Fatalf("DNS/Observatory cancel = %d binding=%q token=%q body=%s", response.StatusCode, stub.cancelBinding, stub.cancelToken, readBody(response))
 	}
 	response.Body.Close()
 

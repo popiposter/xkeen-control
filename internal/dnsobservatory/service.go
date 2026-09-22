@@ -62,10 +62,9 @@ type DNSProjection struct {
 }
 
 type ObservatoryProjection struct {
-	ProbeIntervalMinutes int    `json:"probeIntervalMinutes"`
-	MinIntervalMinutes   int    `json:"minIntervalMinutes"`
-	MaxIntervalMinutes   int    `json:"maxIntervalMinutes"`
-	SubjectSelector      string `json:"subjectSelector"`
+	ProbeIntervalMinutes int `json:"probeIntervalMinutes"`
+	MinIntervalMinutes   int `json:"minIntervalMinutes"`
+	MaxIntervalMinutes   int `json:"maxIntervalMinutes"`
 }
 
 // Projection is the safe GET result. It contains no raw Xray policy, resolver
@@ -382,20 +381,12 @@ func makeProjection(value appliance.Appliance, managed appliance.ManagedPolicy, 
 			ProbeIntervalMinutes: managed.Observatory.ProbeIntervalMinutes,
 			MinIntervalMinutes:   appliance.MinObservatoryIntervalMinutes,
 			MaxIntervalMinutes:   appliance.MaxObservatoryIntervalMinutes,
-			SubjectSelector:      firstOrEmpty(baseline.Observatory.SubjectSelector),
 		},
 	}
 }
 
 func hasSystemFallback(value appliance.Appliance) bool {
 	return len(value.DNS.Servers) > 0 && value.DNS.Servers[len(value.DNS.Servers)-1].Address == "localhost"
-}
-
-func firstOrEmpty(values []string) string {
-	if len(values) == 0 {
-		return ""
-	}
-	return values[0]
 }
 
 func cloneDNSSettings(value appliance.DNSSettings) appliance.DNSSettings {
