@@ -326,6 +326,40 @@ func TestXKeenNeverExecutesFixedScriptsOrGuessesVersion(t *testing.T) {
 	}
 }
 
+func TestXKeenManagedMarkerDriftFailsClosedWithoutExecutingOpkg(t *testing.T) {
+	fixture := newInventoryFixture(t)
+	fixture.createXkeenLayout(t)
+	fixture.config.XkeenGenerationMarker = filepath.Join(fixture.root, "opt", "etc", "xkeen-control", "state", "xkeen-generation.json")
+	opkgMarker := filepath.Join(fixture.root, "opkg-executed")
+	writeFixtureExecutable(t, fixture.config.EntwareBinary, "#!/bin/sh\nprintf marker > "+opkgMarker+"\n")
+
+	_, markerContents, err := markerForGeneration(xkeenCatalogGenerationSHA)
+	if err != nil {
+		t.Fatalf("build synthetic managed marker: %v", err)
+	}
+	writeFixtureFile(t, fixture.config.XkeenGenerationMarker, markerContents, 0o600)
+	if err := os.Chmod(filepath.Dir(fixture.config.XkeenGenerationMarker), 0o700); err != nil {
+		t.Fatalf("protect synthetic marker directory: %v", err)
+	}
+
+	component := fixture.service().Snapshot(context.Background()).XKeen
+	if component.State != StatePresent || !component.Present || component.ReasonCode != "managed-drift" || component.Capability != CapabilityUnsupported || !component.VersionUnknown || component.Version != "" || component.SourceCommit != "" {
+		t.Fatalf("managed drift projection = %+v", component)
+	}
+	if _, err := os.Stat(opkgMarker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("opkg tripwire exists after drift observation or could not be checked: %v", err)
+	}
+
+	writeFixtureFile(t, fixture.config.XkeenGenerationMarker, []byte("{\"schemaVersion\":1}\n"), 0o600)
+	component = fixture.service().Snapshot(context.Background()).XKeen
+	if component.State != StatePresent || !component.Present || component.ReasonCode != "managed-marker-invalid" || component.Capability != CapabilityUnsupported || !component.VersionUnknown || component.Version != "" || component.SourceCommit != "" {
+		t.Fatalf("invalid managed marker projection = %+v", component)
+	}
+	if _, err := os.Stat(opkgMarker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("opkg tripwire exists after invalid-marker observation or could not be checked: %v", err)
+	}
+}
+
 func TestXKeenRecognizesLegacyS24xrayWithoutTreatingItAsSupportedDevLayout(t *testing.T) {
 	fixture := newInventoryFixture(t)
 	fixture.createXkeenLayout(t)

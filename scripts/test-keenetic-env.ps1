@@ -1,0 +1,213 @@
+[CmdletBinding()]
+param()
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$loader = Join-Path $PSScriptRoot 'keenetic-env.ps1'
+$temporary = Join-Path ([IO.Path]::GetTempPath()) ("xkeen-keenetic-env-{0}" -f [Guid]::NewGuid().ToString('N'))
+$names = @('KEENETIC_SSH_HOST', 'KEENETIC_SSH_PORT', 'KEENETIC_SSH_USER', 'KEENETIC_SSH_TARGET', 'KEENETIC_SSH_PASSWORD', 'KEENETIC_SSH_IDENTITY_FILE')
+$saved = @{}
+foreach ($name in $names) {
+    $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
+
+function Write-Fixture {
+    param([string]$Path, [string]$Contents)
+    $directory = Split-Path -Parent $Path
+    [void][IO.Directory]::CreateDirectory($directory)
+    [IO.File]::WriteAllText($Path, $Contents, [Text.UTF8Encoding]::new($false))
+}
+
+function Assert-Rejected {
+    param([string]$Name, [string]$Contents)
+    $path = Join-Path $temporary ("reject-{0}.env" -f $Name)
+    Write-Fixture -Path $path -Contents $Contents
+    $accepted = $true
+    $message = ''
+    try {
+        . $loader -EnvFile $path
+    } catch {
+        $accepted = $false
+        $message = $_.Exception.Message
+    }
+    if ($accepted) {
+        throw "rejection fixture was accepted: $Name"
+    }
+    if ($message.Contains('synthetic-secret-value', [StringComparison]::Ordinal)) {
+        throw "rejection exposed the synthetic secret: $Name"
+    }
+}
+
+function Assert-RejectedPath {
+    param([string]$Name, [string]$Path)
+    $accepted = $true
+    try {
+        . $loader -EnvFile $Path
+    } catch {
+        $accepted = $false
+    }
+    if ($accepted) {
+        throw "path rejection fixture was accepted: $Name"
+    }
+}
+
+function Assert-AcceptedTarget {
+    param([string]$Name, [string]$HostValue, [string]$UserValue)
+    $path = Join-Path $temporary ("accept-{0}.env" -f $Name)
+    Write-Fixture -Path $path -Contents "KEENETIC_SSH_HOST=$HostValue`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=$UserValue`nKEENETIC_SSH_PASSWORD=synthetic-secret-value`n"
+    $output = @(. $loader -EnvFile $path 2>&1)
+    if ($output.Count -ne 0 -or $env:KEENETIC_SSH_TARGET -ne "$UserValue@$HostValue") {
+        throw "accepted grammar fixture did not load: $Name"
+    }
+}
+
+try {
+    [void][IO.Directory]::CreateDirectory($temporary)
+    $identity = Join-Path $temporary 'keys\operator-key'
+    Write-Fixture -Path $identity -Contents "synthetic-private-key-placeholder`n"
+
+    $keyOnly = Join-Path $temporary 'key-only.env'
+    Write-Fixture -Path $keyOnly -Contents @"
+KEENETIC_SSH_HOST=router.example
+KEENETIC_SSH_PORT=222
+KEENETIC_SSH_USER=root
+KEENETIC_SSH_IDENTITY_FILE=keys/operator-key
+"@
+    $env:KEENETIC_SSH_PASSWORD = 'stale-password'
+    $output = @(. $loader -EnvFile $keyOnly 2>&1)
+    if ($output.Count -ne 0 -or $env:KEENETIC_SSH_TARGET -ne 'root@router.example' -or $env:KEENETIC_SSH_IDENTITY_FILE -ne $identity -or (Test-Path Env:KEENETIC_SSH_PASSWORD)) {
+        throw 'key-only fixture did not load or clear stale password state'
+    }
+
+    $passwordOnly = Join-Path $temporary 'password-only.env'
+    Write-Fixture -Path $passwordOnly -Contents @"
+KEENETIC_SSH_HOST=router.example
+KEENETIC_SSH_PORT=22
+KEENETIC_SSH_USER=operator
+KEENETIC_SSH_PASSWORD=synthetic-secret-value
+"@
+    $output = @(. $loader -EnvFile $passwordOnly 2>&1)
+    if ($output.Count -ne 0 -or $env:KEENETIC_SSH_PASSWORD -ne 'synthetic-secret-value' -or (Test-Path Env:KEENETIC_SSH_IDENTITY_FILE)) {
+        throw 'password-only fixture did not load or clear stale identity state'
+    }
+
+    $both = Join-Path $temporary 'both.env'
+    Write-Fixture -Path $both -Contents @"
+KEENETIC_SSH_HOST=router.example
+KEENETIC_SSH_PORT=2200
+KEENETIC_SSH_USER=operator
+KEENETIC_SSH_PASSWORD="synthetic-secret-value"
+KEENETIC_SSH_IDENTITY_FILE="keys/operator-key"
+"@
+    $output = @(. $loader -EnvFile $both 2>&1)
+    if ($output.Count -ne 0 -or $env:KEENETIC_SSH_PASSWORD -ne 'synthetic-secret-value' -or $env:KEENETIC_SSH_IDENTITY_FILE -ne $identity) {
+        throw 'combined authentication fixture did not load'
+    }
+
+    $maximumHost = ('a' * 63) + '.' + ('b' * 63) + '.' + ('c' * 63) + '.' + ('d' * 61)
+    Assert-AcceptedTarget -Name 'punctuation' -HostValue 'router-1.lab.example' -UserValue 'operator_1.test-user'
+    Assert-AcceptedTarget -Name 'bounds' -HostValue $maximumHost -UserValue ('u' * 32)
+
+    $base = "KEENETIC_SSH_HOST=router.example`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=root`nKEENETIC_SSH_PASSWORD=synthetic-secret-value`n"
+    Assert-Rejected -Name 'unknown' -Contents ($base + "UNSUPPORTED=value`n")
+    Assert-Rejected -Name 'duplicate' -Contents ($base + "KEENETIC_SSH_HOST=other.example`n")
+    Assert-Rejected -Name 'missing-user' -Contents "KEENETIC_SSH_HOST=router.example`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_PASSWORD=synthetic-secret-value`n"
+    Assert-Rejected -Name 'invalid-port' -Contents ($base.Replace('KEENETIC_SSH_PORT=22', 'KEENETIC_SSH_PORT=70000'))
+    Assert-Rejected -Name 'no-auth' -Contents "KEENETIC_SSH_HOST=router.example`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=root`n"
+    foreach ($case in @(
+        @{ Name = 'host-leading-dash'; Host = '-router.example'; User = 'root' },
+        @{ Name = 'host-trailing-dash'; Host = 'router-.example'; User = 'root' },
+        @{ Name = 'host-empty-label'; Host = 'router..example'; User = 'root' },
+        @{ Name = 'host-underscore'; Host = 'router_name.example'; User = 'root' },
+        @{ Name = 'host-at'; Host = 'router@example'; User = 'root' },
+        @{ Name = 'host-label-long'; Host = (('a' * 64) + '.example'); User = 'root' },
+        @{ Name = 'host-too-long'; Host = ($maximumHost + 'e'); User = 'root' },
+        @{ Name = 'user-leading-dash'; Host = 'router.example'; User = '-root' },
+        @{ Name = 'user-at'; Host = 'router.example'; User = 'root@router' },
+        @{ Name = 'user-space'; Host = 'router.example'; User = 'root user' },
+        @{ Name = 'user-too-long'; Host = 'router.example'; User = ('u' * 33) }
+    )) {
+        Assert-Rejected -Name $case.Name -Contents "KEENETIC_SSH_HOST=$($case.Host)`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=$($case.User)`nKEENETIC_SSH_PASSWORD=synthetic-secret-value`n"
+    }
+    Assert-Rejected -Name 'oversize' -Contents ('A' * 4097)
+    Assert-RejectedPath -Name 'checkout-local' -Path (Join-Path $root '.env.keenetic.example')
+
+    # The placeholder is a public, small regular file: the loader must reject
+    # its checkout location without inspecting its contents as a private key.
+    $checkoutIdentity = Join-Path $root '.env.keenetic.example'
+    Assert-Rejected -Name 'checkout-identity-absolute' -Contents "KEENETIC_SSH_HOST=router.example`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=root`nKEENETIC_SSH_IDENTITY_FILE=$checkoutIdentity`n"
+    $checkoutIdentityViaParent = Join-Path $root 'scripts\..\.env.keenetic.example'
+    Assert-Rejected -Name 'checkout-identity-dotdot' -Contents "KEENETIC_SSH_HOST=router.example`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=root`nKEENETIC_SSH_IDENTITY_FILE=$checkoutIdentityViaParent`n"
+    if ($IsWindows -or $env:OS -eq 'Windows_NT') {
+        foreach ($namespace in @(@{ Name = 'extended'; Prefix = '\\?\' }, @{ Name = 'device'; Prefix = '\\.\' })) {
+            Assert-Rejected -Name ("checkout-identity-namespace-{0}" -f $namespace.Name) -Contents "KEENETIC_SSH_HOST=router.example`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=root`nKEENETIC_SSH_IDENTITY_FILE=$($namespace.Prefix)$checkoutIdentity`n"
+        }
+    }
+
+    $directoryInput = Join-Path $temporary 'directory-input'
+    [void][IO.Directory]::CreateDirectory($directoryInput)
+    $directoryAccepted = $true
+    try { . $loader -EnvFile $directoryInput } catch { $directoryAccepted = $false }
+    if ($directoryAccepted) { throw 'directory input was accepted' }
+
+    $symlink = Join-Path $temporary 'linked.env'
+    $linkCreated = $false
+    try {
+        [void](New-Item -ItemType SymbolicLink -Path $symlink -Target $passwordOnly -ErrorAction Stop)
+        $linkCreated = $true
+    } catch [System.UnauthorizedAccessException] {
+        # Windows without Developer Mode cannot create this synthetic link.
+    } catch [System.IO.IOException] {
+        # Some Windows filesystems do not expose symbolic-link creation.
+    }
+    if ($linkCreated) {
+        $linkAccepted = $true
+        try { . $loader -EnvFile $symlink } catch { $linkAccepted = $false }
+        if ($linkAccepted) { throw 'symlink input was accepted' }
+    }
+
+    $checkoutAlias = Join-Path $temporary 'checkout-alias'
+    $aliasCreated = $false
+    try {
+        [void](New-Item -ItemType SymbolicLink -Path $checkoutAlias -Target $root -ErrorAction Stop)
+        $aliasCreated = $true
+    } catch [System.UnauthorizedAccessException] {
+        # Directory symlinks also require Windows Developer Mode or privilege.
+    } catch [System.IO.IOException] {
+        # Filesystem may not support creating this synthetic alias.
+    }
+    if ($aliasCreated) {
+        $checkoutIdentityViaAlias = Join-Path $checkoutAlias '.env.keenetic.example'
+        Assert-Rejected -Name 'checkout-identity-parent-alias' -Contents "KEENETIC_SSH_HOST=router.example`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=root`nKEENETIC_SSH_IDENTITY_FILE=$checkoutIdentityViaAlias`n"
+    }
+
+    $externalKeyAlias = Join-Path $temporary 'external-key-alias'
+    $externalAliasCreated = $false
+    try {
+        [void](New-Item -ItemType SymbolicLink -Path $externalKeyAlias -Target (Join-Path $temporary 'keys') -ErrorAction Stop)
+        $externalAliasCreated = $true
+    } catch [System.UnauthorizedAccessException] {
+        # Directory symlink creation may be unavailable on this Windows host.
+    } catch [System.IO.IOException] {
+        # Filesystem may not support creating this synthetic alias.
+    }
+    if ($externalAliasCreated) {
+        $externalAliasEnv = Join-Path $temporary 'external-alias.env'
+        Write-Fixture -Path $externalAliasEnv -Contents "KEENETIC_SSH_HOST=router.example`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=root`nKEENETIC_SSH_IDENTITY_FILE=external-key-alias/operator-key`n"
+        $output = @(. $loader -EnvFile $externalAliasEnv 2>&1)
+        if ($output.Count -ne 0 -or $env:KEENETIC_SSH_IDENTITY_FILE -ne $identity) {
+            throw 'external identity directory alias did not remain supported'
+        }
+    }
+
+    Write-Output 'keenetic env PowerShell fixtures passed'
+} finally {
+    foreach ($name in $names) {
+        [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process')
+    }
+    if (Test-Path -LiteralPath $temporary) {
+        Remove-Item -LiteralPath $temporary -Recurse -Force
+    }
+}

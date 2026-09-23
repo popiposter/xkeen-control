@@ -287,6 +287,7 @@ The HTTP regressions cover authenticated same-origin/CSRF routes, strict query/m
 | `test-components.sh` | Focused component packages/race plus prohibited-surface assertions | Aggregate uses `--fixtures-only` |
 | `test-release.sh` | Focused release packages plus bootstrap/updater/legacy integration | Aggregate uses `--fixtures-only` |
 | `test-appliance.sh` | Binary-level appliance/deploy candidate integration | Retained when helpers/build paths change |
+| `test-keenetic-env.ps1`, `test-keenetic-env.sh` | Synthetic operator-local environment parser and secret-output boundaries | Helper lane runs both host and container fixtures |
 | `test-benchmark-policy.sh`, `test-xkeen-foreground.sh` | Legacy-writer retirement and foreground runtime shell contracts | Retained when helpers/build paths change |
 | Playwright per-area scripts | Focused behavioral UI iteration | `test:ui` once in full mode |
 | `npm-audit.sh` | Bounded high-severity dependency audit with transient endpoint retries | Full only |
@@ -300,6 +301,30 @@ A fresh clone/checkout of PR HEAD must be sufficient for documented qualificatio
 ## Router SSH boundary
 
 Router qualification is host-side and issue-authorized. Never mount router credentials/private keys, production registry files or subscription credentials into the development container or release workflow.
+
+The operator-local `.env.keenetic` loaders have independent synthetic fixtures:
+
+```powershell
+pwsh -NoProfile -File scripts/test-keenetic-env.ps1
+```
+
+```sh
+bash scripts/test-keenetic-env.sh
+```
+
+They exercise the closed bounded host/port/user/authentication grammar,
+external-path enforcement, metadata-only private-identity validation,
+regular-file handling, stale-variable cleanup and secret-free output. The
+fixtures create only temporary placeholder values and never open an SSH
+connection. Both run from the helper lane of `dev-check`.
+
+The real credential environment and private identity must live in an
+operator-owned host path outside every repository checkout. PowerShell receives
+that absolute path through `-EnvFile`; Bash receives it through the host-only
+`KEENETIC_ENV_FILE` selector. Repo-local `.env.keenetic*` ignores are only
+defense-in-depth. Because real credentials are external, ordinary Docker build
+contexts and the `.:/workspace` qualification bind mount cannot read, send or
+mount them.
 
 Build/test first, then copy/use only the exact release/artifact/scripts required for the bounded smoke. Snapshot affected state, use repository/typed transactions, sanitize evidence and remove temporary uploads/tunnels afterward.
 
