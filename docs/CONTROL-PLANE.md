@@ -86,6 +86,10 @@ GET  /api/v1/session
 GET  /api/v1/status
 GET  /api/v1/nodes
 GET  /api/v1/performance
+GET  /api/v1/performance/policy
+POST /api/v1/performance/policy/preview
+POST /api/v1/performance/policy/apply
+POST /api/v1/performance/policy/cancel
 GET  /api/v1/config-summary
 GET  /api/v1/components
 POST /api/v1/components/check
@@ -211,14 +215,33 @@ compatibility route and readable snapshot, but its primary UI trigger and
 daily/next-run presentation are removed; historical throughput is not shown as
 adaptive quality.
 
-The existing `GET /api/v1/performance` response remains the only active
-performance projection path. While adaptive work is running, the UI polls that
-path about once per second only on mounted Overview or Nodes views; manual
-diagnostic polling remains Nodes-only, and terminal/navigation transitions stop
-the extra poll. No new endpoint, persistent state, browser storage, scheduler,
-traffic budget, selection algorithm, Coordinator/ProbeRouter ownership or
-mutation API is introduced. Slice F is source-qualified only and is not deployed or
-production-qualified.
+The existing `GET /api/v1/performance` response remains the only high-frequency
+performance telemetry projection path. While adaptive work is running, the UI
+polls that path about once per second only on mounted Overview or Nodes views;
+manual diagnostic polling remains Nodes-only, and terminal/navigation
+transitions stop the extra poll. Slice F itself added no new endpoint,
+persistent state, browser storage, scheduler, traffic budget, selection
+algorithm, Coordinator/ProbeRouter ownership or mutation API.
+
+Issue #91 D / PR #92 later adds a separate **lazy configuration** projection at
+`GET /api/v1/performance/policy` plus session-bound Preview/Apply/Cancel. It
+persists only six conservative knobs in
+`/opt/etc/xkeen-control/state/performance-policy.json`: active probe interval
+60–300 seconds, failure threshold 2–5, adaptive cadence 180–1440 minutes,
+challenger limit 1–5 plus the current target, minimum dwell 30–1440 minutes,
+and quality hysteresis 10–50%. The existing transfer sizes, generation byte/time
+ceilings, transport identity, RTT guard and scoring remain source-owned.
+
+The Performance owner records the exact authority generation that initialized
+or successfully converged the active C.1 RAM snapshot. Post-start out-of-band
+file replacement/removal/invalidation is projected as closed
+`drift-detected`; GET never silently adopts it, and Preview/Apply remain
+blocked until authority/runtime coherence is restored deliberately. Policy
+Apply neither runs a benchmark, writes selection state nor restarts the runtime.
+The Performance workspace loads this settings projection only on entry/explicit
+Refresh and preserves the conservative one-shot/unknown-outcome behavior used
+by the other policy editors. PR #92 is source-qualified only and is not deployed
+or production-qualified.
 
 Current panel lifecycle endpoints are:
 
@@ -260,11 +283,15 @@ Node activation does not regenerate routing, DNS or Observatory policy.
 
 C.1 makes the stable runtime override the normal managed selection policy; native `leastPing` remains emergency fallback.
 
-Source-main E separates 60-second active liveness/recovery, existing
-Observatory RTT evidence and the single adaptive quality generation. Healthy
-automatic switching is owned only by that adaptive generation; explicit
-legacy throughput remains a compatibility diagnostic and no longer selects a
-healthy target. Native Xray `leastPing` remains the emergency fallback.
+Source-main E separates active liveness/recovery, existing Observatory RTT
+evidence and the single adaptive quality generation. PR #92 keeps the current
+60-second / 2-failure liveness values and three-hour adaptive cadence as exact
+defaults, but allows only **more conservative** bounded policy: liveness may be
+slower or require more failures, adaptive checks may be less frequent/use fewer
+challengers, and dwell/hysteresis may be increased. Healthy automatic switching
+is still owned only by that adaptive generation; explicit legacy throughput
+remains a compatibility diagnostic and no longer selects a healthy target.
+Native Xray `leastPing` remains the emergency fallback.
 
 Temporary targeted probes use typed append-only RoutingService rules on the dedicated loopback `probe` inbound. Probe cleanup is gating: cleanup failure prevents a quality-driven switch and further unsafe probe reuse.
 
@@ -292,7 +319,7 @@ Panel install/update does not install or repair XKeen/Xray and does not rewrite 
 
 Normal polling, update checks and runtime telemetry cause no persistent writes unless the operator deliberately changes policy or applies a release/state mutation.
 
-Persistent writes are purpose-specific and bounded, including auth/listener changes, explicit typed `appliance.json` adoption/restore changes, explicit `nodes.json` mutations plus generated active outbounds, the authenticated component policy at `/opt/etc/xkeen-control/state/component-policy.json`, real stable-selection changes, one compact completed legacy benchmark snapshot, compact panel release/update markers and bounded rollback generations. The Issue #81 Setup source boundary additionally commits the empty authority pair, complete managed config/geodata, exact candidate generations, fixed `S05xkeen` and one bounded shared journal only during explicit Apply; its plan/token remains in RAM. The Issue #83 custom-routing preview remains RAM-only and dispatches Apply through that same D.1 settings journal/recovery owner; it never writes `nodes.json` or independently owns generated outbounds. Adaptive generations, manual progress/results and component scheduler timestamps, status, notification dedupe and failures remain in RAM.
+Persistent writes are purpose-specific and bounded, including auth/listener changes, explicit typed `appliance.json` adoption/restore changes, explicit `nodes.json` mutations plus generated active outbounds, the authenticated component policy at `/opt/etc/xkeen-control/state/component-policy.json`, explicit bounded Performance policy changes at `/opt/etc/xkeen-control/state/performance-policy.json`, real stable-selection changes, one compact completed legacy benchmark snapshot, compact panel release/update markers and bounded rollback generations. The Issue #81 Setup source boundary additionally commits the empty authority pair, complete managed config/geodata, exact candidate generations, fixed `S05xkeen` and one bounded shared journal only during explicit Apply; its plan/token remains in RAM. The Issue #83 custom-routing preview remains RAM-only and dispatches Apply through that same D.1 settings journal/recovery owner; it never writes `nodes.json` or independently owns generated outbounds. Adaptive generations, manual progress/results and component scheduler timestamps, status, notification dedupe and failures remain in RAM.
 
 No SQLite/Redis/Prometheus/Grafana/growing revision history belongs on the router.
 
@@ -516,14 +543,21 @@ The source F1 broker, F2 operator UI and F3 bounded policy/check-only scheduler 
 
 ### #5 — visual configuration
 
-Supported routing, DNS, XKeen/Xray, performance and panel settings will be edited as typed domains and rendered into complete runtime candidates with preview/validation/apply/rollback. No raw JSON editor.
+Routing and DNS/Observatory typed broker/UI are merged source-only, and Issue
+#91 D / PR #92 adds the bounded Performance authority/UI without a second
+selection writer or arbitrary performance URL. The active #91 E boundary is
+System / Panel: typed listener management, password/session UX and truthful
+signed panel release controls over their existing purpose-specific owners.
+Issue #91 F then performs the final cross-domain integration/drift UX and closes
+#5. No raw JSON editor.
 
 ## Authorities
 
 - Current system architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - Sequencing: [`ROADMAP.md`](ROADMAP.md)
 - Completed D.1 implementation/qualification contract: [Issue #3](https://github.com/popiposter/xkeen-control/issues/3)
-- Current product slice: [Issue #4](https://github.com/popiposter/xkeen-control/issues/4)
+- Active source completion contract: [Issue #91](https://github.com/popiposter/xkeen-control/issues/91)
+- Live D.2 operational ledger: [Issue #4](https://github.com/popiposter/xkeen-control/issues/4)
 - Build/test: [`DEVELOPMENT.md`](DEVELOPMENT.md)
 - Production operations: [`OPERATIONS.md`](OPERATIONS.md)
 - Security: [`../SECURITY.md`](../SECURITY.md)
