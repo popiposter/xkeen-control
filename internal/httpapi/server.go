@@ -2369,6 +2369,8 @@ func writePerformancePolicyError(w http.ResponseWriter, err error) {
 		writeCodedError(w, http.StatusConflict, "busy", "performance policy is busy")
 	case errors.Is(err, performancepolicy.ErrSave):
 		writeCodedError(w, http.StatusInternalServerError, "save-failed", "performance policy could not be saved")
+	case errors.Is(err, performancepolicy.ErrDriftDetected):
+		writeCodedError(w, http.StatusConflict, "drift-detected", "performance policy authority drift detected")
 	case errors.Is(err, performancepolicy.ErrUnavailable):
 		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "performance policy unavailable")
 	default:

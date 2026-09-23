@@ -36,6 +36,7 @@ var (
 	ErrPreviewStale   = errors.New("performance policy preview is stale")
 	ErrBusy           = errors.New("performance policy is busy")
 	ErrSave           = errors.New("performance policy could not be saved")
+	ErrDriftDetected  = errors.New("performance policy authority drift detected")
 )
 
 type Source string
@@ -43,6 +44,13 @@ type Source string
 const (
 	SourceDefault   Source = "default"
 	SourcePersisted Source = "persisted"
+)
+
+type AuthorityState string
+
+const (
+	AuthorityEditable      AuthorityState = "editable"
+	AuthorityDriftDetected AuthorityState = "drift-detected"
 )
 
 type HardCeilings struct {
@@ -58,11 +66,14 @@ type HardCeilings struct {
 }
 
 type Projection struct {
-	Policy       c1.PerformancePolicy         `json:"policy"`
-	Source       Source                       `json:"source"`
-	ReasonCode   string                       `json:"reasonCode,omitempty"`
-	HardCeilings HardCeilings                 `json:"hardCeilings"`
-	Adaptive     c1.AdaptivePerformanceStatus `json:"adaptive"`
+	Policy              c1.PerformancePolicy         `json:"policy"`
+	Source              Source                       `json:"source"`
+	ReasonCode          string                       `json:"reasonCode,omitempty"`
+	AuthorityState      AuthorityState               `json:"authorityState"`
+	PersistedSource     Source                       `json:"persistedSource"`
+	PersistedReasonCode string                       `json:"persistedReasonCode,omitempty"`
+	HardCeilings        HardCeilings                 `json:"hardCeilings"`
+	Adaptive            c1.AdaptivePerformanceStatus `json:"adaptive"`
 }
 
 type FieldChange struct {
@@ -107,9 +118,14 @@ type Config struct {
 }
 
 type Service struct {
-	config   Config
-	mu       sync.Mutex
-	previews map[string]previewEntry
+	config      Config
+	mu          sync.Mutex
+	previews    map[string]previewEntry
+	authorityMu sync.Mutex
+	active      fileState
+	initialized bool
+	unproven    bool
+	writePolicy func(string, c1.PerformancePolicy) (writeOutcome, error)
 }
 
 type previewEntry struct {
@@ -130,6 +146,10 @@ type fileState struct {
 	fingerprint string
 }
 
+type writeOutcome struct {
+	replaced bool
+}
+
 func NewService(config Config) *Service {
 	if config.Path == "" {
 		config.Path = DefaultPath
@@ -146,7 +166,7 @@ func NewService(config Config) *Service {
 	if config.Random == nil {
 		config.Random = rand.Reader
 	}
-	return &Service{config: config, previews: make(map[string]previewEntry)}
+	return &Service{config: config, previews: make(map[string]previewEntry), writePolicy: writePolicyAtomic}
 }
 
 // InitializeRuntime installs the fail-closed startup snapshot before the C.1
@@ -159,6 +179,11 @@ func (s *Service) InitializeRuntime() error {
 	if err := s.config.Runtime.InitializePerformancePolicy(state.policy, s.config.Now().UTC()); err != nil {
 		return ErrUnavailable
 	}
+	s.authorityMu.Lock()
+	s.active = state
+	s.initialized = true
+	s.unproven = false
+	s.authorityMu.Unlock()
 	return nil
 }
 
@@ -166,20 +191,46 @@ func (s *Service) Read(context.Context) (Projection, error) {
 	if s == nil {
 		return Projection{}, ErrUnavailable
 	}
-	state := readPolicy(s.config.Path)
+	s.authorityMu.Lock()
+	if !s.initialized {
+		s.authorityMu.Unlock()
+		return Projection{}, ErrUnavailable
+	}
+	active := s.active
+	current := readPolicy(s.config.Path)
+	authorityState := AuthorityEditable
+	if s.unproven || current.fingerprint != active.fingerprint {
+		authorityState = AuthorityDriftDetected
+	}
+	s.authorityMu.Unlock()
 	adaptive := c1.DefaultAdaptivePerformanceStatus()
 	if s.config.Runtime != nil {
 		adaptive = s.config.Runtime.AdaptiveSnapshot()
 	}
-	return Projection{Policy: state.policy, Source: state.source, ReasonCode: state.reasonCode, HardCeilings: hardCeilings(), Adaptive: adaptive}, nil
+	return Projection{
+		Policy: active.policy, Source: active.source, ReasonCode: active.reasonCode,
+		AuthorityState: authorityState, PersistedSource: current.source, PersistedReasonCode: current.reasonCode,
+		HardCeilings: hardCeilings(), Adaptive: adaptive,
+	}, nil
 }
 
 func (s *Service) Preview(_ context.Context, binding string, candidate c1.PerformancePolicy) (Preview, error) {
 	if s == nil || binding == "" || c1.ValidatePerformancePolicy(candidate) != nil {
 		return Preview{}, ErrInvalidRequest
 	}
+	s.authorityMu.Lock()
+	if !s.initialized {
+		s.authorityMu.Unlock()
+		return Preview{}, ErrUnavailable
+	}
+	active := s.active
 	current := readPolicy(s.config.Path)
-	changes := semanticChanges(current.policy, candidate)
+	if s.unproven || current.fingerprint != active.fingerprint {
+		s.authorityMu.Unlock()
+		return Preview{}, ErrDriftDetected
+	}
+	s.authorityMu.Unlock()
+	changes := semanticChanges(active.policy, candidate)
 	// An invalid authority may always be explicitly replaced, including with
 	// the exact fail-closed defaults. An absent/default authority is a no-op.
 	noop := current.valid && len(changes) == 0
@@ -202,7 +253,7 @@ func (s *Service) Preview(_ context.Context, binding string, candidate c1.Perfor
 	}
 	s.previews[token] = entry
 	s.mu.Unlock()
-	return Preview{Token: token, ExpiresAt: expires, Before: current.policy, After: candidate, Changes: changes, Noop: noop, RestartRequired: false, NextRunTimeChanges: !noop}, nil
+	return Preview{Token: token, ExpiresAt: expires, Before: active.policy, After: candidate, Changes: changes, Noop: noop, RestartRequired: false, NextRunTimeChanges: !noop}, nil
 }
 
 func (s *Service) Apply(ctx context.Context, binding, token string) (ApplyResult, error) {
@@ -213,10 +264,20 @@ func (s *Service) Apply(ctx context.Context, binding, token string) (ApplyResult
 	if !ok {
 		return ApplyResult{}, ErrPreviewExpired
 	}
-	if readPolicy(s.config.Path).fingerprint != entry.Fingerprint {
+	s.authorityMu.Lock()
+	defer s.authorityMu.Unlock()
+	current := readPolicy(s.config.Path)
+	if current.fingerprint != entry.Fingerprint {
 		return ApplyResult{}, ErrPreviewStale
 	}
+	if !s.initialized {
+		return ApplyResult{}, ErrUnavailable
+	}
+	if s.unproven || current.fingerprint != s.active.fingerprint {
+		return ApplyResult{}, ErrDriftDetected
+	}
 	appliedAt := s.config.Now().UTC()
+	var persisted fileState
 	persist := func() error {
 		current := readPolicy(s.config.Path)
 		if current.fingerprint != entry.Fingerprint {
@@ -225,13 +286,20 @@ func (s *Service) Apply(ctx context.Context, binding, token string) (ApplyResult
 		if entry.Noop {
 			return nil
 		}
-		if err := writePolicyAtomic(s.config.Path, entry.Candidate); err != nil {
+		outcome, err := s.writePolicy(s.config.Path, entry.Candidate)
+		if err != nil {
+			if outcome.replaced {
+				s.unproven = true
+				return ErrDriftDetected
+			}
 			return ErrSave
 		}
 		updated := readPolicy(s.config.Path)
 		if !updated.valid || updated.source != SourcePersisted || updated.policy != entry.Candidate {
-			return ErrSave
+			s.unproven = true
+			return ErrDriftDetected
 		}
+		persisted = updated
 		return nil
 	}
 	if err := s.config.Runtime.CommitPerformancePolicy(ctx, entry.Candidate, appliedAt, !entry.Noop, persist); err != nil {
@@ -242,9 +310,15 @@ func (s *Service) Apply(ctx context.Context, binding, token string) (ApplyResult
 			return ApplyResult{}, ErrPreviewStale
 		case errors.Is(err, ErrSave):
 			return ApplyResult{}, ErrSave
+		case errors.Is(err, ErrDriftDetected):
+			return ApplyResult{}, ErrDriftDetected
 		default:
 			return ApplyResult{}, ErrUnavailable
 		}
+	}
+	if !entry.Noop {
+		s.active = persisted
+		s.unproven = false
 	}
 	source := SourcePersisted
 	if entry.Noop {
@@ -479,58 +553,56 @@ func metadataFingerprint(info os.FileInfo, reason string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func writePolicyAtomic(path string, policy c1.PerformancePolicy) error {
+func writePolicyAtomic(path string, policy c1.PerformancePolicy) (writeOutcome, error) {
 	if c1.ValidatePerformancePolicy(policy) != nil {
-		return ErrSave
+		return writeOutcome{}, ErrSave
 	}
 	contents, err := json.MarshalIndent(policy, "", "  ")
 	if err != nil {
-		return ErrSave
+		return writeOutcome{}, ErrSave
 	}
 	contents = append(contents, '\n')
 	directory := filepath.Dir(path)
 	if err := ensureDirectory(directory); err != nil {
-		return ErrSave
+		return writeOutcome{}, ErrSave
 	}
 	temporary, err := os.CreateTemp(directory, ".xkeen-performance-policy-*")
 	if err != nil {
-		return ErrSave
+		return writeOutcome{}, ErrSave
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
 	if err := temporary.Chmod(0o600); err != nil {
 		_ = temporary.Close()
-		return ErrSave
+		return writeOutcome{}, ErrSave
 	}
 	if _, err := temporary.Write(contents); err != nil {
 		_ = temporary.Close()
-		return ErrSave
+		return writeOutcome{}, ErrSave
 	}
 	if err := temporary.Sync(); err != nil {
 		_ = temporary.Close()
-		return ErrSave
+		return writeOutcome{}, ErrSave
 	}
 	if err := temporary.Close(); err != nil {
-		return ErrSave
+		return writeOutcome{}, ErrSave
 	}
 	if err := os.Rename(temporaryPath, path); err != nil {
-		return ErrSave
+		return writeOutcome{}, ErrSave
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		return ErrSave
-	}
+	outcome := writeOutcome{replaced: true}
 	if runtime.GOOS != "windows" {
 		directoryHandle, err := os.Open(directory)
 		if err != nil {
-			return ErrSave
+			return outcome, ErrSave
 		}
 		syncErr := directoryHandle.Sync()
 		closeErr := directoryHandle.Close()
 		if syncErr != nil || closeErr != nil {
-			return ErrSave
+			return outcome, ErrSave
 		}
 	}
-	return nil
+	return outcome, nil
 }
 
 func ensureDirectory(path string) error {

@@ -58,6 +58,22 @@ func testService(t *testing.T, runtimeOwner *runtimeStub) (*Service, string) {
 	return NewService(Config{Path: path, Runtime: runtimeOwner}), path
 }
 
+func writeTestPolicy(t *testing.T, path string, policy c1.PerformancePolicy) {
+	t.Helper()
+	contents, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(path, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestDefaultsPersistedRoundTripAndHardCeilings(t *testing.T) {
 	runtimeOwner := &runtimeStub{adaptive: c1.AdaptivePerformanceStatus{State: "waiting", Generation: 7}}
 	service, path := testService(t, runtimeOwner)
@@ -72,7 +88,7 @@ func TestDefaultsPersistedRoundTripAndHardCeilings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if projection.Policy != defaults || projection.Source != SourceDefault || projection.ReasonCode != "" || projection.HardCeilings.MaxCandidates != 6 || projection.HardCeilings.CandidateDownloadMiB != 16 || projection.HardCeilings.CandidateUploadMiB != 8 || projection.HardCeilings.CandidateMaxSeconds != 30 || projection.HardCeilings.GenerationMaxMiB != 144 || projection.HardCeilings.GenerationMaxSeconds != 180 || projection.HardCeilings.TransportIdentity != "source-owned" || projection.HardCeilings.RTTGuard != "source-owned" || projection.HardCeilings.Scoring != "source-owned" || projection.Adaptive.Generation != 7 {
+	if projection.Policy != defaults || projection.Source != SourceDefault || projection.ReasonCode != "" || projection.AuthorityState != AuthorityEditable || projection.PersistedSource != SourceDefault || projection.HardCeilings.MaxCandidates != 6 || projection.HardCeilings.CandidateDownloadMiB != 16 || projection.HardCeilings.CandidateUploadMiB != 8 || projection.HardCeilings.CandidateMaxSeconds != 30 || projection.HardCeilings.GenerationMaxMiB != 144 || projection.HardCeilings.GenerationMaxSeconds != 180 || projection.HardCeilings.TransportIdentity != "source-owned" || projection.HardCeilings.RTTGuard != "source-owned" || projection.HardCeilings.Scoring != "source-owned" || projection.Adaptive.Generation != 7 {
 		t.Fatalf("default projection = %+v", projection)
 	}
 
@@ -105,7 +121,7 @@ func TestDefaultsPersistedRoundTripAndHardCeilings(t *testing.T) {
 		t.Fatalf("mode = %o", info.Mode().Perm())
 	}
 	projection, err = service.Read(context.Background())
-	if err != nil || projection.Policy != candidate || projection.Source != SourcePersisted || projection.ReasonCode != "" {
+	if err != nil || projection.Policy != candidate || projection.Source != SourcePersisted || projection.ReasonCode != "" || projection.AuthorityState != AuthorityEditable || projection.PersistedSource != SourcePersisted {
 		t.Fatalf("persisted projection = %+v err=%v", projection, err)
 	}
 	contents, err := os.ReadFile(path)
@@ -206,6 +222,9 @@ func TestInvalidFilesFailClosedWithoutRewriteAndCanBeReplaced(t *testing.T) {
 				t.Skipf("symlink unavailable: %v", err)
 			}
 		}
+		if err := service.InitializeRuntime(); err != nil {
+			t.Fatal(err)
+		}
 		return service, path
 	}
 
@@ -247,6 +266,9 @@ func TestNoopBusyStaleCancelExpiryAndSessionBinding(t *testing.T) {
 	runtimeOwner := &runtimeStub{}
 	service, path := testService(t, runtimeOwner)
 	service.config.Now = func() time.Time { return now }
+	if err := service.InitializeRuntime(); err != nil {
+		t.Fatal(err)
+	}
 
 	preview, err := service.Preview(context.Background(), "session-a", c1.DefaultPerformancePolicy())
 	if err != nil || !preview.Noop {
@@ -292,15 +314,6 @@ func TestNoopBusyStaleCancelExpiryAndSessionBinding(t *testing.T) {
 		t.Fatalf("expired token = %v", err)
 	}
 
-	now = now.Add(time.Second)
-	stale, _ := service.Preview(context.Background(), "session-a", candidate)
-	if err := os.WriteFile(path, []byte(`{"schemaVersion":1,"probeIntervalSeconds":60,"failureThreshold":2,"adaptiveCadenceMinutes":180,"adaptiveChallengerLimit":5,"minimumDwellMinutes":30,"qualityHysteresisPercent":10}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.Apply(context.Background(), "session-a", stale.Token); !errors.Is(err, ErrPreviewStale) {
-		t.Fatalf("stale apply = %v", err)
-	}
-
 	first, _ := service.Preview(context.Background(), "session-a", candidate)
 	second, _ := service.Preview(context.Background(), "session-a", candidate)
 	if _, err := service.Apply(context.Background(), "session-a", first.Token); !errors.Is(err, ErrPreviewExpired) {
@@ -309,5 +322,115 @@ func TestNoopBusyStaleCancelExpiryAndSessionBinding(t *testing.T) {
 	service.Invalidate("session-a")
 	if _, err := service.Apply(context.Background(), "session-a", second.Token); !errors.Is(err, ErrPreviewExpired) {
 		t.Fatalf("invalidated preview survived: %v", err)
+	}
+
+	now = now.Add(time.Second)
+	stale, _ := service.Preview(context.Background(), "session-a", candidate)
+	writeTestPolicy(t, path, c1.DefaultPerformancePolicy())
+	if _, err := service.Apply(context.Background(), "session-a", stale.Token); !errors.Is(err, ErrPreviewStale) {
+		t.Fatalf("stale apply = %v", err)
+	}
+	projection, err := service.Read(context.Background())
+	if err != nil || projection.AuthorityState != AuthorityDriftDetected || projection.Policy != c1.DefaultPerformancePolicy() {
+		t.Fatalf("stale drift projection = %+v err=%v", projection, err)
+	}
+	if _, err := service.Preview(context.Background(), "session-a", c1.DefaultPerformancePolicy()); !errors.Is(err, ErrDriftDetected) {
+		t.Fatalf("drift preview = %v", err)
+	}
+}
+
+func TestPostStartAuthorityDriftKeepsActiveRuntimeAndBlocksNoopTrap(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		persistedSource Source
+		persistedReason bool
+		mutate          func(*testing.T, string, c1.PerformancePolicy)
+	}{
+		{"valid replacement", SourcePersisted, false, func(t *testing.T, path string, policy c1.PerformancePolicy) { writeTestPolicy(t, path, policy) }},
+		{"removal", SourceDefault, false, func(t *testing.T, path string, _ c1.PerformancePolicy) {
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"invalidation", SourceDefault, true, func(t *testing.T, path string, _ c1.PerformancePolicy) {
+			if err := os.WriteFile(path, []byte(`{"schemaVersion":1`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtimeOwner := &runtimeStub{}
+			service, path := testService(t, runtimeOwner)
+			active := c1.DefaultPerformancePolicy()
+			active.FailureThreshold = 3
+			writeTestPolicy(t, path, active)
+			if err := service.InitializeRuntime(); err != nil {
+				t.Fatal(err)
+			}
+			candidate := active
+			candidate.FailureThreshold = 5
+			test.mutate(t, path, candidate)
+
+			projection, err := service.Read(context.Background())
+			if err != nil || projection.Policy != active || projection.Source != SourcePersisted || projection.AuthorityState != AuthorityDriftDetected || projection.PersistedSource != test.persistedSource || (projection.PersistedReasonCode != "") != test.persistedReason || runtimeOwner.initialized != active {
+				t.Fatalf("drift projection = %+v runtime=%+v err=%v", projection, runtimeOwner, err)
+			}
+			if _, err := service.Preview(context.Background(), "session", candidate); !errors.Is(err, ErrDriftDetected) {
+				t.Fatalf("file-equivalent no-op trap was not blocked: %v", err)
+			}
+			if runtimeOwner.commits != 0 {
+				t.Fatalf("drift reached runtime owner: %+v", runtimeOwner)
+			}
+		})
+	}
+}
+
+func TestTypedApplyAdvancesActiveGenerationOnlyAfterProvenConvergence(t *testing.T) {
+	runtimeOwner := &runtimeStub{}
+	service, _ := testService(t, runtimeOwner)
+	if err := service.InitializeRuntime(); err != nil {
+		t.Fatal(err)
+	}
+	candidate := c1.DefaultPerformancePolicy()
+	candidate.AdaptiveCadenceMinutes = 360
+	preview, err := service.Preview(context.Background(), "session", candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Apply(context.Background(), "session", preview.Token); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := service.Read(context.Background())
+	if err != nil || projection.Policy != candidate || projection.Source != SourcePersisted || projection.PersistedSource != SourcePersisted || projection.AuthorityState != AuthorityEditable || runtimeOwner.committed != candidate || !runtimeOwner.changed {
+		t.Fatalf("converged projection = %+v runtime=%+v err=%v", projection, runtimeOwner, err)
+	}
+}
+
+func TestPostRenameFailureBecomesClosedDrift(t *testing.T) {
+	runtimeOwner := &runtimeStub{}
+	service, _ := testService(t, runtimeOwner)
+	if err := service.InitializeRuntime(); err != nil {
+		t.Fatal(err)
+	}
+	candidate := c1.DefaultPerformancePolicy()
+	candidate.MinimumDwellMinutes = 90
+	preview, err := service.Preview(context.Background(), "session", candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := service.writePolicy
+	service.writePolicy = func(path string, policy c1.PerformancePolicy) (writeOutcome, error) {
+		outcome, err := write(path, policy)
+		if err != nil {
+			return outcome, err
+		}
+		return outcome, ErrSave
+	}
+	if _, err := service.Apply(context.Background(), "session", preview.Token); !errors.Is(err, ErrDriftDetected) {
+		t.Fatalf("post-rename apply = %v", err)
+	}
+	projection, err := service.Read(context.Background())
+	if err != nil || projection.Policy != c1.DefaultPerformancePolicy() || projection.PersistedSource != SourcePersisted || projection.AuthorityState != AuthorityDriftDetected || runtimeOwner.changed {
+		t.Fatalf("post-rename projection = %+v runtime=%+v err=%v", projection, runtimeOwner, err)
 	}
 }

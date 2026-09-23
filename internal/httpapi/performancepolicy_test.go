@@ -61,7 +61,7 @@ func TestPerformancePolicyHTTPIsClosedAuthenticatedAndSessionBound(t *testing.T)
 	policy := c1.DefaultPerformancePolicy()
 	stub := &httpPerformancePolicyStub{
 		projection: performancepolicy.Projection{
-			Policy: policy, Source: performancepolicy.SourceDefault,
+			Policy: policy, Source: performancepolicy.SourceDefault, AuthorityState: performancepolicy.AuthorityEditable, PersistedSource: performancepolicy.SourceDefault,
 			HardCeilings: performancepolicy.HardCeilings{MaxCandidates: 6, CandidateDownloadMiB: 16, CandidateUploadMiB: 8, CandidateMaxSeconds: 30, GenerationMaxMiB: 144, GenerationMaxSeconds: 180, TransportIdentity: "source-owned", RTTGuard: "source-owned", Scoring: "source-owned"},
 			Adaptive:     c1.AdaptivePerformanceStatus{State: "waiting"},
 		},
@@ -88,7 +88,7 @@ func TestPerformancePolicyHTTPIsClosedAuthenticatedAndSessionBound(t *testing.T)
 		t.Fatalf("GET = %d, %v", response.StatusCode, err)
 	}
 	body := readBody(response)
-	if strings.Contains(strings.ToLower(body), "https://") || strings.Contains(strings.ToLower(body), "schedule") || strings.Contains(strings.ToLower(body), "timeout") || !strings.Contains(body, `"transportIdentity":"source-owned"`) {
+	if strings.Contains(strings.ToLower(body), "https://") || strings.Contains(strings.ToLower(body), "schedule") || strings.Contains(strings.ToLower(body), "timeout") || !strings.Contains(body, `"transportIdentity":"source-owned"`) || !strings.Contains(body, `"authorityState":"editable"`) || !strings.Contains(body, `"persistedSource":"default"`) {
 		t.Fatalf("unsafe or incomplete projection: %s", body)
 	}
 	response, err = client.Get(server.URL + "/api/v1/performance/policy?raw=true")
@@ -167,6 +167,7 @@ func TestPerformancePolicyHTTPErrorMappingAndBodyLimit(t *testing.T) {
 		{performancepolicy.ErrPreviewStale, http.StatusConflict, "preview-stale"},
 		{performancepolicy.ErrBusy, http.StatusConflict, "busy"},
 		{performancepolicy.ErrSave, http.StatusInternalServerError, "save-failed"},
+		{performancepolicy.ErrDriftDetected, http.StatusConflict, "drift-detected"},
 		{performancepolicy.ErrUnavailable, http.StatusServiceUnavailable, "unavailable"},
 	}
 	for _, test := range tests {

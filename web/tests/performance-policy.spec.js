@@ -18,6 +18,8 @@ const defaultPolicy = () => ({
 const projection = (overrides = {}) => ({
   policy: defaultPolicy(),
   source: 'default',
+  authorityState: 'editable',
+  persistedSource: 'default',
   hardCeilings: {
     maxCandidates: 6,
     candidateDownloadMiB: 16,
@@ -107,7 +109,7 @@ async function prepare(page, options = {}) {
         if (failures[state.applyMode]) return json(route, { error: 'synthetic safe error', code: failures[state.applyMode][1] }, failures[state.applyMode][0])
         if (pending && !pending.noop) {
           state.writes++
-          state.projection = { ...state.projection, policy: pending.after, source: 'persisted', reasonCode: undefined, adaptive: { ...state.projection.adaptive, nextRunAt: new Date(Date.now() + pending.after.adaptiveCadenceMinutes * 60_000).toISOString() } }
+          state.projection = { ...state.projection, policy: pending.after, source: 'persisted', authorityState: 'editable', persistedSource: 'persisted', reasonCode: undefined, persistedReasonCode: undefined, adaptive: { ...state.projection.adaptive, nextRunAt: new Date(Date.now() + pending.after.adaptiveCadenceMinutes * 60_000).toISOString() } }
         }
         return json(route, { policy: pending?.after || state.projection.policy, source: pending?.noop ? state.projection.source : 'persisted', changes: pending?.changes || [], noop: Boolean(pending?.noop), restartRequired: false, nextRunTimeChanged: !pending?.noop })
       }
@@ -211,6 +213,15 @@ test('visibly fails closed on invalid persistence and explicitly replaces it thr
   await expect(page.getByText('Persisted policy failed closed to source defaults.')).toHaveCount(0)
 })
 
+test('renders post-start authority drift as the active runtime policy and blocks mutation', async ({ page }) => {
+  const state = await prepare(page, { projection: { authorityState: 'drift-detected', persistedSource: 'persisted' } }); page.__performancePolicyIssues = state.issues
+  await openPerformance(page)
+  await expect(page.getByText('Performance policy drift detected.')).toBeVisible()
+  await expect(page.getByText('Read-only active policy')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Preview performance changes' })).toBeDisabled()
+  expect(requestsFor(state, '/api/v1/performance/policy/preview', 'POST')).toHaveLength(0)
+})
+
 test('no-op Apply writes nothing and busy/lifecycle states gate mutation', async ({ page }) => {
   const state = await prepare(page); page.__performancePolicyIssues = state.issues
   await openPerformance(page)
@@ -243,4 +254,133 @@ test('consumes failed Apply tokens without replay and keeps browser storage empt
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByRole('heading', { name: 'Bounded selection policy' })).toBeVisible()
   expect((await page.screenshot({ fullPage: true })).byteLength).toBeGreaterThan(1_000)
+})
+
+test('safe-cancels a late Preview after navigation and never resurrects it', async ({ page }) => {
+  const state = await prepare(page); page.__performancePolicyIssues = state.issues
+  await openPerformance(page)
+  await page.getByLabel('Active probe interval').fill('120')
+  let releasePreview
+  const heldPreview = new Promise((resolve) => { releasePreview = resolve })
+  state.handle = async ({ route, entry, state: current }) => {
+    if (entry.path !== '/api/v1/performance/policy/preview') return false
+    await heldPreview
+    const token = 'synthetic-late-navigation-preview'
+    current.previews.set(token, { after: entry.body, changes: changesFor(current.projection.policy, entry.body), noop: false })
+    json(route, { previewToken: token, expiresAt: new Date(Date.now() + 300_000).toISOString(), before: current.projection.policy, after: entry.body, changes: changesFor(current.projection.policy, entry.body), noop: false, restartRequired: false, nextRunTimeChanges: true })
+    return true
+  }
+  await page.getByRole('button', { name: 'Preview performance changes' }).click()
+  await expect.poll(() => requestsFor(state, '/api/v1/performance/policy/preview', 'POST').length).toBe(1)
+  await page.getByRole('button', { name: 'Routing', exact: true }).click()
+  releasePreview()
+  await expect.poll(() => requestsFor(state, '/api/v1/performance/policy/cancel', 'POST').some((request) => request.body.previewToken === 'synthetic-late-navigation-preview')).toBe(true)
+  await page.getByRole('button', { name: 'Performance', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Performance policy Preview' })).toHaveCount(0)
+  await expect(page.getByLabel('Active probe interval')).toHaveValue('120')
+})
+
+test('safe-cancels a late Preview after the session ends', async ({ page }) => {
+  const state = await prepare(page); page.__performancePolicyIssues = state.issues
+  await openPerformance(page)
+  let releasePreview
+  const heldPreview = new Promise((resolve) => { releasePreview = resolve })
+  state.handle = async ({ route, entry, state: current }) => {
+    if (entry.path !== '/api/v1/performance/policy/preview') return false
+    await heldPreview
+    const token = 'synthetic-late-session-preview'
+    current.previews.set(token, { after: entry.body, changes: [], noop: true })
+    json(route, { previewToken: token, expiresAt: new Date(Date.now() + 300_000).toISOString(), before: current.projection.policy, after: entry.body, changes: [], noop: true, restartRequired: false, nextRunTimeChanges: false })
+    return true
+  }
+  await page.getByRole('button', { name: 'Preview performance changes' }).click()
+  await expect.poll(() => requestsFor(state, '/api/v1/performance/policy/preview', 'POST').length).toBe(1)
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible()
+  releasePreview()
+  await expect.poll(() => requestsFor(state, '/api/v1/performance/policy/cancel', 'POST').some((request) => request.body.previewToken === 'synthetic-late-session-preview' && request.csrf === csrfToken)).toBe(true)
+})
+
+test('keeps a sent Apply alive across navigation without cancelling its token', async ({ page }) => {
+  const state = await prepare(page); page.__performancePolicyIssues = state.issues
+  await openPerformance(page)
+  await page.getByLabel('Failure threshold').fill('4')
+  await page.getByRole('button', { name: 'Preview performance changes' }).click()
+  await expect(page.getByRole('button', { name: 'Apply performance policy' })).toBeVisible()
+  const token = [...state.previews.keys()][0]
+  let releaseApply
+  const heldApply = new Promise((resolve) => { releaseApply = resolve })
+  state.handle = async ({ route, entry, state: current }) => {
+    if (entry.path !== '/api/v1/performance/policy/apply') return false
+    await heldApply
+    const pending = current.previews.get(entry.body.previewToken)
+    current.previews.delete(entry.body.previewToken)
+    current.projection = { ...current.projection, policy: pending.after, source: 'persisted', persistedSource: 'persisted' }
+    json(route, { policy: pending.after, source: 'persisted', changes: pending.changes, noop: false, restartRequired: false, nextRunTimeChanged: true })
+    return true
+  }
+  await page.getByRole('button', { name: 'Apply performance policy' }).click()
+  await expect.poll(() => requestsFor(state, '/api/v1/performance/policy/apply', 'POST').length).toBe(1)
+  await page.getByRole('button', { name: 'Overview', exact: true }).click()
+  releaseApply()
+  await expect.poll(() => requestsFor(state, '/api/v1/performance/policy').length).toBe(2)
+  expect(requestsFor(state, '/api/v1/performance/policy/cancel', 'POST').some((request) => request.body.previewToken === token)).toBe(false)
+  await page.getByRole('button', { name: 'Performance', exact: true }).click()
+  await expect(page.getByTestId('performance-policy-result')).toContainText('Performance policy applied')
+  expect(requestsFor(state, '/api/v1/performance/policy/apply', 'POST')).toHaveLength(1)
+})
+
+test('blocks mutation after a lost Apply until a successful fresh read and preserves the draft', async ({ page }) => {
+  const state = await prepare(page); page.__performancePolicyIssues = state.issues
+  await openPerformance(page)
+  await page.getByLabel('Adaptive cadence').fill('360')
+  await page.getByRole('button', { name: 'Preview performance changes' }).click()
+  await expect(page.getByRole('button', { name: 'Apply performance policy' })).toBeVisible()
+
+  let releaseFreshRead
+  const heldFreshRead = new Promise((resolve) => { releaseFreshRead = resolve })
+  let freshReads = 0
+  state.handle = async ({ route, entry }) => {
+    if (entry.path === '/api/v1/performance/policy/apply') {
+      route.abort('connectionfailed')
+      return true
+    }
+    if (entry.path === '/api/v1/performance/policy' && entry.method === 'GET') {
+      freshReads++
+      if (freshReads === 1) {
+        await heldFreshRead
+        json(route, { code: 'unavailable', error: 'synthetic read failure' }, 503)
+        return true
+      }
+      if (freshReads === 2) {
+        json(route, { code: 'unavailable', error: 'synthetic re-entry read failure' }, 503)
+        return true
+      }
+    }
+    return false
+  }
+
+  await page.getByRole('button', { name: 'Apply performance policy' }).click()
+  await expect.poll(() => requestsFor(state, '/api/v1/performance/policy/apply', 'POST').length).toBe(1)
+  await expect.poll(() => freshReads).toBe(1)
+  await expect(page.getByRole('button', { name: 'Preview performance changes' })).toBeDisabled()
+  await expect(page.getByLabel('Adaptive cadence')).toHaveValue('360')
+  releaseFreshRead()
+  await expect(page.getByText('The performance policy projection is unavailable.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Preview performance changes' })).toBeDisabled()
+  await expect(page.getByLabel('Adaptive cadence')).toHaveValue('360')
+  expect(requestsFor(state, '/api/v1/performance/policy/apply', 'POST')).toHaveLength(1)
+
+  await page.getByRole('button', { name: 'Overview', exact: true }).click()
+  await page.getByRole('button', { name: 'Performance', exact: true }).click()
+  await expect.poll(() => freshReads).toBe(2)
+  await expect(page.getByRole('button', { name: 'Preview performance changes' })).toBeDisabled()
+  await expect(page.getByLabel('Adaptive cadence')).toHaveValue('360')
+
+  await page.getByRole('button', { name: 'Refresh policy' }).click()
+  await expect.poll(() => freshReads).toBe(3)
+  await expect(page.getByTestId('performance-policy-result')).toContainText('fresh policy state was read')
+  await expect(page.getByLabel('Adaptive cadence')).toHaveValue('360')
+  await expect(page.getByRole('button', { name: 'Preview performance changes' })).toBeEnabled()
+  expect(requestsFor(state, '/api/v1/performance/policy/apply', 'POST')).toHaveLength(1)
 })
