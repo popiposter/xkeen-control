@@ -14,9 +14,9 @@ Current runtime facts:
 - `xkeen-control` is one pre-built Go binary with embedded React UI, auth and typed node/subscription operations;
 - node changes use complete candidate validation, bounded activation and rollback;
 - `xkeen-control` is the only managed stable `bal-proxy` override writer; native Xray `leastPing` is emergency fallback;
-- 60-second active liveness is independent from RTT quality switching;
+- source-main active liveness defaults to 60 seconds / 2 failures and PR #92 only permits more conservative 60–300 second / 2–5 failure settings;
 - the production-qualified D baseline's control-plane-owned sustained benchmark runs once/day with bounded whole-run traffic and RAM/`/tmp` high-churn state;
-- source-main E changes healthy automatic quality switching to the fixed three-hour adaptive generation; the legacy daily benchmark is explicit-only there, while installed/historical schedule facts remain read-only;
+- source-main adaptive quality defaults to the three-hour generation; PR #92 permits only less-frequent 180–1440 minute cadence, 1–5 challengers plus current, 30–1440 minute dwell and 10–50% hysteresis while hard traffic/time ceilings remain source-owned; the legacy daily benchmark is explicit-only there;
 - node Apply, supervisor/selection and benchmark work share one runtime coordinator;
 - signed GitHub Releases are the software distribution authority for the qualified `linux/arm64` panel;
 - the public installer and panel rollback path are production-qualified without changing node/Xray/XKeen/routing/DNS/Observatory state;
@@ -45,7 +45,7 @@ local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
 managed XKeen / Xray / geodata lifecycle (#4, active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-F delivered through PRs #69/#71/#73/#75 and Issues #76/#78; D.2 G merged source-only via #81/#82; one feature-complete candidate afterward)
         ↓
-visual typed configuration + transactional render/apply (#5, Routing + DNS/Observatory complete source-only; #91 completion tranche active for Performance → System/Panel → integration)
+visual typed configuration + transactional render/apply (#5, Routing + DNS/Observatory + Performance complete source-only; #91 E System/Panel active → F integration)
 ```
 
 ## Delivery sequence
@@ -61,7 +61,7 @@ visual typed configuration + transactional render/apply (#5, Routing + DNS/Obser
 | D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
 | D.2 — component lifecycle | **Active — trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-F complete; G merged source-only via #81/#82** | Issue #4 / current `main` + live `v0.3.0-beta.2` trial | The prior Xray live pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the diagnostic source correction. Issue #81 / PR #82 deliver typed fresh installation plus recognized takeover/convergence, sole-writer retirement and IPv4-only LAN/policy-scoped Hybrid interception ownership with owned-subset rollback. This remains source-only and does not independently lead to a release |
 | D.3 — foundation A-F (#46) | **Done source-only through Issue #78** | Issue #46 / #68 / #70 / #72 / #74 / #76 / #78 | Selection-first Nodes/atomic batch mutations, exact subscription reconciliation, bounded automatic subscription refresh, fixed one-node diagnostic performance, the single adaptive quality-switch path and the integrated automatic-quality operator UX/source qualification are complete; no release, router access or live qualification is implied |
-| D.3/#5 — remaining visual configuration | **Active — #91 completion tranche** | Issue #5 / #91 | Routing + DNS/Observatory broker/UI are merged source-only through PR #90. #91 now owns the remaining Performance → System/Panel → integration sequence as three ordered PR gates; not deployed |
+| D.3/#5 — remaining visual configuration | **Active — #91 E System/Panel** | Issue #5 / #91 | Routing + DNS/Observatory are merged source-only through PR #90 and bounded Performance through PR #92. #91 E is the active System/Panel gate, followed by F integration/#5 closeout; not deployed |
 | E — notifications/security hardening | Planned after remaining D.3/#5 source | master issue #1 | Outbound alerts, management-VPN guidance, final attack-surface hardening |
 
 ## Pre-D / Issue #8 — complete
@@ -135,15 +135,22 @@ The simplicity decisions in [master issue #1](https://github.com/popiposter/xkee
 
 F3 is delivered by PR #67: bounded persisted `off|notify|manual` component policy with a check-only scheduler/notification hook. It must not introduce automatic component mutation. #46 A-F are delivered by PRs #69/#71/#73/#75 plus Issues #76/#78. D.2 G is delivered source-only by Issue #81 / PR #82: typed Setup fresh/takeover convergence using qualified component primitives, with sole-writer retirement and source-owned Hybrid interception, without generic package/command/file surfaces or blanket `opkg upgrade`.
 
-The sequence is **#46 A-F foundation → D.2 G Setup Mode source (merged #82) → #5 A/B Routing (merged #84/#86) → #5 C1/C2 DNS + Observatory broker/UI (merged #88/#90) → #91 completion tranche: D Performance → E System/Panel → F integration/#5 closeout → planned product E notifications/security hardening → one feature-complete signed candidate plus integrated live qualification**. These source slices do not independently trigger release publication, router install or live qualification. Only after that integrated candidate is installed may live Xray/geodata/XKeen update+rollback qualification resume, restoring each component baseline before the next class and settling all component state before the original stable panel return.
+The sequence is **#46 A-F foundation → D.2 G Setup Mode source (merged #82) → #5 A/B Routing (merged #84/#86) → #5 C1/C2 DNS + Observatory broker/UI (merged #88/#90) → #91 D Performance (merged #92) → #91 E System/Panel (active) → #91 F integration/#5 closeout → planned product E notifications/security hardening → one feature-complete signed candidate plus integrated live qualification**. These source slices do not independently trigger release publication, router install or live qualification. Only after that integrated candidate is installed may live Xray/geodata/XKeen update+rollback qualification resume, restoring each component baseline before the next class and settling all component state before the original stable panel return.
 
 ## D.3 / Issue #46 foundation — Slices A-F delivered; not deployed
 
 PR #69 delivered Slice A (selection-first Nodes and atomic batch mutations). PR #71 delivered Slice B (exact subscription membership reconciliation). PR #73 delivered Slice C (bounded automatic subscription refresh with non-preemptive background admission). PR #75 delivered Slice D (fixed manual-node down/up diagnostics and bounded progress). Issue #76 delivers Slice E (fresh RTT shortlist, fixed down/up quality generation, deterministic scoring, hysteresis/dwell and the one Coordinator performance owner). Issue #78 delivers Slice F (integrated automatic-quality Overview/Nodes presentation, closed state/reason vocabulary, view-scoped performance polling, legacy-trigger retirement and source qualification). The #46 slices remain source-only and do not deploy to production; no release, router access or live qualification is implied.
 
-## Remaining D.3/#5 source — #91 completion tranche active
+## Remaining D.3/#5 source — #91 E System/Panel active
 
-Issues #83/#85 and PRs #84/#86 deliver Routing broker/UI. Issue #87 / PR #88 deliver the shared managed-policy envelope plus closed DNS/Observatory backend, and Issue #89 / PR #90 deliver the visual DNS + Observatory workspace. Issue #91 now owns all remaining #5 architecture/acceptance in one completion contract, delivered as three ordered PR gates from then-current main: D Performance policy/UI, E System/Panel, then F integration/drift/feature-complete UX. #5 closes only after PR F passes the final integrated source gate.
+Issues #83/#85 and PRs #84/#86 deliver Routing broker/UI. Issue #87 / PR #88
+deliver the shared managed-policy envelope plus closed DNS/Observatory backend,
+Issue #89 / PR #90 deliver the visual DNS + Observatory workspace, and PR #92
+delivers the bounded Performance policy/UI with closed persisted-authority drift
+handling. Issue #91 E is now the active implementation boundary: source-aware
+private listener management, password/session UX and truthful signed panel
+release controls over existing owners. F then provides integration/drift and
+feature-complete UX; #5 closes only after that final source gate.
 
 After the remaining D.3/#5 source scope, the planned product E adds outbound notifications and remote-management/security hardening without creating a remote command plane. The panel remains trusted-LAN/management-VPN only.
 
