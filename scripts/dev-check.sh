@@ -18,6 +18,7 @@ lane_enabled() {
 run_shell_fixtures() {
 	echo "== Unique shell and integration fixtures =="
 	bash -n scripts/*.sh scripts/xkeen-control-updater
+	bash scripts/test-keenetic-env.sh
 	bash scripts/test-benchmark-policy.sh
 	bash scripts/test-xkeen-foreground.sh
 	if [ "$mode" = "--full" ]; then

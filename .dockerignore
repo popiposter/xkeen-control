@@ -5,6 +5,8 @@ web/node_modules
 web/test-results
 web/playwright-report
 keenetic_cred.txt
+.env.keenetic
+.env.keenetic.local
 **/04_outbounds.json
 **/nodes.json
 **/*.pem
