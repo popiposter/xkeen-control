@@ -56,14 +56,17 @@ type LifecycleStatus struct {
 }
 
 type Coordinator struct {
-	policy         Policy
-	supervisor     *Supervisor
-	runner         *BenchmarkRunner
-	manualRunner   *ManualNodeRunner
-	adaptiveRunner *AdaptiveRunner
-	nodes          NodeReader
-	lifecycle      chan struct{}
-	supervisorWake chan struct{}
+	policy                  Policy
+	performancePolicy       PerformancePolicy
+	supervisor              *Supervisor
+	runner                  *BenchmarkRunner
+	manualRunner            *ManualNodeRunner
+	adaptiveRunner          *AdaptiveRunner
+	nodes                   NodeReader
+	lifecycle               chan struct{}
+	supervisorWake          chan struct{}
+	supervisorPolicyChanged chan struct{}
+	adaptivePolicyChanged   chan struct{}
 
 	mu              sync.Mutex
 	benchmarkCancel context.CancelFunc
@@ -99,7 +102,7 @@ type Coordinator struct {
 
 func NewCoordinator(policy Policy, supervisor *Supervisor, runner *BenchmarkRunner, nodes NodeReader) *Coordinator {
 	policy = policy.normalized()
-	c := &Coordinator{policy: policy, supervisor: supervisor, runner: runner, nodes: nodes, lifecycle: make(chan struct{}, 1), supervisorWake: make(chan struct{}, 1), clock: func() time.Time { return time.Now().UTC() }}
+	c := &Coordinator{policy: policy, performancePolicy: DefaultPerformancePolicy(), supervisor: supervisor, runner: runner, nodes: nodes, lifecycle: make(chan struct{}, 1), supervisorWake: make(chan struct{}, 1), supervisorPolicyChanged: make(chan struct{}, 1), adaptivePolicyChanged: make(chan struct{}, 1), clock: func() time.Time { return time.Now().UTC() }}
 	c.lifecycle <- struct{}{}
 	c.benchmark = BenchmarkStatus{Enabled: policy.Enabled, State: "idle", Schedule: ExplicitBenchmarkSchedule, TotalBudgetBytes: policy.TotalBudgetBytes, MinimumPayloadBytes: policy.MinimumPayloadBytes, PerNodeTimeoutMS: policy.PerNodeTimeout.Milliseconds(), Samples: make(map[string]ThroughputStatus)}
 	c.manual = idleManualPerformanceStatus()
@@ -193,7 +196,7 @@ func (c *Coordinator) Start(parent context.Context) {
 	if start.IsZero() {
 		start = time.Now().UTC()
 	}
-	c.adaptive.NextRunAt = start.UTC().Add(AdaptiveCadence)
+	c.adaptive.NextRunAt = start.UTC().Add(c.performancePolicy.adaptiveCadence())
 	c.mu.Unlock()
 	if c.supervisor != nil {
 		c.wait.Add(1)
@@ -927,10 +930,8 @@ func (c *Coordinator) supervisorLoop(ctx context.Context) {
 	if c == nil || c.supervisor == nil {
 		return
 	}
-	ticker := time.NewTicker(c.policy.ProbeInterval)
-	defer ticker.Stop()
 	reconciled := c.supervisor.probe == nil
-	for {
+	run := func() {
 		if !reconciled {
 			if err := c.runSupervisorOperation(ctx, c.supervisor.probe.Reconcile); err == nil {
 				reconciled = true
@@ -939,11 +940,26 @@ func (c *Coordinator) supervisorLoop(ctx context.Context) {
 		if reconciled {
 			_ = c.runSupervisorOperation(ctx, c.supervisor.Tick)
 		}
+	}
+	run()
+	timer := time.NewTimer(c.currentPerformancePolicy().probeInterval())
+	defer stopTimer(timer)
+	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
+			run()
+			timer.Reset(c.currentPerformancePolicy().probeInterval())
 		case <-c.supervisorWake:
+			stopTimer(timer)
+			run()
+			timer.Reset(c.currentPerformancePolicy().probeInterval())
+		case <-c.supervisorPolicyChanged:
+			// Policy Apply never triggers a probe. Restart the interval from the
+			// successful Apply time and let the next cycle use the new snapshot.
+			stopTimer(timer)
+			timer.Reset(c.currentPerformancePolicy().probeInterval())
 		}
 	}
 }
@@ -1031,21 +1047,23 @@ func (c *Coordinator) schedule(ctx context.Context) {
 		timer := time.NewTimer(time.Until(next))
 		select {
 		case <-ctx.Done():
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
+			stopTimer(timer)
 			return
+		case <-c.adaptivePolicyChanged:
+			stopTimer(timer)
+			c.mu.Lock()
+			next = c.adaptive.NextRunAt
+			c.mu.Unlock()
+			continue
 		case <-timer.C:
 			c.runScheduledAdaptive(ctx)
 			now := c.now()
-			next = next.Add(AdaptiveCadence)
+			cadence := c.currentPerformancePolicy().adaptiveCadence()
+			next = next.Add(cadence)
 			// A delayed process performs no catch-up burst. The next run is
 			// always one normal cadence after the due event or the wake time.
 			if !next.After(now) {
-				next = now.Add(AdaptiveCadence)
+				next = now.Add(cadence)
 			}
 			c.mu.Lock()
 			c.adaptive.NextRunAt = next

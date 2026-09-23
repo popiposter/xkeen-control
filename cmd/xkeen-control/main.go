@@ -27,6 +27,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/dnsobservatory"
 	"github.com/popiposter/xkeen-control/internal/httpapi"
 	"github.com/popiposter/xkeen-control/internal/nodes"
+	"github.com/popiposter/xkeen-control/internal/performancepolicy"
 	"github.com/popiposter/xkeen-control/internal/restore"
 	"github.com/popiposter/xkeen-control/internal/routingpolicy"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
@@ -160,6 +161,11 @@ func main() {
 	runner := c1.NewBenchmarkRunner(policy, probeRouter, c1.BenchmarkStore{Path: getenv("XKEEN_CONTROL_BENCHMARK_PATH", c1.DefaultBenchmarkPath)})
 	coordinator := c1.NewCoordinator(policy, supervisor, runner, nodeReader)
 	coordinator.SetManualRunner(c1.NewManualNodeRunner(probeRouter))
+	performancePolicyService := performancepolicy.NewService(performancepolicy.Config{Runtime: coordinator})
+	if err := performancePolicyService.InitializeRuntime(); err != nil {
+		log.Print("performance policy startup initialization failed")
+		os.Exit(1)
+	}
 	authorityLease := authority.NewLease()
 	componentGate := components.NewComponentMutationGate()
 	componentMaintenance := components.NewComponentMaintenance(coordinator, authorityLease)
@@ -342,6 +348,7 @@ func main() {
 		Restore:            restoreService,
 		Policy:             routingPolicyService,
 		DNSObservatory:     dnsObservatoryService,
+		PerformancePolicy:  performancePolicyService,
 		Backup: backup.NewService(backup.Config{
 			Appliance:      applianceService,
 			Nodes:          nodeManager,

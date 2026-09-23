@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './styles.css'
 import { ComponentLifecycleNotices, ComponentsUpdatesSection, useComponentsController } from './components-updates.jsx'
 import { DNSLifecycleNotice, DNSObservatorySection, useDNSObservatoryController } from './dns-observatory.jsx'
+import { PerformancePolicySection, usePerformancePolicyController } from './performance-policy.jsx'
 import { RoutingLifecycleNotice, RoutingPolicySection, useRoutingController } from './routing-policy.jsx'
 import { SetupFlow } from './setup-flow.jsx'
 
@@ -446,6 +447,8 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const appliancePolicyUncertain = unprovenPolicyReads.routing || unprovenPolicyReads.dns
   const routingController = useRoutingController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'routing', appliancePolicyUncertain, onBeforeApply: invalidateDNSPreview, onApplied: refreshDNSPeer, onUnprovenApply: markRoutingApplyUnproven, onFreshReadAfterUnprovenApply: clearRoutingApplyUnproven })
   const dnsController = useDNSObservatoryController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'dns', appliancePolicyUncertain, onBeforeApply: invalidateRoutingPreview, onApplied: refreshRoutingPeer, onUnprovenApply: markDNSApplyUnproven, onFreshReadAfterUnprovenApply: clearDNSApplyUnproven })
+  const performanceOwnerBusy = Boolean(status.benchmark?.controlPlane?.running || performance?.manual?.state === 'running' || performance?.adaptive?.state === 'running')
+  const performancePolicyController = usePerformancePolicyController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, performanceBusy: performanceOwnerBusy, onUnauthorized, active: section === 'performance' })
   routingControllerRef.current = routingController
   dnsControllerRef.current = dnsController
   const openComponents = useCallback(() => {
@@ -498,6 +501,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
       <button type="button" className={section === 'nodes' ? 'active' : ''} onClick={() => setSection('nodes')}>Nodes <span>{nodes.total || 0}</span></button>
       <button type="button" className={section === 'routing' ? 'active' : ''} onClick={openRouting}>Routing</button>
       <button type="button" className={section === 'dns' ? 'active' : ''} onClick={openDNS}>DNS</button>
+      <button type="button" className={section === 'performance' ? 'active' : ''} onClick={() => setSection('performance')}>Performance</button>
       <button type="button" className={section === 'components' ? 'active' : ''} onClick={openComponents}>Components / Updates</button>
       <button type="button" className={section === 'system' ? 'active' : ''} onClick={() => setSection('system')}>System</button>
       <button type="button" className={section === 'backup' ? 'active' : ''} onClick={() => setSection('backup')}>Backup &amp; Restore</button>
@@ -510,6 +514,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} performance={performance} manualOverride={status.selection?.manualOverride || ''} benchmarkRunning={Boolean(status.benchmark?.controlPlane?.running)} csrf={session.csrfToken} onRefresh={onRefresh} onPerformanceRefresh={onPerformanceRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} manualLifecycleBlocked={manualLifecycleBlocked} />}
     {section === 'routing' && <RoutingPolicySection controller={routingController} lifecycle={status.lifecycle} />}
     {section === 'dns' && <DNSObservatorySection controller={dnsController} />}
+    {section === 'performance' && <PerformancePolicySection controller={performancePolicyController} />}
     {section === 'components' && <ComponentsUpdatesSection controller={componentController} lifecycle={status.lifecycle} onOpenSystem={() => setSection('system')} />}
     {section === 'system' && <SystemSection status={status} config={config} nodesByTag={nodesByTag} update={update} onCheckUpdate={onCheckUpdate} />}
     {section === 'backup' && <BackupRestoreSection csrf={session.csrfToken} restoreState={restoreState} setRestoreState={setRestoreState} onRefresh={onRefresh} onUnauthorized={onUnauthorized} lifecycleBlocked={lifecycleBlocked} />}

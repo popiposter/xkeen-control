@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/components"
 	"github.com/popiposter/xkeen-control/internal/dnsobservatory"
 	"github.com/popiposter/xkeen-control/internal/nodes"
+	"github.com/popiposter/xkeen-control/internal/performancepolicy"
 	"github.com/popiposter/xkeen-control/internal/restore"
 	"github.com/popiposter/xkeen-control/internal/routingpolicy"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
@@ -35,6 +37,7 @@ const (
 	maxSetupBody             = 1 << 10
 	maxRoutingPolicyBody     = 128 << 10
 	maxDNSObservatoryBody    = 16 << 10
+	maxPerformancePolicyBody = 4 << 10
 	maxJSONResponse          = 512 << 10
 	csrfRequiredPath         = "/api/v1/session/logout"
 )
@@ -65,6 +68,15 @@ type DNSObservatoryService interface {
 	Read(context.Context) (dnsobservatory.Projection, error)
 	Preview(context.Context, string, appliance.DNSSettings, appliance.ObservatorySettings) (dnsobservatory.Preview, error)
 	Apply(context.Context, string, string) (dnsobservatory.ApplyResult, error)
+	Cancel(string, string)
+	Invalidate(string)
+	InvalidateAll()
+}
+
+type PerformancePolicyService interface {
+	Read(context.Context) (performancepolicy.Projection, error)
+	Preview(context.Context, string, c1.PerformancePolicy) (performancepolicy.Preview, error)
+	Apply(context.Context, string, string) (performancepolicy.ApplyResult, error)
 	Cancel(string, string)
 	Invalidate(string)
 	InvalidateAll()
@@ -109,6 +121,7 @@ type Server struct {
 	restore            RestoreService
 	policy             RoutingPolicyService
 	dnsObservatory     DNSObservatoryService
+	performancePolicy  PerformancePolicyService
 	restorePreviewGate chan struct{}
 }
 
@@ -137,13 +150,14 @@ type Config struct {
 	Restore            RestoreService
 	Policy             RoutingPolicyService
 	DNSObservatory     DNSObservatoryService
+	PerformancePolicy  PerformancePolicyService
 }
 
 func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, updates: config.Updates, backup: config.Backup, restore: config.Restore, policy: config.Policy, dnsObservatory: config.DNSObservatory, restorePreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, updates: config.Updates, backup: config.Backup, restore: config.Restore, policy: config.Policy, dnsObservatory: config.DNSObservatory, performancePolicy: config.PerformancePolicy, restorePreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -165,6 +179,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/setup/preview", "/api/v1/setup/apply", "/api/v1/setup/cancel",
 		"/api/v1/appliance/policy", "/api/v1/appliance/policy/preview", "/api/v1/appliance/policy/apply", "/api/v1/appliance/policy/cancel",
 		"/api/v1/appliance/dns-observatory", "/api/v1/appliance/dns-observatory/preview", "/api/v1/appliance/dns-observatory/apply", "/api/v1/appliance/dns-observatory/cancel",
+		"/api/v1/performance/policy", "/api/v1/performance/policy/preview", "/api/v1/performance/policy/apply", "/api/v1/performance/policy/cancel",
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
 		"/api/v1/session/password",
 		"/api/v1/benchmark/run", "/api/v1/performance/manual-node",
@@ -246,6 +261,30 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.readPerformance(w, r)
+	case "/api/v1/performance/policy":
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w, http.MethodGet)
+			return
+		}
+		s.readPerformancePolicy(w, r)
+	case "/api/v1/performance/policy/preview":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.previewPerformancePolicy(w, r)
+	case "/api/v1/performance/policy/apply":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.applyPerformancePolicy(w, r)
+	case "/api/v1/performance/policy/cancel":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.cancelPerformancePolicy(w, r)
 	case "/api/v1/config-summary":
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w, http.MethodGet)
@@ -733,6 +772,9 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if s.dnsObservatory != nil {
 		s.dnsObservatory.Invalidate(session.CSRFToken)
 	}
+	if s.performancePolicy != nil {
+		s.performancePolicy.Invalidate(session.CSRFToken)
+	}
 	s.auth.ClearSessionCookie(w)
 	writeJSON(w, http.StatusOK, struct {
 		Authenticated bool `json:"authenticated"`
@@ -776,6 +818,9 @@ func (s *Server) replacePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.dnsObservatory != nil {
 		s.dnsObservatory.InvalidateAll()
+	}
+	if s.performancePolicy != nil {
+		s.performancePolicy.InvalidateAll()
 	}
 	s.auth.ClearSessionCookie(w)
 	writeJSON(w, http.StatusOK, struct {
@@ -1534,6 +1579,101 @@ func (s *Server) readPerformance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.collector.PerformanceSnapshot(r.Context()))
 }
 
+func (s *Server) readPerformancePolicy(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	if r.URL.RawQuery != "" {
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid performance policy request")
+		return
+	}
+	if s.performancePolicy == nil {
+		writePerformancePolicyError(w, performancepolicy.ErrUnavailable)
+		return
+	}
+	projection, err := s.performancePolicy.Read(r.Context())
+	if err != nil {
+		writePerformancePolicyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, projection)
+}
+
+func (s *Server) previewPerformancePolicy(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.performancePolicy == nil {
+		writePerformancePolicyError(w, performancepolicy.ErrUnavailable)
+		return
+	}
+	contents, ok := decodePerformancePolicyBody(w, r)
+	if !ok {
+		return
+	}
+	policy, err := performancepolicy.DecodeRequest(contents)
+	if err != nil {
+		writePerformancePolicyError(w, err)
+		return
+	}
+	preview, err := s.performancePolicy.Preview(r.Context(), session.CSRFToken, policy)
+	if err != nil {
+		writePerformancePolicyError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
+func (s *Server) applyPerformancePolicy(w http.ResponseWriter, r *http.Request) {
+	s.performancePolicyTokenAction(w, r, true)
+}
+
+func (s *Server) cancelPerformancePolicy(w http.ResponseWriter, r *http.Request) {
+	s.performancePolicyTokenAction(w, r, false)
+}
+
+func (s *Server) performancePolicyTokenAction(w http.ResponseWriter, r *http.Request, apply bool) {
+	session, ok := s.requireSession(w, r)
+	if !ok {
+		return
+	}
+	if !auth.ValidateCSRF(r, session) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.performancePolicy == nil {
+		writePerformancePolicyError(w, performancepolicy.ErrUnavailable)
+		return
+	}
+	contents, ok := decodePerformancePolicyBody(w, r)
+	if !ok {
+		return
+	}
+	token, err := decodePerformancePolicyToken(contents)
+	if err != nil {
+		writePerformancePolicyError(w, performancepolicy.ErrInvalidRequest)
+		return
+	}
+	if apply {
+		result, err := s.performancePolicy.Apply(r.Context(), session.CSRFToken, token)
+		if err != nil {
+			writePerformancePolicyError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	s.performancePolicy.Cancel(session.CSRFToken, token)
+	writeJSON(w, http.StatusOK, struct {
+		Canceled bool `json:"canceled"`
+	}{Canceled: true})
+}
+
 func (s *Server) readComponents(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireSession(w, r); !ok {
 		return
@@ -2128,6 +2268,70 @@ func decodeDNSObservatoryJSON(w http.ResponseWriter, r *http.Request, value any)
 	return true
 }
 
+func decodePerformancePolicyBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	contentTypes := r.Header.Values("Content-Type")
+	if len(contentTypes) != 1 || strings.TrimSpace(contentTypes[0]) != "application/json" {
+		writeCodedError(w, http.StatusUnsupportedMediaType, "invalid-request", "unsupported media type")
+		return nil, false
+	}
+	if r.URL.RawQuery != "" {
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid performance policy request")
+		return nil, false
+	}
+	if r.ContentLength > maxPerformancePolicyBody {
+		writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		return nil, false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxPerformancePolicyBody)
+	defer r.Body.Close()
+	contents, err := io.ReadAll(r.Body)
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		} else {
+			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid performance policy request")
+		}
+		return nil, false
+	}
+	return contents, true
+}
+
+func decodePerformancePolicyToken(contents []byte) (string, error) {
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	token, err := decoder.Token()
+	if err != nil {
+		return "", err
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
+		return "", performancepolicy.ErrInvalidRequest
+	}
+	previewToken := ""
+	seen := false
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return "", err
+		}
+		name, ok := key.(string)
+		if !ok || name != "previewToken" || seen {
+			return "", performancepolicy.ErrInvalidRequest
+		}
+		seen = true
+		if err := decoder.Decode(&previewToken); err != nil {
+			return "", err
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return "", err
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF || !seen || previewToken == "" {
+		return "", performancepolicy.ErrInvalidRequest
+	}
+	return previewToken, nil
+}
+
 func writeRoutingPolicyError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, routingpolicy.ErrInvalidRequest):
@@ -2150,6 +2354,27 @@ func writeRoutingPolicyError(w http.ResponseWriter, err error) {
 		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "routing policy unavailable")
 	default:
 		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "routing policy unavailable")
+	}
+}
+
+func writePerformancePolicyError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, performancepolicy.ErrInvalidRequest):
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid performance policy request")
+	case errors.Is(err, performancepolicy.ErrPreviewExpired):
+		writeCodedError(w, http.StatusConflict, "preview-expired", "performance policy preview expired or invalid")
+	case errors.Is(err, performancepolicy.ErrPreviewStale):
+		writeCodedError(w, http.StatusConflict, "preview-stale", "performance policy preview is stale")
+	case errors.Is(err, performancepolicy.ErrBusy):
+		writeCodedError(w, http.StatusConflict, "busy", "performance policy is busy")
+	case errors.Is(err, performancepolicy.ErrSave):
+		writeCodedError(w, http.StatusInternalServerError, "save-failed", "performance policy could not be saved")
+	case errors.Is(err, performancepolicy.ErrDriftDetected):
+		writeCodedError(w, http.StatusConflict, "drift-detected", "performance policy authority drift detected")
+	case errors.Is(err, performancepolicy.ErrUnavailable):
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "performance policy unavailable")
+	default:
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "performance policy unavailable")
 	}
 }
 
