@@ -133,6 +133,7 @@ test.afterEach(async ({ page }) => {
 test('places Performance immediately after DNS and reads its policy lazily without dashboard polling', async ({ page }) => {
   const state = await prepare(page); page.__performancePolicyIssues = state.issues
   await page.goto('/')
+  await expect(page.locator('.section-nav button')).toHaveCount(8)
   expect(await page.locator('.section-nav button').allTextContents()).toEqual(['Overview', 'Nodes 0', 'Routing', 'DNS', 'Performance', 'Components / Updates', 'System', 'Backup & Restore'])
   expect(requestsFor(state, '/api/v1/performance/policy')).toHaveLength(0)
   await page.getByRole('button', { name: 'Performance', exact: true }).click()
