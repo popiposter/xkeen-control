@@ -135,6 +135,25 @@ if run_loader "$ROOT/.env.keenetic.example" "$TEMPORARY/checkout-local.out"; the
 	exit 1
 fi
 
+# A public placeholder stands in for an identity, proving that its checkout
+# location is rejected without reading it or creating a private key in Git.
+assert_rejected checkout-identity-absolute "KEENETIC_SSH_HOST=router.example
+KEENETIC_SSH_PORT=22
+KEENETIC_SSH_USER=root
+KEENETIC_SSH_IDENTITY_FILE=$ROOT/.env.keenetic.example
+"
+assert_rejected checkout-identity-dotdot "KEENETIC_SSH_HOST=router.example
+KEENETIC_SSH_PORT=22
+KEENETIC_SSH_USER=root
+KEENETIC_SSH_IDENTITY_FILE=$ROOT/scripts/../.env.keenetic.example
+"
+ln -s "$ROOT" "$TEMPORARY/checkout-alias"
+assert_rejected checkout-identity-parent-alias "KEENETIC_SSH_HOST=router.example
+KEENETIC_SSH_PORT=22
+KEENETIC_SSH_USER=root
+KEENETIC_SSH_IDENTITY_FILE=$TEMPORARY/checkout-alias/.env.keenetic.example
+"
+
 oversize=$TEMPORARY/oversize.env
 head -c 4097 /dev/zero | tr '\0' A > "$oversize"
 chmod 600 "$oversize"

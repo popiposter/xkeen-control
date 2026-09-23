@@ -13,16 +13,58 @@ param(
 
     $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..') -ErrorAction Stop).Path
 
+    function Resolve-KeeneticPhysicalPath {
+        param([string]$Path)
+
+        $resolved = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+        $full = [IO.Path]::GetFullPath($resolved)
+        if (($IsWindows -or $env:OS -eq 'Windows_NT') -and $full -match '^[\\/]{2}') {
+            throw 'Keenetic path must use a local ordinary filesystem path'
+        }
+        for ($pass = 0; $pass -lt 16; $pass++) {
+            $root = [IO.Path]::GetPathRoot($full)
+            $parts = $full.Substring($root.Length).Split([char[]]@('\', '/'), [StringSplitOptions]::RemoveEmptyEntries)
+            $current = $root
+            $changed = $false
+            for ($i = 0; $i -lt $parts.Length; $i++) {
+                $current = [IO.Path]::Combine($current, $parts[$i])
+                $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
+                if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                    if (-not $item.PSIsContainer) {
+                        throw 'Keenetic path must not be a file link'
+                    }
+                    $target = $item.ResolveLinkTarget($true)
+                    if ($null -eq $target) {
+                        throw 'Keenetic path contains an unresolved directory link'
+                    }
+                    $full = $target.FullName
+                    for ($j = $i + 1; $j -lt $parts.Length; $j++) {
+                        $full = [IO.Path]::Combine($full, $parts[$j])
+                    }
+                    $full = [IO.Path]::GetFullPath($full)
+                    if (($IsWindows -or $env:OS -eq 'Windows_NT') -and $full -match '^[\\/]{2}') {
+                        throw 'Keenetic path must use a local ordinary filesystem path'
+                    }
+                    $changed = $true
+                    break
+                }
+            }
+            if (-not $changed) { return $current }
+        }
+        throw 'Keenetic path contains too many directory links'
+    }
+
     function Read-KeeneticEnvironmentFile {
         param([Parameter(Mandatory = $true)][string]$Path)
 
         if (-not [IO.Path]::IsPathFullyQualified($Path)) {
             throw 'Keenetic environment path must be an explicit absolute host path'
         }
-        $resolved = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+        $resolved = Resolve-KeeneticPhysicalPath -Path $Path
+        $physicalRepositoryRoot = Resolve-KeeneticPhysicalPath -Path $repositoryRoot
         $comparison = if ($IsWindows -or $env:OS -eq 'Windows_NT') { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
-        $repositoryPrefix = $repositoryRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
-        if ($resolved.Equals($repositoryRoot, $comparison) -or $resolved.StartsWith($repositoryPrefix, $comparison)) {
+        $repositoryPrefix = $physicalRepositoryRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if ($resolved.Equals($physicalRepositoryRoot, $comparison) -or $resolved.StartsWith($repositoryPrefix, $comparison)) {
             throw 'Keenetic environment must live outside the repository checkout'
         }
         $item = Get-Item -LiteralPath $resolved -Force -ErrorAction Stop
@@ -91,7 +133,14 @@ param(
             throw 'Keenetic SSH identity file is empty or invalid'
         }
         $candidate = if ([IO.Path]::IsPathRooted($Value)) { $Value } else { Join-Path $BaseDirectory $Value }
-        $item = Get-Item -LiteralPath $candidate -Force -ErrorAction Stop
+        $canonical = Resolve-KeeneticPhysicalPath -Path $candidate
+        $physicalRepositoryRoot = Resolve-KeeneticPhysicalPath -Path $repositoryRoot
+        $item = Get-Item -LiteralPath $canonical -Force -ErrorAction Stop
+        $comparison = if ($IsWindows -or $env:OS -eq 'Windows_NT') { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+        $repositoryPrefix = $physicalRepositoryRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if ($canonical.Equals($physicalRepositoryRoot, $comparison) -or $canonical.StartsWith($repositoryPrefix, $comparison)) {
+            throw 'Keenetic SSH identity file must live outside the repository checkout'
+        }
         if ($item.PSIsContainer -or $item.LinkType -or (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) -or $item.Length -le 0 -or $item.Length -gt 65536) {
             throw 'Keenetic SSH identity file must be a small regular non-link file'
         }

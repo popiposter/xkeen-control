@@ -134,6 +134,18 @@ KEENETIC_SSH_IDENTITY_FILE="keys/operator-key"
     Assert-Rejected -Name 'oversize' -Contents ('A' * 4097)
     Assert-RejectedPath -Name 'checkout-local' -Path (Join-Path $root '.env.keenetic.example')
 
+    # The placeholder is a public, small regular file: the loader must reject
+    # its checkout location without inspecting its contents as a private key.
+    $checkoutIdentity = Join-Path $root '.env.keenetic.example'
+    Assert-Rejected -Name 'checkout-identity-absolute' -Contents "KEENETIC_SSH_HOST=router.example`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=root`nKEENETIC_SSH_IDENTITY_FILE=$checkoutIdentity`n"
+    $checkoutIdentityViaParent = Join-Path $root 'scripts\..\.env.keenetic.example'
+    Assert-Rejected -Name 'checkout-identity-dotdot' -Contents "KEENETIC_SSH_HOST=router.example`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=root`nKEENETIC_SSH_IDENTITY_FILE=$checkoutIdentityViaParent`n"
+    if ($IsWindows -or $env:OS -eq 'Windows_NT') {
+        foreach ($namespace in @(@{ Name = 'extended'; Prefix = '\\?\' }, @{ Name = 'device'; Prefix = '\\.\' })) {
+            Assert-Rejected -Name ("checkout-identity-namespace-{0}" -f $namespace.Name) -Contents "KEENETIC_SSH_HOST=router.example`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=root`nKEENETIC_SSH_IDENTITY_FILE=$($namespace.Prefix)$checkoutIdentity`n"
+        }
+    }
+
     $directoryInput = Join-Path $temporary 'directory-input'
     [void][IO.Directory]::CreateDirectory($directoryInput)
     $directoryAccepted = $true
@@ -154,6 +166,40 @@ KEENETIC_SSH_IDENTITY_FILE="keys/operator-key"
         $linkAccepted = $true
         try { . $loader -EnvFile $symlink } catch { $linkAccepted = $false }
         if ($linkAccepted) { throw 'symlink input was accepted' }
+    }
+
+    $checkoutAlias = Join-Path $temporary 'checkout-alias'
+    $aliasCreated = $false
+    try {
+        [void](New-Item -ItemType SymbolicLink -Path $checkoutAlias -Target $root -ErrorAction Stop)
+        $aliasCreated = $true
+    } catch [System.UnauthorizedAccessException] {
+        # Directory symlinks also require Windows Developer Mode or privilege.
+    } catch [System.IO.IOException] {
+        # Filesystem may not support creating this synthetic alias.
+    }
+    if ($aliasCreated) {
+        $checkoutIdentityViaAlias = Join-Path $checkoutAlias '.env.keenetic.example'
+        Assert-Rejected -Name 'checkout-identity-parent-alias' -Contents "KEENETIC_SSH_HOST=router.example`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=root`nKEENETIC_SSH_IDENTITY_FILE=$checkoutIdentityViaAlias`n"
+    }
+
+    $externalKeyAlias = Join-Path $temporary 'external-key-alias'
+    $externalAliasCreated = $false
+    try {
+        [void](New-Item -ItemType SymbolicLink -Path $externalKeyAlias -Target (Join-Path $temporary 'keys') -ErrorAction Stop)
+        $externalAliasCreated = $true
+    } catch [System.UnauthorizedAccessException] {
+        # Directory symlink creation may be unavailable on this Windows host.
+    } catch [System.IO.IOException] {
+        # Filesystem may not support creating this synthetic alias.
+    }
+    if ($externalAliasCreated) {
+        $externalAliasEnv = Join-Path $temporary 'external-alias.env'
+        Write-Fixture -Path $externalAliasEnv -Contents "KEENETIC_SSH_HOST=router.example`nKEENETIC_SSH_PORT=22`nKEENETIC_SSH_USER=root`nKEENETIC_SSH_IDENTITY_FILE=external-key-alias/operator-key`n"
+        $output = @(. $loader -EnvFile $externalAliasEnv 2>&1)
+        if ($output.Count -ne 0 -or $env:KEENETIC_SSH_IDENTITY_FILE -ne $identity) {
+            throw 'external identity directory alias did not remain supported'
+        }
     }
 
     Write-Output 'keenetic env PowerShell fixtures passed'

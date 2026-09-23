@@ -51,7 +51,7 @@ keenetic_env_main() {
 	local repository env_file env_directory line trimmed key value
 	local host_value='' port_value='' user_value='' password_value='' identity_value=''
 	local host_seen=0 port_seen=0 user_seen=0 password_seen=0 identity_seen=0
-	local line_count=0 size mode directory candidate
+	local line_count=0 size mode directory candidate candidate_directory
 
 	repository=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P) || return 1
 	if [[ -z "${KEENETIC_ENV_FILE:-}" || "$KEENETIC_ENV_FILE" != /* ]]; then
@@ -161,12 +161,19 @@ keenetic_env_main() {
 			keenetic_env_error 'identity file must be a small regular non-link file'
 			return 1
 		fi
+		candidate_directory=$(cd -- "$(dirname -- "$candidate")" && pwd -P) || return 1
+		candidate=$candidate_directory/$(basename -- "$candidate")
+		case "$candidate" in
+			"$repository"|"$repository"/*)
+				keenetic_env_error 'identity file must live outside the repository checkout'
+				return 1 ;;
+		esac
 		size=$(keenetic_env_file_size "$candidate") || return 1
 		if ((size <= 0 || size > 65536)); then
 			keenetic_env_error 'identity file must be a small regular non-link file'
 			return 1
 		fi
-		identity_value=$(cd -- "$(dirname -- "$candidate")" && pwd -P)/$(basename -- "$candidate") || return 1
+		identity_value=$candidate
 	fi
 	if [[ -z "$password_value" && -z "$identity_value" ]]; then
 		keenetic_env_error 'a password or identity file is required'
