@@ -30,6 +30,7 @@ async function prepare(page, options = {}) {
   const state = {
     listener: listenerProjection(options.listener),
     update: updateStatus(options.update),
+    reconnected: false,
     requests: [],
     issues: [],
     previews: new Map(),
@@ -48,7 +49,10 @@ async function prepare(page, options = {}) {
     }
     state.requests.push({ path, method: request.method(), body, csrf: request.headers()['x-csrf-token'] || '' })
     switch (path) {
-      case '/api/v1/session': return json(route, { csrfToken })
+      case '/api/v1/session': {
+        if (state.reconnected) state.listener = { ...state.listener, host: '10.0.0.4', source: 'file' }
+        return json(route, { csrfToken: state.reconnected ? `${csrfToken}-reconnected` : csrfToken })
+      }
       case '/api/v1/status': return json(route, status)
       case '/api/v1/nodes': return json(route, { total: 0, nodes: [], subscriptions: [] })
       case '/api/v1/performance': return json(route, { nodes: [] })
@@ -62,7 +66,6 @@ async function prepare(page, options = {}) {
       case '/api/v1/panel/listener/apply': {
         const pending = state.previews.get(body.previewToken)
         state.previews.delete(body.previewToken)
-        if (pending?.host && pending.host !== state.listener.host) state.listener = { ...state.listener, host: pending.host, source: 'file' }
         if (options.dropListenerApplyResponse) return route.abort()
         if (options.malformedListenerApplyResponse) return route.fulfill({ status: 202, contentType: 'application/json', body: '{malformed' })
         return json(route, { accepted: true, state: 'rebind-started', before: { host: '127.0.0.1', port: 8787 }, after: { host: pending?.host || '127.0.0.1', port: 8787 }, noop: false, reconnectClassification: 'loopback-to-lan', restartRequired: true, sessionInvalidated: true, loginRequired: true }, 202)
@@ -127,9 +130,18 @@ test('sends only the server-listed host and presents rebind 202 as a handoff', a
   expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener/apply')).toHaveLength(1)
   expect(state.requests.find(({ path }) => path === '/api/v1/panel/listener/apply').body).toEqual({ previewToken: 'listener-preview-1' })
   await expect(page.locator('div.notice.warning').filter({ hasText: /reconnect and verify/i })).toBeVisible()
+  await expect(page.locator('p.system-blocked').filter({ hasText: /same-session Refresh cannot prove completion/i })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Preview rebind' })).toBeDisabled()
   await expect(page.getByLabel('New management host')).toBeDisabled()
   await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '127.0.0.1:8787', exact: true })).toBeVisible()
+  await expect(page.getByLabel('New management host')).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Preview rebind' })).toBeDisabled()
+
+  state.reconnected = true
+  await page.reload()
+  await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '10.0.0.4:8787', exact: true })).toBeVisible()
   await expect(page.getByLabel('New management host')).toBeEnabled()
   await page.getByLabel('New management host').selectOption('127.0.0.1')
   await expect(page.getByRole('button', { name: 'Preview rebind' })).toBeEnabled()
@@ -146,13 +158,19 @@ test('locks listener rebind after a lost Apply response until a fresh listener r
   await page.getByRole('button', { name: 'Preview rebind' }).click()
   await page.getByRole('button', { name: 'Start rebind handoff' }).click()
   await expect(page.getByText('Listener rebind outcome is unknown', { exact: true })).toBeVisible()
-  await expect(page.locator('p.system-blocked').filter({ hasText: /fresh listener read before another Preview or Apply/i })).toBeVisible()
+  await expect(page.locator('p.system-blocked').filter({ hasText: /same-session Refresh cannot prove completion/i })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Preview rebind' })).toBeDisabled()
   expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener/apply')).toHaveLength(1)
   expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener/cancel')).toHaveLength(0)
 
   await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '127.0.0.1:8787', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Preview rebind' })).toBeDisabled()
+
+  state.reconnected = true
+  await page.reload()
+  await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '10.0.0.4:8787', exact: true })).toBeVisible()
   await page.getByLabel('New management host').selectOption('127.0.0.1')
   await expect(page.getByRole('button', { name: 'Preview rebind' })).toBeEnabled()
   await page.getByRole('button', { name: 'Preview rebind' }).click()

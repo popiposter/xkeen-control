@@ -160,11 +160,6 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
       setListener({ value: listenerValue, loading: false, error: '' })
       setUpdate({ value: updateValue, loading: false, error: '' })
       setChannelDraft(updateValue.policy.channel)
-      if (listenerHandoffGate.current) {
-        listenerHandoffGate.current = false
-        setListenerHandoffState('idle')
-        setResult(null)
-      }
       return true
     } catch (cause) {
       if (requestEpoch !== epoch.current) return false
@@ -397,6 +392,10 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
     setResult(null)
     setChannelDraft('stable')
     setCheckVersion('')
+    // A new CSRF token is the existing session/reconnect turnover boundary;
+    // an ordinary same-session listener read is never proof of rebind.
+    listenerHandoffGate.current = false
+    setListenerHandoffState('idle')
     sessionCSRFRef.current = csrfToken
   }, [clearPreview, csrfToken])
 
@@ -457,8 +456,8 @@ export function SystemPanelSection({ controller, status, onOpenComponents, onOpe
           {listener.editability === 'environment-owned' && <p className="system-blocked" role="alert">An inherited XKEEN_CONTROL_LISTEN environment override owns this bind. Persisted listener changes are read-only.</p>}
           {listener.editability === 'drift-detected' && <p className="system-blocked" role="alert">The listener file changed after startup. Refresh may inspect the drift, but Preview and Apply remain blocked.</p>}
           {listener.editability === 'unavailable' && <p className="system-blocked" role="alert">The local interface catalog or listener authority is unavailable. Mutation is disabled.</p>}
-          {controller.listenerHandoffState === 'sent' && <p className="system-blocked" role="alert">The listener rebind handoff started. Reconnect and verify the active listener, then use Refresh for a successful fresh listener read before another Preview or Apply. The sent handoff will not be canceled or replayed.</p>}
-          {controller.listenerHandoffState === 'unknown' && <p className="system-blocked" role="alert">The listener rebind outcome is unknown. Reconnect and verify the active listener, then use Refresh for a successful fresh listener read before another Preview or Apply. The sent handoff was not canceled or replayed.</p>}
+          {controller.listenerHandoffState === 'sent' && <p className="system-blocked" role="alert">The listener rebind handoff started. Reconnect and verify the active listener; a same-session Refresh cannot prove completion. After session turnover, read the listener state before another Preview or Apply. The sent handoff will not be canceled or replayed.</p>}
+          {controller.listenerHandoffState === 'unknown' && <p className="system-blocked" role="alert">The listener rebind outcome is unknown. Reconnect and verify the active listener; a same-session Refresh cannot prove completion. After session turnover, read the listener state before another Preview or Apply. The sent handoff was not canceled or replayed.</p>}
           <label className="system-select-field">New management host<select aria-label="New management host" value={listener.selectedHost} onChange={(event) => controller.chooseHost(event.target.value)} disabled={listener.editability !== 'editable' || controller.pending || lifecycleBlocked || controller.listenerHandoffState !== 'idle'}><option value={listener.host}>{listener.host} (current)</option>{listener.allowedHosts.filter((host) => host !== listener.host).map((host) => <option key={host} value={host}>{host}</option>)}</select></label>
           <div className="system-card-actions"><button className="ghost" type="button" onClick={controller.refresh} disabled={controller.pending || controller.listenerLoading}>Refresh</button><button type="button" onClick={controller.previewListener} disabled={!controller.listener || !controller.listener.selectedHost || controller.listener.selectedHost === controller.listener.host || controller.listener.editability !== 'editable' || controller.pending || lifecycleBlocked || controller.listenerHandoffState !== 'idle'}>Preview rebind</button></div>
         </>}
