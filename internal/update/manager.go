@@ -85,11 +85,12 @@ type Manager struct {
 	now       func() time.Time
 	runHelper func(context.Context, string) error
 
-	mu              sync.Mutex
-	lastCheck       time.Time
-	lastResult      string
-	latest          *release.Manifest
-	rollbackClaimed bool
+	mu                           sync.Mutex
+	lastCheck                    time.Time
+	lastResult                   string
+	latest                       *release.Manifest
+	rollbackAdmissionClaimed     bool
+	rollbackVerificationRequired bool
 }
 
 func NewManager(config Config) *Manager {
@@ -151,9 +152,8 @@ func (m *Manager) Status(_ context.Context) Status {
 		status.LatestSourceCommit = m.latest.SourceCommit
 		status.ReleaseNotesURL = release.ReleaseNotesURL(m.latest.Version)
 	}
-	if m.rollbackClaimed {
-		status.RollbackVerificationRequired = true
-	} else {
+	status.RollbackVerificationRequired = m.rollbackVerificationRequired
+	if !m.rollbackAdmissionClaimed && !m.rollbackVerificationRequired {
 		_, rollbackErr := os.Stat(filepath.Join(m.paths.PreviousDir, "xkeen-control-linux-arm64"))
 		status.RollbackAvailable = rollbackErr == nil
 	}
@@ -337,30 +337,52 @@ func validateVersionRequest(channel, version string) error {
 // grace expires and process replacement begins.
 func (m *Manager) Rollback(ctx context.Context) error {
 	m.mu.Lock()
-	if m.rollbackClaimed {
+	if m.rollbackVerificationRequired {
 		m.mu.Unlock()
 		return errors.New("panel rollback outcome requires verification")
+	}
+	if m.rollbackAdmissionClaimed {
+		m.mu.Unlock()
+		return errors.New("panel rollback is busy")
 	}
 	m.mu.Unlock()
 	if _, err := os.Stat(filepath.Join(m.paths.PreviousDir, "xkeen-control-linux-arm64")); err != nil {
 		return errors.New("panel rollback is unavailable")
 	}
-	// Claim before lifecycle admission/helper start. If the response is lost or
-	// the helper fails before replacement, a second click cannot replay it.
+	// Claim before lifecycle admission/helper start so concurrent requests cannot
+	// enter the fixed helper twice. This is only transient ownership: a proven
+	// pre-handoff failure releases it below.
 	m.mu.Lock()
-	if m.rollbackClaimed {
+	if m.rollbackVerificationRequired {
 		m.mu.Unlock()
 		return errors.New("panel rollback outcome requires verification")
 	}
-	m.rollbackClaimed = true
+	if m.rollbackAdmissionClaimed {
+		m.mu.Unlock()
+		return errors.New("panel rollback is busy")
+	}
+	m.rollbackAdmissionClaimed = true
 	m.mu.Unlock()
 	releaseToken, err := m.beginLifecycle(ctx)
 	if err != nil {
+		m.mu.Lock()
+		m.rollbackAdmissionClaimed = false
+		m.mu.Unlock()
 		return err
 	}
 	if err := m.launchHelper("rollback", releaseToken); err != nil {
+		m.mu.Lock()
+		m.rollbackAdmissionClaimed = false
+		m.mu.Unlock()
 		return errors.New("panel rollback helper could not start")
 	}
+	// launchHelper returning nil proves that the fixed helper was started. From
+	// this point the response may be lost while replacement proceeds, so retain
+	// a no-replay verification latch and release transient admission ownership.
+	m.mu.Lock()
+	m.rollbackAdmissionClaimed = false
+	m.rollbackVerificationRequired = true
+	m.mu.Unlock()
 	return nil
 }
 

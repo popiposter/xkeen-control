@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -38,6 +39,43 @@ func (f *fakeLifecycle) counts() (int, int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.entered, f.exited
+}
+
+type rejectingLifecycle struct {
+	mu    sync.Mutex
+	calls int
+	err   error
+}
+
+func (f *rejectingLifecycle) BeginApply(context.Context) (func(), error) {
+	f.mu.Lock()
+	f.calls++
+	f.mu.Unlock()
+	return nil, f.err
+}
+
+func (f *rejectingLifecycle) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+type blockingLifecycle struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (f *blockingLifecycle) BeginApply(ctx context.Context) (func(), error) {
+	select {
+	case f.entered <- struct{}{}:
+	default:
+	}
+	select {
+	case <-f.release:
+		return func() {}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func TestManagerStagesMarkerAndHandsOffUnderLifecycle(t *testing.T) {
@@ -210,6 +248,109 @@ func TestRollbackConsumesHandoffBeforeReturning(t *testing.T) {
 	status := manager.Status(context.Background())
 	if status.RollbackAvailable || !status.RollbackVerificationRequired {
 		t.Fatalf("rollback verification state = %+v", status)
+	}
+}
+
+func TestRollbackReleasesAdmissionAfterLifecycleFailure(t *testing.T) {
+	dir := t.TempDir()
+	previous := filepath.Join(dir, "previous")
+	if err := os.MkdirAll(previous, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(previous, "xkeen-control-linux-arm64"), []byte("previous"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lifecycle := &rejectingLifecycle{err: errors.New("synthetic lifecycle busy")}
+	manager := NewManager(Config{
+		Current:   buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
+		Lifecycle: lifecycle,
+		Paths:     Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: previous, MarkerPath: filepath.Join(dir, "state", "installed-release.json"), PolicyPath: filepath.Join(dir, "state", "update-policy.json"), HelperPath: filepath.Join(dir, "helper")},
+	})
+	if err := manager.Rollback(context.Background()); err == nil {
+		t.Fatal("busy lifecycle unexpectedly admitted rollback")
+	}
+	status := manager.Status(context.Background())
+	if !status.RollbackAvailable || status.RollbackVerificationRequired {
+		t.Fatalf("lifecycle failure retained rollback claim: %+v", status)
+	}
+	if err := manager.Rollback(context.Background()); err == nil {
+		t.Fatal("rollback admission was not released after lifecycle failure")
+	}
+	if lifecycle.callCount() != 2 {
+		t.Fatalf("lifecycle admission calls = %d, want 2", lifecycle.callCount())
+	}
+}
+
+func TestRollbackReleasesAdmissionAfterHelperStartFailure(t *testing.T) {
+	dir := t.TempDir()
+	previous := filepath.Join(dir, "previous")
+	if err := os.MkdirAll(previous, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(previous, "xkeen-control-linux-arm64"), []byte("previous"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(Config{
+		Current: buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
+		Paths:   Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: previous, MarkerPath: filepath.Join(dir, "state", "installed-release.json"), PolicyPath: filepath.Join(dir, "state", "update-policy.json"), HelperPath: filepath.Join(dir, "missing-helper")},
+	})
+	if err := manager.Rollback(context.Background()); err == nil {
+		t.Fatal("missing rollback helper unexpectedly started")
+	}
+	status := manager.Status(context.Background())
+	if !status.RollbackAvailable || status.RollbackVerificationRequired {
+		t.Fatalf("helper-start failure retained rollback claim: %+v", status)
+	}
+	if err := manager.Rollback(context.Background()); err == nil {
+		t.Fatal("rollback admission was not released after helper-start failure")
+	}
+}
+
+func TestRollbackExcludesConcurrentAdmissionAndPersistsAfterHelperStart(t *testing.T) {
+	dir := t.TempDir()
+	previous := filepath.Join(dir, "previous")
+	if err := os.MkdirAll(previous, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(previous, "xkeen-control-linux-arm64"), []byte("previous"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lifecycle := &blockingLifecycle{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	helperStarted := make(chan struct{}, 1)
+	manager := NewManager(Config{
+		Current:   buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
+		Lifecycle: lifecycle,
+		Paths:     Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: previous, MarkerPath: filepath.Join(dir, "state", "installed-release.json"), PolicyPath: filepath.Join(dir, "state", "update-policy.json")},
+		RunHelper: func(_ context.Context, action string) error {
+			if action != "rollback" {
+				t.Errorf("helper action = %q", action)
+			}
+			helperStarted <- struct{}{}
+			return nil
+		},
+	})
+	first := make(chan error, 1)
+	go func() { first <- manager.Rollback(context.Background()) }()
+	select {
+	case <-lifecycle.entered:
+	case <-time.After(time.Second):
+		t.Fatal("rollback did not reach lifecycle admission")
+	}
+	if err := manager.Rollback(context.Background()); err == nil || !strings.Contains(err.Error(), "busy") {
+		t.Fatalf("concurrent rollback error = %v", err)
+	}
+	close(lifecycle.release)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-helperStarted:
+	case <-time.After(time.Second):
+		t.Fatal("rollback helper did not start")
+	}
+	status := manager.Status(context.Background())
+	if status.RollbackAvailable || !status.RollbackVerificationRequired {
+		t.Fatalf("successful rollback handoff state = %+v", status)
 	}
 }
 

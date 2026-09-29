@@ -201,6 +201,7 @@ type checkedUpdateHTTPStub struct {
 	checked         atomicBool
 	claimed         atomicBool
 	rollbackClaimed atomicBool
+	rollbackError   error
 	applied         chan [2]string
 }
 
@@ -271,6 +272,9 @@ func (stub *checkedUpdateHTTPStub) ValidateChecked(_ context.Context, channel, v
 }
 
 func (stub *checkedUpdateHTTPStub) Rollback(context.Context) error {
+	if stub.rollbackError != nil {
+		return stub.rollbackError
+	}
 	if !stub.rollbackClaimed.compareAndSwap(false, true) {
 		return errors.New("rollback outcome requires verification")
 	}
@@ -350,6 +354,20 @@ func TestUpdateApplyRequiresExactCheckedCandidateAndReturnsHandoff202(t *testing
 		t.Fatalf("replayed checked candidate reached ApplyChecked: %v", applied)
 	default:
 	}
+
+	updates.rollbackError = errors.New("panel rollback is busy")
+	response = postJSON(t, client, server.URL+"/api/v1/update/rollback", map[string]string{}, login.CSRFToken)
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("busy rollback = %d %s", response.StatusCode, readBody(response))
+	}
+	response.Body.Close()
+	updates.rollbackError = errors.New("panel rollback helper could not start")
+	response = postJSON(t, client, server.URL+"/api/v1/update/rollback", map[string]string{}, login.CSRFToken)
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("helper-start rollback = %d %s", response.StatusCode, readBody(response))
+	}
+	response.Body.Close()
+	updates.rollbackError = nil
 
 	response = postJSON(t, client, server.URL+"/api/v1/update/rollback", map[string]string{}, login.CSRFToken)
 	if response.StatusCode != http.StatusAccepted {
