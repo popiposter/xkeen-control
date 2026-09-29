@@ -135,6 +135,54 @@ func TestPolicyRejectsBetaAutoAndBoundsCadence(t *testing.T) {
 	}
 }
 
+func TestCheckedCandidateIsExactAndPolicyChangeClearsIt(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewManager(Config{Current: buildinfo.Current(), Client: release.NewClientForTest("", nil), Paths: Paths{
+		PolicyPath: filepath.Join(dir, "state", "policy.json"), CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: filepath.Join(dir, "previous"),
+	}})
+	if err := manager.ValidateChecked(context.Background(), "stable", "1.2.3"); err == nil {
+		t.Fatal("unchecked candidate was accepted")
+	}
+	manager.mu.Lock()
+	manager.latest = &release.Manifest{Channel: "stable", Version: "1.2.3"}
+	manager.mu.Unlock()
+	if err := manager.ValidateChecked(context.Background(), "stable", "1.2.3"); err != nil {
+		t.Fatalf("exact checked candidate rejected: %v", err)
+	}
+	if err := manager.ValidateChecked(context.Background(), "stable", "1.2.4"); err == nil {
+		t.Fatal("different checked version was accepted")
+	}
+	status, err := manager.SetPolicy(Policy{Channel: "beta", Mode: "manual", CheckCadenceMinutes: 360})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.LatestCompatible != "" || status.LatestChannel != "" || status.LatestSource != "" {
+		t.Fatalf("policy change retained stale candidate: %+v", status)
+	}
+	manager.mu.Lock()
+	manager.latest = &release.Manifest{Channel: "stable", Version: "1.2.3"}
+	manager.mu.Unlock()
+	if _, err := manager.Check(context.Background(), "stable", ""); err == nil {
+		t.Fatal("unavailable release Check unexpectedly succeeded")
+	}
+	if status := manager.Status(context.Background()); status.LatestCompatible != "" {
+		t.Fatalf("failed Check retained stale candidate: %+v", status)
+	}
+}
+
+func TestCheckBoundsVersionAndRequiresBetaPin(t *testing.T) {
+	dir := t.TempDir()
+	manager := NewManager(Config{Paths: Paths{
+		PolicyPath: filepath.Join(dir, "state", "policy.json"), CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: filepath.Join(dir, "previous"),
+	}})
+	if _, err := manager.Check(context.Background(), "beta", ""); err == nil {
+		t.Fatal("beta Check without version was accepted")
+	}
+	if _, err := manager.Check(context.Background(), "stable", strings.Repeat("1", release.MaxRequestedVersionBytes+1)); err == nil {
+		t.Fatal("oversized stable version was accepted")
+	}
+}
+
 func testCandidate(t *testing.T) (release.Manifest, map[string][]byte) {
 	t.Helper()
 	dir := t.TempDir()

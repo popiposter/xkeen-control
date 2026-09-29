@@ -5,6 +5,11 @@ set -f
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 command -v jq >/dev/null 2>&1 || { echo "jq is required for bootstrap fixture" >&2; exit 1; }
 
+if grep -Fq 'XKEEN_CONTROL_LISTEN="$LISTEN"' "$ROOT/packaging/S99xkeen-control" || grep -Fq 'LISTEN_FILE=' "$ROOT/packaging/S99xkeen-control"; then
+	echo "init fixture still owns persisted listener resolution" >&2
+	exit 1
+fi
+
 tmp="$(mktemp -d /tmp/xkeen-bootstrap-test.XXXXXX)"
 trap 'rm -rf "$tmp"' EXIT
 fixture="$tmp/release"

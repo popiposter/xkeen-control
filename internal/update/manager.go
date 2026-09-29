@@ -46,6 +46,8 @@ type Status struct {
 	Installed            buildinfo.Info `json:"installed"`
 	Channel              string         `json:"channel"`
 	LatestCompatible     string         `json:"latestCompatibleVersion"`
+	LatestChannel        string         `json:"latestChannel,omitempty"`
+	LatestSource         string         `json:"latestSource,omitempty"`
 	LatestSourceCommit   string         `json:"latestSourceCommit,omitempty"`
 	ReleaseNotesURL      string         `json:"releaseNotesUrl,omitempty"`
 	LastCheckAt          string         `json:"lastCheckAt,omitempty"`
@@ -141,6 +143,8 @@ func (m *Manager) Status(_ context.Context) Status {
 	}
 	if m.latest != nil {
 		status.LatestCompatible = m.latest.Version
+		status.LatestChannel = m.latest.Channel
+		status.LatestSource = "github-release"
 		status.LatestSourceCommit = m.latest.SourceCommit
 		status.ReleaseNotesURL = release.ReleaseNotesURL(m.latest.Version)
 	}
@@ -154,13 +158,20 @@ func (m *Manager) Check(ctx context.Context, channel, version string) (Status, e
 	if err != nil {
 		return m.Status(ctx), err
 	}
-	if channel == "beta" && strings.TrimSpace(version) == "" {
-		return m.Status(ctx), errors.New("beta checks require an explicit version")
+	version = strings.TrimSpace(version)
+	if err := validateVersionRequest(channel, version); err != nil {
+		return m.Status(ctx), err
 	}
+	// A new valid Check attempt supersedes any remembered candidate immediately;
+	// a failed lookup must never leave an older release applyable.
+	m.mu.Lock()
+	m.latest = nil
+	m.mu.Unlock()
 	manifest, err := m.client.Check(ctx, channel, version)
 	m.mu.Lock()
 	m.lastCheck = m.now()
 	if err != nil {
+		m.latest = nil
 		m.lastResult = "failed"
 		m.mu.Unlock()
 		return m.Status(ctx), err
@@ -192,6 +203,11 @@ func (m *Manager) SetPolicy(policy Policy) (Status, error) {
 	if err := writeJSONAtomic(m.paths.PolicyPath, policy, 0o600); err != nil {
 		return Status{}, errors.New("update policy could not be saved")
 	}
+	m.mu.Lock()
+	if m.latest != nil && m.latest.Channel != channel {
+		m.latest = nil
+	}
+	m.mu.Unlock()
 	return m.Status(context.Background()), nil
 }
 
@@ -204,8 +220,9 @@ func (m *Manager) Apply(ctx context.Context, channel, version string) error {
 	if err != nil {
 		return err
 	}
-	if channel == "beta" && strings.TrimSpace(version) == "" {
-		return errors.New("beta apply requires an explicit version")
+	version = strings.TrimSpace(version)
+	if err := validateVersionRequest(channel, version); err != nil {
+		return err
 	}
 	candidate, err := m.client.FetchCandidate(ctx, channel, version)
 	if err != nil {
@@ -214,6 +231,49 @@ func (m *Manager) Apply(ctx context.Context, channel, version string) error {
 	if err := release.VerifyCandidate(candidate); err != nil {
 		return err
 	}
+	return m.applyCandidate(ctx, candidate)
+}
+
+// ValidateChecked proves that a candidate was explicitly checked for the
+// current effective channel. It is intentionally separate from Service so
+// existing non-UI callers retain their narrow Apply contract.
+func (m *Manager) ValidateChecked(ctx context.Context, channel, version string) error {
+	channel, err := release.ParseChannel(channel)
+	if err != nil {
+		return err
+	}
+	version = strings.TrimSpace(version)
+	if err := release.ValidateVersion(version); err != nil {
+		return err
+	}
+	status := m.Status(ctx)
+	if status.Policy.Channel != channel || status.LatestChannel != channel || status.LatestCompatible != version || status.LatestSource == "" {
+		return errors.New("release candidate was not explicitly checked")
+	}
+	return nil
+}
+
+// ApplyChecked pins the fetch and staged candidate to the exact manifest
+// version returned by the latest explicit Check. A policy/channel change or a
+// replaced check invalidates this path before any lifecycle admission.
+func (m *Manager) ApplyChecked(ctx context.Context, channel, version string) error {
+	if err := m.ValidateChecked(ctx, channel, version); err != nil {
+		return err
+	}
+	candidate, err := m.client.FetchCandidate(ctx, channel, version)
+	if err != nil {
+		return err
+	}
+	if candidate.Manifest.Channel != channel || candidate.Manifest.Version != version {
+		return errors.New("release candidate changed after check")
+	}
+	if err := release.VerifyCandidate(candidate); err != nil {
+		return err
+	}
+	return m.applyCandidate(ctx, candidate)
+}
+
+func (m *Manager) applyCandidate(ctx context.Context, candidate release.Candidate) error {
 
 	releaseToken, err := m.beginLifecycle(ctx)
 	if err != nil {
@@ -226,6 +286,16 @@ func (m *Manager) Apply(ctx context.Context, channel, version string) error {
 	if err := m.launchHelper("install", releaseToken); err != nil {
 		_ = os.RemoveAll(m.paths.CandidateDir)
 		return errors.New("panel update helper could not start")
+	}
+	return nil
+}
+
+func validateVersionRequest(channel, version string) error {
+	if channel == "beta" && version == "" {
+		return errors.New("beta checks require an explicit version")
+	}
+	if version != "" && release.ValidateVersion(version) != nil {
+		return errors.New("release version is invalid")
 	}
 	return nil
 }

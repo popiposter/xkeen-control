@@ -20,7 +20,9 @@ import (
 	"github.com/popiposter/xkeen-control/internal/components"
 	"github.com/popiposter/xkeen-control/internal/dnsobservatory"
 	"github.com/popiposter/xkeen-control/internal/nodes"
+	"github.com/popiposter/xkeen-control/internal/panellistener"
 	"github.com/popiposter/xkeen-control/internal/performancepolicy"
+	"github.com/popiposter/xkeen-control/internal/release"
 	"github.com/popiposter/xkeen-control/internal/restore"
 	"github.com/popiposter/xkeen-control/internal/routingpolicy"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
@@ -38,6 +40,7 @@ const (
 	maxRoutingPolicyBody     = 128 << 10
 	maxDNSObservatoryBody    = 16 << 10
 	maxPerformancePolicyBody = 4 << 10
+	maxPanelListenerBody     = 1 << 10
 	maxJSONResponse          = 512 << 10
 	csrfRequiredPath         = "/api/v1/session/logout"
 )
@@ -77,6 +80,15 @@ type PerformancePolicyService interface {
 	Read(context.Context) (performancepolicy.Projection, error)
 	Preview(context.Context, string, c1.PerformancePolicy) (performancepolicy.Preview, error)
 	Apply(context.Context, string, string) (performancepolicy.ApplyResult, error)
+	Cancel(string, string)
+	Invalidate(string)
+	InvalidateAll()
+}
+
+type PanelListenerService interface {
+	Read(context.Context) (panellistener.Projection, error)
+	Preview(context.Context, string, string) (panellistener.Preview, error)
+	Apply(context.Context, string, string) (panellistener.ApplyResult, error)
 	Cancel(string, string)
 	Invalidate(string)
 	InvalidateAll()
@@ -122,6 +134,7 @@ type Server struct {
 	policy             RoutingPolicyService
 	dnsObservatory     DNSObservatoryService
 	performancePolicy  PerformancePolicyService
+	listener           PanelListenerService
 	restorePreviewGate chan struct{}
 }
 
@@ -151,13 +164,14 @@ type Config struct {
 	Policy             RoutingPolicyService
 	DNSObservatory     DNSObservatoryService
 	PerformancePolicy  PerformancePolicyService
+	Listener           PanelListenerService
 }
 
 func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, updates: config.Updates, backup: config.Backup, restore: config.Restore, policy: config.Policy, dnsObservatory: config.DNSObservatory, performancePolicy: config.PerformancePolicy, restorePreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, updates: config.Updates, backup: config.Backup, restore: config.Restore, policy: config.Policy, dnsObservatory: config.DNSObservatory, performancePolicy: config.PerformancePolicy, listener: config.Listener, restorePreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -180,6 +194,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/appliance/policy", "/api/v1/appliance/policy/preview", "/api/v1/appliance/policy/apply", "/api/v1/appliance/policy/cancel",
 		"/api/v1/appliance/dns-observatory", "/api/v1/appliance/dns-observatory/preview", "/api/v1/appliance/dns-observatory/apply", "/api/v1/appliance/dns-observatory/cancel",
 		"/api/v1/performance/policy", "/api/v1/performance/policy/preview", "/api/v1/performance/policy/apply", "/api/v1/performance/policy/cancel",
+		"/api/v1/panel/listener", "/api/v1/panel/listener/preview", "/api/v1/panel/listener/apply", "/api/v1/panel/listener/cancel",
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
 		"/api/v1/session/password",
 		"/api/v1/benchmark/run", "/api/v1/performance/manual-node",
@@ -285,6 +300,30 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.cancelPerformancePolicy(w, r)
+	case "/api/v1/panel/listener":
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w, http.MethodGet)
+			return
+		}
+		s.readPanelListener(w, r)
+	case "/api/v1/panel/listener/preview":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.previewPanelListener(w, r)
+	case "/api/v1/panel/listener/apply":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.applyPanelListener(w, r)
+	case "/api/v1/panel/listener/cancel":
+		if r.Method != http.MethodPost {
+			methodNotAllowed(w, http.MethodPost)
+			return
+		}
+		s.cancelPanelListener(w, r)
 	case "/api/v1/config-summary":
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w, http.MethodGet)
@@ -775,6 +814,9 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if s.performancePolicy != nil {
 		s.performancePolicy.Invalidate(session.CSRFToken)
 	}
+	if s.listener != nil {
+		s.listener.Invalidate(session.CSRFToken)
+	}
 	s.auth.ClearSessionCookie(w)
 	writeJSON(w, http.StatusOK, struct {
 		Authenticated bool `json:"authenticated"`
@@ -822,11 +864,124 @@ func (s *Server) replacePassword(w http.ResponseWriter, r *http.Request) {
 	if s.performancePolicy != nil {
 		s.performancePolicy.InvalidateAll()
 	}
+	if s.listener != nil {
+		s.listener.InvalidateAll()
+	}
 	s.auth.ClearSessionCookie(w)
 	writeJSON(w, http.StatusOK, struct {
 		Authenticated bool   `json:"authenticated"`
 		State         string `json:"state"`
 	}{Authenticated: false, State: "reauthentication-required"})
+}
+
+func (s *Server) readPanelListener(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireSession(w, r); !ok {
+		return
+	}
+	if s.listener == nil {
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "panel listener unavailable")
+		return
+	}
+	projection, err := s.listener.Read(r.Context())
+	if err != nil {
+		writePanelListenerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, projection)
+}
+
+func (s *Server) previewPanelListener(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.requireSession(w, r)
+	if !ok || !auth.ValidateCSRF(r, session) {
+		if ok {
+			writeError(w, http.StatusForbidden, "forbidden")
+		}
+		return
+	}
+	if s.listener == nil {
+		writePanelListenerError(w, panellistener.ErrUnavailable)
+		return
+	}
+	var request struct {
+		Host string
+	}
+	if !s.decodePanelListenerHost(w, r, &request) {
+		return
+	}
+	preview, err := s.listener.Preview(r.Context(), session.CSRFToken, request.Host)
+	if err != nil {
+		writePanelListenerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
+func (s *Server) applyPanelListener(w http.ResponseWriter, r *http.Request) {
+	s.panelListenerTokenMutation(w, r, true)
+}
+
+func (s *Server) cancelPanelListener(w http.ResponseWriter, r *http.Request) {
+	s.panelListenerTokenMutation(w, r, false)
+}
+
+func (s *Server) panelListenerTokenMutation(w http.ResponseWriter, r *http.Request, apply bool) {
+	session, ok := s.requireSession(w, r)
+	if !ok || !auth.ValidateCSRF(r, session) {
+		if ok {
+			writeError(w, http.StatusForbidden, "forbidden")
+		}
+		return
+	}
+	if s.listener == nil {
+		writePanelListenerError(w, panellistener.ErrUnavailable)
+		return
+	}
+	var request struct {
+		PreviewToken string
+	}
+	if !s.decodePanelListenerToken(w, r, &request) {
+		return
+	}
+	if request.PreviewToken == "" {
+		writePanelListenerError(w, panellistener.ErrInvalidRequest)
+		return
+	}
+	if !apply {
+		s.listener.Cancel(session.CSRFToken, request.PreviewToken)
+		writeJSON(w, http.StatusOK, struct {
+			Canceled bool `json:"canceled"`
+		}{Canceled: true})
+		return
+	}
+	result, err := s.listener.Apply(r.Context(), session.CSRFToken, request.PreviewToken)
+	if err != nil {
+		writePanelListenerError(w, err)
+		return
+	}
+	if result.Noop {
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
+}
+
+func writePanelListenerError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, panellistener.ErrInvalidRequest):
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid panel listener request")
+	case errors.Is(err, panellistener.ErrEnvironmentOwned):
+		writeCodedError(w, http.StatusConflict, "environment-owned", "panel listener is environment-owned")
+	case errors.Is(err, panellistener.ErrDriftDetected), errors.Is(err, panellistener.ErrPreviewStale):
+		writeCodedError(w, http.StatusConflict, "drift-detected", "panel listener authority changed")
+	case errors.Is(err, panellistener.ErrPreviewExpired):
+		writeCodedError(w, http.StatusConflict, "preview-expired", "panel listener Preview expired")
+	case errors.Is(err, panellistener.ErrBusy), errors.Is(err, c1.ErrLifecycleBusy):
+		writeCodedError(w, http.StatusConflict, "busy", "panel listener handoff is busy")
+	case errors.Is(err, panellistener.ErrHelperStart):
+		writeCodedError(w, http.StatusServiceUnavailable, "handoff-unavailable", "panel listener handoff could not start")
+	default:
+		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "panel listener unavailable")
+	}
 }
 
 func (s *Server) updateStatus(w http.ResponseWriter, r *http.Request) {
@@ -857,6 +1012,10 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request) {
 		Version string `json:"version"`
 	}
 	if !s.decodeMutation(w, r, &request) {
+		return
+	}
+	if err := validateUpdateCheckRequest(request.Channel, request.Version); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	status, err := s.updates.Check(r.Context(), request.Channel, request.Version)
@@ -910,16 +1069,31 @@ func (s *Server) updateApply(w http.ResponseWriter, r *http.Request) {
 	if !s.decodeMutation(w, r, &request) {
 		return
 	}
+	if err := validateUpdateApplyRequest(r.Context(), s.updates, request.Channel, request.Version); err != nil {
+		if errors.Is(err, errUpdateApplyMalformed) {
+			writeError(w, http.StatusBadRequest, "invalid update request")
+		} else {
+			writeError(w, http.StatusConflict, "checked release candidate is unavailable")
+		}
+		return
+	}
 	// The external helper must outlive the HTTP handler: it stops/replaces the
 	// running panel after this accepted response has been written.
 	go func(channel, version string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 		defer cancel()
+		if checked, ok := s.updates.(interface {
+			ApplyChecked(context.Context, string, string) error
+		}); ok {
+			_ = checked.ApplyChecked(ctx, channel, version)
+			return
+		}
 		_ = s.updates.Apply(ctx, channel, version)
 	}(request.Channel, request.Version)
 	writeJSON(w, http.StatusAccepted, struct {
-		Accepted bool `json:"accepted"`
-	}{Accepted: true})
+		Accepted bool   `json:"accepted"`
+		State    string `json:"state"`
+	}{Accepted: true, State: "update-attempt-started"})
 }
 
 func (s *Server) updateRollback(w http.ResponseWriter, r *http.Request) {
@@ -939,8 +1113,46 @@ func (s *Server) updateRollback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, struct {
-		Accepted bool `json:"accepted"`
-	}{Accepted: true})
+		Accepted bool   `json:"accepted"`
+		State    string `json:"state"`
+	}{Accepted: true, State: "rollback-attempt-started"})
+}
+
+var errUpdateApplyMalformed = errors.New("update apply request is malformed")
+
+func validateUpdateCheckRequest(channel, version string) error {
+	parsed, err := release.ParseChannel(channel)
+	if err != nil {
+		return errUpdateApplyMalformed
+	}
+	version = strings.TrimSpace(version)
+	if parsed == "beta" && version == "" {
+		return errUpdateApplyMalformed
+	}
+	if version != "" && release.ValidateVersion(version) != nil {
+		return errUpdateApplyMalformed
+	}
+	return nil
+}
+
+func validateUpdateApplyRequest(ctx context.Context, updates panelupdate.Service, channel, version string) error {
+	parsed, err := release.ParseChannel(channel)
+	if err != nil || release.ValidateVersion(strings.TrimSpace(version)) != nil {
+		return errUpdateApplyMalformed
+	}
+	version = strings.TrimSpace(version)
+	status := updates.Status(ctx)
+	if status.Policy.Channel != parsed || status.LatestChannel != parsed || status.LatestCompatible != version || status.LatestSource == "" {
+		return errors.New("release candidate was not explicitly checked")
+	}
+	if checked, ok := updates.(interface {
+		ValidateChecked(context.Context, string, string) error
+	}); ok {
+		if err := checked.ValidateChecked(ctx, parsed, version); err != nil {
+			return errors.New("release candidate was not explicitly checked")
+		}
+	}
+	return nil
 }
 
 func (s *Server) readNodes(w http.ResponseWriter, r *http.Request) {
@@ -1320,6 +1532,104 @@ func (s *Server) decodeMutation(w http.ResponseWriter, r *http.Request, value an
 		return false
 	}
 	return true
+}
+
+func (s *Server) decodePanelListenerHost(w http.ResponseWriter, r *http.Request, value *struct{ Host string }) bool {
+	fields, ok := decodePanelListenerObject(w, r, map[string]struct{}{"host": {}})
+	if !ok || len(fields) != 1 {
+		return false
+	}
+	if err := json.Unmarshal(fields["host"], &value.Host); err != nil {
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid panel listener request")
+		return false
+	}
+	return true
+}
+
+func (s *Server) decodePanelListenerToken(w http.ResponseWriter, r *http.Request, value *struct{ PreviewToken string }) bool {
+	fields, ok := decodePanelListenerObject(w, r, map[string]struct{}{"previewToken": {}})
+	if !ok || len(fields) != 1 {
+		return false
+	}
+	if err := json.Unmarshal(fields["previewToken"], &value.PreviewToken); err != nil {
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid panel listener request")
+		return false
+	}
+	return true
+}
+
+func decodePanelListenerObject(w http.ResponseWriter, r *http.Request, allowed map[string]struct{}) (map[string]json.RawMessage, bool) {
+	contentTypes := r.Header.Values("Content-Type")
+	if len(contentTypes) != 1 || strings.TrimSpace(contentTypes[0]) != "application/json" {
+		writeCodedError(w, http.StatusUnsupportedMediaType, "invalid-request", "unsupported media type")
+		return nil, false
+	}
+	if r.URL.RawQuery != "" {
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid panel listener request")
+		return nil, false
+	}
+	if r.ContentLength > maxPanelListenerBody {
+		writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+		return nil, false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxPanelListenerBody)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	start, err := decoder.Token()
+	if err != nil {
+		return panelListenerDecodeError(w, err)
+	}
+	delimiter, ok := start.(json.Delim)
+	if !ok || delimiter != '{' {
+		return panelListenerDecodeError(w, errors.New("object required"))
+	}
+	fields := make(map[string]json.RawMessage, len(allowed))
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return panelListenerDecodeError(w, err)
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return panelListenerDecodeError(w, errors.New("field name required"))
+		}
+		if _, accepted := allowed[key]; !accepted {
+			return panelListenerDecodeError(w, errors.New("unknown field"))
+		}
+		if _, duplicate := fields[key]; duplicate {
+			return panelListenerDecodeError(w, errors.New("duplicate field"))
+		}
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return panelListenerDecodeError(w, err)
+		}
+		fields[key] = raw
+	}
+	end, err := decoder.Token()
+	if err != nil {
+		return panelListenerDecodeError(w, err)
+	}
+	if delimiter, ok := end.(json.Delim); !ok || delimiter != '}' {
+		return panelListenerDecodeError(w, errors.New("object end required"))
+	}
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return panelListenerDecodeError(w, err)
+	}
+	if len(fields) != len(allowed) {
+		return panelListenerDecodeError(w, errors.New("required field missing"))
+	}
+	return fields, true
+}
+
+func panelListenerDecodeError(w http.ResponseWriter, err error) (map[string]json.RawMessage, bool) {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
+	} else {
+		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid panel listener request")
+	}
+	return nil, false
 }
 
 func (s *Server) decodeManualNodeRequest(w http.ResponseWriter, r *http.Request, value any) bool {

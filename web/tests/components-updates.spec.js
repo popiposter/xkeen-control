@@ -106,7 +106,8 @@ async function mockApplication(page, options = {}) {
       case '/api/v1/nodes': return jsonResponse(route, { total: 0, nodes: [], subscriptions: [] })
       case '/api/v1/performance': return jsonResponse(route, { nodes: [] })
       case '/api/v1/config-summary': return jsonResponse(route, { routing: {}, dns: {}, observatory: {} })
-      case '/api/v1/update': return jsonResponse(route, { channel: 'stable', installed: { version: '0.2.0' } })
+      case '/api/v1/panel/listener': return jsonResponse(route, { host: '127.0.0.1', port: 8787, source: 'default', editability: 'editable', allowedHosts: ['127.0.0.1', '::1'] })
+      case '/api/v1/update': return jsonResponse(route, { channel: 'stable', installed: { version: '0.2.0', sourceCommit: 'a'.repeat(40) }, policy: { channel: 'stable', mode: 'manual', checkCadenceMinutes: 360 }, rollbackAvailable: false, signingKeyConfigured: true })
       case '/api/v1/components/policy':
         if (request.method() === 'POST') {
           scenario.policy = { ...requestBody, scheduler: scenario.policy.scheduler }
@@ -148,7 +149,7 @@ const openComponents = async (page) => {
   await expect(page).toHaveURL('http://127.0.0.1:4173/')
   await expect(page).toHaveTitle('XKeen Control')
   await expect(page.locator('#root')).toContainText('Overview')
-  await page.getByRole('button', { name: 'Components / Updates' }).click()
+  await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button', { name: 'Components / Updates' }).click()
   await expect(page.getByRole('heading', { name: 'Manual, one component at a time' })).toBeVisible()
 }
 
@@ -403,15 +404,15 @@ test('shows maintenance across sections and never confuses a benchmark with life
   const scenario = await mockApplication(page, { status })
   await page.goto('/')
   await expect(page.getByText('Lifecycle maintenance', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'System' }).click()
+  await page.getByRole('button', { name: 'System / Panel' }).click()
   await expect(page.getByText('Lifecycle maintenance', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Components / Updates' }).click()
+  await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button', { name: 'Components / Updates' }).click()
   await expect(page.locator('[data-component="xray"]').getByRole('button', { name: 'Preview update' })).toBeDisabled()
   await expect(page.locator('[data-component="xray"]')).toContainText('25.9.1')
 
   scenario.status.lifecycle.maintenance = false
   await page.reload()
-  await page.getByRole('button', { name: 'Components / Updates' }).click()
+  await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button', { name: 'Components / Updates' }).click()
   await expect(page.locator('[data-component="xray"]').getByRole('button', { name: 'Preview update' })).toBeEnabled()
 })
 
