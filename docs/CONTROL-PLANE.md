@@ -543,13 +543,13 @@ The source F1 broker, F2 operator UI and F3 bounded policy/check-only scheduler 
 
 ### #5 — visual configuration
 
-Routing and DNS/Observatory typed broker/UI are merged source-only, and Issue
-#91 D / PR #92 adds the bounded Performance authority/UI without a second
-selection writer or arbitrary performance URL. The active #91 E boundary is
-System / Panel: typed listener management, password/session UX and truthful
-signed panel release controls over their existing purpose-specific owners.
-Issue #91 F then performs the final cross-domain integration/drift UX and closes
-#5. No raw JSON editor.
+Routing and DNS/Observatory typed broker/UI are merged source-only, Issue #91 D /
+PR #92 adds the bounded Performance authority/UI without a second selection
+writer or arbitrary performance URL, and Issue #91 E / PR #97 adds the
+source-aware System / Panel workspace over the existing listener/auth/signed
+update owners. Issue #91 F is the active final cross-domain integration/drift,
+feature-complete UX and source-documentation closeout gate before #5 closes. No
+raw JSON editor.
 
 ## Authorities
 
