@@ -76,8 +76,14 @@ async function prepare(page, options = {}) {
         state.update = { ...state.update, channel, policy: { ...state.update.policy, channel }, latestCompatibleVersion: channel === 'beta' ? body.version : '1.2.3', latestChannel: channel, latestSource: 'github-release', lastCheckResult: 'ok', lastCheckAt: new Date().toISOString() }
         return json(route, state.update)
       }
-      case '/api/v1/update/apply': return json(route, { accepted: true, state: 'update-attempt-started' }, 202)
-      case '/api/v1/update/rollback': return json(route, { accepted: true, state: 'rollback-attempt-started' }, 202)
+      case '/api/v1/update/apply': {
+        if (options.dropApplyResponse) return route.abort()
+        return json(route, { accepted: true, state: 'update-attempt-started' }, 202)
+      }
+      case '/api/v1/update/rollback': {
+        if (options.dropRollbackResponse) return route.abort()
+        return json(route, { accepted: true, state: 'rollback-attempt-started' }, 202)
+      }
       case '/api/v1/session/password': return json(route, { authenticated: false, state: 'reauthentication-required' })
       default: return json(route, { error: `unexpected synthetic route: ${path}` }, 404)
     }
@@ -143,6 +149,34 @@ test('checks then applies the exact checked release and never reports install su
   expect(state.checked).toEqual({ channel: 'stable' })
   expect(state.requests.find(({ path }) => path === '/api/v1/update/apply').body).toEqual({ channel: 'stable', version: '1.2.3' })
   await expect(page.getByText(/final install success is not proven/i)).toBeVisible()
+})
+
+test('locks checked Apply after a lost response until a fresh explicit Check', async ({ page }) => {
+  const state = await prepare(page, { dropApplyResponse: true }); page.__systemIssues = state.issues
+  await page.goto('/')
+  await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+  await page.getByRole('button', { name: 'Check fixed release' }).click()
+  await page.getByRole('button', { name: 'Apply checked release' }).click()
+  await expect(page.getByText('Panel update outcome is unknown', { exact: true })).toBeVisible()
+  await expect(page.locator('p.system-blocked').filter({ hasText: /fresh explicit Check before another Apply/i })).toBeVisible()
+  const apply = page.getByRole('button', { name: 'Apply checked release' })
+  await expect(apply).toBeDisabled()
+  expect(state.requests.filter(({ path }) => path === '/api/v1/update/apply')).toHaveLength(1)
+  await page.getByRole('button', { name: 'Check fixed release' }).click()
+  await expect(apply).toBeEnabled()
+  expect(state.requests.filter(({ path }) => path === '/api/v1/update/check')).toHaveLength(2)
+})
+
+test('locks rollback after a lost response and does not replay it', async ({ page }) => {
+  const state = await prepare(page, { dropRollbackResponse: true }); page.__systemIssues = state.issues
+  await page.goto('/')
+  await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+  await page.getByRole('button', { name: 'Rollback retained release' }).click()
+  await expect(page.getByText('Panel rollback outcome is unknown', { exact: true })).toBeVisible()
+  await expect(page.locator('p.system-blocked').filter({ hasText: /retained generation before another action/i })).toBeVisible()
+  const rollback = page.getByRole('button', { name: 'Rollback retained release' })
+  await expect(rollback).toBeDisabled()
+  expect(state.requests.filter(({ path }) => path === '/api/v1/update/rollback')).toHaveLength(1)
 })
 
 test('password replacement uses the exact RAM-only request and returns to login', async ({ page }) => {

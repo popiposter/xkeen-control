@@ -103,11 +103,13 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
   const [checkVersion, setCheckVersion] = useState('')
   const [checkPending, setCheckPending] = useState(false)
   const [rollbackPending, setRollbackPending] = useState(false)
+  const [handoffState, setHandoffState] = useState('idle')
   const readGate = useRef(false)
   const loaded = useRef(false)
   const previewRef = useRef(preview)
   const previewGate = useRef(false)
   const applyGate = useRef(false)
+  const handoffGate = useRef(false)
   const epoch = useRef(0)
   const activeRef = useRef(active)
   const csrfRef = useRef(csrfToken)
@@ -254,6 +256,8 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
       if (!validUpdate(value)) throw new SystemPanelError('The release Check response is invalid.', { kind: 'malformed' })
       setUpdate({ value, loading: false, error: '' })
       setCheckVersion(value.latestCompatibleVersion || version)
+      handoffGate.current = false
+      setHandoffState('idle')
       setResult({ tone: 'success', title: 'Explicit release Check completed', message: `Checked ${value.latestChannel || channel} candidate ${value.latestCompatibleVersion || 'latest'} from ${value.latestSource || 'the signed release source'}.` })
     } catch (cause) {
       if (cause.status === 401) onUnauthorized()
@@ -266,7 +270,13 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
   const applyUpdate = useCallback(async () => {
     const current = update.value
     const version = current?.latestCompatibleVersion
-    if (!current || !version || current.latestChannel !== current.policy.channel || current.latestSource === '' || current.latestSource == null || rollbackPending) return
+    if (!current || !version || current.latestChannel !== current.policy.channel || current.latestSource === '' || current.latestSource == null || rollbackPending || handoffGate.current || handoffState !== 'idle' || current.rollbackVerificationRequired) return
+    handoffGate.current = true
+    setHandoffState('update-unknown')
+    setUpdate((currentState) => currentState.value ? {
+      ...currentState,
+      value: { ...currentState.value, latestCompatibleVersion: null, latestChannel: null, latestSource: '', latestSourceCommit: '', releaseNotesUrl: '' },
+    } : currentState)
     setRollbackPending(true)
     setResult(null)
     try {
@@ -274,14 +284,16 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
       setResult({ tone: 'warning', title: 'Panel update attempt started', message: value.state === 'update-attempt-started' ? 'The checked version was handed to the existing updater. Final install success is not proven by 202; reconnect and verify the installed version. No automatic retry will be sent.' : 'The updater handoff was accepted. Reconnect and verify; final install success is not proven by 202.' })
     } catch (cause) {
       if (cause.status === 401) onUnauthorized()
-      setResult({ tone: 'error', title: 'Panel update was not started', message: cause.message })
+      setResult({ tone: 'warning', title: 'Panel update outcome is unknown', message: 'The Apply request was sent but its outcome is unproven. Reconnect and verify, then run a fresh explicit Check before another Apply.' })
     } finally {
       setRollbackPending(false)
     }
-  }, [csrfToken, onUnauthorized, rollbackPending, update.value])
+  }, [csrfToken, handoffState, onUnauthorized, rollbackPending, update.value])
 
   const rollbackUpdate = useCallback(async () => {
-    if (!update.value?.rollbackAvailable || rollbackPending) return
+    if (!update.value?.rollbackAvailable || rollbackPending || handoffGate.current || handoffState !== 'idle' || update.value.rollbackVerificationRequired) return
+    handoffGate.current = true
+    setHandoffState('rollback-unknown')
     setRollbackPending(true)
     setResult(null)
     try {
@@ -289,11 +301,11 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
       setResult({ tone: 'warning', title: 'Panel rollback attempt started', message: value.state === 'rollback-attempt-started' ? 'The retained generation was handed to the updater. Reconnect and verify; final rollback success is not proven by 202.' : 'Rollback handoff was accepted. Reconnect and verify the retained generation.' })
     } catch (cause) {
       if (cause.status === 401) onUnauthorized()
-      setResult({ tone: 'error', title: 'Panel rollback was not started', message: cause.message })
+      setResult({ tone: 'warning', title: 'Panel rollback outcome is unknown', message: 'The rollback request was sent but its outcome is unproven. Reconnect and verify the retained generation before any further action.' })
     } finally {
       setRollbackPending(false)
     }
-  }, [csrfToken, onUnauthorized, rollbackPending, update.value])
+  }, [csrfToken, handoffState, onUnauthorized, rollbackPending, update.value])
 
   const replacePassword = useCallback(async (event) => {
     event.preventDefault()
@@ -355,6 +367,8 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
   const checkedCandidate = Boolean(update.value?.latestCompatibleVersion)
     && update.value.latestChannel === update.value.policy.channel
     && update.value.latestSource
+    && handoffState === 'idle'
+    && !update.value.rollbackVerificationRequired
 
   return {
     listener: listener.value ? { ...listener.value, selectedHost } : null,
@@ -379,6 +393,7 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
     checkUpdate,
     checkedCandidate,
     rollbackPending,
+    handoffState,
     applyUpdate,
     rollbackUpdate,
     chooseHost,
@@ -422,14 +437,17 @@ export function SystemPanelSection({ controller, status, onOpenComponents, onOpe
       <section className="panel system-panel-card" aria-label="Signed panel release">
         <div className="system-card-heading"><div><span className="panel-label">Signed panel release</span><h2>{update?.installed?.version || 'Unavailable'}</h2><p className="muted">Checks use the fixed signed release source. Apply is pinned to the exact checked version.</p></div>{update && <span className={`chip ${update.signingKeyConfigured ? 'green' : 'amber'}`}>{update.signingKeyConfigured ? 'Signing key configured' : 'Signing key unavailable'}</span>}</div>
         {update && <>
-          <div className="system-facts-grid"><Fact label="Installed source" value={update.installed?.sourceCommit ? 'Signed release commit' : 'Unknown'} /><Fact label="Effective channel" value={update.policy.channel} /><Fact label="Rollback" value={update.rollbackAvailable ? 'Available' : 'None'} /><Fact label="Policy mode" value={modeLabel(update.policy.mode)} /></div>
+          <div className="system-facts-grid"><Fact label="Installed source" value={update.installed?.sourceCommit ? 'Signed release commit' : 'Unknown'} /><Fact label="Effective channel" value={update.policy.channel} /><Fact label="Rollback" value={update.rollbackVerificationRequired ? 'Verify required' : update.rollbackAvailable ? 'Available' : 'None'} /><Fact label="Policy mode" value={modeLabel(update.policy.mode)} /></div>
           {update.policy.mode !== 'manual' && <p className="system-blocked">{modeLabel(update.policy.mode)} is persisted metadata only. No automatic panel update scheduler is active.</p>}
+          {controller.handoffState === 'update-unknown' && <p className="system-blocked" role="alert">The panel update handoff outcome is unknown. Reconnect and verify the installed version, then run a fresh explicit Check before another Apply.</p>}
+          {controller.handoffState === 'rollback-unknown' && <p className="system-blocked" role="alert">The panel rollback outcome is unknown. Reconnect and verify the retained generation before another action.</p>}
+          {update.rollbackVerificationRequired && <p className="system-blocked" role="alert">A previous rollback handoff is unproven in this process. Verification is required; no replay is available.</p>}
           <label className="system-select-field">Effective release channel<select aria-label="Effective release channel" value={controller.channelDraft} onChange={(event) => controller.setChannelDraft(event.target.value)} disabled={controller.channelPending || controller.checkPending}><option value="stable">Stable</option><option value="beta">Beta</option></select></label>
           <div className="system-card-actions"><button type="button" className="ghost" onClick={controller.saveChannel} disabled={controller.channelPending || controller.channelDraft === update.policy.channel}>{controller.channelPending ? 'Saving…' : 'Save channel'}</button></div>
           <div className="system-check-row"><label>Beta version (optional for stable)<input aria-label="Beta version" type="text" inputMode="text" maxLength="64" value={controller.checkVersion} onChange={(event) => controller.setCheckVersion(event.target.value)} disabled={controller.checkPending} /></label><button type="button" onClick={controller.checkUpdate} disabled={controller.checkPending}>{controller.checkPending ? 'Checking…' : 'Check fixed release'}</button></div>
           <div className="system-facts-grid"><Fact label="Latest checked" value={update.latestCompatibleVersion || 'Not checked'} /><Fact label="Checked channel" value={update.latestChannel || '—'} /><Fact label="Checked source" value={update.latestSource || '—'} /><Fact label="Last check" value={update.lastCheckAt ? new Date(update.lastCheckAt).toLocaleString() : '—'} /></div>
           {update.releaseNotesUrl && <p><a href={update.releaseNotesUrl} target="_blank" rel="noreferrer">Checked release notes</a></p>}
-          <div className="system-card-actions"><button type="button" onClick={controller.applyUpdate} disabled={!controller.checkedCandidate || controller.rollbackPending}>{controller.rollbackPending ? 'Starting…' : 'Apply checked release'}</button><button className="ghost" type="button" onClick={controller.rollbackUpdate} disabled={!update.rollbackAvailable || controller.rollbackPending}>Rollback retained release</button></div>
+          <div className="system-card-actions"><button type="button" onClick={controller.applyUpdate} disabled={!controller.checkedCandidate || controller.rollbackPending}>{controller.rollbackPending && controller.handoffState === 'update-unknown' ? 'Verifying…' : 'Apply checked release'}</button><button className="ghost" type="button" onClick={controller.rollbackUpdate} disabled={!update.rollbackAvailable || update.rollbackVerificationRequired || controller.rollbackPending || controller.handoffState !== 'idle'}>{controller.rollbackPending && controller.handoffState === 'rollback-unknown' ? 'Verifying…' : 'Rollback retained release'}</button></div>
         </>}
         {controller.updateError && <p className="system-blocked" role="alert">{controller.updateError}</p>}
       </section>

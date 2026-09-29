@@ -69,6 +69,29 @@ func TestResolveStartupUsesEnvironmentFileThenDefault(t *testing.T) {
 	}
 }
 
+func TestResolveStartupAcceptsLegacy0644ListenerFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "listen-address")
+	if err := os.WriteFile(path, []byte("192.168.10.2:8787\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resolution, err := ResolveStartup("", path)
+	if err != nil || resolution.Source != SourceFile || resolution.Address != "192.168.10.2:8787" {
+		t.Fatalf("legacy 0644 startup resolution = %+v, %v", resolution, err)
+	}
+	service := NewService(Config{FilePath: path, Initial: resolution, InterfaceAddrs: listenerAddresses})
+	if err := service.StartupError(); err != nil {
+		t.Fatalf("legacy 0644 listener prevented startup: %v", err)
+	}
+	projection, err := service.Read(context.Background())
+	if err != nil || projection.Editability != EditabilityEditable || projection.Host != "192.168.10.2" {
+		t.Fatalf("legacy 0644 projection = %+v, %v", projection, err)
+	}
+}
+
 func TestParseAddressRejectsHostnameWildcardAndPublicBind(t *testing.T) {
 	for _, value := range []string{"localhost:8787", "0.0.0.0:8787", "8.8.8.8:8787", "169.254.1.2:8787", "192.168.1.2:0", "not-an-address"} {
 		if _, err := ParseAddress(value); err == nil {

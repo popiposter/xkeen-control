@@ -198,8 +198,10 @@ func TestPanelListenerRoutesAreAuthenticatedCSRFBoundAndExact(t *testing.T) {
 }
 
 type checkedUpdateHTTPStub struct {
-	checked atomicBool
-	applied chan [2]string
+	checked         atomicBool
+	claimed         atomicBool
+	rollbackClaimed atomicBool
+	applied         chan [2]string
 }
 
 type atomicBool struct {
@@ -217,6 +219,16 @@ func (value *atomicBool) Store(next bool) {
 	value.mu.Lock()
 	value.value = next
 	value.mu.Unlock()
+}
+
+func (value *atomicBool) compareAndSwap(old, next bool) bool {
+	value.mu.Lock()
+	defer value.mu.Unlock()
+	if value.value != old {
+		return false
+	}
+	value.value = next
+	return true
 }
 
 func (stub *checkedUpdateHTTPStub) Status(context.Context) panelupdate.Status {
@@ -243,6 +255,10 @@ func (stub *checkedUpdateHTTPStub) SetPolicy(policy panelupdate.Policy) (panelup
 func (stub *checkedUpdateHTTPStub) Apply(context.Context, string, string) error { return nil }
 
 func (stub *checkedUpdateHTTPStub) ApplyChecked(_ context.Context, channel, version string) error {
+	if !stub.claimed.compareAndSwap(false, true) {
+		return errors.New("checked candidate already claimed")
+	}
+	stub.checked.Store(false)
 	stub.applied <- [2]string{channel, version}
 	return nil
 }
@@ -254,7 +270,12 @@ func (stub *checkedUpdateHTTPStub) ValidateChecked(_ context.Context, channel, v
 	return nil
 }
 
-func (stub *checkedUpdateHTTPStub) Rollback(context.Context) error { return nil }
+func (stub *checkedUpdateHTTPStub) Rollback(context.Context) error {
+	if !stub.rollbackClaimed.compareAndSwap(false, true) {
+		return errors.New("rollback outcome requires verification")
+	}
+	return nil
+}
 
 func TestUpdateApplyRequiresExactCheckedCandidateAndReturnsHandoff202(t *testing.T) {
 	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
@@ -318,6 +339,28 @@ func TestUpdateApplyRequiresExactCheckedCandidateAndReturnsHandoff202(t *testing
 	default:
 		t.Fatal("checked update did not reach ApplyChecked")
 	}
+
+	response = postJSON(t, client, server.URL+"/api/v1/update/apply", map[string]string{"channel": "stable", "version": "1.2.3"}, login.CSRFToken)
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("replayed checked update Apply = %d %s", response.StatusCode, readBody(response))
+	}
+	response.Body.Close()
+	select {
+	case applied := <-updates.applied:
+		t.Fatalf("replayed checked candidate reached ApplyChecked: %v", applied)
+	default:
+	}
+
+	response = postJSON(t, client, server.URL+"/api/v1/update/rollback", map[string]string{}, login.CSRFToken)
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("rollback = %d %s", response.StatusCode, readBody(response))
+	}
+	response.Body.Close()
+	response = postJSON(t, client, server.URL+"/api/v1/update/rollback", map[string]string{}, login.CSRFToken)
+	if response.StatusCode != http.StatusConflict {
+		t.Fatalf("replayed rollback = %d %s", response.StatusCode, readBody(response))
+	}
+	response.Body.Close()
 }
 
 var _ PanelListenerService = (*panelListenerHTTPStub)(nil)

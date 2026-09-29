@@ -179,7 +179,12 @@ setup_generation() {
 	make_init "$root/opt/etc/init.d/S99xkeen-control"
 	cp "$ROOT/scripts/xkeen-control-updater" "$root/opt/libexec/xkeen-control-updater"
 	chmod 755 "$root/opt/libexec/xkeen-control-updater"
-	if [ -n "$listen" ]; then printf '%s\n' "$listen" > "$root/opt/etc/xkeen-control/listen-address"; fi
+	if [ -n "$listen" ]; then
+		# Pre-E installs used the ordinary shell-created non-secret listener
+		# shape; startup must continue accepting this 0644 file after upgrade.
+		printf '%s\n' "$listen" > "$root/opt/etc/xkeen-control/listen-address"
+		chmod 644 "$root/opt/etc/xkeen-control/listen-address"
+	fi
 	printf '%s\n' '{"product":"xkeen-control","version":"1.0.0","sourceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","channel":"stable"}' > "$root/opt/etc/xkeen-control/state/installed-release.json"
 	printf '%s\n' '{"schemaVersion":1,"generation":"legacy"}' > "$root/opt/etc/xkeen-control/secrets/nodes.json"
 	printf '%s\n' '{"schemaVersion":1,"generation":"legacy"}' > "$root/opt/etc/xray/configs/04_outbounds.json"

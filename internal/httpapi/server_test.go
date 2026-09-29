@@ -89,8 +89,9 @@ func (stub *updateRequestStub) Check(context.Context, string, string) (panelupda
 func (stub *updateRequestStub) SetPolicy(policy panelupdate.Policy) (panelupdate.Status, error) {
 	return panelupdate.Status{Channel: policy.Channel, Policy: policy}, nil
 }
-func (stub *updateRequestStub) Apply(context.Context, string, string) error { return nil }
-func (stub *updateRequestStub) Rollback(context.Context) error              { return nil }
+func (stub *updateRequestStub) Apply(context.Context, string, string) error        { return nil }
+func (stub *updateRequestStub) ApplyChecked(context.Context, string, string) error { return nil }
+func (stub *updateRequestStub) Rollback(context.Context) error                     { return nil }
 
 func TestUpdateRoutesAreAuthenticatedAndCSRFBound(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "password.bcrypt")

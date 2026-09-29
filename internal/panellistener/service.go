@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -676,7 +675,12 @@ func readFileSnapshot(path string) (fileSnapshot, error) {
 		}
 		return fileSnapshot{}, err
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0) {
+	// listen-address is a non-secret startup input. Existing pre-E installs
+	// commonly have the ordinary shell-created 0644 shape, so startup/read
+	// compatibility must not depend on private-file permission bits. Keep the
+	// structural checks (no symlink or special file) and retain 0600 for typed
+	// replacement writes below.
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return fileSnapshot{}, ErrUnavailable
 	}
 	file, err := os.Open(path)

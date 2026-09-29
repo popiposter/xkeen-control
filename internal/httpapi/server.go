@@ -1077,19 +1077,15 @@ func (s *Server) updateApply(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	// The external helper must outlive the HTTP handler: it stops/replaces the
-	// running panel after this accepted response has been written.
-	go func(channel, version string) {
-		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
-		defer cancel()
-		if checked, ok := s.updates.(interface {
-			ApplyChecked(context.Context, string, string) error
-		}); ok {
-			_ = checked.ApplyChecked(ctx, channel, version)
-			return
-		}
-		_ = s.updates.Apply(ctx, channel, version)
-	}(request.Channel, request.Version)
+	// ApplyChecked claims and consumes the explicit candidate before fetching,
+	// staging or starting the fixed helper. It is intentionally synchronous up
+	// to helper start so a lost response cannot make the same check replayable.
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Minute)
+	defer cancel()
+	if err := s.updates.ApplyChecked(ctx, request.Channel, request.Version); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "checked release handoff unavailable")
+		return
+	}
 	writeJSON(w, http.StatusAccepted, struct {
 		Accepted bool   `json:"accepted"`
 		State    string `json:"state"`

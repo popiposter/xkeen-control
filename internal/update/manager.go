@@ -43,18 +43,19 @@ type Policy struct {
 }
 
 type Status struct {
-	Installed            buildinfo.Info `json:"installed"`
-	Channel              string         `json:"channel"`
-	LatestCompatible     string         `json:"latestCompatibleVersion"`
-	LatestChannel        string         `json:"latestChannel,omitempty"`
-	LatestSource         string         `json:"latestSource,omitempty"`
-	LatestSourceCommit   string         `json:"latestSourceCommit,omitempty"`
-	ReleaseNotesURL      string         `json:"releaseNotesUrl,omitempty"`
-	LastCheckAt          string         `json:"lastCheckAt,omitempty"`
-	LastCheckResult      string         `json:"lastCheckResult,omitempty"`
-	RollbackAvailable    bool           `json:"rollbackAvailable"`
-	Policy               Policy         `json:"policy"`
-	SigningKeyConfigured bool           `json:"signingKeyConfigured"`
+	Installed                    buildinfo.Info `json:"installed"`
+	Channel                      string         `json:"channel"`
+	LatestCompatible             string         `json:"latestCompatibleVersion"`
+	LatestChannel                string         `json:"latestChannel,omitempty"`
+	LatestSource                 string         `json:"latestSource,omitempty"`
+	LatestSourceCommit           string         `json:"latestSourceCommit,omitempty"`
+	ReleaseNotesURL              string         `json:"releaseNotesUrl,omitempty"`
+	LastCheckAt                  string         `json:"lastCheckAt,omitempty"`
+	LastCheckResult              string         `json:"lastCheckResult,omitempty"`
+	RollbackAvailable            bool           `json:"rollbackAvailable"`
+	RollbackVerificationRequired bool           `json:"rollbackVerificationRequired"`
+	Policy                       Policy         `json:"policy"`
+	SigningKeyConfigured         bool           `json:"signingKeyConfigured"`
 }
 
 type Service interface {
@@ -62,6 +63,7 @@ type Service interface {
 	Check(context.Context, string, string) (Status, error)
 	SetPolicy(Policy) (Status, error)
 	Apply(context.Context, string, string) error
+	ApplyChecked(context.Context, string, string) error
 	Rollback(context.Context) error
 }
 
@@ -83,10 +85,11 @@ type Manager struct {
 	now       func() time.Time
 	runHelper func(context.Context, string) error
 
-	mu         sync.Mutex
-	lastCheck  time.Time
-	lastResult string
-	latest     *release.Manifest
+	mu              sync.Mutex
+	lastCheck       time.Time
+	lastResult      string
+	latest          *release.Manifest
+	rollbackClaimed bool
 }
 
 func NewManager(config Config) *Manager {
@@ -148,8 +151,12 @@ func (m *Manager) Status(_ context.Context) Status {
 		status.LatestSourceCommit = m.latest.SourceCommit
 		status.ReleaseNotesURL = release.ReleaseNotesURL(m.latest.Version)
 	}
-	_, rollbackErr := os.Stat(filepath.Join(m.paths.PreviousDir, "xkeen-control-linux-arm64"))
-	status.RollbackAvailable = rollbackErr == nil
+	if m.rollbackClaimed {
+		status.RollbackVerificationRequired = true
+	} else {
+		_, rollbackErr := os.Stat(filepath.Join(m.paths.PreviousDir, "xkeen-control-linux-arm64"))
+		status.RollbackAvailable = rollbackErr == nil
+	}
 	return status
 }
 
@@ -253,24 +260,49 @@ func (m *Manager) ValidateChecked(ctx context.Context, channel, version string) 
 	return nil
 }
 
-// ApplyChecked pins the fetch and staged candidate to the exact manifest
-// version returned by the latest explicit Check. A policy/channel change or a
-// replaced check invalidates this path before any lifecycle admission.
+// ApplyChecked consumes the explicitly checked candidate before doing any
+// network, staging or lifecycle work. A lost response therefore cannot be
+// replayed with the same check. The candidate remains consumed if a later
+// fetch/stage/helper step fails; the operator must run a fresh Check.
 func (m *Manager) ApplyChecked(ctx context.Context, channel, version string) error {
-	if err := m.ValidateChecked(ctx, channel, version); err != nil {
+	checked, err := m.claimChecked(ctx, channel, version)
+	if err != nil {
 		return err
 	}
 	candidate, err := m.client.FetchCandidate(ctx, channel, version)
 	if err != nil {
 		return err
 	}
-	if candidate.Manifest.Channel != channel || candidate.Manifest.Version != version {
+	if candidate.Manifest.Channel != channel || candidate.Manifest.Version != version || (checked.SourceCommit != "" && candidate.Manifest.SourceCommit != checked.SourceCommit) {
 		return errors.New("release candidate changed after check")
 	}
 	if err := release.VerifyCandidate(candidate); err != nil {
 		return err
 	}
+	if m.readPolicy().Channel != channel {
+		return errors.New("release policy changed after check")
+	}
 	return m.applyCandidate(ctx, candidate)
+}
+
+func (m *Manager) claimChecked(_ context.Context, channel, version string) (release.Manifest, error) {
+	channel, err := release.ParseChannel(channel)
+	if err != nil {
+		return release.Manifest{}, err
+	}
+	version = strings.TrimSpace(version)
+	if err := release.ValidateVersion(version); err != nil {
+		return release.Manifest{}, err
+	}
+	policy := m.readPolicy()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if policy.Channel != channel || m.latest == nil || m.latest.Channel != channel || m.latest.Version != version {
+		return release.Manifest{}, errors.New("release candidate was not explicitly checked")
+	}
+	checked := *m.latest
+	m.latest = nil
+	return checked, nil
 }
 
 func (m *Manager) applyCandidate(ctx context.Context, candidate release.Candidate) error {
@@ -304,9 +336,24 @@ func validateVersionRequest(channel, version string) error {
 // returns so the HTTP layer can deliver 202 before the helper's bounded handoff
 // grace expires and process replacement begins.
 func (m *Manager) Rollback(ctx context.Context) error {
+	m.mu.Lock()
+	if m.rollbackClaimed {
+		m.mu.Unlock()
+		return errors.New("panel rollback outcome requires verification")
+	}
+	m.mu.Unlock()
 	if _, err := os.Stat(filepath.Join(m.paths.PreviousDir, "xkeen-control-linux-arm64")); err != nil {
 		return errors.New("panel rollback is unavailable")
 	}
+	// Claim before lifecycle admission/helper start. If the response is lost or
+	// the helper fails before replacement, a second click cannot replay it.
+	m.mu.Lock()
+	if m.rollbackClaimed {
+		m.mu.Unlock()
+		return errors.New("panel rollback outcome requires verification")
+	}
+	m.rollbackClaimed = true
+	m.mu.Unlock()
 	releaseToken, err := m.beginLifecycle(ctx)
 	if err != nil {
 		return err

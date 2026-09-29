@@ -166,7 +166,9 @@ setup_legacy_root() {
 	cp "$tmp/legacy-init" "$root/opt/etc/init.d/S99xkeen-control"
 	chmod 755 "$root/opt/sbin/xkeen-control" "$root/opt/etc/init.d/S99xkeen-control"
 	printf '%s\n' existing-auth-hash > "$root/opt/etc/xkeen-control/auth/password.bcrypt"
+	# Existing pre-E installs commonly retain the non-secret listener as 0644.
 	printf '%s\n' 192.168.10.2:8787 > "$root/opt/etc/xkeen-control/listen-address"
+	chmod 644 "$root/opt/etc/xkeen-control/listen-address"
 	printf '%s\n' existing-state-fixture > "$root/opt/etc/xkeen-control/state/protected-state"
 	printf '%s\n' existing-xray-fixture > "$root/opt/etc/xray/configs/protected-config"
 	printf '%s\n' '{"schemaVersion":1,"generation":"legacy"}' > "$root/opt/etc/xkeen-control/secrets/nodes.json"

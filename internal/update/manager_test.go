@@ -107,6 +107,61 @@ func TestManagerStagesMarkerAndHandsOffUnderLifecycle(t *testing.T) {
 	}
 }
 
+func TestApplyCheckedConsumesCandidateBeforeHandoff(t *testing.T) {
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, assets := testCandidate(t)
+	manifestBytes, _ := manifest.MarshalDeterministic()
+	signature, _ := release.Sign(manifestBytes, privateKey)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := filepath.Base(r.URL.Path)
+		switch name {
+		case "release-manifest.json":
+			_, _ = w.Write(manifestBytes)
+		case "release-manifest.sig":
+			_, _ = w.Write(signature)
+		default:
+			_, _ = w.Write(assets[name])
+		}
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	helperStarted := make(chan struct{}, 1)
+	manager := NewManager(Config{
+		Current: buildinfo.Info{Product: "xkeen-control", Version: "1.0.0", SourceCommit: strings.Repeat("b", 40), Channel: "stable"},
+		Client:  release.NewClientForTest(server.URL, privateKey.Public().(ed25519.PublicKey)),
+		Paths:   Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: filepath.Join(dir, "previous"), MarkerPath: filepath.Join(dir, "state", "installed-release.json"), PolicyPath: filepath.Join(dir, "state", "update-policy.json")},
+		RunHelper: func(_ context.Context, action string) error {
+			if action != "install" {
+				t.Errorf("helper action = %q", action)
+			}
+			helperStarted <- struct{}{}
+			return nil
+		},
+	})
+	manager.mu.Lock()
+	manager.latest = &manifest
+	manager.mu.Unlock()
+
+	if err := manager.ApplyChecked(context.Background(), "stable", "1.2.3"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-helperStarted:
+	case <-time.After(time.Second):
+		t.Fatal("checked Apply did not start the helper")
+	}
+	if status := manager.Status(context.Background()); status.LatestCompatible != "" || status.LatestChannel != "" || status.LatestSource != "" {
+		t.Fatalf("checked candidate remained applyable after claim: %+v", status)
+	}
+	if err := manager.ApplyChecked(context.Background(), "stable", "1.2.3"); err == nil {
+		t.Fatal("checked Apply replay unexpectedly succeeded")
+	}
+}
+
 func TestRollbackStartsHelperOnlyWhenPreviousGenerationExists(t *testing.T) {
 	dir := t.TempDir()
 	lifecycle := &fakeLifecycle{}
@@ -117,6 +172,44 @@ func TestRollbackStartsHelperOnlyWhenPreviousGenerationExists(t *testing.T) {
 	})
 	if err := manager.Rollback(context.Background()); err == nil {
 		t.Fatal("rollback without previous generation was accepted")
+	}
+}
+
+func TestRollbackConsumesHandoffBeforeReturning(t *testing.T) {
+	dir := t.TempDir()
+	previous := filepath.Join(dir, "previous")
+	if err := os.MkdirAll(previous, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(previous, "xkeen-control-linux-arm64"), []byte("previous"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	helperStarted := make(chan struct{}, 1)
+	manager := NewManager(Config{
+		Current: buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
+		Paths:   Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: previous, MarkerPath: filepath.Join(dir, "state", "installed-release.json"), PolicyPath: filepath.Join(dir, "state", "update-policy.json")},
+		RunHelper: func(_ context.Context, action string) error {
+			if action != "rollback" {
+				t.Errorf("helper action = %q", action)
+			}
+			helperStarted <- struct{}{}
+			return nil
+		},
+	})
+	if err := manager.Rollback(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-helperStarted:
+	case <-time.After(time.Second):
+		t.Fatal("rollback did not start the helper")
+	}
+	if err := manager.Rollback(context.Background()); err == nil {
+		t.Fatal("rollback replay unexpectedly succeeded")
+	}
+	status := manager.Status(context.Background())
+	if status.RollbackAvailable || !status.RollbackVerificationRequired {
+		t.Fatalf("rollback verification state = %+v", status)
 	}
 }
 
