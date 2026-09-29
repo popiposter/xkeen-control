@@ -6,6 +6,7 @@ import { DNSLifecycleNotice, DNSObservatorySection, useDNSObservatoryController 
 import { PerformancePolicySection, usePerformancePolicyController } from './performance-policy.jsx'
 import { RoutingLifecycleNotice, RoutingPolicySection, useRoutingController } from './routing-policy.jsx'
 import { SetupFlow } from './setup-flow.jsx'
+import { SystemPanelSection, useSystemPanelController } from './system-panel.jsx'
 
 import flagAE from 'flag-icons/flags/4x3/ae.svg'
 import flagAM from 'flag-icons/flags/4x3/am.svg'
@@ -298,14 +299,12 @@ function App() {
 
   const loadDashboard = useCallback(async () => {
     try {
-      const [status, nodes, performance, config, update] = await Promise.all([
+      const [status, nodes, performance] = await Promise.all([
         api('/api/v1/status'),
         api('/api/v1/nodes'),
         api('/api/v1/performance'),
-        api('/api/v1/config-summary'),
-        api('/api/v1/update'),
       ])
-      setDashboard({ status, nodes, performance, config, update })
+      setDashboard({ status, nodes, performance })
       setError('')
     } catch (cause) {
       if (cause.status === 401) {
@@ -385,24 +384,11 @@ function App() {
     setSession(null)
   }, [])
 
-  const checkUpdate = async () => {
-    try {
-      await api('/api/v1/update/check', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': session?.csrfToken || '' },
-        body: JSON.stringify({ channel: dashboard?.update?.policy?.channel || 'stable' }),
-      })
-      await loadDashboard()
-    } catch (cause) {
-      setError(cause.message)
-    }
-  }
-
   if (!session) return <Login error={error} password={password} setPassword={setPassword} onSubmit={login} />
   if (loading && !dashboard) return <Shell><div className="loading">Reading current router state…</div></Shell>
   if (!dashboard) return <Shell><Notice message={error || 'Runtime state is unavailable.'} /></Shell>
 
-  return <Dashboard dashboard={dashboard} session={session} error={error} onRefresh={loadDashboard} onPerformanceRefresh={loadPerformance} onLogout={logout} onCheckUpdate={checkUpdate} onUnauthorized={invalidateSession} />
+  return <Dashboard dashboard={dashboard} session={session} error={error} onRefresh={loadDashboard} onPerformanceRefresh={loadPerformance} onLogout={logout} onUnauthorized={invalidateSession} />
 }
 
 function Login({ error, password, setPassword, onSubmit }) {
@@ -419,8 +405,8 @@ function Login({ error, password, setPassword, onSubmit }) {
   </main>
 }
 
-function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh, onLogout, onCheckUpdate, onUnauthorized }) {
-  const { status, nodes, performance, config, update } = dashboard
+function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh, onLogout, onUnauthorized }) {
+  const { status, nodes, performance } = dashboard
   const [section, setSection] = useState('overview')
   const [nodeView, setNodeView] = useState(createNodeViewState)
   const [restoreState, setRestoreState] = useState({ preview: null })
@@ -449,6 +435,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const dnsController = useDNSObservatoryController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'dns', appliancePolicyUncertain, onBeforeApply: invalidateRoutingPreview, onApplied: refreshRoutingPeer, onUnprovenApply: markDNSApplyUnproven, onFreshReadAfterUnprovenApply: clearDNSApplyUnproven })
   const performanceOwnerBusy = Boolean(status.benchmark?.controlPlane?.running || performance?.manual?.state === 'running' || performance?.adaptive?.state === 'running')
   const performancePolicyController = usePerformancePolicyController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, performanceBusy: performanceOwnerBusy, onUnauthorized, active: section === 'performance' })
+  const systemPanelController = useSystemPanelController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'system' })
   routingControllerRef.current = routingController
   dnsControllerRef.current = dnsController
   const openComponents = useCallback(() => {
@@ -457,6 +444,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   }, [componentController.loadInventory])
   const openRouting = useCallback(() => setSection('routing'), [])
   const openDNS = useCallback(() => setSection('dns'), [])
+  const openBackup = useCallback(() => setSection('backup'), [])
   const lifecycleBlocked = componentController.lifecycleMutationBlocked
   const manualLifecycleBlocked = !status.lifecycle || status.lifecycle.maintenance || status.lifecycle.applying
   const manualRunning = performance?.manual?.state === 'running'
@@ -503,8 +491,8 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
       <button type="button" className={section === 'dns' ? 'active' : ''} onClick={openDNS}>DNS</button>
       <button type="button" className={section === 'performance' ? 'active' : ''} onClick={() => setSection('performance')}>Performance</button>
       <button type="button" className={section === 'components' ? 'active' : ''} onClick={openComponents}>Components / Updates</button>
-      <button type="button" className={section === 'system' ? 'active' : ''} onClick={() => setSection('system')}>System</button>
-      <button type="button" className={section === 'backup' ? 'active' : ''} onClick={() => setSection('backup')}>Backup &amp; Restore</button>
+      <button type="button" className={section === 'backup' ? 'active' : ''} onClick={openBackup}>Backup &amp; Restore</button>
+      <button type="button" className={section === 'system' ? 'active' : ''} onClick={() => setSection('system')}>System / Panel</button>
     </nav>
     <ComponentLifecycleNotices controller={componentController} lifecycle={status.lifecycle} onOpenComponents={openComponents} />
     <RoutingLifecycleNotice controller={routingController} active={section === 'routing'} onOpenRouting={openRouting} />
@@ -516,8 +504,8 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     {section === 'dns' && <DNSObservatorySection controller={dnsController} />}
     {section === 'performance' && <PerformancePolicySection controller={performancePolicyController} />}
     {section === 'components' && <ComponentsUpdatesSection controller={componentController} lifecycle={status.lifecycle} onOpenSystem={() => setSection('system')} />}
-    {section === 'system' && <SystemSection status={status} config={config} nodesByTag={nodesByTag} update={update} onCheckUpdate={onCheckUpdate} />}
     {section === 'backup' && <BackupRestoreSection csrf={session.csrfToken} restoreState={restoreState} setRestoreState={setRestoreState} onRefresh={onRefresh} onUnauthorized={onUnauthorized} lifecycleBlocked={lifecycleBlocked} />}
+    {section === 'system' && <SystemPanelSection controller={systemPanelController} status={status} onOpenComponents={openComponents} onOpenBackup={openBackup} />}
   </Shell>
 }
 
@@ -1216,19 +1204,6 @@ function RestorePreviewSummary({ preview, blockers, busy, canApply, onCancel, on
     {blockers.length > 0 && <div className="restore-blockers"><strong>Compatibility blockers</strong>{blockers.map((code, index) => <p className="warning" key={`${code}-${index}`}>{restoreBlockerMessage(code)}</p>)}</div>}
     <div className="preview-actions"><button className="ghost" type="button" onClick={onCancel} disabled={busy}>Cancel</button><button type="button" onClick={onApply} disabled={busy || !canApply}>{busy ? 'Applying…' : 'Apply restore'}</button></div>
   </div>
-}
-
-function SystemSection({ status, config, nodesByTag, update, onCheckUpdate }) {
-  const dnsServers = (config.dns?.upstreams || []).map((upstream) => upstream.host || upstream.tag).filter(Boolean)
-  const healthSelectors = config.observatory?.subjectSelectors || []
-  const activeTag = status.selection?.effectiveTarget || status.balancer?.effective
-  const activeNode = nodesByTag.get(activeTag)
-
-  return <section className="lower-grid system-section">
-    <div className="panel"><span className="panel-label">Network policy</span><h2>How traffic is handled</h2><div className="metric-row"><span>Routing rules</span><strong>{config.routing?.ruleCount ?? '—'}</strong></div><div className="metric-row"><span>DNS servers</span><div className="metric-value-list">{dnsServers.length ? dnsServers.map((server) => <code key={server}>{server}</code>) : <strong>—</strong>}</div></div><div className="metric-row"><span>Proxy pool</span><strong>Unified proxy pool</strong></div><div className="metric-row"><span>Health-check scope</span><div className="metric-value-list">{healthSelectors.length ? healthSelectors.map((selector) => <code key={selector}>{selector}</code>) : <strong>—</strong>}</div></div></div>
-    <div className="panel"><span className="panel-label">Runtime</span><h2>Current state</h2><div className="metric-row"><span>Active proxy</span><div className="metric-value">{activeNode ? <strong>{visibleNodeName(activeNode)}</strong> : <strong>{safeCanonicalTag(activeTag) || 'Automatic selection'}</strong>}{activeNode?.address && <small>{activeNode.address}</small>}</div></div><div className="metric-row"><span>Healthy proxies</span><strong>{status.observatory?.healthy ?? 0} / {status.observatory?.total ?? 0}</strong></div><div className="metric-row"><span>Control plane uptime</span><strong>{formatUptime(status.controlPlane?.uptimeSeconds)}</strong></div></div>
-    <div className="panel"><span className="panel-label">Signed panel release</span><h2>{update?.installed?.version || 'development'}</h2><div className="metric-row"><span>Channel</span><strong>{update?.channel || 'stable'}</strong></div><div className="metric-row"><span>Latest compatible</span><strong>{update?.latestCompatibleVersion || 'Not checked'}</strong></div><div className="metric-row"><span>Rollback</span><strong>{update?.rollbackAvailable ? 'Available' : 'None'}</strong></div><button type="button" onClick={onCheckUpdate}>Check fixed GitHub release</button></div>
-  </section>
 }
 
 function SortHeader({ label, sortKey, sort, onSort }) {

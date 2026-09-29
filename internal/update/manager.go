@@ -43,16 +43,19 @@ type Policy struct {
 }
 
 type Status struct {
-	Installed            buildinfo.Info `json:"installed"`
-	Channel              string         `json:"channel"`
-	LatestCompatible     string         `json:"latestCompatibleVersion"`
-	LatestSourceCommit   string         `json:"latestSourceCommit,omitempty"`
-	ReleaseNotesURL      string         `json:"releaseNotesUrl,omitempty"`
-	LastCheckAt          string         `json:"lastCheckAt,omitempty"`
-	LastCheckResult      string         `json:"lastCheckResult,omitempty"`
-	RollbackAvailable    bool           `json:"rollbackAvailable"`
-	Policy               Policy         `json:"policy"`
-	SigningKeyConfigured bool           `json:"signingKeyConfigured"`
+	Installed                    buildinfo.Info `json:"installed"`
+	Channel                      string         `json:"channel"`
+	LatestCompatible             string         `json:"latestCompatibleVersion"`
+	LatestChannel                string         `json:"latestChannel,omitempty"`
+	LatestSource                 string         `json:"latestSource,omitempty"`
+	LatestSourceCommit           string         `json:"latestSourceCommit,omitempty"`
+	ReleaseNotesURL              string         `json:"releaseNotesUrl,omitempty"`
+	LastCheckAt                  string         `json:"lastCheckAt,omitempty"`
+	LastCheckResult              string         `json:"lastCheckResult,omitempty"`
+	RollbackAvailable            bool           `json:"rollbackAvailable"`
+	RollbackVerificationRequired bool           `json:"rollbackVerificationRequired"`
+	Policy                       Policy         `json:"policy"`
+	SigningKeyConfigured         bool           `json:"signingKeyConfigured"`
 }
 
 type Service interface {
@@ -60,6 +63,7 @@ type Service interface {
 	Check(context.Context, string, string) (Status, error)
 	SetPolicy(Policy) (Status, error)
 	Apply(context.Context, string, string) error
+	ApplyChecked(context.Context, string, string) error
 	Rollback(context.Context) error
 }
 
@@ -81,10 +85,12 @@ type Manager struct {
 	now       func() time.Time
 	runHelper func(context.Context, string) error
 
-	mu         sync.Mutex
-	lastCheck  time.Time
-	lastResult string
-	latest     *release.Manifest
+	mu                           sync.Mutex
+	lastCheck                    time.Time
+	lastResult                   string
+	latest                       *release.Manifest
+	rollbackAdmissionClaimed     bool
+	rollbackVerificationRequired bool
 }
 
 func NewManager(config Config) *Manager {
@@ -141,11 +147,16 @@ func (m *Manager) Status(_ context.Context) Status {
 	}
 	if m.latest != nil {
 		status.LatestCompatible = m.latest.Version
+		status.LatestChannel = m.latest.Channel
+		status.LatestSource = "github-release"
 		status.LatestSourceCommit = m.latest.SourceCommit
 		status.ReleaseNotesURL = release.ReleaseNotesURL(m.latest.Version)
 	}
-	_, rollbackErr := os.Stat(filepath.Join(m.paths.PreviousDir, "xkeen-control-linux-arm64"))
-	status.RollbackAvailable = rollbackErr == nil
+	status.RollbackVerificationRequired = m.rollbackVerificationRequired
+	if !m.rollbackAdmissionClaimed && !m.rollbackVerificationRequired {
+		_, rollbackErr := os.Stat(filepath.Join(m.paths.PreviousDir, "xkeen-control-linux-arm64"))
+		status.RollbackAvailable = rollbackErr == nil
+	}
 	return status
 }
 
@@ -154,13 +165,20 @@ func (m *Manager) Check(ctx context.Context, channel, version string) (Status, e
 	if err != nil {
 		return m.Status(ctx), err
 	}
-	if channel == "beta" && strings.TrimSpace(version) == "" {
-		return m.Status(ctx), errors.New("beta checks require an explicit version")
+	version = strings.TrimSpace(version)
+	if err := validateVersionRequest(channel, version); err != nil {
+		return m.Status(ctx), err
 	}
+	// A new valid Check attempt supersedes any remembered candidate immediately;
+	// a failed lookup must never leave an older release applyable.
+	m.mu.Lock()
+	m.latest = nil
+	m.mu.Unlock()
 	manifest, err := m.client.Check(ctx, channel, version)
 	m.mu.Lock()
 	m.lastCheck = m.now()
 	if err != nil {
+		m.latest = nil
 		m.lastResult = "failed"
 		m.mu.Unlock()
 		return m.Status(ctx), err
@@ -192,6 +210,11 @@ func (m *Manager) SetPolicy(policy Policy) (Status, error) {
 	if err := writeJSONAtomic(m.paths.PolicyPath, policy, 0o600); err != nil {
 		return Status{}, errors.New("update policy could not be saved")
 	}
+	m.mu.Lock()
+	if m.latest != nil && m.latest.Channel != channel {
+		m.latest = nil
+	}
+	m.mu.Unlock()
 	return m.Status(context.Background()), nil
 }
 
@@ -204,8 +227,9 @@ func (m *Manager) Apply(ctx context.Context, channel, version string) error {
 	if err != nil {
 		return err
 	}
-	if channel == "beta" && strings.TrimSpace(version) == "" {
-		return errors.New("beta apply requires an explicit version")
+	version = strings.TrimSpace(version)
+	if err := validateVersionRequest(channel, version); err != nil {
+		return err
 	}
 	candidate, err := m.client.FetchCandidate(ctx, channel, version)
 	if err != nil {
@@ -214,6 +238,74 @@ func (m *Manager) Apply(ctx context.Context, channel, version string) error {
 	if err := release.VerifyCandidate(candidate); err != nil {
 		return err
 	}
+	return m.applyCandidate(ctx, candidate)
+}
+
+// ValidateChecked proves that a candidate was explicitly checked for the
+// current effective channel. It is intentionally separate from Service so
+// existing non-UI callers retain their narrow Apply contract.
+func (m *Manager) ValidateChecked(ctx context.Context, channel, version string) error {
+	channel, err := release.ParseChannel(channel)
+	if err != nil {
+		return err
+	}
+	version = strings.TrimSpace(version)
+	if err := release.ValidateVersion(version); err != nil {
+		return err
+	}
+	status := m.Status(ctx)
+	if status.Policy.Channel != channel || status.LatestChannel != channel || status.LatestCompatible != version || status.LatestSource == "" {
+		return errors.New("release candidate was not explicitly checked")
+	}
+	return nil
+}
+
+// ApplyChecked consumes the explicitly checked candidate before doing any
+// network, staging or lifecycle work. A lost response therefore cannot be
+// replayed with the same check. The candidate remains consumed if a later
+// fetch/stage/helper step fails; the operator must run a fresh Check.
+func (m *Manager) ApplyChecked(ctx context.Context, channel, version string) error {
+	checked, err := m.claimChecked(ctx, channel, version)
+	if err != nil {
+		return err
+	}
+	candidate, err := m.client.FetchCandidate(ctx, channel, version)
+	if err != nil {
+		return err
+	}
+	if candidate.Manifest.Channel != channel || candidate.Manifest.Version != version || (checked.SourceCommit != "" && candidate.Manifest.SourceCommit != checked.SourceCommit) {
+		return errors.New("release candidate changed after check")
+	}
+	if err := release.VerifyCandidate(candidate); err != nil {
+		return err
+	}
+	if m.readPolicy().Channel != channel {
+		return errors.New("release policy changed after check")
+	}
+	return m.applyCandidate(ctx, candidate)
+}
+
+func (m *Manager) claimChecked(_ context.Context, channel, version string) (release.Manifest, error) {
+	channel, err := release.ParseChannel(channel)
+	if err != nil {
+		return release.Manifest{}, err
+	}
+	version = strings.TrimSpace(version)
+	if err := release.ValidateVersion(version); err != nil {
+		return release.Manifest{}, err
+	}
+	policy := m.readPolicy()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if policy.Channel != channel || m.latest == nil || m.latest.Channel != channel || m.latest.Version != version {
+		return release.Manifest{}, errors.New("release candidate was not explicitly checked")
+	}
+	checked := *m.latest
+	m.latest = nil
+	return checked, nil
+}
+
+func (m *Manager) applyCandidate(ctx context.Context, candidate release.Candidate) error {
 
 	releaseToken, err := m.beginLifecycle(ctx)
 	if err != nil {
@@ -230,20 +322,67 @@ func (m *Manager) Apply(ctx context.Context, channel, version string) error {
 	return nil
 }
 
+func validateVersionRequest(channel, version string) error {
+	if channel == "beta" && version == "" {
+		return errors.New("beta checks require an explicit version")
+	}
+	if version != "" && release.ValidateVersion(version) != nil {
+		return errors.New("release version is invalid")
+	}
+	return nil
+}
+
 // Rollback admits the fixed helper under the same lifecycle barrier and then
 // returns so the HTTP layer can deliver 202 before the helper's bounded handoff
 // grace expires and process replacement begins.
 func (m *Manager) Rollback(ctx context.Context) error {
+	m.mu.Lock()
+	if m.rollbackVerificationRequired {
+		m.mu.Unlock()
+		return errors.New("panel rollback outcome requires verification")
+	}
+	if m.rollbackAdmissionClaimed {
+		m.mu.Unlock()
+		return errors.New("panel rollback is busy")
+	}
+	m.mu.Unlock()
 	if _, err := os.Stat(filepath.Join(m.paths.PreviousDir, "xkeen-control-linux-arm64")); err != nil {
 		return errors.New("panel rollback is unavailable")
 	}
+	// Claim before lifecycle admission/helper start so concurrent requests cannot
+	// enter the fixed helper twice. This is only transient ownership: a proven
+	// pre-handoff failure releases it below.
+	m.mu.Lock()
+	if m.rollbackVerificationRequired {
+		m.mu.Unlock()
+		return errors.New("panel rollback outcome requires verification")
+	}
+	if m.rollbackAdmissionClaimed {
+		m.mu.Unlock()
+		return errors.New("panel rollback is busy")
+	}
+	m.rollbackAdmissionClaimed = true
+	m.mu.Unlock()
 	releaseToken, err := m.beginLifecycle(ctx)
 	if err != nil {
+		m.mu.Lock()
+		m.rollbackAdmissionClaimed = false
+		m.mu.Unlock()
 		return err
 	}
 	if err := m.launchHelper("rollback", releaseToken); err != nil {
+		m.mu.Lock()
+		m.rollbackAdmissionClaimed = false
+		m.mu.Unlock()
 		return errors.New("panel rollback helper could not start")
 	}
+	// launchHelper returning nil proves that the fixed helper was started. From
+	// this point the response may be lost while replacement proceeds, so retain
+	// a no-replay verification latch and release transient admission ownership.
+	m.mu.Lock()
+	m.rollbackAdmissionClaimed = false
+	m.rollbackVerificationRequired = true
+	m.mu.Unlock()
 	return nil
 }
 

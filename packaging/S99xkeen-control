@@ -4,14 +4,6 @@ set -eu
 BIN="${XKEEN_CONTROL_BIN:-/opt/sbin/xkeen-control}"
 PIDFILE="${XKEEN_CONTROL_PIDFILE:-/opt/var/run/xkeen-control.pid}"
 LOG="${XKEEN_CONTROL_LOG:-/tmp/xkeen-control.log}"
-LISTEN_FILE="${XKEEN_CONTROL_LISTEN_FILE:-/opt/etc/xkeen-control/listen-address}"
-if [ -n "${XKEEN_CONTROL_LISTEN:-}" ]; then
-	LISTEN="$XKEEN_CONTROL_LISTEN"
-elif [ -r "$LISTEN_FILE" ]; then
-	LISTEN="$(sed -n '1p' "$LISTEN_FILE")"
-else
-	LISTEN="127.0.0.1:8787"
-fi
 
 pid_is_control() {
 	pid="$1"
@@ -37,7 +29,10 @@ start() {
 	# Diagnostics are ephemeral and reset at service start; the Go process does
 	# not write a request/access log.
 	: > "$LOG"
-	XKEEN_CONTROL_LISTEN="$LISTEN" nohup "$BIN" >> "$LOG" 2>&1 &
+	# Go owns env -> fixed listener file -> default resolution. This init
+	# script inherits a real external XKEEN_CONTROL_LISTEN override but never
+	# manufactures ownership from the persisted listener file.
+	nohup "$BIN" >> "$LOG" 2>&1 &
 	child="$!"
 	printf '%s\n' "$child" > "$PIDFILE"
 	sleep 1

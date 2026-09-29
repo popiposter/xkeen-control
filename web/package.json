@@ -14,7 +14,8 @@
     "test:performance-ui": "playwright test tests/performance-ui.spec.js",
     "test:performance-policy-ui": "playwright test tests/performance-policy.spec.js",
     "test:routing-ui": "playwright test tests/routing-policy.spec.js",
-    "test:setup-ui": "playwright test tests/setup.spec.js"
+    "test:setup-ui": "playwright test tests/setup.spec.js",
+    "test:system-panel-ui": "playwright test tests/system-panel.spec.js"
   },
   "dependencies": {
     "flag-icons": "7.5.0",

@@ -3,15 +3,12 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -27,6 +24,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/dnsobservatory"
 	"github.com/popiposter/xkeen-control/internal/httpapi"
 	"github.com/popiposter/xkeen-control/internal/nodes"
+	"github.com/popiposter/xkeen-control/internal/panellistener"
 	"github.com/popiposter/xkeen-control/internal/performancepolicy"
 	"github.com/popiposter/xkeen-control/internal/restore"
 	"github.com/popiposter/xkeen-control/internal/routingpolicy"
@@ -38,7 +36,7 @@ import (
 )
 
 const (
-	defaultListenAddress           = "127.0.0.1:8787"
+	defaultListenAddress           = panellistener.DefaultAddress
 	componentMutationResponseGrace = components.DefaultMutationResponseGrace
 )
 
@@ -113,11 +111,13 @@ func main() {
 		return
 	}
 
-	listenAddress, err := listenAddressFromEnv()
+	listenerFile := getenv("XKEEN_CONTROL_LISTEN_FILE", panellistener.DefaultFilePath)
+	listenerResolution, err := panellistener.ResolveStartup(os.Getenv("XKEEN_CONTROL_LISTEN"), listenerFile)
 	if err != nil {
 		log.Printf("invalid listen address: %v", err)
 		os.Exit(2)
 	}
+	listenAddress := listenerResolution.Address
 	startedAt := time.Now().UTC()
 	authManager := auth.NewManager(auth.Config{
 		HashPath:            getenv("XKEEN_CONTROL_AUTH_HASH", auth.PasswordHashPath),
@@ -161,6 +161,16 @@ func main() {
 	runner := c1.NewBenchmarkRunner(policy, probeRouter, c1.BenchmarkStore{Path: getenv("XKEEN_CONTROL_BENCHMARK_PATH", c1.DefaultBenchmarkPath)})
 	coordinator := c1.NewCoordinator(policy, supervisor, runner, nodeReader)
 	coordinator.SetManualRunner(c1.NewManualNodeRunner(probeRouter))
+	listenerService := panellistener.NewService(panellistener.Config{
+		FilePath:   listenerFile,
+		HelperPath: getenv("XKEEN_CONTROL_UPDATER", panellistener.DefaultHelperPath),
+		Initial:    listenerResolution,
+		Lifecycle:  coordinator,
+	})
+	if err := listenerService.StartupError(); err != nil {
+		log.Printf("panel listener startup initialization failed: %v", err)
+		os.Exit(1)
+	}
 	performancePolicyService := performancepolicy.NewService(performancepolicy.Config{Runtime: coordinator})
 	if err := performancePolicyService.InitializeRuntime(); err != nil {
 		log.Print("performance policy startup initialization failed")
@@ -349,6 +359,7 @@ func main() {
 		Policy:             routingPolicyService,
 		DNSObservatory:     dnsObservatoryService,
 		PerformancePolicy:  performancePolicyService,
+		Listener:           listenerService,
 		Backup: backup.NewService(backup.Config{
 			Appliance:      applianceService,
 			Nodes:          nodeManager,
@@ -826,23 +837,11 @@ func writeCLIOutput(path string, contents []byte) error {
 }
 
 func listenAddressFromEnv() (string, error) {
-	value := getenv("XKEEN_CONTROL_LISTEN", defaultListenAddress)
-	host, port, err := net.SplitHostPort(value)
-	if err != nil || host == "" {
-		return "", fmt.Errorf("listen address must be host:port")
+	resolution, err := panellistener.ResolveStartup(os.Getenv("XKEEN_CONTROL_LISTEN"), getenv("XKEEN_CONTROL_LISTEN_FILE", panellistener.DefaultFilePath))
+	if err != nil {
+		return "", err
 	}
-	parsedPort, err := strconv.Atoi(port)
-	if err != nil || parsedPort < 1 || parsedPort > 65535 {
-		return "", fmt.Errorf("listen port must be between 1 and 65535")
-	}
-	if strings.EqualFold(host, "localhost") {
-		host = "127.0.0.1"
-	}
-	ip := net.ParseIP(strings.Trim(host, "[]"))
-	if ip == nil || ip.IsUnspecified() || (!ip.IsLoopback() && !ip.IsPrivate()) {
-		return "", fmt.Errorf("listen address must be loopback or an exact private LAN address")
-	}
-	return net.JoinHostPort(ip.String(), strconv.Itoa(parsedPort)), nil
+	return resolution.Address, nil
 }
 
 func getenv(name, fallback string) string {

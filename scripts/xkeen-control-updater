@@ -2,8 +2,8 @@
 set -eu
 set -f
 
-# Fixed, purpose-built panel lifecycle helper. It accepts only install, adopt
-# or rollback and has no arbitrary command, path, URL or file API. A /tmp-only
+# Fixed, purpose-built panel lifecycle helper. It accepts only install, adopt,
+# rollback or rebind and has no arbitrary command, path, URL or file API. A /tmp-only
 # root prefix exists solely for hermetic off-router fixtures.
 TEST_MODE="${XKEEN_CONTROL_TEST_MODE:-0}"
 ROOT_PREFIX="${XKEEN_CONTROL_TEST_ROOT:-}"
@@ -26,24 +26,29 @@ TEMP="${ROOT_PREFIX}/tmp/xkeen-control/panel-update-rollback"
 TEMP_HELPER_ABSENT="${TEMP}/.helper-absent"
 STATE="${ROOT_PREFIX}/opt/etc/xkeen-control/state"
 LISTEN_FILE="${ROOT_PREFIX}/opt/etc/xkeen-control/listen-address"
+if [ -n "${XKEEN_CONTROL_LISTEN_FILE:-}" ]; then
+	LISTEN_FILE="$XKEEN_CONTROL_LISTEN_FILE"
+fi
 NODE_REGISTRY="${ROOT_PREFIX}/opt/etc/xkeen-control/secrets/nodes.json"
 NODE_OUTBOUNDS="${ROOT_PREFIX}/opt/etc/xray/configs/04_outbounds.json"
 ADOPTION_RECOVERY="${STATE}/panel-adoption-recovery"
+LISTENER_STAGING="${ROOT_PREFIX}/tmp/xkeen-control/panel-listener"
+LISTENER_CANDIDATE="${LISTENER_STAGING}/candidate"
+LISTENER_PREVIOUS="${LISTENER_STAGING}/previous"
+LISTENER_PREVIOUS_ABSENT="${LISTENER_STAGING}/previous-absent"
 
 fail() { echo "ERROR: panel updater rejected operation" >&2; exit 1; }
+[ "$#" -eq 1 ] || fail
 action="${1:-}"
-case "$action" in install|adopt|rollback) ;; *) fail ;; esac
+case "$action" in install|adopt|rollback|rebind) ;; *) fail ;; esac
 
 valid_port() {
 	case "$1" in ''|*[!0-9]*) return 1 ;; esac
 	[ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ] 2>/dev/null
 }
 
-private_health_url() {
-	listen="127.0.0.1:8787"
-	if [ -r "$LISTEN_FILE" ]; then
-		listen="$(sed -n '1p' "$LISTEN_FILE" | tr -d '\r\n')"
-	fi
+listener_url_for() {
+	listen="$1"
 	case "$listen" in
 		\[*\]:*)
 			host="${listen#\[}"
@@ -81,6 +86,16 @@ private_health_url() {
 	printf 'http://%s/healthz\n' "$listen"
 }
 
+private_health_url() {
+	listen="127.0.0.1:8787"
+	if [ -n "${XKEEN_CONTROL_LISTEN:-}" ]; then
+		listen="$XKEEN_CONTROL_LISTEN"
+	elif [ -r "$LISTEN_FILE" ]; then
+		listen="$(sed -n '1p' "$LISTEN_FILE" | tr -d '\r\n')"
+	fi
+	listener_url_for "$listen"
+}
+
 health() {
 	command -v curl >/dev/null 2>&1 || return 1
 	url="$(private_health_url)" || return 1
@@ -89,6 +104,23 @@ health() {
 
 stop_panel() { "$INIT" stop >/dev/null 2>&1 || true; }
 start_panel() { "$INIT" start >/dev/null 2>&1; }
+
+rebind_response_grace() {
+	case "${XKEEN_CONTROL_HANDOFF_DELAY:-1}" in
+		0) return 0 ;;
+		1) sleep 1 ;;
+		*) return 1 ;;
+	esac
+}
+
+validate_listener_candidate() {
+	path="$1"
+	bounded_regular_file "$path" 256 || return 1
+	first="$(sed -n '1p' "$path" | tr -d '\r\n')"
+	second="$(sed -n '2p' "$path" | tr -d '\r\n')"
+	[ -n "$first" ] && [ -z "$second" ] || return 1
+	listener_url_for "$first" >/dev/null
+}
 
 # The legacy init script is the only lifecycle surface available before #2.
 # Confirming that no process still has the fixed legacy binary in /proc is a
@@ -393,6 +425,57 @@ restore_current_marker() {
 		rm -f "$STATE/installed-release.json"
 	fi
 }
+
+install_listener_candidate() {
+	[ -d "$(dirname "$LISTEN_FILE")" ] || return 1
+	if [ -e "$LISTEN_FILE" ] || [ -L "$LISTEN_FILE" ]; then
+		[ -f "$LISTEN_FILE" ] && [ ! -L "$LISTEN_FILE" ] || return 1
+	fi
+	temporary="${LISTEN_FILE}.rebind.new"
+	[ ! -e "$temporary" ] && [ ! -L "$temporary" ] || return 1
+	cp "$1" "$temporary"
+	chmod 600 "$temporary"
+	mv -f "$temporary" "$LISTEN_FILE"
+}
+
+restore_listener_snapshot() {
+	if [ -f "$LISTENER_PREVIOUS_ABSENT" ]; then
+		[ "$(sed -n '1p' "$LISTENER_PREVIOUS_ABSENT" | tr -d '\r\n')" = "absent" ] || return 1
+		[ ! -L "$LISTEN_FILE" ] || return 1
+		rm -f "$LISTEN_FILE"
+		return 0
+	fi
+	validate_listener_candidate "$LISTENER_PREVIOUS" || return 1
+	install_listener_candidate "$LISTENER_PREVIOUS"
+}
+
+if [ "$action" = "rebind" ]; then
+	# An inherited environment bind is explicitly read-only. The broker will
+	# reject a rebind before launch, and this helper keeps the same fail-closed
+	# boundary if invoked outside that path.
+	[ -z "${XKEEN_CONTROL_LISTEN:-}" ] || fail
+	[ -d "$LISTENER_STAGING" ] && [ ! -L "$LISTENER_STAGING" ] || fail
+	validate_listener_candidate "$LISTENER_CANDIDATE" || fail
+	if [ -f "$LISTENER_PREVIOUS_ABSENT" ]; then
+		[ ! -e "$LISTENER_PREVIOUS" ] && [ ! -L "$LISTENER_PREVIOUS" ] || fail
+		[ "$(sed -n '1p' "$LISTENER_PREVIOUS_ABSENT" | tr -d '\r\n')" = "absent" ] || fail
+	else
+		[ ! -e "$LISTENER_PREVIOUS_ABSENT" ] && [ ! -L "$LISTENER_PREVIOUS_ABSENT" ] || fail
+		validate_listener_candidate "$LISTENER_PREVIOUS" || fail
+	fi
+	rebind_response_grace || fail
+	stop_panel
+	if install_listener_candidate "$LISTENER_CANDIDATE" && start_panel && health; then
+		rm -rf "$LISTENER_STAGING"
+		exit 0
+	fi
+	stop_panel
+	if restore_listener_snapshot && start_panel && health; then
+		rm -rf "$LISTENER_STAGING"
+		fail
+	fi
+	fail
+fi
 
 if [ "$action" = "adopt" ]; then
 	# Adoption is a separate action so the normal managed self-update path keeps

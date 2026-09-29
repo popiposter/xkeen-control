@@ -15,13 +15,24 @@ import (
 )
 
 const (
-	RepositoryOwner  = "popiposter"
-	RepositoryName   = "xkeen-control"
-	maxManifestBody  = 128 << 10
-	maxSignatureBody = 8 << 10
-	maxScriptBody    = 1 << 20
-	maxBinaryBody    = 64 << 20
+	RepositoryOwner          = "popiposter"
+	RepositoryName           = "xkeen-control"
+	MaxRequestedVersionBytes = 64
+	maxManifestBody          = 128 << 10
+	maxSignatureBody         = 8 << 10
+	maxScriptBody            = 1 << 20
+	maxBinaryBody            = 64 << 20
 )
+
+// ValidateVersion keeps the release client's semver boundary available to
+// narrow API owners without exposing repository or URL configuration.
+func ValidateVersion(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > MaxRequestedVersionBytes || !validSemver(strings.TrimPrefix(value, "v")) {
+		return errors.New("release version is invalid")
+	}
+	return nil
+}
 
 type Client struct {
 	baseURL   string

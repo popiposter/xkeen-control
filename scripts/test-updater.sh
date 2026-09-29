@@ -26,6 +26,7 @@ for arg in "$@"; do
 	case "$arg" in http://*) url="$arg" ;; esac
 done
 [ "$url" = "${EXPECTED_HEALTH_URL:?}" ] || { echo "unexpected health URL: $url" >&2; exit 1; }
+[ -z "${FAIL_HEALTH_URL:-}" ] || [ "$url" != "$FAIL_HEALTH_URL" ] || exit 1
 exit 0
 EOF_CURL
 chmod 755 "$fakebin/curl"
@@ -117,6 +118,33 @@ EOF_RECORDING_INIT
 	chmod 755 "$path"
 }
 
+make_listener_init() {
+	path="$1"
+	cat > "$path" <<'EOF_LISTENER_INIT'
+#!/bin/sh
+set -eu
+root="${XKEEN_CONTROL_TEST_ROOT:?}"
+case "${1:-}" in
+	stop)
+		count=0
+		[ ! -f "$root/listener-stop-count" ] || count="$(cat "$root/listener-stop-count")"
+		printf '%s\n' $((count + 1)) > "$root/listener-stop-count"
+		;;
+	start)
+		count=0
+		[ ! -f "$root/listener-start-count" ] || count="$(cat "$root/listener-start-count")"
+		printf '%s\n' $((count + 1)) > "$root/listener-start-count"
+		;;
+	status|restart)
+		;;
+	*)
+		exit 2
+		;;
+esac
+EOF_LISTENER_INIT
+	chmod 755 "$path"
+}
+
 make_racy_init() {
 	path="$1"
 	cat > "$path" <<'EOF_RACY_INIT'
@@ -151,7 +179,12 @@ setup_generation() {
 	make_init "$root/opt/etc/init.d/S99xkeen-control"
 	cp "$ROOT/scripts/xkeen-control-updater" "$root/opt/libexec/xkeen-control-updater"
 	chmod 755 "$root/opt/libexec/xkeen-control-updater"
-	if [ -n "$listen" ]; then printf '%s\n' "$listen" > "$root/opt/etc/xkeen-control/listen-address"; fi
+	if [ -n "$listen" ]; then
+		# Pre-E installs used the ordinary shell-created non-secret listener
+		# shape; startup must continue accepting this 0644 file after upgrade.
+		printf '%s\n' "$listen" > "$root/opt/etc/xkeen-control/listen-address"
+		chmod 644 "$root/opt/etc/xkeen-control/listen-address"
+	fi
 	printf '%s\n' '{"product":"xkeen-control","version":"1.0.0","sourceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","channel":"stable"}' > "$root/opt/etc/xkeen-control/state/installed-release.json"
 	printf '%s\n' '{"schemaVersion":1,"generation":"legacy"}' > "$root/opt/etc/xkeen-control/secrets/nodes.json"
 	printf '%s\n' '{"schemaVersion":1,"generation":"legacy"}' > "$root/opt/etc/xray/configs/04_outbounds.json"
@@ -379,6 +412,78 @@ XKEEN_CONTROL_TEST_MODE=1 \
 XKEEN_CONTROL_TEST_ROOT="$loopback_root" \
 sh "$ROOT/scripts/xkeen-control-updater" install
 grep -Fq '"version":"1.2.3"' "$loopback_root/opt/etc/xkeen-control/state/installed-release.json"
+
+environment_health_root="$tmp/environment-health-root"
+setup_generation "$environment_health_root"
+PATH="$fakebin:$PATH" \
+EXPECTED_HEALTH_URL='http://127.0.0.1:8787/healthz' \
+XKEEN_CONTROL_LISTEN='127.0.0.1:8787' \
+XKEEN_CONTROL_TEST_MODE=1 \
+XKEEN_CONTROL_TEST_ROOT="$environment_health_root" \
+sh "$ROOT/scripts/xkeen-control-updater" install >/dev/null
+
+rebind_root="$tmp/rebind-root"
+setup_generation "$rebind_root" "127.0.0.1:8787"
+make_listener_init "$rebind_root/opt/etc/init.d/S99xkeen-control"
+mkdir -p "$rebind_root/tmp/xkeen-control/panel-listener"
+printf '%s\n' '10.0.0.4:8787' > "$rebind_root/tmp/xkeen-control/panel-listener/candidate"
+printf '%s\n' '127.0.0.1:8787' > "$rebind_root/tmp/xkeen-control/panel-listener/previous"
+PATH="$fakebin:$PATH" \
+EXPECTED_HEALTH_URL='http://10.0.0.4:8787/healthz' \
+XKEEN_CONTROL_HANDOFF_DELAY=0 \
+XKEEN_CONTROL_TEST_MODE=1 \
+XKEEN_CONTROL_TEST_ROOT="$rebind_root" \
+sh "$ROOT/scripts/xkeen-control-updater" rebind
+[ "$(sed -n '1p' "$rebind_root/opt/etc/xkeen-control/listen-address")" = '10.0.0.4:8787' ]
+[ "$(cat "$rebind_root/listener-stop-count")" -eq 1 ]
+[ "$(cat "$rebind_root/listener-start-count")" -eq 1 ]
+[ ! -e "$rebind_root/tmp/xkeen-control/panel-listener" ]
+if PATH="$fakebin:$PATH" XKEEN_CONTROL_TEST_MODE=1 XKEEN_CONTROL_TEST_ROOT="$rebind_root" sh "$ROOT/scripts/xkeen-control-updater" rebind extra >/dev/null 2>&1; then
+	echo "rebind accepted a browser-supplied argument" >&2
+	exit 1
+fi
+
+rebind_failure_root="$tmp/rebind-failure-root"
+setup_generation "$rebind_failure_root" "127.0.0.1:8787"
+make_listener_init "$rebind_failure_root/opt/etc/init.d/S99xkeen-control"
+mkdir -p "$rebind_failure_root/tmp/xkeen-control/panel-listener"
+printf '%s\n' '10.0.0.4:8787' > "$rebind_failure_root/tmp/xkeen-control/panel-listener/candidate"
+printf '%s\n' '127.0.0.1:8787' > "$rebind_failure_root/tmp/xkeen-control/panel-listener/previous"
+if PATH="$fakebin:$PATH" \
+	EXPECTED_HEALTH_URL='http://127.0.0.1:8787/healthz' \
+	FAIL_HEALTH_URL='http://10.0.0.4:8787/healthz' \
+	XKEEN_CONTROL_HANDOFF_DELAY=0 \
+	XKEEN_CONTROL_TEST_MODE=1 \
+	XKEEN_CONTROL_TEST_ROOT="$rebind_failure_root" \
+	sh "$ROOT/scripts/xkeen-control-updater" rebind >/dev/null 2>&1; then
+	echo "failed rebind unexpectedly committed" >&2
+	exit 1
+fi
+[ "$(sed -n '1p' "$rebind_failure_root/opt/etc/xkeen-control/listen-address")" = '127.0.0.1:8787' ]
+[ "$(cat "$rebind_failure_root/listener-stop-count")" -eq 2 ]
+[ "$(cat "$rebind_failure_root/listener-start-count")" -eq 2 ]
+[ ! -e "$rebind_failure_root/tmp/xkeen-control/panel-listener" ]
+
+rebind_absence_root="$tmp/rebind-absence-root"
+setup_generation "$rebind_absence_root" ""
+make_listener_init "$rebind_absence_root/opt/etc/init.d/S99xkeen-control"
+mkdir -p "$rebind_absence_root/tmp/xkeen-control/panel-listener"
+printf '%s\n' '10.0.0.4:8787' > "$rebind_absence_root/tmp/xkeen-control/panel-listener/candidate"
+printf '%s\n' absent > "$rebind_absence_root/tmp/xkeen-control/panel-listener/previous-absent"
+if PATH="$fakebin:$PATH" \
+	EXPECTED_HEALTH_URL='http://127.0.0.1:8787/healthz' \
+	FAIL_HEALTH_URL='http://10.0.0.4:8787/healthz' \
+	XKEEN_CONTROL_HANDOFF_DELAY=0 \
+	XKEEN_CONTROL_TEST_MODE=1 \
+	XKEEN_CONTROL_TEST_ROOT="$rebind_absence_root" \
+	sh "$ROOT/scripts/xkeen-control-updater" rebind >/dev/null 2>&1; then
+	echo "failed absent-listener rebind unexpectedly committed" >&2
+	exit 1
+fi
+[ ! -e "$rebind_absence_root/opt/etc/xkeen-control/listen-address" ]
+[ "$(cat "$rebind_absence_root/listener-stop-count")" -eq 2 ]
+[ "$(cat "$rebind_absence_root/listener-start-count")" -eq 2 ]
+[ ! -e "$rebind_absence_root/tmp/xkeen-control/panel-listener" ]
 
 failure_root="$tmp/failure-root"
 setup_generation "$failure_root"

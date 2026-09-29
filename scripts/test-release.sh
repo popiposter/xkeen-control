@@ -39,8 +39,9 @@ grep -Fq '.helper-absent' "$ROOT/scripts/xkeen-control-updater"
 grep -Fq 'panel-adoption-recovery' "$ROOT/scripts/xkeen-control-updater"
 grep -Fq 'nodes validate' "$ROOT/scripts/xkeen-control-updater"
 grep -Fq 'nodes reconcile-runtime' "$ROOT/scripts/xkeen-control-updater"
-if grep -Eq 'HANDOFF_DELAY|[[:space:]]sleep[[:space:]]' "$ROOT/scripts/xkeen-control-updater"; then
-	echo 'legacy handoff must not use a delay' >&2
+grep -Fq 'rebind_response_grace' "$ROOT/scripts/xkeen-control-updater"
+if grep -Fq 'XKEEN_CONTROL_LISTEN="$LISTEN"' "$ROOT/packaging/S99xkeen-control"; then
+	echo 'init script must not manufacture listener environment ownership' >&2
 	exit 1
 fi
 grep -Fq 'release-assets.githubusercontent.com' "$ROOT/scripts/install.sh"
