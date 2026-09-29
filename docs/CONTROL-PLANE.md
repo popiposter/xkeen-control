@@ -543,13 +543,48 @@ The source F1 broker, F2 operator UI and F3 bounded policy/check-only scheduler 
 
 ### #5 — visual configuration
 
-Routing and DNS/Observatory typed broker/UI are merged source-only, Issue #91 D /
-PR #92 adds the bounded Performance authority/UI without a second selection
-writer or arbitrary performance URL, and Issue #91 E / PR #97 adds the
-source-aware System / Panel workspace over the existing listener/auth/signed
-update owners. Issue #91 F is the active final cross-domain integration/drift,
-feature-complete UX and source-documentation closeout gate before #5 closes. No
-raw JSON editor.
+Issue #5 is complete source-only through Issue #91 F; it is not deployed. The
+Dashboard composes the final navigation sequence `Overview → Nodes → Routing →
+DNS → Performance → Components / Updates → Backup & Restore → System / Panel`.
+Its five-second collector remains limited to status, nodes and performance
+telemetry. Routing, DNS/Observatory, Performance policy, component inventory
+and System settings load lazily on entry or explicit refresh.
+
+Routing and DNS/Observatory share the existing appliance authority and a narrow
+peer Preview invalidation/unknown-outcome fresh-read gate. Performance policy,
+Components, Backup & Restore, listener/auth and signed panel updates remain
+under their purpose-specific owners. There is no global mutation bus or new
+persistent settings authority. Lifecycle-unavailable, maintenance and applying
+states disable new mutation initiation across the workspaces. System release
+Check and read-only facts remain available; panel update Apply and Rollback
+require a known idle lifecycle state.
+
+System / Panel uses the active listener projection resolved at process startup
+from environment, listener file or default. Later file drift is shown without
+being silently adopted. A typed listener rebind uses the fixed updater and a
+202 response means the handoff started; reconnect and verify the active bind.
+Signed release Check remains explicit, Apply uses the checked version, and a
+202 update/rollback response does not prove the final outcome. Persisted
+`notify` and `auto-stable` panel modes remain metadata because no automatic panel
+update scheduler is active. Components and Backup & Restore retain their own
+existing forms and transaction owners. No raw JSON editor is exposed.
+
+The existing listener handoff API remains typed and purpose-specific:
+
+```text
+GET  /api/v1/panel/listener
+POST /api/v1/panel/listener/preview
+POST /api/v1/panel/listener/apply
+POST /api/v1/panel/listener/cancel
+```
+
+The `202` listener Apply response only confirms that the handoff started. A
+same-session refresh cannot establish completion; the operator reconnects to
+the target and verifies the active listener projection.
+
+The source-only feature-complete suite verifies these cross-domain boundaries.
+The production-qualified baseline remains signed stable `v0.2.0`; no #5 source
+change implies a release, router access or live qualification.
 
 ## Authorities
 

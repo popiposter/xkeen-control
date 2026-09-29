@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes the **currently production-qualified architecture**. Slices A/B/C/C.1/D/D.1 are qualified; later D.2/D.3/#5 capabilities on source main, including Setup, visual Routing and visual DNS/Observatory, remain source-qualified only and must not be treated as deployed behavior. Detailed design for active work lives in the active GitHub issue.
+This document describes the **currently production-qualified architecture**. Slices A/B/C/C.1/D/D.1 are qualified; later D.2/D.3/#5 capabilities on source main, including Setup and the completed source-only #5 visual configuration program, remain source-qualified only and must not be treated as deployed behavior. Detailed design for active work lives in the active GitHub issue.
 
 ## System goal
 
@@ -211,7 +211,7 @@ Persistent writes are tied to real explicit state changes and bounded generation
 
 `docs/ROADMAP.md` is the sole sequencing/status authority; do not copy its volatile issue order here.
 
-#4 component lifecycle and #5 visual configuration remain not deployed. Source main now contains D.2 G Setup plus the #5 Routing, DNS/Observatory, bounded Performance and System/Panel workspaces through PR #97. Issue #91 F is the remaining source-only integration/drift/feature-complete UX gate before parent #5 closes. None of these changes the production-qualified status of the current release. The current authority model above is in force for adopted routers; the explicit repository-derived/legacy compatibility boundary remains in force before successful adoption.
+#4 component lifecycle and #5 visual configuration remain not deployed. Source main contains D.2 G Setup and the completed source-only #5 Routing, DNS/Observatory, bounded Performance, and System/Panel workspaces. The Dashboard composes their existing owners: only Routing/DNS share peer Preview invalidation and an unknown-outcome read gate; other domains keep their purpose-specific recovery boundaries. Settings reads remain lazy and lifecycle readiness gates mutation initiation across workspaces. No new global transaction or persistence owner was added. None of this changes the production-qualified status of signed stable `v0.2.0`. The current authority model above is in force for adopted routers; the explicit repository-derived/legacy compatibility boundary remains in force before successful adoption.
 
 ## Architecture invariants
 

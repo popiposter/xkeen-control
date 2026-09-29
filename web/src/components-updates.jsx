@@ -249,7 +249,7 @@ export function useComponentsController({ csrfToken, lifecycle, onUnauthorized }
   }, [onUnauthorized])
 
   const savePolicy = useCallback(async () => {
-    if (!policy.value || policy.saving) return false
+    if (!policy.value || policy.saving || lifecycleMutationBlocked) return false
     const cadence = Number(policyDraft.checkCadenceMinutes)
     if (!POLICY_MODES.includes(policyDraft.mode) || !Number.isInteger(cadence) || cadence < MIN_POLICY_CADENCE_MINUTES || cadence > MAX_POLICY_CADENCE_MINUTES) {
       setPolicy((current) => ({ ...current, error: `Check cadence must be an integer from ${MIN_POLICY_CADENCE_MINUTES} to ${MAX_POLICY_CADENCE_MINUTES} minutes.` }))
@@ -271,7 +271,7 @@ export function useComponentsController({ csrfToken, lifecycle, onUnauthorized }
       setPolicy((current) => ({ ...current, saving: false, error: cause.message || 'Component policy was not saved.' }))
       return false
     }
-  }, [csrfToken, onUnauthorized, policy.saving, policy.value, policyDraft])
+  }, [csrfToken, lifecycleMutationBlocked, onUnauthorized, policy.saving, policy.value, policyDraft])
 
   const policyKnown = Boolean(policy.value)
   const policyOff = policy.value?.mode === 'off'
@@ -537,10 +537,12 @@ function ComponentPolicyPanel({ controller }) {
   const { policy, policyDraft } = controller
   const value = policy.value
   const scheduler = value?.scheduler
+  const lifecycleBlocked = controller.lifecycleMutationBlocked
   const updateBlocked = !value || value.mode === 'off'
   const saveDisabled = !value || policy.saving || policy.loading
     || !policyDraft
     || policyDraft.mode === value?.mode && Number(policyDraft.checkCadenceMinutes) === value?.checkCadenceMinutes
+    || lifecycleBlocked
   const schedulerResults = scheduler?.results || {}
   return <section className="panel component-policy" aria-label="Component policy">
     <div className="component-policy-heading"><div><span className="panel-label">Background policy</span><h2>Component discovery stays bounded</h2><p>Policy and scheduler status are read only until this page is opened. The scheduler performs Check-only metadata reads; it never previews, applies, or rolls back.</p></div><div className="component-policy-actions"><small>{policy.loading ? 'Reading…' : value ? `Effective: ${POLICY_MODE_LABELS[value.mode]}` : 'Status unavailable'}</small><button type="button" className="ghost" onClick={() => controller.loadPolicy({ force: true })} disabled={policy.loading || policy.saving}>{policy.loading ? 'Reading…' : 'Refresh policy'}</button></div></div>
@@ -548,8 +550,8 @@ function ComponentPolicyPanel({ controller }) {
     {!value && !policy.loading && !policy.error && <div className="loading">Reading component policy…</div>}
     {value && <>
       <div className="component-policy-form">
-        <label>Mode<select aria-label="Component policy mode" value={policyDraft.mode} disabled={policy.saving || policy.loading} onChange={(event) => controller.setPolicyDraft((current) => ({ ...current, mode: event.target.value }))}>{POLICY_MODES.map((mode) => <option key={mode} value={mode}>{POLICY_MODE_LABELS[mode]}</option>)}</select></label>
-        <label>Check cadence (minutes)<input aria-label="Component check cadence" type="number" min={MIN_POLICY_CADENCE_MINUTES} max={MAX_POLICY_CADENCE_MINUTES} step="1" value={policyDraft.checkCadenceMinutes} disabled={policy.saving || policy.loading} onChange={(event) => controller.setPolicyDraft((current) => ({ ...current, checkCadenceMinutes: event.target.value }))} /></label>
+        <label>Mode<select aria-label="Component policy mode" value={policyDraft.mode} disabled={policy.saving || policy.loading || lifecycleBlocked} onChange={(event) => controller.setPolicyDraft((current) => ({ ...current, mode: event.target.value }))}>{POLICY_MODES.map((mode) => <option key={mode} value={mode}>{POLICY_MODE_LABELS[mode]}</option>)}</select></label>
+        <label>Check cadence (minutes)<input aria-label="Component check cadence" type="number" min={MIN_POLICY_CADENCE_MINUTES} max={MAX_POLICY_CADENCE_MINUTES} step="1" value={policyDraft.checkCadenceMinutes} disabled={policy.saving || policy.loading || lifecycleBlocked} onChange={(event) => controller.setPolicyDraft((current) => ({ ...current, checkCadenceMinutes: event.target.value }))} /></label>
         <button type="button" onClick={controller.savePolicy} disabled={saveDisabled}>{policy.saving ? 'Saving…' : 'Save policy'}</button>
       </div>
       <p className="component-policy-note">Notify checks only; updates remain manual.</p>

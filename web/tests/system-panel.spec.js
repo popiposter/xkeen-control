@@ -35,6 +35,7 @@ async function prepare(page, options = {}) {
     issues: [],
     previews: new Map(),
     checked: null,
+    lifecycle: Object.hasOwn(options, 'lifecycle') ? options.lifecycle : status.lifecycle,
   }
   page.on('pageerror', (error) => state.issues.push(`pageerror: ${error.message}`))
   page.on('console', (message) => {
@@ -53,7 +54,7 @@ async function prepare(page, options = {}) {
         if (state.reconnected) state.listener = { ...state.listener, host: '10.0.0.4', source: 'file' }
         return json(route, { csrfToken: state.reconnected ? `${csrfToken}-reconnected` : csrfToken })
       }
-      case '/api/v1/status': return json(route, status)
+      case '/api/v1/status': return json(route, { ...status, lifecycle: state.lifecycle })
       case '/api/v1/nodes': return json(route, { total: 0, nodes: [], subscriptions: [] })
       case '/api/v1/performance': return json(route, { nodes: [] })
       case '/api/v1/panel/listener': return json(route, state.listener)
@@ -244,6 +245,37 @@ test('locks rollback after a lost response and does not replay it', async ({ pag
   const rollback = page.getByRole('button', { name: 'Rollback retained release' })
   await expect(rollback).toBeDisabled()
   expect(state.requests.filter(({ path }) => path === '/api/v1/update/rollback')).toHaveLength(1)
+})
+
+test('gates panel update and rollback during maintenance, Apply, or unavailable lifecycle while Check stays available', async ({ page }) => {
+  const state = await prepare(page, {
+    update: {
+      latestCompatibleVersion: '1.2.3', latestChannel: 'stable', latestSource: 'github-release',
+      latestSourceCommit: 'b'.repeat(40),
+    },
+  }); page.__systemIssues = state.issues
+
+  for (const lifecycle of [
+    { maintenance: true, applying: false },
+    { maintenance: false, applying: true },
+    null,
+    { maintenance: false },
+  ]) {
+    state.lifecycle = lifecycle
+    await page.goto('/')
+    await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Check fixed release' })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Apply checked release' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Rollback retained release' })).toBeDisabled()
+    await expect(page.getByRole('heading', { name: '0.2.0', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Check fixed release' }).click()
+    await expect(page.getByText('Explicit release Check completed')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Apply checked release' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Rollback retained release' })).toBeDisabled()
+  }
+
+  expect(state.requests.filter(({ path }) => path === '/api/v1/update/check')).toHaveLength(4)
+  expect(state.requests.filter(({ path }) => path === '/api/v1/update/apply' || path === '/api/v1/update/rollback')).toHaveLength(0)
 })
 
 test('re-arms rollback after a proven HTTP rejection and allows a later retry', async ({ page }) => {

@@ -167,7 +167,11 @@ export function usePerformancePolicyController({ csrfToken, lifecycle, performan
   dirtyRef.current = dirty
   applyUnprovenRef.current = applyUnproven
 
-  const lifecycleBlocked = !lifecycle || lifecycle.maintenance || lifecycle.applying
+  const lifecycleBlocked = !lifecycle
+    || typeof lifecycle.maintenance !== 'boolean'
+    || typeof lifecycle.applying !== 'boolean'
+    || lifecycle.maintenance
+    || lifecycle.applying
   const authorityDrift = projection.value?.authorityState === 'drift-detected'
   const mutationBlocked = lifecycleBlocked || performanceBusy || applyUnproven || authorityDrift
 
