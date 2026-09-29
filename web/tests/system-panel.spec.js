@@ -84,6 +84,7 @@ async function prepare(page, options = {}) {
       }
       case '/api/v1/update/rollback': {
         if (options.dropRollbackResponse) return route.abort()
+        if (options.rollbackRejectOnce && state.requests.filter(({ path }) => path === '/api/v1/update/rollback').length === 1) return json(route, { error: 'panel rollback rejected', code: 'busy' }, 409)
         return json(route, { accepted: true, state: 'rollback-attempt-started' }, 202)
       }
       case '/api/v1/session/password': return json(route, { authenticated: false, state: 'reauthentication-required' })
@@ -122,10 +123,19 @@ test('sends only the server-listed host and presents rebind 202 as a handoff', a
   const preview = state.requests.find(({ path }) => path === '/api/v1/panel/listener/preview')
   expect(preview.body).toEqual({ host: '10.0.0.4' })
   await page.getByRole('button', { name: 'Start rebind handoff' }).click()
-  await expect(page.getByText('Listener rebind handoff started')).toBeVisible()
+  await expect(page.getByText('Listener rebind handoff started', { exact: true })).toBeVisible()
   expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener/apply')).toHaveLength(1)
   expect(state.requests.find(({ path }) => path === '/api/v1/panel/listener/apply').body).toEqual({ previewToken: 'listener-preview-1' })
-  await expect(page.getByText(/reconnect and verify/i)).toBeVisible()
+  await expect(page.locator('div.notice.warning').filter({ hasText: /reconnect and verify/i })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Preview rebind' })).toBeDisabled()
+  await expect(page.getByLabel('New management host')).toBeDisabled()
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByLabel('New management host')).toBeEnabled()
+  await page.getByLabel('New management host').selectOption('127.0.0.1')
+  await expect(page.getByRole('button', { name: 'Preview rebind' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Preview rebind' }).click()
+  await expect(page.getByRole('heading', { name: 'Review management listener rebind' })).toBeVisible()
+  expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener/apply')).toHaveLength(1)
 })
 
 test('locks listener rebind after a lost Apply response until a fresh listener read', async ({ page }) => {
@@ -216,6 +226,21 @@ test('locks rollback after a lost response and does not replay it', async ({ pag
   const rollback = page.getByRole('button', { name: 'Rollback retained release' })
   await expect(rollback).toBeDisabled()
   expect(state.requests.filter(({ path }) => path === '/api/v1/update/rollback')).toHaveLength(1)
+})
+
+test('re-arms rollback after a proven HTTP rejection and allows a later retry', async ({ page }) => {
+  const state = await prepare(page, { rollbackRejectOnce: true }); page.__systemIssues = state.issues
+  await page.goto('/')
+  await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+  await page.getByRole('button', { name: 'Rollback retained release' }).click()
+  await expect(page.getByText('Panel rollback was rejected', { exact: true })).toBeVisible()
+  await expect(page.getByText('Panel rollback outcome is unknown', { exact: true })).toHaveCount(0)
+  const rollback = page.getByRole('button', { name: 'Rollback retained release' })
+  await expect(rollback).toBeEnabled()
+  expect(state.requests.filter(({ path }) => path === '/api/v1/update/rollback')).toHaveLength(1)
+  await rollback.click()
+  await expect(page.getByText('Panel rollback attempt started', { exact: true })).toBeVisible()
+  expect(state.requests.filter(({ path }) => path === '/api/v1/update/rollback')).toHaveLength(2)
 })
 
 test('password replacement uses the exact RAM-only request and returns to login', async ({ page }) => {

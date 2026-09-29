@@ -79,6 +79,8 @@ const validListenerApply = (value) => value && typeof value.accepted === 'boolea
   && safeText(value.reconnectClassification, 64)
   && value.restartRequired === !value.noop && value.sessionInvalidated === !value.noop && value.loginRequired === !value.noop
 
+const validHandoff = (value) => value && value.accepted === true && safeText(value.state, 64)
+
 const validUpdate = (value) => value && value.installed && typeof value.installed === 'object'
   && safeText(value.channel, 16) && value.policy && typeof value.policy === 'object'
   && safeText(value.policy.channel, 16) && ['manual', 'notify', 'auto-stable'].includes(value.policy.mode)
@@ -223,6 +225,8 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
       if (value.noop) {
         setResult({ tone: 'success', title: 'Listener already effective', message: 'No listener file or restart was requested.' })
       } else {
+        listenerHandoffGate.current = true
+        setListenerHandoffState('sent')
         setResult({ tone: 'warning', title: 'Listener rebind handoff started', message: 'The panel will restart at the selected address. This response proves helper handoff only; reconnect and verify, then sign in again.' })
       }
     } catch (cause) {
@@ -307,6 +311,7 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
     setResult(null)
     try {
       const value = await postJSON('/api/v1/update/apply', csrfToken, { channel: current.policy.channel, version })
+      if (!validHandoff(value)) throw new SystemPanelError('The update handoff response is invalid.', { kind: 'malformed' })
       setResult({ tone: 'warning', title: 'Panel update attempt started', message: value.state === 'update-attempt-started' ? 'The checked version was handed to the existing updater. Final install success is not proven by 202; reconnect and verify the installed version. No automatic retry will be sent.' : 'The updater handoff was accepted. Reconnect and verify; final install success is not proven by 202.' })
     } catch (cause) {
       if (cause.status === 401) onUnauthorized()
@@ -324,10 +329,17 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
     setResult(null)
     try {
       const value = await postEmpty('/api/v1/update/rollback', csrfToken)
+      if (!validHandoff(value)) throw new SystemPanelError('The rollback handoff response is invalid.', { kind: 'malformed' })
       setResult({ tone: 'warning', title: 'Panel rollback attempt started', message: value.state === 'rollback-attempt-started' ? 'The retained generation was handed to the updater. Reconnect and verify; final rollback success is not proven by 202.' : 'Rollback handoff was accepted. Reconnect and verify the retained generation.' })
     } catch (cause) {
       if (cause.status === 401) onUnauthorized()
-      setResult({ tone: 'warning', title: 'Panel rollback outcome is unknown', message: 'The rollback request was sent but its outcome is unproven. Reconnect and verify the retained generation before any further action.' })
+      if (cause.kind === 'network' || cause.kind === 'malformed') {
+        setResult({ tone: 'warning', title: 'Panel rollback outcome is unknown', message: 'The rollback request was sent but its outcome is unproven. Reconnect and verify the retained generation before any further action.' })
+      } else {
+        handoffGate.current = false
+        setHandoffState('idle')
+        setResult({ tone: 'error', title: 'Panel rollback was rejected', message: 'The server rejected this rollback before handoff. No rollback handoff was started; you may retry.' })
+      }
     } finally {
       setRollbackPending(false)
     }
@@ -389,7 +401,7 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
   }, [clearPreview, csrfToken])
 
   const selectedHost = listener.value?.selectedHost || listener.value?.host || ''
-  const canPreviewListener = listener.value?.editability === 'editable' && selectedHost && selectedHost !== listener.value.host && listenerHandoffState === 'idle' && !pending && !lifecycle?.maintenance && !lifecycle?.applying
+  const canPreviewListener = listener.value?.editability === 'editable' && selectedHost && selectedHost !== listener.value.host && !listenerHandoffGate.current && listenerHandoffState === 'idle' && !pending && !lifecycle?.maintenance && !lifecycle?.applying
   const checkedCandidate = Boolean(update.value?.latestCompatibleVersion)
     && update.value.latestChannel === update.value.policy.channel
     && update.value.latestSource
@@ -445,6 +457,7 @@ export function SystemPanelSection({ controller, status, onOpenComponents, onOpe
           {listener.editability === 'environment-owned' && <p className="system-blocked" role="alert">An inherited XKEEN_CONTROL_LISTEN environment override owns this bind. Persisted listener changes are read-only.</p>}
           {listener.editability === 'drift-detected' && <p className="system-blocked" role="alert">The listener file changed after startup. Refresh may inspect the drift, but Preview and Apply remain blocked.</p>}
           {listener.editability === 'unavailable' && <p className="system-blocked" role="alert">The local interface catalog or listener authority is unavailable. Mutation is disabled.</p>}
+          {controller.listenerHandoffState === 'sent' && <p className="system-blocked" role="alert">The listener rebind handoff started. Reconnect and verify the active listener, then use Refresh for a successful fresh listener read before another Preview or Apply. The sent handoff will not be canceled or replayed.</p>}
           {controller.listenerHandoffState === 'unknown' && <p className="system-blocked" role="alert">The listener rebind outcome is unknown. Reconnect and verify the active listener, then use Refresh for a successful fresh listener read before another Preview or Apply. The sent handoff was not canceled or replayed.</p>}
           <label className="system-select-field">New management host<select aria-label="New management host" value={listener.selectedHost} onChange={(event) => controller.chooseHost(event.target.value)} disabled={listener.editability !== 'editable' || controller.pending || lifecycleBlocked || controller.listenerHandoffState !== 'idle'}><option value={listener.host}>{listener.host} (current)</option>{listener.allowedHosts.filter((host) => host !== listener.host).map((host) => <option key={host} value={host}>{host}</option>)}</select></label>
           <div className="system-card-actions"><button className="ghost" type="button" onClick={controller.refresh} disabled={controller.pending || controller.listenerLoading}>Refresh</button><button type="button" onClick={controller.previewListener} disabled={!controller.listener || !controller.listener.selectedHost || controller.listener.selectedHost === controller.listener.host || controller.listener.editability !== 'editable' || controller.pending || lifecycleBlocked || controller.listenerHandoffState !== 'idle'}>Preview rebind</button></div>
