@@ -184,6 +184,22 @@ test.afterEach(async ({ page }) => {
   if (issues) expect(issues).toEqual([])
 })
 
+test('renders and filters RU/BY country projections without changing enabled state', async ({ page }) => {
+  const prepared = await prepare(page)
+  page.__nodesIssues = prepared.issues
+  prepared.state.nodes[0] = { ...prepared.state.nodes[0], countryCode: 'RU', enabled: false, alive: false, displayName: 'Russia fixture' }
+  prepared.state.nodes[1] = { ...prepared.state.nodes[1], countryCode: 'BY', enabled: false, alive: false, displayName: 'Belarus fixture' }
+  await openNodes(page)
+  for (const [code, name] of [['RU', 'Russia fixture'], ['BY', 'Belarus fixture']]) {
+    await page.getByLabel('Filter by country').selectOption(code)
+    const row = page.locator('.nodes-table tbody tr').filter({ hasText: name })
+    await expect(row).toContainText('Disabled')
+    await expect(row.locator('.country-flag')).toBeVisible()
+    await expect(page.locator('.nodes-table tbody tr')).toHaveCount(1)
+  }
+  expect(prepared.state.requests.filter((request) => request.method === 'POST')).toEqual([])
+})
+
 test('shows bounded automatic subscription status without scheduler controls', async ({ page }) => {
   const prepared = await prepare(page)
   page.__nodesIssues = prepared.issues

@@ -21,6 +21,7 @@ var (
 		{code: "AM", name: "Armenia", flag: "🇦🇲", aliases: []string{"armenia", "arm"}},
 		{code: "AT", name: "Austria", flag: "🇦🇹", aliases: []string{"austria", "aut"}},
 		{code: "BG", name: "Bulgaria", flag: "🇧🇬", aliases: []string{"bulgaria", "bgr"}},
+		{code: "BY", name: "Belarus", flag: "🇧🇾", aliases: []string{"belarus", "belarusian", "blr", "by", "беларусь", "белоруссия"}},
 		{code: "CA", name: "Canada", flag: "🇨🇦", aliases: []string{"canada", "can"}},
 		{code: "CZ", name: "Czechia", flag: "🇨🇿", aliases: []string{"czechia", "czech", "cze"}},
 		{code: "DE", name: "Germany", flag: "🇩🇪", aliases: []string{"germany", "deu", "ger"}},
@@ -35,6 +36,7 @@ var (
 		{code: "LV", name: "Latvia", flag: "🇱🇻", aliases: []string{"latvia", "lva"}},
 		{code: "NL", name: "Netherlands", flag: "🇳🇱", aliases: []string{"netherlands", "nld", "nl"}},
 		{code: "PL", name: "Poland", flag: "🇵🇱", aliases: []string{"poland", "pol", "pl"}},
+		{code: "RU", name: "Russia", flag: "🇷🇺", aliases: []string{"russia", "russian", "rus", "ru", "россия", "рф"}},
 		{code: "SE", name: "Sweden", flag: "🇸🇪", aliases: []string{"sweden", "swe"}},
 		{code: "SG", name: "Singapore", flag: "🇸🇬", aliases: []string{"singapore", "sgp"}},
 		{code: "TH", name: "Thailand", flag: "🇹🇭", aliases: []string{"thailand", "tha"}},
@@ -69,6 +71,12 @@ func displayAddress(host string, port int) string {
 }
 
 func inferCountry(name, host string) (countryHint, bool) {
+	// A provider's explicit country flag is stronger than a hostname hint.
+	for _, hint := range countryHints {
+		if strings.Contains(name, hint.flag) {
+			return hint, true
+		}
+	}
 	nameWords := hintWords(name)
 	hostWords := hintWords(host)
 	for _, hint := range countryHints {
@@ -79,6 +87,11 @@ func inferCountry(name, host string) (countryHint, bool) {
 		}
 	}
 	return countryHint{}, false
+}
+
+func subscriptionCountryDisabledByDefault(name, host string) bool {
+	hint, ok := inferCountry(name, host)
+	return ok && (hint.code == "RU" || hint.code == "BY")
 }
 
 func hintWords(value string) map[string]bool {

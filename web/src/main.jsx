@@ -12,6 +12,7 @@ import flagAE from 'flag-icons/flags/4x3/ae.svg'
 import flagAM from 'flag-icons/flags/4x3/am.svg'
 import flagAT from 'flag-icons/flags/4x3/at.svg'
 import flagBG from 'flag-icons/flags/4x3/bg.svg'
+import flagBY from 'flag-icons/flags/4x3/by.svg'
 import flagCA from 'flag-icons/flags/4x3/ca.svg'
 import flagCZ from 'flag-icons/flags/4x3/cz.svg'
 import flagDE from 'flag-icons/flags/4x3/de.svg'
@@ -26,6 +27,7 @@ import flagKZ from 'flag-icons/flags/4x3/kz.svg'
 import flagLV from 'flag-icons/flags/4x3/lv.svg'
 import flagNL from 'flag-icons/flags/4x3/nl.svg'
 import flagPL from 'flag-icons/flags/4x3/pl.svg'
+import flagRU from 'flag-icons/flags/4x3/ru.svg'
 import flagSE from 'flag-icons/flags/4x3/se.svg'
 import flagSG from 'flag-icons/flags/4x3/sg.svg'
 import flagTH from 'flag-icons/flags/4x3/th.svg'
@@ -39,10 +41,10 @@ const MIN_BACKUP_PASSPHRASE_BYTES = 12
 const MAX_BACKUP_PASSPHRASE_BYTES = 256
 const FLAG_PREFIX = /^[\u{1F1E6}-\u{1F1FF}]{2}\s*/u
 const COUNTRY_FLAGS = {
-  AE: flagAE, AM: flagAM, AT: flagAT, BG: flagBG, CA: flagCA, CZ: flagCZ,
+  AE: flagAE, AM: flagAM, AT: flagAT, BG: flagBG, BY: flagBY, CA: flagCA, CZ: flagCZ,
   DE: flagDE, EE: flagEE, ES: flagES, FI: flagFI, FR: flagFR, GB: flagGB,
   IL: flagIL, IN: flagIN, KZ: flagKZ, LV: flagLV, NL: flagNL, PL: flagPL,
-  SE: flagSE, SG: flagSG, TH: flagTH, TR: flagTR, US: flagUS, UZ: flagUZ,
+  RU: flagRU, SE: flagSE, SG: flagSG, TH: flagTH, TR: flagTR, US: flagUS, UZ: flagUZ,
 }
 
 const api = async (path, options = {}) => {
