@@ -24,6 +24,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/dnsobservatory"
 	"github.com/popiposter/xkeen-control/internal/httpapi"
 	"github.com/popiposter/xkeen-control/internal/nodes"
+	"github.com/popiposter/xkeen-control/internal/notifications"
 	"github.com/popiposter/xkeen-control/internal/panellistener"
 	"github.com/popiposter/xkeen-control/internal/performancepolicy"
 	"github.com/popiposter/xkeen-control/internal/restore"
@@ -297,6 +298,18 @@ func main() {
 	})
 	collector.SetBuildInfo(buildinfo.Current())
 	updateManager := panelupdate.NewManager(panelupdate.Config{Current: buildinfo.Current(), Lifecycle: coordinator})
+	notificationService := notifications.NewService()
+	panelNotifyScheduler := panelupdate.NewNotifyScheduler(panelupdate.NotifySchedulerConfig{
+		Manager: updateManager,
+		Send:    notificationService.Send,
+		Lifecycle: func() (bool, bool, bool) {
+			state := coordinator.Snapshot()
+			if state.Lifecycle == nil {
+				return false, false, false
+			}
+			return state.Lifecycle.Maintenance, state.Lifecycle.Applying, true
+		},
+	})
 	componentService := components.NewService(components.Config{
 		Panel:                  buildinfo.Current(),
 		XrayBinary:             getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary),
@@ -328,6 +341,9 @@ func main() {
 	componentScheduler := components.NewCheckScheduler(components.CheckSchedulerConfig{
 		Policy: componentPolicy,
 		Checks: componentPolicyChecker,
+		Notification: components.NotificationHookFunc(func(ctx context.Context, event components.NotificationEvent) error {
+			return notificationService.Send(ctx, notifications.ComponentAlert(string(event.Component), event.Channel, event.CandidateIdentity, event.InstalledState, event.CheckedAt))
+		}),
 		Lifecycle: func() (components.LifecycleProjection, bool) {
 			coordinatorState := coordinator.Snapshot()
 			if coordinatorState.Lifecycle == nil {
@@ -355,6 +371,7 @@ func main() {
 		ComponentPolicy:    componentPolicy,
 		Setup:              setupService,
 		Updates:            updateManager,
+		Notifications:      notificationService,
 		Restore:            restoreService,
 		Policy:             routingPolicyService,
 		DNSObservatory:     dnsObservatoryService,
@@ -391,6 +408,7 @@ func main() {
 		cancelRuntime()
 		subscriptionRefresher.Stop()
 		componentScheduler.Stop()
+		panelNotifyScheduler.Stop()
 		coordinator.Stop()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -402,6 +420,7 @@ func main() {
 	// the coordinator's non-preemptive background admission for commits.
 	subscriptionRefresher.Start(runtimeContext)
 	componentScheduler.Start(runtimeContext)
+	panelNotifyScheduler.Start(runtimeContext)
 
 	log.Printf("xkeen-control %s listening on %s", buildinfo.Current().Version, listenAddress)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

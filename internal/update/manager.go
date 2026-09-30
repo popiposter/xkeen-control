@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +23,7 @@ const (
 	DefaultMarkerPath   = "/opt/etc/xkeen-control/state/installed-release.json"
 	DefaultPolicyPath   = "/opt/etc/xkeen-control/state/update-policy.json"
 	DefaultHelperPath   = "/opt/libexec/xkeen-control-updater"
+	maxPolicyBytes      = 4 << 10
 )
 
 type Lifecycle interface {
@@ -56,6 +59,7 @@ type Status struct {
 	RollbackVerificationRequired bool           `json:"rollbackVerificationRequired"`
 	Policy                       Policy         `json:"policy"`
 	SigningKeyConfigured         bool           `json:"signingKeyConfigured"`
+	Scheduler                    NotifyStatus   `json:"scheduler"`
 }
 
 type Service interface {
@@ -91,6 +95,9 @@ type Manager struct {
 	latest                       *release.Manifest
 	rollbackAdmissionClaimed     bool
 	rollbackVerificationRequired bool
+	notify                       *NotifyScheduler
+	policyRevision               uint64
+	policyChanges                chan struct{}
 }
 
 func NewManager(config Config) *Manager {
@@ -123,7 +130,7 @@ func NewManager(config Config) *Manager {
 	}
 	return &Manager{
 		current: config.Current, client: config.Client, lifecycle: config.Lifecycle,
-		paths: config.Paths, now: config.Now, runHelper: config.RunHelper,
+		paths: config.Paths, now: config.Now, runHelper: config.RunHelper, policyChanges: make(chan struct{}, 1),
 	}
 }
 
@@ -142,6 +149,10 @@ func (m *Manager) Status(_ context.Context) Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	status := Status{Installed: installed, Channel: policy.Channel, Policy: policy, SigningKeyConfigured: m.client != nil && m.clientSigningKeyConfigured(), LastCheckResult: m.lastResult}
+	status.Scheduler = notifyPolicyStatus(policy)
+	if m.notify != nil {
+		status.Scheduler = m.notify.statusFor(policy)
+	}
 	if !m.lastCheck.IsZero() {
 		status.LastCheckAt = m.lastCheck.UTC().Format(time.RFC3339)
 	}
@@ -211,10 +222,15 @@ func (m *Manager) SetPolicy(policy Policy) (Status, error) {
 		return Status{}, errors.New("update policy could not be saved")
 	}
 	m.mu.Lock()
+	m.policyRevision++
 	if m.latest != nil && m.latest.Channel != channel {
 		m.latest = nil
 	}
 	m.mu.Unlock()
+	select {
+	case m.policyChanges <- struct{}{}:
+	default:
+	}
 	return m.Status(context.Background()), nil
 }
 
@@ -454,8 +470,21 @@ func (m *Manager) stage(candidate release.Candidate) error {
 
 func (m *Manager) readPolicy() Policy {
 	defaultPolicy := Policy{Channel: "stable", Mode: "manual", CheckCadenceMinutes: 360}
-	contents, err := os.ReadFile(m.paths.PolicyPath)
+	info, err := os.Lstat(m.paths.PolicyPath)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxPolicyBytes || (runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0) {
+		return defaultPolicy
+	}
+	file, err := os.Open(m.paths.PolicyPath)
 	if err != nil {
+		return defaultPolicy
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !os.SameFile(info, opened) || !opened.Mode().IsRegular() || opened.Size() > maxPolicyBytes {
+		return defaultPolicy
+	}
+	contents, err := io.ReadAll(io.LimitReader(file, maxPolicyBytes+1))
+	if err != nil || len(contents) > maxPolicyBytes {
 		return defaultPolicy
 	}
 	var value Policy

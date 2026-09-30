@@ -30,7 +30,7 @@ const (
 	MaxComponentPolicyBytes              = 4 << 10
 
 	DefaultComponentSchedulerCycleTimeout = 3 * MaxCheckDuration
-	DefaultComponentNotificationTimeout   = 1 * time.Second
+	DefaultComponentNotificationTimeout   = 5 * time.Second
 )
 
 var (
@@ -764,6 +764,7 @@ func (scheduler *CheckScheduler) runCycle(parent context.Context, epoch uint64) 
 	scheduler.mu.Lock()
 	scheduler.status.Enabled = true
 	scheduler.status.State = "running"
+	scheduler.status.NotificationState = "idle"
 	scheduler.status.NextDueAt = nil
 	scheduler.status.LastSkipReason = ""
 	scheduler.mu.Unlock()
@@ -987,17 +988,21 @@ func (scheduler *CheckScheduler) notifyCandidate(ctx context.Context, request Ch
 	identity := safeCandidateIdentity(result)
 	installedState := safeInstalledState(result.InstalledState)
 	if !result.Eligible || identity == "" || !actionableInstalledState(installedState) {
+		scheduler.mu.Lock()
+		delete(scheduler.notified, request.Component)
+		scheduler.mu.Unlock()
 		return
 	}
 	fingerprint := string(request.Component) + "\x00" + request.Channel + "\x00" + identity + "\x00" + installedState
 	scheduler.mu.Lock()
 	if scheduler.notified[request.Component] == fingerprint {
+		if scheduler.status.NotificationState == "idle" {
+			scheduler.status.NotificationState = "notified"
+		}
 		scheduler.mu.Unlock()
 		return
 	}
-	// Mark before invoking the hook so a failed hook cannot cause an immediate
-	// retry loop. A later process restart intentionally starts a new RAM epoch.
-	scheduler.notified[request.Component] = fingerprint
+	delete(scheduler.notified, request.Component)
 	scheduler.mu.Unlock()
 
 	eventTime := result.CheckedAt.UTC()
@@ -1013,6 +1018,9 @@ func (scheduler *CheckScheduler) notifyCandidate(ctx context.Context, request Ch
 		ReasonCode:        safeSchedulerReason(result.ReasonCode),
 	}
 	if scheduler.notification == nil {
+		scheduler.mu.Lock()
+		scheduler.status.NotificationState = "unconfigured"
+		scheduler.mu.Unlock()
 		return
 	}
 	notificationContext, cancel := context.WithTimeout(ctx, scheduler.notificationTimeout)
@@ -1029,9 +1037,23 @@ func (scheduler *CheckScheduler) notifyCandidate(ctx context.Context, request Ch
 	cancel()
 	scheduler.mu.Lock()
 	if err != nil {
-		scheduler.status.NotificationState = "failed"
+		notificationState := "failed"
+		if state, ok := err.(interface{ NotificationState() string }); ok {
+			switch state.NotificationState() {
+			case "unconfigured", "disabled":
+				notificationState = state.NotificationState()
+			}
+		}
+		if scheduler.status.NotificationState != "failed" {
+			scheduler.status.NotificationState = notificationState
+		}
 	} else {
-		scheduler.status.NotificationState = "notified"
+		// Each fixed component is checked once per normal cycle. Failed sends
+		// are intentionally absent from this bounded successful-delivery map.
+		scheduler.notified[request.Component] = fingerprint
+		if scheduler.status.NotificationState == "idle" {
+			scheduler.status.NotificationState = "notified"
+		}
 	}
 	scheduler.mu.Unlock()
 }

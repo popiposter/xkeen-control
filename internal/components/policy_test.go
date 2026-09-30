@@ -331,6 +331,71 @@ func TestCheckSchedulerUsesFixedSequentialTuplesAndRAMNotificationDedupe(t *test
 	}
 }
 
+func TestCheckSchedulerFailedDeliveryRetriesNextNormalCycle(t *testing.T) {
+	manager := newPolicyManager(filepath.Join(t.TempDir(), "component-policy.json"))
+	manager.SetPolicy(ComponentPolicy{SchemaVersion: 1, Mode: ComponentPolicyModeNotify, CheckCadenceMinutes: 60})
+	now := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+	calls := 0
+	fail := true
+	scheduler := NewCheckScheduler(CheckSchedulerConfig{
+		Policy: manager, Now: func() time.Time { return now },
+		Checks: &policyCheckStub{resultFor: func(request CheckRequest) CheckResult {
+			return validPolicyScheduledResult(request, now, "update-available")
+		}},
+		Lifecycle: func() (LifecycleProjection, bool) { return LifecycleProjection{}, true },
+		Notification: NotificationHookFunc(func(context.Context, NotificationEvent) error {
+			calls++
+			if fail {
+				return errors.New("synthetic failure")
+			}
+			return nil
+		}),
+	})
+	epoch := manager.snapshot().epoch
+	scheduler.runCycle(context.Background(), epoch)
+	if calls != 3 || len(scheduler.notified) != 0 || scheduler.status.NotificationState != "failed" || !scheduler.nextDue.Equal(now.Add(time.Hour)) {
+		t.Fatal("failure retried/deduped outside cadence")
+	}
+	now = now.Add(time.Hour)
+	fail = false
+	scheduler.runCycle(context.Background(), epoch)
+	if calls != 6 || len(scheduler.notified) != 3 {
+		t.Fatal("next cycle did not retry")
+	}
+	now = now.Add(time.Hour)
+	scheduler.runCycle(context.Background(), epoch)
+	if calls != 6 {
+		t.Fatal("success did not dedupe")
+	}
+}
+
+func TestCheckSchedulerCycleKeepsFailureVisibleAndRetriesOnlyFailedCandidate(t *testing.T) {
+	manager := newPolicyManager(filepath.Join(t.TempDir(), "component-policy.json"))
+	manager.SetPolicy(ComponentPolicy{SchemaVersion: 1, Mode: ComponentPolicyModeNotify, CheckCadenceMinutes: 60})
+	now := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+	fail := true
+	calls := 0
+	scheduler := NewCheckScheduler(CheckSchedulerConfig{Policy: manager, Now: func() time.Time { return now }, Lifecycle: func() (LifecycleProjection, bool) { return LifecycleProjection{}, true }, Checks: &policyCheckStub{resultFor: func(request CheckRequest) CheckResult {
+		return validPolicyScheduledResult(request, now, "update-available")
+	}}, Notification: NotificationHookFunc(func(_ context.Context, event NotificationEvent) error {
+		calls++
+		if fail && event.Component == KindXray {
+			return errors.New("synthetic failure")
+		}
+		return nil
+	})})
+	scheduler.runCycle(context.Background(), manager.snapshot().epoch)
+	if scheduler.status.NotificationState != "failed" || len(scheduler.notified) != 2 || calls != 3 {
+		t.Fatal("mixed cycle hid failure")
+	}
+	fail = false
+	now = now.Add(time.Hour)
+	scheduler.runCycle(context.Background(), manager.snapshot().epoch)
+	if scheduler.status.NotificationState != "notified" || len(scheduler.notified) != 3 || calls != 4 {
+		t.Fatal("successful candidates retried or failed candidate suppressed")
+	}
+}
+
 func TestCheckSchedulerBoundsNotificationHook(t *testing.T) {
 	now := time.Date(2026, time.September, 16, 12, 0, 0, 0, time.UTC)
 	manager := newPolicyManager(filepath.Join(t.TempDir(), "component-policy.json"))

@@ -398,6 +398,8 @@ export class FeatureCompleteModel {
       }
       case '/api/v1/update':
         return this.recordProjection(route, updateProjection(this.update))
+      case '/api/v1/notifications':
+        return this.recordProjection(route, { provider: 'telegram', configured: false, enabled: false, authorityState: 'unconfigured', deliveryState: 'idle' })
       case '/api/v1/update/check': {
         const channel = body?.channel || this.update.policy.channel
         const version = channel === 'beta' ? body?.version : '1.2.3'
