@@ -535,6 +535,27 @@ previews below the HTTP/UI layer. F3 is source-qualified only: it adds no releas
 dispatch, router access, production mutation, live qualification or external
 notification transport.
 
+## Product Slice E / Issue #99 — active source boundary
+
+Issue #99 is the active post-#5 source contract. It reuses the existing F3
+check-only notification hook and existing panel release trust boundary rather
+than introducing a generic event bus or scheduler framework. The intended first
+transport is a fixed-host outbound-only Telegram sender with separate root-only
+panel notification credentials; no inbound command, arbitrary webhook URL or
+automatic mutation is authorized. A panel notify scheduler must use an
+independent read-only release check and must never populate the explicit checked
+candidate used by Apply.
+
+The second Issue #99 gate is a bounded private-management hardening pass over
+the existing auth/listener/HTTP boundary: bounded RAM auth cardinality,
+fail-closed password-authority reads, request Host authority bound to the actual
+local listener, strict auth request parsing and management-VPN/SSH-tunnel
+guidance. Direct WAN exposure, VPN/firewall automation, TLS termination and
+generic remote administration remain out of scope.
+
+Issue #99 remains source-only. It does not dispatch a Release, access the live
+router or change the production-qualified `v0.2.0` baseline.
+
 ## Planned later capabilities
 
 ### #4 — component lifecycle production qualification
@@ -591,7 +612,7 @@ change implies a release, router access or live qualification.
 - Current system architecture: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - Sequencing: [`ROADMAP.md`](ROADMAP.md)
 - Completed D.1 implementation/qualification contract: [Issue #3](https://github.com/popiposter/xkeen-control/issues/3)
-- Active source completion contract: [Issue #91](https://github.com/popiposter/xkeen-control/issues/91)
+- Active source completion contract: [Issue #99](https://github.com/popiposter/xkeen-control/issues/99)
 - Live D.2 operational ledger: [Issue #4](https://github.com/popiposter/xkeen-control/issues/4)
 - Build/test: [`DEVELOPMENT.md`](DEVELOPMENT.md)
 - Production operations: [`OPERATIONS.md`](OPERATIONS.md)
