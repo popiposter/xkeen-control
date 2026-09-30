@@ -96,6 +96,7 @@ type Manager struct {
 	rollbackAdmissionClaimed     bool
 	rollbackVerificationRequired bool
 	notify                       *NotifyScheduler
+	policyMu                     sync.Mutex // Policy persistence/revision and notify admission only.
 	policyRevision               uint64
 	policyChanges                chan struct{}
 }
@@ -218,15 +219,18 @@ func (m *Manager) SetPolicy(policy Policy) (Status, error) {
 		return Status{}, errors.New("check cadence is outside bounds")
 	}
 	policy.Channel = channel
+	m.policyMu.Lock()
 	if err := writeJSONAtomic(m.paths.PolicyPath, policy, 0o600); err != nil {
+		m.policyMu.Unlock()
 		return Status{}, errors.New("update policy could not be saved")
 	}
-	m.mu.Lock()
 	m.policyRevision++
+	m.mu.Lock()
 	if m.latest != nil && m.latest.Channel != channel {
 		m.latest = nil
 	}
 	m.mu.Unlock()
+	m.policyMu.Unlock()
 	select {
 	case m.policyChanges <- struct{}{}:
 	default:

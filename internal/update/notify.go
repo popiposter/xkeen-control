@@ -105,6 +105,8 @@ type NotifyScheduler struct {
 	running   bool
 	cancel    context.CancelFunc
 	done      chan struct{}
+
+	beforeNotificationAdmission func() // In-package concurrency test seam; nil in production.
 }
 
 func NewNotifyScheduler(config NotifySchedulerConfig) *NotifyScheduler {
@@ -138,11 +140,25 @@ func (s *NotifyScheduler) statusFor(policy Policy) NotifyStatus {
 	return status
 }
 func (s *NotifyScheduler) policySnapshot() (Policy, uint64) {
+	s.manager.policyMu.Lock()
+	defer s.manager.policyMu.Unlock()
 	policy := s.manager.readPolicy()
-	s.manager.mu.Lock()
 	revision := s.manager.policyRevision
-	s.manager.mu.Unlock()
 	return policy, revision
+}
+
+// startNotifyDelivery admits and launches one delivery atomically with policy
+// mutation. The policy mutex protects only this short admission boundary, not
+// the network work or its result, and does not acquire lifecycle/global owners.
+func (m *Manager) startNotifyDelivery(ctx context.Context, policy Policy, revision uint64, send func(context.Context, notifications.Alert) error, alert notifications.Alert) <-chan error {
+	m.policyMu.Lock()
+	defer m.policyMu.Unlock()
+	if policy.Mode != "notify" || policy.Channel != "stable" || m.readPolicy() != policy || m.policyRevision != revision || ctx.Err() != nil {
+		return nil
+	}
+	result := make(chan error, 1)
+	go func() { result <- send(ctx, alert) }()
+	return result
 }
 func (s *NotifyScheduler) Start(parent context.Context) {
 	if s == nil || s.manager == nil {
@@ -281,7 +297,22 @@ func (s *NotifyScheduler) step(ctx context.Context) {
 		result.NotificationState = "unconfigured"
 		return
 	}
-	err = s.send(checkCtx, notifications.PanelAlert(discovery.Version, discovery.Identity, now))
+	if s.beforeNotificationAdmission != nil {
+		s.beforeNotificationAdmission()
+	}
+	deliveryCtx, cancelDelivery := context.WithTimeout(checkCtx, 5*time.Second)
+	defer cancelDelivery()
+	delivery := s.manager.startNotifyDelivery(deliveryCtx, policy, revision, s.send, notifications.PanelAlert(discovery.Version, discovery.Identity, now))
+	if delivery == nil {
+		result.State = "skipped"
+		result.LastSkipReason = "policy-changed"
+		return
+	}
+	select {
+	case err = <-delivery:
+	case <-deliveryCtx.Done():
+		err = deliveryCtx.Err()
+	}
 	if err != nil {
 		result.NotificationState = "failed"
 		result.ErrorCode = "delivery-failed"

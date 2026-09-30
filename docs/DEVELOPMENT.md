@@ -312,7 +312,10 @@ It verifies protected strict authority reads/atomic mutations, secretless API
 and log projections, fixed Telegram host/TLS/no-proxy/no-redirect behavior,
 unsafe DNS rejection, bounded sanitized delivery errors, disabled explicit test,
 component success dedupe and next-cadence retry, and read-only panel discovery
-that cannot arm or alter explicit checked Apply. System browser fixtures cover
+that cannot arm or alter explicit checked Apply. Deterministic concurrency
+fixtures pause both schedulers at final delivery admission, complete policy
+mutation, and verify no old-epoch send starts; already admitted sends finish
+without blocking policy mutation. System browser fixtures cover
 credential clearing/storage absence, the notification controls, stable notify
 and unsupported beta/auto-stable projections. No real Telegram credential,
 provider passthrough, router access or live delivery is part of these tests.

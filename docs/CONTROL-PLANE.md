@@ -572,6 +572,12 @@ never stored in localStorage/sessionStorage or read back. Delivery timestamps,
 closed error codes and scheduler/dedupe state are bounded and RAM-only. Component
 send attempts occur once per fixed tuple per normal F3 cycle; successful delivery
 dedupes the fingerprint, while failure may retry only at the next cadence.
+F3 retains one hard 105-second cycle bound: three 30-second metadata Checks plus
+three bounded five-second deliveries. Both component and panel schedulers admit
+and launch delivery under their policy owner's mutation mutex. A successful
+policy change revokes old-epoch attempts still awaiting admission; an already
+admitted delivery may finish. Policy, scheduler and lifecycle ownership are not
+held across network delivery or its result wait.
 
 The sender uses only HTTPS `api.telegram.org:443` / fixed `sendMessage`, plain
 text, no redirect/proxy configuration, a five-second whole-request/connect cap

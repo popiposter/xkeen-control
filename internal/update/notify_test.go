@@ -5,11 +5,13 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -264,6 +266,89 @@ func TestNotifyMalformedAndOversizePolicyNeverDiscovers(t *testing.T) {
 		s.step(context.Background())
 		if requests.Load() != 0 || m.Status(context.Background()).Scheduler.State != "disabled" {
 			t.Fatal("malformed policy scheduled network")
+		}
+	}
+}
+
+func TestNotifyAtomicDeliveryAdmission(t *testing.T) {
+	// Panel policy has no off mode. Manual, unsupported beta/auto-stable, and
+	// leaving/re-entering identical stable notify values all revoke the epoch.
+	for _, change := range []string{"manual", "beta-notify", "auto-stable", "notify-new-epoch"} {
+		for _, admitted := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/admitted=%t", change, admitted), func(t *testing.T) {
+				m, s, now, _, sends := notifyFixture(t)
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+				var releaseOnce sync.Once
+				unblock := func() { releaseOnce.Do(func() { close(release) }) }
+				defer unblock()
+				if admitted {
+					s.send = func(ctx context.Context, _ notifications.Alert) error {
+						sends.Add(1)
+						close(entered)
+						select {
+						case <-release:
+							return nil
+						case <-ctx.Done():
+							return ctx.Err()
+						}
+					}
+				} else {
+					s.beforeNotificationAdmission = func() { close(entered); <-release }
+				}
+				s.step(ctx)
+				*now = now.Add(time.Hour)
+				go func() { defer close(done); s.step(ctx) }()
+				select {
+				case <-entered:
+				case <-ctx.Done():
+					t.Fatal("notification boundary not reached")
+				}
+				mutation := make(chan error, 1)
+				go func() {
+					policy := Policy{Channel: "stable", Mode: "manual", CheckCadenceMinutes: 60}
+					if change == "beta-notify" {
+						policy.Channel, policy.Mode = "beta", "notify"
+					}
+					if change == "auto-stable" {
+						policy.Mode = "auto-stable"
+					}
+					_, err := m.SetPolicy(policy)
+					if err == nil && change == "notify-new-epoch" {
+						policy.Mode = "notify"
+						_, err = m.SetPolicy(policy)
+					}
+					mutation <- err
+				}()
+				select {
+				case err := <-mutation:
+					if err != nil {
+						t.Fatal(err)
+					}
+				case <-ctx.Done():
+					t.Fatal("policy mutation waited on notification network work")
+				}
+				unblock()
+				select {
+				case <-done:
+				case <-ctx.Done():
+					t.Fatal("notification cycle did not finish")
+				}
+				want := int32(0)
+				if admitted {
+					want = 1
+				}
+				if sends.Load() != want || m.latest != nil || m.Status(ctx).LatestCompatible != "" {
+					t.Fatalf("send calls=%d, want %d; candidate=%v", sends.Load(), want, m.latest)
+				}
+				if admitted && (s.status.NotificationState != "notified" || s.notified == "") {
+					t.Fatal("already admitted delivery did not complete successfully")
+				}
+				if !admitted && (s.status.LastSkipReason != "policy-changed" || s.notified != "") {
+					t.Fatal("revoked delivery was not skipped without dedupe")
+				}
+			})
 		}
 	}
 }
