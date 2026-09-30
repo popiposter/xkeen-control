@@ -1,5 +1,10 @@
 import { useEffect, useRef } from 'react'
-import { IconChevronRight } from '@tabler/icons-react'
+import { IconChevronRight, IconArrowUp, IconArrowDown, IconTrash } from '@tabler/icons-react'
+
+export function RowAction({ action, label, className = '', ...props }) {
+  const Icon = { up: IconArrowUp, down: IconArrowDown, remove: IconTrash }[action]
+  return <button type="button" className={`icon-button ghost ${action === 'remove' ? 'danger-action' : ''} ${className}`} aria-label={label} title={label} data-tooltip={label} {...props}><Icon size={16} aria-hidden="true" /></button>
+}
 
 // Native disclosure preserves keyboard behavior and keeps controller ownership
 // independent of presentation. An operation needing attention reveals itself.

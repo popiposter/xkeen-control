@@ -499,7 +499,7 @@ export function ComponentsUpdatesSection({ controller, lifecycle, onOpenSystem }
 
   return <div className="section-stack components-section">
     <section className="panel components-heading">
-      <div><span className="panel-label">Components / Updates</span><h2>Installed components</h2><p>Check a component, review its update or rollback, then confirm. One operation runs at a time.</p></div>
+      <div><h2>Installed components</h2></div>
       <div className="components-heading-actions"><small>{inventory.observedAt ? `Observed ${formatTime(inventory.observedAt)}` : 'Not loaded this session'}</small><button type="button" className="ghost" onClick={() => controller.loadInventory({ force: true })} disabled={inventory.loading}>{inventory.loading ? 'Reading…' : 'Refresh inventory'}</button></div>
     </section>
 
@@ -541,14 +541,13 @@ function ComponentPolicyPanel({ controller }) {
   const value = policy.value
   const scheduler = value?.scheduler
   const lifecycleBlocked = controller.lifecycleMutationBlocked
-  const updateBlocked = !value || value.mode === 'off'
   const saveDisabled = !value || policy.saving || policy.loading
     || !policyDraft
     || policyDraft.mode === value?.mode && Number(policyDraft.checkCadenceMinutes) === value?.checkCadenceMinutes
     || lifecycleBlocked
   const schedulerResults = scheduler?.results || {}
   return <section className="panel component-policy" aria-label="Component policy">
-    <div className="component-policy-heading"><div><span className="panel-label">Background policy</span><h2>Component discovery stays bounded</h2><p>Policy and scheduler status are read only until this page is opened. The scheduler performs Check-only metadata reads; it never previews, applies, or rolls back.</p></div><div className="component-policy-actions"><small>{policy.loading ? 'Reading…' : value ? `Effective: ${POLICY_MODE_LABELS[value.mode]}` : 'Status unavailable'}</small><button type="button" className="ghost" onClick={() => controller.loadPolicy({ force: true })} disabled={policy.loading || policy.saving}>{policy.loading ? 'Reading…' : 'Refresh policy'}</button></div></div>
+    <div className="component-policy-heading"><div></div><div className="component-policy-actions"><small>{policy.loading ? 'Reading…' : value ? `Effective: ${POLICY_MODE_LABELS[value.mode]}` : 'Status unavailable'}</small><button type="button" className="ghost" onClick={() => controller.loadPolicy({ force: true })} disabled={policy.loading || policy.saving}>{policy.loading ? 'Reading…' : 'Refresh policy'}</button></div></div>
     {policy.error && <div className="notice" role="alert">{policy.error}</div>}
     {!value && !policy.loading && !policy.error && <div className="loading">Reading component policy…</div>}
     {value && <>
@@ -568,7 +567,7 @@ function ComponentPolicyPanel({ controller }) {
       {scheduler?.lastSkipReason && <small className="component-policy-skip">Last cycle status: {scheduler.lastSkipReason}</small>}
       {value.mode === 'off' && <p className="component-policy-disabled">Check and update are disabled by policy. Inventory and rollback Preview/Rollback/Cancel remain available.</p>}
       {value.mode === 'notify' && <div className="component-scheduler-results" aria-label="Scheduled check results"><span className="panel-label">Latest scheduled checks</span>{['xray', 'geodata', 'xkeen'].map((kind) => { const item = schedulerResults[kind]; return <div key={kind}><span>{COMPONENT_BY_KIND.get(kind)?.label}</span><strong>{item?.state || 'not run'}</strong><small>{item?.candidateIdentity || item?.reasonCode || '—'}</small></div> })}</div>}
-      <small className="component-policy-guard">{updateBlocked ? 'Rollback remains available while updates are disabled.' : 'Updates still require a fresh explicit Preview and confirmation.'}</small>
+
     </>}
   </section>
 }
@@ -597,7 +596,7 @@ function ComponentCard({ definition, component, check, metadataBusy, lifecycle, 
         <button type="button" className="ghost" disabled={metadataBusy || blocked} onClick={(event) => onPreview(definition.kind, 'rollback', '', event.currentTarget)}>Preview rollback</button>
       </>}
     </div>
-    {definition.informational && definition.kind !== 'panel' && <small className="informational-note">Informational only. No install, repair, or update action is exposed here.</small>}
+    {definition.informational && definition.kind !== 'panel' && <small className="informational-note">Read only</small>}
   </article>
 }
 

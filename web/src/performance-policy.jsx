@@ -390,7 +390,7 @@ export function PerformancePolicySection({ controller }) {
 
   return <div className="section-stack performance-policy-section">
     <section className="panel performance-policy-heading">
-      <div><span className="panel-label">Performance</span><h2>Selection policy</h2><p>Adjust health checks and automatic selection. Fixed traffic and time limits remain read only.</p></div>
+      <div><h2>Selection policy</h2></div>
       <div><small>{projection.observedAt ? `Observed ${formatTime(projection.observedAt)}` : 'Not loaded this session'}</small><button className="ghost" type="button" onClick={controller.requestRefresh} disabled={projection.loading || pending}>{projection.loading ? 'Reading…' : 'Refresh policy'}</button></div>
     </section>
 
@@ -406,7 +406,7 @@ export function PerformancePolicySection({ controller }) {
 
 
       <section className="panel performance-policy-editor" aria-label="Performance policy editor">
-        <div className="performance-card-heading"><div><span className="panel-label">{controller.authorityDrift ? 'Read-only active policy' : 'Editable policy'}</span><h2>Health checks and selection {controller.dirty && <span className="chip amber">Unsaved</span>}</h2><p>Current running operations keep their frozen policy. Apply never runs a benchmark, writes selection state or restarts the runtime.</p></div><span className={`chip ${controller.authorityDrift ? 'amber' : value.source === 'persisted' ? 'green' : 'neutral'}`}>{controller.authorityDrift ? 'Drift detected' : value.source === 'persisted' ? 'Persisted' : 'Source defaults'}</span></div>
+        <div className="performance-card-heading"><div><h2>Health checks and selection {controller.dirty && <span className="chip amber">Unsaved</span>}</h2><p>Changes take effect on the next cycle.</p></div><span className={`chip ${controller.authorityDrift ? 'amber' : value.source === 'persisted' ? 'green' : 'neutral'}`}>{controller.authorityDrift ? 'Drift detected' : value.source === 'persisted' ? 'Persisted' : 'Source defaults'}</span></div>
         {draft && <div className="performance-policy-grid">
           <NumberField label="Active probe interval" suffix="seconds" value={draft.probeIntervalSeconds} min={60} max={300} step={30} disabled={disabled} onChange={(next) => controller.updateField('probeIntervalSeconds', next)} />
           <NumberField label="Failure threshold" suffix="failed cycles" value={draft.failureThreshold} min={2} max={5} step={1} disabled={disabled} onChange={(next) => controller.updateField('failureThreshold', next)} />
@@ -422,7 +422,7 @@ export function PerformancePolicySection({ controller }) {
     </>}
 
     {value && <Disclosure title="Fixed traffic and time limits">      <section className="panel performance-ceilings" aria-label="Source-owned performance ceilings">
-        <div className="performance-card-heading"><div><span className="panel-label">Source-owned ceilings</span><h2>Fixed traffic and time envelope</h2></div><span className="chip neutral">Source-owned</span></div>
+        <div className="performance-card-heading"><div></div><span className="chip neutral">Source-owned</span></div>
         <div className="performance-facts-grid">
           <Fact label="Maximum candidates" value={value.hardCeilings.maxCandidates} />
           <Fact label="Candidate download" value={`${value.hardCeilings.candidateDownloadMiB} MiB`} />

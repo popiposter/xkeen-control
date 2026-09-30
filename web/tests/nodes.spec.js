@@ -263,7 +263,7 @@ test('gates toolbar actions and sends one exact batch state preview', async ({ p
   await openNodes(page)
 
   const button = (name) => page.getByRole('button', { name, exact: true })
-  await expect(page.getByRole('toolbar', { name: 'Selected node actions' })).toHaveCount(0)
+  await expect(page.getByRole('toolbar', { name: 'Selected node actions' })).toBeVisible()
 
   await page.getByLabel('Select Node 001').check()
   await expect(button('Enable')).toBeDisabled()
@@ -288,7 +288,7 @@ test('allows Full speed test beside another manual override and polls only while
   await openNodes(page)
 
   const speedTest = page.getByRole('button', { name: 'Full speed test', exact: true })
-  await expect(page.getByRole('toolbar', { name: 'Selected node actions' })).toHaveCount(0)
+  await expect(page.getByRole('toolbar', { name: 'Selected node actions' })).toBeVisible()
   await page.getByLabel('Select Node 001').check()
   expect(prepared.state.status.selection.manualOverride).toBe(`proxy-${nodeID(2)}`)
   await expect(speedTest).toBeEnabled()

@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import './styles.css'
 import { Disclosure } from './ui.jsx'
 import { IconHome, IconServer, IconSitemap, IconWorld, IconChartBar, IconCube, IconHistory, IconSettings, IconLogout, IconMenu2 } from '@tabler/icons-react'
-import { IconPlus, IconLink, IconRefresh, IconPencil, IconPower, IconTrash, IconX, IconChevronLeft, IconChevronRight, IconSearch, IconGauge, IconFocus2, IconArrowUp, IconArrowDown, IconArrowsSort } from '@tabler/icons-react'
+import { IconPlus, IconLink, IconRefresh, IconPencil, IconPower, IconTrash, IconX, IconChevronLeft, IconChevronRight, IconSearch, IconGauge, IconFocus2, IconArrowUp, IconArrowDown, IconArrowsSort, IconSquareCheck, IconPlayerPlay, IconPlayerPause } from '@tabler/icons-react'
 import { ComponentLifecycleNotices, ComponentsUpdatesSection, useComponentsController } from './components-updates.jsx'
 import { DNSLifecycleNotice, DNSObservatorySection, useDNSObservatoryController } from './dns-observatory.jsx'
 import { PerformancePolicySection, usePerformancePolicyController } from './performance-policy.jsx'
@@ -93,7 +93,6 @@ const formatTime = (value) => {
 }
 
 const visibleNodeName = (node) => String(node?.displayName || node?.name || '').replace(FLAG_PREFIX, '').trim() || 'Unnamed node'
-const nodeSource = (node) => node.subscriptionName || (node.sourceType === 'subscription' ? 'Unnamed subscription' : node.sourceType) || 'legacy'
 const nodeRole = (node) => node.isEffective ? 'effective' : node.isOverride ? 'override' : node.isNativeSelected ? 'native' : 'none'
 const matchesNodeRole = (node, role) => role === 'all'
   || (role === 'native' && node.isNativeSelected)
@@ -267,7 +266,8 @@ const sortNodes = (nodes, key, direction) => {
       case 'health': return healthRank(node)
       case 'latency': return node.alive && node.latencyMs ? node.latencyMs : Number.MAX_SAFE_INTEGER
       case 'role': return roleRank(node)
-      case 'source': return stringValue(nodeSource(node))
+      case 'source': return stringValue(node.sourceType)
+      case 'subscription': return stringValue(node.subscriptionName)
       case 'country': return stringValue(node.countryCode)
       default: return stringValue(visibleNodeName(node))
     }
@@ -288,6 +288,7 @@ const createNodeViewState = () => ({
   statusFilter: 'all',
   roleFilter: 'all',
   sourceFilter: 'all',
+  subscriptionFilter: 'all',
   countryFilter: 'all',
   sort: { key: 'name', direction: 'asc' },
   page: 1,
@@ -618,7 +619,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
   const manualRunning = manualStatus.state === 'running'
   const adaptiveStatus = performance?.adaptive || { state: 'waiting' }
   const adaptiveRunning = adaptiveStatus.state === 'running'
-  const { query, statusFilter, roleFilter, sourceFilter, countryFilter, sort, page } = viewState
+  const { query, statusFilter, roleFilter, sourceFilter, subscriptionFilter, countryFilter, sort, page } = viewState
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase()
@@ -630,10 +631,11 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
       if (statusFilter === 'stale' && !node.stale && !node.missing) return false
       if (!matchesNodeRole(node, roleFilter)) return false
       if (sourceFilter !== 'all' && node.sourceType !== sourceFilter) return false
+      if (subscriptionFilter !== 'all' && JSON.stringify([node.sourceType === 'subscription', node.subscriptionName || '']) !== subscriptionFilter) return false
       if (countryFilter !== 'all' && node.countryCode !== countryFilter) return false
       return true
     })
-  }, [nodes, query, statusFilter, roleFilter, sourceFilter, countryFilter])
+  }, [nodes, query, statusFilter, roleFilter, sourceFilter, subscriptionFilter, countryFilter])
   const ordered = useMemo(() => sortNodes(filtered, sort.key, sort.direction), [filtered, sort])
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const visibleNodes = ordered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
@@ -645,6 +647,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
   const selectedManual = selectedNode && manualOverride === (selectedNode.outboundTag || selectedNode.tag)
   const countryOptions = useMemo(() => [...new Set(nodes.map((node) => node.countryCode).filter(Boolean))].sort(), [nodes])
   const sourceOptions = useMemo(() => [...new Set(nodes.map((node) => node.sourceType).filter(Boolean))].sort(), [nodes])
+  const subscriptionOptions = useMemo(() => [...new Set(nodes.filter((node) => node.sourceType === 'subscription').map((node) => node.subscriptionName || ''))].sort(), [nodes])
   const statusCounts = useMemo(() => ({
     all: nodes.length,
     alive: nodes.filter((node) => node.alive).length,
@@ -652,7 +655,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
     disabled: nodes.filter((node) => !node.enabled).length,
     stale: nodes.filter((node) => node.stale || node.missing).length,
   }), [nodes])
-  const filtersActive = Boolean(query.trim()) || statusFilter !== 'all' || roleFilter !== 'all' || sourceFilter !== 'all' || countryFilter !== 'all'
+  const filtersActive = Boolean(query.trim()) || statusFilter !== 'all' || roleFilter !== 'all' || sourceFilter !== 'all' || subscriptionFilter !== 'all' || countryFilter !== 'all'
 
   useEffect(() => {
     if (page > totalPages) onViewStateChange((current) => current.page > totalPages ? { ...current, page: totalPages } : current)
@@ -838,13 +841,13 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
     {notice && <Notice message={notice.message} tone={notice.tone} />}
 
     {composer === 'profiles' && <form className="composer" onSubmit={(event) => { event.preventDefault(); requestPreview('/api/v1/nodes/import/preview', { profiles }) }}>
-      <div><span className="panel-label">Add profiles</span><h3>Import VLESS + REALITY links</h3><p>Names are read from link fragments. Keys stay inside the authenticated request and RAM-only preview.</p></div>
+      <div><h3>Import VLESS + REALITY links</h3></div>
       <textarea value={profiles} onChange={(event) => setProfiles(event.target.value)} placeholder="Paste one or more vless:// links" autoFocus />
       <div className="composer-actions"><button className="ghost" type="button" onClick={closeComposer}>Cancel</button><button type="submit" disabled={busy || lifecycleBlocked || !profiles.trim()}>Preview add</button></div>
     </form>}
 
     {composer === 'subscription' && <form className="composer compact" onSubmit={(event) => { event.preventDefault(); requestPreview('/api/v1/subscriptions/refresh/preview', { ...(subscriptionID ? { subscriptionId: subscriptionID } : {}), name: subscriptionName, url: subscriptionUrl }) }}>
-      <div><span className="panel-label">{subscriptionID ? 'Update subscription' : 'New subscription'}</span><h3>Fetch explicitly</h3><p>HTTPS only, with DNS/IP SSRF checks and bounded response parsing.</p></div>
+      <div><h3>{subscriptionID ? 'Update subscription' : 'New subscription'}</h3></div>
       <label htmlFor="subscription-name">Display name</label>
       <input id="subscription-name" value={subscriptionName} onChange={(event) => setSubscriptionName(event.target.value)} placeholder="Home provider" />
       <label htmlFor="subscription-url">Subscription URL</label>
@@ -865,22 +868,23 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
           {[['all', 'Any role'], ['native', 'Native'], ['override', 'Override'], ['effective', 'Effective'], ['none', 'No role']].map(([value, label]) => <button type="button" key={value} className={roleFilter === value ? 'active' : ''} onClick={() => chooseFilter('roleFilter', value)}>{label}</button>)}
         </div>
         <label className="filter-select">Source<select aria-label="Filter by source" value={sourceFilter} onChange={(event) => chooseFilter('sourceFilter', event.target.value)}><option value="all">All</option>{sourceOptions.map((source) => <option value={source} key={source}>{source}</option>)}</select></label>
+        <label className="filter-select">Subscription<select aria-label="Filter by subscription" value={subscriptionFilter} onChange={(event) => chooseFilter('subscriptionFilter', event.target.value)}><option value="all">All</option>{subscriptionOptions.map((name) => <option value={JSON.stringify([true, name])} key={name}>{name || 'Unnamed subscription'}</option>)}</select></label>
         <label className="filter-select">Country<select aria-label="Filter by country" value={countryFilter} onChange={(event) => chooseFilter('countryFilter', event.target.value)}><option value="all">All</option>{countryOptions.map((country) => <option value={country} key={country}>{country}</option>)}</select></label>
         {filtersActive && <button className="clear-filters" type="button" onClick={clearFilters}>Clear</button>}
       </div>
     </div>
 
-    {selectedIDs.size > 0 && <div className="node-selection-toolbar" role="toolbar" aria-label="Selected node actions">
-      <div className="selection-summary"><strong>{selectedIDs.size} selected</strong><button className="clear-filters" type="button" onClick={toggleAllFiltered} disabled={busy || lifecycleBlocked || !filtered.length || allFilteredSelected}>Select all {filtered.length} filtered</button><button className="clear-filters" type="button" onClick={clearSelection} disabled={busy || lifecycleBlocked || !selectedIDs.size}>Clear selection</button></div>
+    <div className="node-selection-toolbar" role="toolbar" aria-label="Selected node actions">
+      <div className="selection-summary"><IconButton icon="select" label={`Select all ${filtered.length} filtered`} onClick={toggleAllFiltered} disabled={busy || lifecycleBlocked || !filtered.length || allFilteredSelected} /><IconButton icon="close" label="Clear selection" onClick={clearSelection} disabled={busy || lifecycleBlocked || !selectedIDs.size} /></div>
       <div className="selection-actions">
-        <button type="button" onClick={() => setManualOverride(selectedManual ? '' : (selectedNode.outboundTag || selectedNode.tag))} disabled={busy || lifecycleBlocked || !selectedNode || (!selectedManual && !selectedNode.enabled)}>{selectedManual ? 'Clear manual override' : 'Set manual override'}</button>
-        <button type="button" onClick={runManualNode} disabled={busy || manualRequestBusy || manualLifecycleBlocked || benchmarkRunning || manualRunning || adaptiveRunning || selectedNodes.length !== 1 || !selectedNode?.enabled}>{manualRequestBusy ? 'Starting speed test…' : 'Full speed test'}</button>
-        <button type="button" onClick={() => openEditor()} disabled={busy || lifecycleBlocked || selectedNodes.length !== 1}>Edit / replace profile</button>
-        <button type="button" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: true })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => node.enabled)}>Enable</button>
-        <button type="button" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: false })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => !node.enabled)}>Disable</button>
-        <button type="button" className="danger-action" onClick={() => requestPreview('/api/v1/nodes/batch/remove/preview', { nodeIds: selectedNodeIDs })} disabled={busy || lifecycleBlocked || !selectedNodes.length}>Delete</button>
+        <IconButton icon="target" label={selectedManual ? 'Clear manual override' : 'Set manual override'} active={Boolean(selectedManual)} onClick={() => setManualOverride(selectedManual ? '' : (selectedNode.outboundTag || selectedNode.tag))} disabled={busy || lifecycleBlocked || !selectedNode || (!selectedManual && !selectedNode.enabled)} />
+        <IconButton icon="gauge" label={manualRequestBusy ? 'Starting speed test…' : 'Full speed test'} onClick={runManualNode} disabled={busy || manualRequestBusy || manualLifecycleBlocked || benchmarkRunning || manualRunning || adaptiveRunning || selectedNodes.length !== 1 || !selectedNode?.enabled} />
+        <IconButton icon="edit" label="Edit / replace profile" onClick={() => openEditor()} disabled={busy || lifecycleBlocked || selectedNodes.length !== 1} />
+        <IconButton icon="enable" label="Enable" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: true })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => node.enabled)} />
+        <IconButton icon="disable" label="Disable" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: false })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => !node.enabled)} />
+        <IconButton icon="trash" label="Delete" tone="danger" onClick={() => requestPreview('/api/v1/nodes/batch/remove/preview', { nodeIds: selectedNodeIDs })} disabled={busy || lifecycleBlocked || !selectedNodes.length} />
       </div>
-    </div>}
+    </div>
 
     {manualStatus.state !== 'idle' && <ManualPerformanceCard status={manualStatus} node={nodes.find((node) => node.id === manualStatus.targetNodeId)} />}
 
@@ -890,8 +894,8 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
       <div className="inline-editor-actions"><button className="ghost" type="button" onClick={() => { setEditingID(''); setReplacement('') }}>Cancel</button><button type="button" disabled={busy || lifecycleBlocked || !replacement.trim()} onClick={() => requestPreview('/api/v1/nodes/replace/preview', { id: selectedNode.id, profile: replacement })}>Preview replacement</button></div>
     </div>}
 
-    <div className="table-wrap"><table className="nodes-table"><thead><tr><th className="selection-column"><SelectionCheckbox label="Select all filtered nodes" checked={allFilteredSelected} indeterminate={selectedFilteredCount > 0 && !allFilteredSelected} onChange={toggleAllFiltered} /></th><SortHeader label="Name" sortKey="name" sort={sort} onSort={changeSort} /><SortHeader label="Address" sortKey="address" sort={sort} onSort={changeSort} /><SortHeader label="Health" sortKey="health" sort={sort} onSort={changeSort} /><SortHeader label="Latency" sortKey="latency" sort={sort} onSort={changeSort} /><SortHeader label="Role" sortKey="role" sort={sort} onSort={changeSort} /><SortHeader label="Source" sortKey="source" sort={sort} onSort={changeSort} /><th>Actions</th></tr></thead><tbody>
-      {visibleNodes.map((node) => <NodeRows key={node.id || node.tag} node={node} selected={selectedIDs.has(node.id)} onToggle={() => toggleSelection(node.id)} onEdit={() => openEditor(node)} onActions={() => setSelectedIDs(new Set([node.id]))} disabled={busy || lifecycleBlocked} />)}
+    <div className="table-wrap"><table className="nodes-table"><thead><tr><th className="selection-column"><SelectionCheckbox label="Select all filtered nodes" checked={allFilteredSelected} indeterminate={selectedFilteredCount > 0 && !allFilteredSelected} onChange={toggleAllFiltered} /></th><SortHeader label="Name" sortKey="name" sort={sort} onSort={changeSort} /><SortHeader label="Address" sortKey="address" sort={sort} onSort={changeSort} /><SortHeader label="Health" sortKey="health" sort={sort} onSort={changeSort} /><SortHeader label="Latency" sortKey="latency" sort={sort} onSort={changeSort} /><SortHeader label="Role" sortKey="role" sort={sort} onSort={changeSort} /><SortHeader label="Source" sortKey="source" sort={sort} onSort={changeSort} /><SortHeader label="Subscription" sortKey="subscription" sort={sort} onSort={changeSort} /></tr></thead><tbody>
+      {visibleNodes.map((node) => <NodeRows key={node.id || node.tag} node={node} selected={selectedIDs.has(node.id)} onToggle={() => toggleSelection(node.id)} />)}
       {!visibleNodes.length && <tr><td colSpan="8" className="empty">No nodes match this view.</td></tr>}
     </tbody></table></div>
 
@@ -960,18 +964,18 @@ function ManualPerformanceCard({ status, node }) {
   </section>
 }
 
-function NodeRows({ node, selected, onToggle, onEdit, onActions, disabled }) {
+function NodeRows({ node, selected, onToggle }) {
   const health = node.alive ? 'Alive' : (node.enabled ? (node.lastError || 'No data') : 'Disabled')
   return <>
-    <tr className={selected ? 'selected' : ''}>
+    <tr className={selected ? 'selected' : ''} tabIndex={0} aria-selected={selected} onClick={(event) => { if (!event.target.closest('input, label, button, a')) onToggle() }} onKeyDown={(event) => { if (event.target === event.currentTarget && [' ', 'Enter'].includes(event.key)) { event.preventDefault(); onToggle() } }}>
       <td className="selection-column"><SelectionCheckbox label={`Select ${visibleNodeName(node)}`} checked={selected} onChange={onToggle} /></td>
       <td><NodeName node={node} />{node.stale && <span className="chip amber">stale</span>}</td>
       <td data-label="Address"><code className="address">{node.address || '—'}</code></td>
       <td data-label="Health"><span className={`status-dot ${node.alive ? 'up' : 'down'}`}></span>{health}</td>
       <td data-label="Latency">{formatAdaptiveLatency(node.latencyMs)}</td>
       <td data-label="Role"><NodeBadges node={node} /></td>
-      <td data-label="Source"><span>{node.subscriptionName || node.sourceType || 'legacy'}</span></td>
-      <td className="node-row-actions"><IconButton icon="gauge" label={`Actions for ${visibleNodeName(node)}`} onClick={onActions} disabled={disabled} /><IconButton icon="edit" label={`Edit ${visibleNodeName(node)}`} onClick={onEdit} disabled={disabled} /></td>
+      <td data-label="Source"><span>{node.sourceType || 'legacy'}</span></td>
+      <td data-label="Subscription">{node.sourceType === 'subscription' ? node.subscriptionName || 'Unnamed subscription' : '—'}</td>
     </tr>
   </>
 }
@@ -1186,9 +1190,9 @@ function BackupRestoreSection({ csrf, restoreState, setRestoreState, onRefresh, 
   return <div className="section-stack backup-restore-section">
     {notice && <Notice message={notice.message} tone={notice.tone} />}
     <section className="panel backup-card">
-      <div className="backup-card-heading"><div><span className="panel-label">Backup</span><h2>Download current settings</h2><p className="muted">Safe export contains appliance policy and no node secrets.</p></div><button type="button" onClick={exportSafe} disabled={safeBusy}>{safeBusy ? 'Preparing…' : 'Download safe backup'}</button></div>
+      <div className="backup-card-heading"><div><h2>Download current settings</h2><p className="muted">Safe export contains appliance policy and no node secrets.</p></div><button type="button" onClick={exportSafe} disabled={safeBusy}>{safeBusy ? 'Preparing…' : 'Download safe backup'}</button></div>
       <Disclosure title="Encrypted backup · include node secrets"><form className="secret-export" onSubmit={exportSecret}>
-        <div><span className="panel-label">Encrypted export</span><h3>Include the node registry</h3><p className="muted">This download contains secret-bearing node material. It is never stored in browser storage.</p></div>
+        <p className="muted">Contains node secrets. Keep this download private.</p>
         <label>Current panel password<input type="password" autoComplete="current-password" value={secretForm.currentPassword} onChange={(event) => setSecretForm((current) => ({ ...current, currentPassword: event.target.value }))} /></label>
         <label>Encryption passphrase<input type="password" autoComplete="new-password" value={secretForm.passphrase} onChange={(event) => setSecretForm((current) => ({ ...current, passphrase: event.target.value }))} /></label>
         <label>Confirm passphrase<input type="password" autoComplete="new-password" value={secretForm.confirmation} onChange={(event) => setSecretForm((current) => ({ ...current, confirmation: event.target.value }))} /></label>
@@ -1197,7 +1201,7 @@ function BackupRestoreSection({ csrf, restoreState, setRestoreState, onRefresh, 
     </section>
 
     <section className="panel backup-card">
-      <div><span className="panel-label">Restore</span><h2>Import a local backup</h2><p className="muted">Choose one JSON bundle. The server enforces the 10 MiB request and 9 MiB bundle limits.</p></div>
+      <div><h2>Import a local backup</h2><p className="muted">Choose one JSON bundle. The server enforces the 10 MiB request and 9 MiB bundle limits.</p></div>
       <div className="restore-form">
         <label>Restore mode<select value={effectiveMode} onChange={(event) => { setMode(event.target.value); setRestoreState({ preview: null }); setDestructiveConfirmed(false) }} disabled={restoreBusy || lifecycleBlocked || Boolean(preview)}><option value="settings-only">Settings only</option><option value="replace-registry">Replace registry (destructive)</option><option value="merge-registry">Merge registry (destructive)</option></select></label>
         <label>Backup bundle<input ref={fileInput} type="file" accept="application/json,.json" onChange={chooseFile} disabled={restoreBusy || lifecycleBlocked || Boolean(preview)} /></label>
@@ -1252,7 +1256,7 @@ function IconButton({ icon, label, tone = '', active = false, ...props }) {
 }
 
 function Icon({ name }) {
-  const icons = { plus: IconPlus, link: IconLink, refresh: IconRefresh, edit: IconPencil, power: IconPower, trash: IconTrash, close: IconX, left: IconChevronLeft, right: IconChevronRight, search: IconSearch, gauge: IconGauge, target: IconFocus2 }
+  const icons = { select: IconSquareCheck, enable: IconPlayerPlay, disable: IconPlayerPause, plus: IconPlus, link: IconLink, refresh: IconRefresh, edit: IconPencil, power: IconPower, trash: IconTrash, close: IconX, left: IconChevronLeft, right: IconChevronRight, search: IconSearch, gauge: IconGauge, target: IconFocus2 }
   const Component = icons[name]
   return Component ? <Component size={16} aria-hidden="true" focusable="false" /> : null
 }

@@ -240,13 +240,13 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
     await expect(page.getByText('Feature test node', { exact: true })).toBeVisible()
     await openSection(page, 'Routing')
     await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toBeDisabled()
-    await expect(page.getByText('Policy boundary', { exact: true })).toBeVisible()
+    await expect(page.getByLabel('Routing source-owned facts')).toBeVisible()
     await openSection(page, 'DNS')
     await expect(page.getByRole('button', { name: 'Preview DNS changes' })).toBeDisabled()
     await expect(page.getByText('Proxy resolver 1', { exact: true })).toBeVisible()
     await openSection(page, 'Performance')
     await expect(page.getByRole('button', { name: 'Preview performance changes' })).toBeDisabled()
-    await expect(page.getByText('Fixed traffic and time envelope', { exact: true })).toBeVisible()
+    await expect(page.getByLabel('Source-owned performance ceilings')).toBeVisible()
     await openSection(page, 'Components / Updates')
     await expect(page.getByLabel('Component policy mode')).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Save policy' })).toBeDisabled()
@@ -438,9 +438,9 @@ test('keeps safe projections secretless, browser storage empty, and the Dashboar
   const renderedSections = [await page.locator('body').innerText(), await page.locator('body').evaluate((body) => body.outerHTML)]
   for (const [section, ready] of [
     ['Nodes', page.getByText('Feature test node', { exact: true })],
-    ['Routing', page.getByText('Policy boundary', { exact: true })],
+    ['Routing', page.getByLabel('Routing source-owned facts')],
     ['DNS', page.getByText('Proxy resolver 1', { exact: true })],
-    ['Performance', page.getByText('Fixed traffic and time envelope', { exact: true })],
+    ['Performance', page.getByLabel('Source-owned performance ceilings')],
     ['Components / Updates', page.getByText('Xray', { exact: true })],
     ['Backup & Restore', page.getByLabel('Backup bundle')],
     ['System / Panel', page.getByRole('heading', { name: '0.2.0', exact: true })],

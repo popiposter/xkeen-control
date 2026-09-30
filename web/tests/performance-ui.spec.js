@@ -307,7 +307,7 @@ test('missing nodes retain only the safe canonical tag and browser storage stays
   await expect(card).toContainText('proxy-missing')
   await expect(card).not.toContainText('Unnamed node')
   await expect(card.getByTestId('adaptive-candidate')).toBeVisible()
-  await expect(page.getByRole('toolbar', { name: 'Selected node actions' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Full speed test', exact: true })).toBeDisabled()
   await expect(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } }))).toEqual({ local: {}, session: {} })
 })
 

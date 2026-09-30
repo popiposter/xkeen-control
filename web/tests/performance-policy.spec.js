@@ -219,7 +219,7 @@ test('renders post-start authority drift as the active runtime policy and blocks
   const state = await prepare(page, { projection: { authorityState: 'drift-detected', persistedSource: 'persisted' } }); page.__performancePolicyIssues = state.issues
   await openPerformance(page)
   await expect(page.getByText('Performance policy drift detected.')).toBeVisible()
-  await expect(page.getByText('Read-only active policy')).toBeVisible()
+  await expect(page.getByLabel('Active probe interval')).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Preview performance changes' })).toBeDisabled()
   expect(requestsFor(state, '/api/v1/performance/policy/preview', 'POST')).toHaveLength(0)
 })

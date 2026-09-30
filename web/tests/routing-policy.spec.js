@@ -523,7 +523,7 @@ test('lifecycle maintenance disables new mutation initiation while keeping read-
   page.__routingIssues = state.issues
   await openRouting(page)
   await expect(page.getByRole('button', { name: 'Add rule', exact: true })).toBeDisabled()
-  await expect(page.getByText('Policy boundary', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('Routing source-owned facts')).toBeVisible()
   expect(requestsFor(state, '/api/v1/appliance/policy/preview', 'POST')).toHaveLength(0)
 })
 

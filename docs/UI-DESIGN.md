@@ -16,12 +16,19 @@ polling loop, API, scheduler, browser store or credential authority.
 
 Desktop type is 13px with 12px secondary labels and 20px page titles. The sidebar
 is 184px; forms/toolbars use 32px controls. Node rows are 30px, paginated at 25;
-only selected nodes expose the bulk toolbar. A bounded pagination window keeps
-large registries from producing an unbounded control strip. Compact row actions
-open the existing selection/edit workflow. Touch layouts use 44px controls and
+the action toolbar is always visible, with named icon buttons enabled by the
+selection. Clicking a row or pressing Enter/Space toggles selection without
+moving the table. Actions live in the toolbar rather than a table column. A
+separate Subscription column and filter use safe subscription display names;
+subscriptions with the same name share a filter option because the existing
+public DTO does not expose their IDs. A bounded pagination window keeps large
+registries from producing an unbounded control strip. Touch layouts use 44px controls and
 stacked node rows; the table remains a semantic table with its column headings.
 Keyboard focus, a skip link, native disclosure and explicit accessible names are
-part of the design.
+part of the design. Reordering and removal use named icons. Short fields use
+content-sized widths; form actions align consistently to the left. Redundant
+headings and implementation explanations are removed while operation, secret
+and uncertainty warnings remain explicit.
 
 ## Image references and coverage
 

@@ -20,6 +20,16 @@ A browser capture immediately after viewport resizing once retained the previous
 paint layout. Those captures were replaced after a separate state observation;
 this was an evidence-capture issue, not an application layout finding.
 
+The operator subsequently requested a permanent icon toolbar, row-click
+selection, a separate subscription column/filter, shorter fields and less copy.
+These requests supersede the mock's Actions column and earlier selective toolbar.
+The updated eight desktop/mobile captures were reviewed again. At 1440x900 the
+table starts at 199.84375 CSS pixels before and after row selection. The new
+subscription fixture distinguishes Work and Travel; changing the filter removes
+out-of-filter selections. Names are the existing safe DTO projection, so equal
+subscription display names are grouped by the filter. Numeric fields use 12ch;
+password/release forms and Save actions no longer span the workspace.
+
 ## Targets, state and normalization
 
 Source visual truth: the twelve generated references listed in
@@ -40,7 +50,7 @@ pixel-density crops. Actual DOM measurements establish CSS sizes independently
 of raster capture normalization.
 
 At CSS viewport 1440x900, `rendered/02-nodes-final-1440.png` shows 25 rendered
-rows, 30px per row, 23 fully visible and no page overflow. The 1,000-node fixture
+rows, 30px per row, 22 fully visible and no page overflow. The 1,000-node fixture
 test checks bounded rendering, at least 20 visible rows, bounded pagination and
 selection across pages. Native desktop controls are compact; mobile buttons are
 44px. Mobile captures use a 375x812 CSS viewport; the combined
@@ -107,9 +117,14 @@ integrity disclosure. All mutations were synthetic fixture operations. Fresh
 browser console inspection returned no errors or warnings. Native disclosures
 and mobile navigation were exercised; no real password was entered.
 
-Iterative browser qualification passed 162/162 tests before the final small
-responsive refinements. The post-refinement build and focused task-workspace,
-Components and DNS suites passed 61/61, including button heights and overflow. A subsequent 7/7 task-workspace pass also verified 44x44px mobile selection labels after their final width adjustment.
+The original candidate passed 162 browser tests and the Full gate at historical
+HEAD `4cda1a3ac6cdec1597b396755f377eac6e98a632`. That gate is not reused for the
+subsequent operator refinements. The revised full browser suite passed 163/163
+(exit 0, 1.3 minutes); the final Nodes/task-workspace focused pass passed 18/18
+(exit 0, 14.3 seconds) after the last form-width and composer-copy adjustment.
+Tests cover stable table position, always-visible toolbar availability, row and
+keyboard selection, named subscription filtering, bounded 1,000-node rendering,
+all-page responsive layouts and the existing typed workflows.
 Exact-HEAD Full qualification is recorded separately in the Draft PR after the
 candidate commit; this visual report does not stand in for that gate.
 

@@ -1,4 +1,4 @@
-import { Disclosure, WorkflowSteps } from './ui.jsx'
+import { Disclosure, WorkflowSteps, RowAction } from './ui.jsx'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const EDITABILITY = Object.freeze(['editable', 'drift-detected', 'unavailable'])
@@ -569,7 +569,7 @@ export function RoutingPolicySection({ controller, lifecycle }) {
 
   return <div className="section-stack routing-section">
     <section className="panel routing-heading">
-      <div><span className="panel-label">Routing</span><h2>Custom rules</h2><p>Choose how matching traffic is routed. Protected rules remain read only.</p></div>
+      <div><h2>Custom rules</h2></div>
       <div className="routing-heading-actions"><small>{projection.observedAt ? `Observed ${formatTime(projection.observedAt)}` : 'Not loaded this session'}</small><button className="ghost" type="button" onClick={controller.requestRefresh} disabled={projection.loading || Boolean(pending)}>{projection.loading ? 'Reading…' : 'Refresh policy'}</button></div>
     </section>
 
@@ -587,7 +587,7 @@ export function RoutingPolicySection({ controller, lifecycle }) {
 
     {editable && <>
       <section className="panel routing-editor" aria-label="Custom routing rule editor">
-        <div className="routing-editor-heading"><div><span className="panel-label">Custom region</span><h2>Ordered rules {dirty && <span className="chip amber">Unsaved</span>}</h2><p>Rules are evaluated in order. Review changes before applying.</p></div><button type="button" onClick={controller.addRule} disabled={editorDisabled}>Add rule</button></div>
+        <div className="routing-editor-heading"><div><h2>Ordered rules {dirty && <span className="chip amber">Unsaved</span>}</h2></div><button type="button" onClick={controller.addRule} disabled={editorDisabled}>Add rule</button></div>
         {draft.length === 0 && <div className="routing-empty">No custom rules. Add a rule before the protected final direct catch-all.</div>}
         <div className="routing-rule-list">{draft.map((rule, index) => <RoutingRuleEditor key={rule.clientId} rule={rule} index={index} total={draft.length} disabled={editorDisabled} onChange={(patch) => controller.updateRule(index, patch)} onRemove={() => controller.removeRule(index)} onMove={(direction) => controller.moveRule(index, direction)} />)}</div>
         <div className="routing-editor-actions"><div>{controller.lifecycleBlocked && <small className="routing-disabled-note">Lifecycle readiness is unavailable or maintenance/applying is active; new mutation requests are disabled.</small>}{controller.outcomeRequiresFreshRead && <small className="routing-disabled-note">Refresh the policy and verify the outcome before creating another Preview.</small>}{controller.appliancePolicyUncertain && <small className="routing-disabled-note">An appliance-policy Apply has an unknown outcome. New mutations remain blocked until its controller completes a fresh read.</small>}</div><button type="button" onClick={controller.previewDraft} disabled={previewDisabled}>{requestState?.kind === 'preview' ? 'Preparing Preview…' : 'Preview changes'}</button></div>
@@ -607,7 +607,7 @@ function RoutingFacts({ projection }) {
   const { protected: protectedFacts, dns, observatory } = projection
   const editabilityLabel = projection.editability === 'editable' ? 'Editable' : projection.editability === 'drift-detected' ? 'Drift detected' : 'Unavailable'
   return <section className="panel routing-facts" aria-label="Routing source-owned facts">
-    <div className="routing-facts-heading"><div><span className="panel-label">Source-owned context</span><h2>Policy boundary</h2></div><span className={`chip ${projection.editability === 'editable' ? 'green' : 'amber'}`}>{editabilityLabel}</span></div>
+    <div className="routing-facts-heading"><div></div><span className={`chip ${projection.editability === 'editable' ? 'green' : 'amber'}`}>{editabilityLabel}</span></div>
     <div className="routing-facts-grid">
       <Fact label="Protected prefix rules" value={protectedFacts.prefixRuleCount} />
       <Fact label="Custom region rules" value={protectedFacts.customRegionRuleCount} />
@@ -649,9 +649,9 @@ function RoutingRuleEditor({ rule, index, total, disabled, onChange, onRemove, o
     <div className="routing-ports" aria-label={`Rule ${index + 1} port ranges`}>
       <div className="routing-subheading"><span>Port ranges</span><button className="ghost" type="button" onClick={addPort} disabled={disabled}>Add port range</button></div>
       {rule.ports.length === 0 && <small className="muted">No port restriction</small>}
-      {rule.ports.map((port, portIndex) => <div className="routing-port-row" key={portIndex}><label>From<input aria-label={`Rule ${index + 1} port ${portIndex + 1} from`} type="number" min="1" max="65535" step="1" value={port.from} disabled={disabled} onChange={(event) => updatePort(portIndex, 'from', event.target.value)} /></label><label>To <span className="muted">(optional)</span><input aria-label={`Rule ${index + 1} port ${portIndex + 1} to`} type="number" min="1" max="65535" step="1" value={port.to} disabled={disabled} onChange={(event) => updatePort(portIndex, 'to', event.target.value)} /></label><button className="ghost" type="button" onClick={() => removePort(portIndex)} disabled={disabled}>Remove port</button></div>)}
+      {rule.ports.map((port, portIndex) => <div className="routing-port-row" key={portIndex}><label>From<input aria-label={`Rule ${index + 1} port ${portIndex + 1} from`} type="number" min="1" max="65535" step="1" value={port.from} disabled={disabled} onChange={(event) => updatePort(portIndex, 'from', event.target.value)} /></label><label>To <span className="muted">(optional)</span><input aria-label={`Rule ${index + 1} port ${portIndex + 1} to`} type="number" min="1" max="65535" step="1" value={port.to} disabled={disabled} onChange={(event) => updatePort(portIndex, 'to', event.target.value)} /></label><RowAction action="remove" label="Remove port" onClick={() => removePort(portIndex)} disabled={disabled} /></div>)}
     </div>
-    <div className="routing-rule-actions"><button className="ghost" type="button" onClick={() => onMove(-1)} disabled={disabled || index === 0} aria-label={`Move rule up: ${rule.name || `rule ${index + 1}`}`}>Move up</button><button className="ghost" type="button" onClick={() => onMove(1)} disabled={disabled || index === total - 1} aria-label={`Move rule down: ${rule.name || `rule ${index + 1}`}`}>Move down</button><button className="ghost danger-action" type="button" onClick={onRemove} disabled={disabled} aria-label={`Remove rule: ${rule.name || `rule ${index + 1}`}`}>Remove rule</button></div>
+    <div className="routing-rule-actions"><RowAction action="up" label={`Move rule up: ${rule.name || `rule ${index + 1}`}`} onClick={() => onMove(-1)} disabled={disabled || index === 0} /><RowAction action="down" label={`Move rule down: ${rule.name || `rule ${index + 1}`}`} onClick={() => onMove(1)} disabled={disabled || index === total - 1} /><RowAction action="remove" label={`Remove rule: ${rule.name || `rule ${index + 1}`}`} onClick={onRemove} disabled={disabled} /></div>
   </fieldset>
 }
 
@@ -664,7 +664,7 @@ function RoutingPreview({ preview, busy, applyDisabled, onCancel, onConfirm }) {
     ['Reordered', diff.reordered],
   ]
   return <section className="panel routing-preview" aria-label="Routing Preview confirmation" aria-live="polite">
-    <div className="routing-preview-heading"><div><span className="panel-label">Semantic Preview</span><h2>{preview.noop ? 'No effective changes' : 'Review routing changes'}</h2><p>Server-derived facts only; candidate configuration and protected rule bodies stay hidden.</p></div><small>Expires {formatTime(preview.expiresAt)}</small></div>
+    <div className="routing-preview-heading"><div><h2>{preview.noop ? 'No effective changes' : 'Review routing changes'}</h2></div><small>Expires {formatTime(preview.expiresAt)}</small></div>
     <div className="routing-diff-groups">{groups.map(([label, changes]) => <div key={label}><span>{label}</span>{changes.length === 0 ? <small>None</small> : <ul>{changes.map((change, index) => <li key={`${change.name}-${index}`}><strong>{change.name}</strong><small>{change.action}</small></li>)}</ul>}</div>)}</div>
     <div className="routing-diff-facts">
       <Fact label="Rules before → after" value={`${diff.beforeMatches.rules} → ${diff.afterMatches.rules}`} />
