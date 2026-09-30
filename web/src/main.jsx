@@ -1,7 +1,7 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles.css'
-import { Disclosure } from './ui.jsx'
+import { Disclosure, MobileNavigationDrawer } from './ui.jsx'
 import { IconHome, IconServer, IconSitemap, IconWorld, IconChartBar, IconCube, IconHistory, IconSettings, IconLogout, IconMenu2 } from '@tabler/icons-react'
 import { IconPlus, IconLink, IconRefresh, IconPencil, IconPower, IconTrash, IconX, IconChevronLeft, IconChevronRight, IconSearch, IconGauge, IconFocus2, IconArrowUp, IconArrowDown, IconArrowsSort, IconSquareCheck, IconPlayerPlay, IconPlayerPause } from '@tabler/icons-react'
 import { ComponentLifecycleNotices, ComponentsUpdatesSection, useComponentsController } from './components-updates.jsx'
@@ -413,6 +413,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const { status, nodes, performance } = dashboard
   const [section, setSection] = useState('overview')
   const [navigationOpen, setNavigationOpen] = useState(false)
+  const closeNavigation = useCallback(() => setNavigationOpen(false), [])
   const [nodeView, setNodeView] = useState(createNodeViewState)
   const [restoreState, setRestoreState] = useState({ preview: null })
   const registryNodes = nodes.nodes || []
@@ -494,14 +495,9 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const pageTitle = { components: 'Components', system: 'System' }[section] || sections.find(([key]) => key === section)?.[1]
   return <Shell>
     <a className="skip-link" href="#workspace">Skip to workspace</a>
-    <header className="mobile-bar"><button type="button" className="ghost" aria-label="Toggle navigation" aria-expanded={navigationOpen} aria-controls="dashboard-navigation" onClick={() => setNavigationOpen(!navigationOpen)}><IconMenu2 size={18} /></button><strong>XKeen Control</strong></header>
-    <aside className={`sidebar ${navigationOpen ? 'open' : ''}`}>
-      <strong className="product-name">XKeen <span>Control</span></strong>
-      <nav id="dashboard-navigation" className="section-nav" aria-label="Dashboard sections">
-        {sections.map(([key, label, NavigationIcon, open]) => <button key={key} type="button" className={section === key ? 'active' : ''} aria-label={key === 'nodes' ? `Nodes ${nodes.total || 0}` : label} aria-current={section === key ? 'page' : undefined} onClick={() => { open(); setNavigationOpen(false) }}><NavigationIcon size={18} aria-hidden="true" /><span>{label === 'Components / Updates' ? <>Components<span className="nav-suffix"> / Updates</span></> : label === 'System / Panel' ? <>System<span className="nav-suffix"> / Panel</span></> : label}</span>{key === 'nodes' && <span className="nav-count"> {nodes.total || 0}</span>}</button>)}
-      </nav>
-      <div className="sidebar-footer"><small>{status.controlPlane?.version || 'dev'}</small><button className="ghost" type="button" onClick={onLogout}><IconLogout size={18} aria-hidden="true" />Sign out</button></div>
-    </aside>
+    <header className="mobile-bar"><button type="button" className="ghost" aria-label="Toggle navigation" aria-expanded={navigationOpen} aria-controls="mobile-dashboard-navigation" aria-haspopup="dialog" onClick={() => setNavigationOpen(!navigationOpen)}><IconMenu2 size={18} /></button><strong>XKeen Control</strong></header>
+    <aside className="sidebar"><NavigationContent sections={sections} section={section} total={nodes.total || 0} version={status.controlPlane?.version || 'dev'} onSelect={closeNavigation} onLogout={onLogout} /></aside>
+    <MobileNavigationDrawer open={navigationOpen} onClose={closeNavigation}><div className="mobile-navigation-panel"><NavigationContent mobile sections={sections} section={section} total={nodes.total || 0} version={status.controlPlane?.version || 'dev'} onSelect={closeNavigation} onLogout={onLogout} /></div></MobileNavigationDrawer>
     <div id="workspace" className="workspace" tabIndex="-1">
     {section !== 'nodes' && <header className="page-heading"><h1>{pageTitle}</h1>{section === 'overview' && <button className="ghost" type="button" onClick={onRefresh}><Icon name="refresh" />Refresh</button>}</header>}
     <ComponentLifecycleNotices controller={componentController} lifecycle={status.lifecycle} onOpenComponents={openComponents} />
@@ -518,6 +514,16 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     {section === 'system' && <SystemPanelSection controller={systemPanelController} status={status} onOpenComponents={openComponents} onOpenBackup={openBackup} />}
     </div>
   </Shell>
+}
+
+function NavigationContent({ mobile = false, sections, section, total, version, onSelect, onLogout }) {
+  return <>
+    <div className="navigation-heading"><strong className="product-name">XKeen <span>Control</span></strong>{mobile && <button type="button" className="icon-button ghost" aria-label="Close navigation" onClick={onSelect}><IconX size={20} aria-hidden="true" /></button>}</div>
+    <nav id={mobile ? 'mobile-dashboard-navigation' : 'dashboard-navigation'} className="section-nav" aria-label="Dashboard sections">
+      {sections.map(([key, label, NavigationIcon, open]) => <button key={key} type="button" className={section === key ? 'active' : ''} aria-label={key === 'nodes' ? `Nodes ${total}` : label} aria-current={section === key ? 'page' : undefined} onClick={() => { open(); onSelect() }}><NavigationIcon size={18} aria-hidden="true" /><span>{label === 'Components / Updates' ? <>Components<span className="nav-suffix"> / Updates</span></> : label === 'System / Panel' ? <>System<span className="nav-suffix"> / Panel</span></> : label}</span>{key === 'nodes' && <span className="nav-count"> {total}</span>}</button>)}
+    </nav>
+    <div className="sidebar-footer"><small>{version}</small><button className="ghost" type="button" onClick={onLogout}><IconLogout size={18} aria-hidden="true" />Sign out</button></div>
+  </>
 }
 
 function Overview({ status, performance, nodeTotal, nodesByTag, csrfToken, onRefresh, onUnauthorized, onOpenNodes }) {

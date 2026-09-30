@@ -30,6 +30,25 @@ out-of-filter selections. Names are the existing safe DTO projection, so equal
 subscription display names are grouped by the filter. Numeric fields use 12ch;
 password/release forms and Save actions no longer span the workspace.
 
+The subsequent mobile-menu request was reproduced as a preview-contour issue:
+switching the single checkout to a main-based backend branch also changed the
+live Vite frontend to the old horizontal navigation. The local preview now serves
+a pinned copy of built UX assets, independent of checkout branches. That artifact
+copy is not a Git checkout or worktree. The product's existing hamburger panel
+was then upgraded to a native modal drawer with a dimmed backdrop, explicit Close,
+Escape/backdrop/selection dismissal, background scroll lock, focus return and
+Tab-edge wrapping. The desktop sidebar retains the same navigation callbacks.
+Closed mobile content is unmounted so there is no duplicate hidden menu inventory.
+
+Final mobile captures: `rendered/16-mobile-drawer-320.png` and
+`rendered/16-mobile-drawer-375.png`; desktop sidebar regression:
+`rendered/16-desktop-sidebar.png`. At 320/375 CSS pixels all eight menu items remain
+visible with 44px targets, no horizontal strip or page overflow. Browser interaction
+confirmed modal state, initial Close focus, keyboard containment, Escape dismissal,
+section-selection dismissal and opener focus/scroll restoration. The fresh QA tab
+returned an empty error/warning log. Older development-tab logs retain historical
+hot reload errors from branch/source switching; they are not current-load evidence.
+
 ## Targets, state and normalization
 
 Source visual truth: the twelve generated references listed in
@@ -125,6 +144,13 @@ subsequent operator refinements. The revised full browser suite passed 163/163
 Tests cover stable table position, always-visible toolbar availability, row and
 keyboard selection, named subscription filtering, bounded 1,000-node rendering,
 all-page responsive layouts and the existing typed workflows.
+After the mobile drawer refinement the focused task-workspace/Nodes/System suites
+passed 37/37 (exit 0, 25.1 seconds). The new 320/375px cases exercise Tab wrapping,
+Escape, backdrop, explicit Close, section selection, touch sizes, modal state,
+scroll restoration, desktop resize and unchanged operation requests. An initial
+pass caught missing reliable Tab-edge wrapping and a duplicate hidden menu
+inventory; both were repaired and the original eight-item assertions retained.
+The prior `837b43c` Full (163 browser tests) is historical after this refinement.
 Exact-HEAD Full qualification is recorded separately in the Draft PR after the
 candidate commit; this visual report does not stand in for that gate.
 

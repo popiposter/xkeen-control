@@ -24,6 +24,10 @@ subscriptions with the same name share a filter option because the existing
 public DTO does not expose their IDs. A bounded pagination window keeps large
 registries from producing an unbounded control strip. Touch layouts use 44px controls and
 stacked node rows; the table remains a semantic table with its column headings.
+The mobile header opens a vertical modal navigation drawer. Its dimmed backdrop
+blocks background interaction; scrolling stays inside the menu. Escape, backdrop,
+Close and section selection dismiss it and return focus to the opener. Tab wraps
+within menu controls; resizing to desktop dismisses it and restores the sidebar.
 Keyboard focus, a skip link, native disclosure and explicit accessible names are
 part of the design. Reordering and removal use named icons. Short fields use
 content-sized widths; form actions align consistently to the left. Redundant
