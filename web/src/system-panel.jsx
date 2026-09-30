@@ -1,3 +1,4 @@
+import { Disclosure } from './ui.jsx'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { NotificationsCard, useNotifications } from './notifications'
 
@@ -478,8 +479,9 @@ export function SystemPanelSection({ controller, status, onOpenComponents, onOpe
   const lifecycleBlocked = lifecycleBlocksMutations(status?.lifecycle)
   return <div className="section-stack system-panel-section">
     {controller.result && <div className={`notice ${controller.result.tone}`} role={controller.result.tone === 'error' ? 'alert' : 'status'}><strong>{controller.result.title}</strong> {controller.result.message}</div>}
+    <nav className="local-navigation" aria-label="System settings">{[['system-access', 'Access'], ['system-password', 'Password'], ['system-releases', 'Releases'], ['system-notifications', 'Notifications']].map(([id, label]) => <a key={id} href={`#${id}`} onClick={() => { const target = document.getElementById(id); if (target?.tagName === 'DETAILS') target.open = true }}>{label}</a>)}</nav>
     <div className="system-panel-grid">
-      <section className="panel system-panel-card listener-card" aria-label="Management listener">
+      <section id="system-access" className="panel system-panel-card listener-card" aria-label="Management listener">
         <div className="system-card-heading"><div><span className="panel-label">Management listener</span><h2>{listener ? addressText(listener) : 'Reading listener…'}</h2><p className="muted">The active process bind is shown. A changed file is never adopted until a typed rebind is applied.</p></div>{listener && <span className={`chip ${listener.editability === 'editable' ? 'green' : 'amber'}`}>{editabilityLabel(listener.editability)}</span>}</div>
         {listener && <>
           <div className="system-facts-grid"><Fact label="Source" value={sourceLabel(listener.source)} /><Fact label="Port" value={listener.port} /><Fact label="Allowed hosts" value={listener.allowedHosts.length ? listener.allowedHosts.join(', ') : 'Unavailable'} /></div>
@@ -494,7 +496,15 @@ export function SystemPanelSection({ controller, status, onOpenComponents, onOpe
         {controller.preview && <ListenerPreview preview={controller.preview} busy={controller.pending || lifecycleBlocked} onCancel={controller.cancelPreview} onApply={controller.applyListener} />}
       </section>
 
-      <section className="panel system-panel-card" aria-label="Panel password">
+      <Disclosure title="Private management · VPN or SSH tunnel"><section className="panel system-panel-card" aria-label="Private management">
+        <h2>VPN or SSH tunnel</h2>
+        <p>For remote administration, use an operator-managed VPN to the router or an SSH tunnel to loopback.</p>
+        <p className="muted">Active listener: {listener ? addressText(listener) : 'Unavailable'}. For a management VPN, select only an exact server-listed private or ULA address in Management listener.</p>
+        <p className="muted">An SSH tunnel may use localhost with the listener port only when the panel is bound to loopback. Private listeners require the exact numeric address and port.</p>
+        <p className="muted">Never bind to WAN or open a WAN firewall rule. Hostname and wildcard binds are unavailable. Configure VPN, firewall and DDNS yourself; this panel does not automate them.</p>
+      </section></Disclosure>
+
+      <Disclosure title="Password" id="system-password" attention={controller.password.pending || Boolean(controller.password.error)}>      <section className="panel system-panel-card" aria-label="Panel password">
         <div><span className="panel-label">Panel password</span><h2>Replace credential</h2><p className="muted">The bcrypt hash never enters the browser. Success invalidates every session and returns to login.</p></div>
         <form className="system-password-form" onSubmit={controller.replacePassword}>
           <label>New panel password<input type="password" autoComplete="new-password" value={controller.password.newPassword} onChange={(event) => controller.setPassword((current) => ({ ...current, newPassword: event.target.value, error: '' }))} disabled={controller.password.pending} /></label>
@@ -502,9 +512,9 @@ export function SystemPanelSection({ controller, status, onOpenComponents, onOpe
           {controller.password.error && <p className="warning" role="alert">{controller.password.error}</p>}
           <button type="submit" disabled={controller.password.pending}>{controller.password.pending ? 'Replacing…' : 'Replace password'}</button>
         </form>
-      </section>
+      </section></Disclosure>
 
-      <section className="panel system-panel-card" aria-label="Signed panel release">
+      <Disclosure title="Panel releases" id="system-releases" attention={controller.checkPending || controller.rollbackPending || Boolean(controller.updateError) || controller.handoffState !== 'idle' || Boolean(update?.rollbackVerificationRequired)}>      <section className="panel system-panel-card" aria-label="Signed panel release">
         <div className="system-card-heading"><div><span className="panel-label">Signed panel release</span><h2>{update?.installed?.version || 'Unavailable'}</h2><p className="muted">Checks use the fixed signed release source. Apply is pinned to the exact checked version.</p></div>{update && <span className={`chip ${update.signingKeyConfigured ? 'green' : 'amber'}`}>{update.signingKeyConfigured ? 'Signing key configured' : 'Signing key unavailable'}</span>}</div>
         {update && <>
           <div className="system-facts-grid"><Fact label="Installed source" value={update.installed?.sourceCommit ? 'Signed release commit' : 'Unknown'} /><Fact label="Effective channel" value={update.policy.channel} /><Fact label="Rollback" value={update.rollbackVerificationRequired ? 'Verify required' : update.rollbackAvailable ? 'Available' : 'None'} /><Fact label="Policy mode" value={modeLabel(update.policy.mode)} /></div>
@@ -526,16 +536,16 @@ export function SystemPanelSection({ controller, status, onOpenComponents, onOpe
           <div className="system-card-actions"><button type="button" onClick={controller.applyUpdate} disabled={lifecycleBlocked || !controller.checkedCandidate || controller.rollbackPending}>{controller.rollbackPending && controller.handoffState === 'update-unknown' ? 'Verifying…' : 'Apply checked release'}</button><button className="ghost" type="button" onClick={controller.rollbackUpdate} disabled={lifecycleBlocked || !update.rollbackAvailable || update.rollbackVerificationRequired || controller.rollbackPending || controller.handoffState !== 'idle'}>{controller.rollbackPending && controller.handoffState === 'rollback-unknown' ? 'Verifying…' : 'Rollback retained release'}</button></div>
         </>}
         {controller.updateError && <p className="system-blocked" role="alert">{controller.updateError}</p>}
-      </section>
+      </section></Disclosure>
 
-      <NotificationsCard controller={controller.notifications} sessionKey={controller.sessionKey} />
+      <Disclosure title="Notifications" id="system-notifications" attention={controller.notifications.pending && Boolean(controller.notifications.status) || Boolean(controller.notifications.message)}><NotificationsCard controller={controller.notifications} sessionKey={controller.sessionKey} /></Disclosure>
 
-      <section className="panel system-panel-card" aria-label="Source-owned runtime facts">
+      <Disclosure title="Runtime facts" id="system-runtime" attention={false}>      <section className="panel system-panel-card" aria-label="Source-owned runtime facts">
         <div><span className="panel-label">Source-owned/runtime facts</span><h2>Operational boundary</h2><p className="muted">System / Panel summarizes safe facts owned by the running control plane. Raw DNS, routing, resolver and generated-outbound data stay in their owning workspaces.</p></div>
         <div className="system-facts-grid"><Fact label="Control plane" value={status?.controlPlane?.version || 'dev'} /><Fact label="Runtime" value={status?.setup?.runtime || 'unknown'} /><Fact label="XKeen" value={status?.xkeen?.running ? 'Running' : 'Not detected'} /><Fact label="Xray" value={status?.xray?.running ? 'Running' : 'Not detected'} /><Fact label="Observatory" value={status?.observatory?.apiReachable ? 'Reachable' : 'Degraded'} /><Fact label="Uptime" value={formatUptime(status?.controlPlane?.uptimeSeconds)} /></div>
-      </section>
+      </section></Disclosure>
 
-      <section className="panel system-panel-card system-navigation-card" aria-label="System workspace navigation"><span className="panel-label">Existing owners</span><h2>Open the owning workspace</h2><div className="system-navigation-actions"><button type="button" onClick={onOpenComponents}>Components / Updates</button><button type="button" className="ghost" onClick={onOpenBackup}>Backup &amp; Restore</button></div></section>
+      <Disclosure title="Related workspaces" id="system-workspaces" attention={false}>      <section className="panel system-panel-card system-navigation-card" aria-label="System workspace navigation"><span className="panel-label">Existing owners</span><h2>Open the owning workspace</h2><div className="system-navigation-actions"><button type="button" onClick={onOpenComponents}>Components / Updates</button><button type="button" className="ghost" onClick={onOpenBackup}>Backup &amp; Restore</button></div></section></Disclosure>
     </div>
   </div>
 }

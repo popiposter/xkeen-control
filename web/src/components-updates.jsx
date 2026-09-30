@@ -1,3 +1,4 @@
+import { Disclosure } from './ui.jsx'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const COMPONENTS = [
@@ -498,11 +499,11 @@ export function ComponentsUpdatesSection({ controller, lifecycle, onOpenSystem }
 
   return <div className="section-stack components-section">
     <section className="panel components-heading">
-      <div><span className="panel-label">Components / Updates</span><h2>Manual, one component at a time</h2><p>Inventory is read only. Check inspects fixed metadata; Preview creates the exact short-lived intent used by Apply or one-step rollback.</p></div>
+      <div><span className="panel-label">Components / Updates</span><h2>Installed components</h2><p>Check a component, review its update or rollback, then confirm. One operation runs at a time.</p></div>
       <div className="components-heading-actions"><small>{inventory.observedAt ? `Observed ${formatTime(inventory.observedAt)}` : 'Not loaded this session'}</small><button type="button" className="ghost" onClick={() => controller.loadInventory({ force: true })} disabled={inventory.loading}>{inventory.loading ? 'Reading…' : 'Refresh inventory'}</button></div>
     </section>
 
-    <ComponentPolicyPanel controller={controller} />
+
 
     {inventory.error && <div className="notice" role="status">{inventory.error}</div>}
     {result && <OperationResult result={result} refreshError={refreshError} onDismiss={controller.clearResult} />}
@@ -528,6 +529,8 @@ export function ComponentsUpdatesSection({ controller, lifecycle, onOpenSystem }
         onOpenSystem={onOpenSystem}
       />)}
     </div>}
+
+    <Disclosure title={`Background discovery · ${policy.value ? POLICY_MODE_LABELS[policy.value.mode] : 'Unavailable'}`} attention={Boolean(policy.error || policy.value?.reasonCode)}><ComponentPolicyPanel controller={controller} /></Disclosure>
 
     {preview && <ComponentConfirmation preview={preview} busy={Boolean(pending)} onCancel={() => controller.cancelPreview()} onConfirm={controller.submitPreview} />}
   </div>
@@ -578,12 +581,12 @@ function ComponentCard({ definition, component, check, metadataBusy, lifecycle, 
   return <article className={`panel component-card state-${state}`} data-component={definition.kind}>
     <div className="component-card-heading"><div><span className="panel-label">{definition.description}</span><h2>{definition.label}</h2></div><span className={`chip ${state === 'present' ? 'green' : state === 'missing' ? 'amber' : 'neutral'}`}>{state}</span></div>
     <strong className="component-version">{componentVersion(component)}</strong>
-    <dl className="component-facts">
+    <Disclosure title="Component details"><dl className="component-facts">
       <div><dt>Support</dt><dd>{component?.capability || 'unknown'}</dd></div>
       <div><dt>Reason</dt><dd>{component?.reasonCode || '—'}</dd></div>
       {component?.architecture && <div><dt>Architecture</dt><dd>{component.architecture}</dd></div>}
       {component?.channel && <div><dt>Installed channel</dt><dd>{component.channel}</dd></div>}
-    </dl>
+    </dl></Disclosure>
     {definition.kind === 'geodata' && <GeodataItems items={component?.items || []} />}
     {check && <CheckSummary check={check} />}
     <div className="component-actions">

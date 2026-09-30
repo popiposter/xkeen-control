@@ -1,3 +1,4 @@
+import { revealDetails, revealNavigation } from './fixtures/disclosures.js'
 import { expect, test } from '@playwright/test'
 
 const origin = 'http://127.0.0.1:4173'
@@ -146,8 +147,9 @@ const requestsFor = (state, path, method) => state.requests.filter((request) => 
 async function openDNS(page) {
   await page.goto('/')
   await expect(page).toHaveTitle('XKeen Control')
-  await page.getByRole('button', { name: 'DNS', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Typed resolver policy' })).toBeVisible()
+  await (await revealNavigation(page)).getByRole('button', { name: 'DNS', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Resolvers and sampling' })).toBeVisible()
+  await revealDetails(page, 'Protected DNS and Observatory')
 }
 async function makeChange(page) { await page.getByLabel('Parallel queries').uncheck() }
 
@@ -161,7 +163,7 @@ test('places DNS immediately after Routing, loads lazily, and never polls it', a
   await expect(page.locator('.section-nav button')).toHaveCount(8)
   expect(await page.locator('.section-nav button').allTextContents()).toEqual(['Overview', 'Nodes 0', 'Routing', 'DNS', 'Performance', 'Components / Updates', 'Backup & Restore', 'System / Panel'])
   expect(requestsFor(state, '/api/v1/appliance/dns-observatory')).toHaveLength(0)
-  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: 'DNS', exact: true }).click()
   await expect.poll(() => requestsFor(state, '/api/v1/appliance/dns-observatory').length).toBe(1)
   await page.waitForTimeout(5_300)
   expect(requestsFor(state, '/api/v1/appliance/dns-observatory')).toHaveLength(1)
@@ -322,7 +324,7 @@ test('navigation invalidates completed and in-flight Preview and late tokens can
   await page.getByRole('button', { name: 'Routing', exact: true }).click()
   release.resolve()
   await expect.poll(() => requestsFor(state, '/api/v1/appliance/dns-observatory/cancel', 'POST').length).toBe(1)
-  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: 'DNS', exact: true }).click()
   await expect(page.getByRole('region', { name: 'DNS Preview confirmation' })).toHaveCount(0)
   expect(requestsFor(state, '/api/v1/appliance/dns-observatory/apply', 'POST')).toHaveLength(0)
 })
@@ -389,7 +391,7 @@ test('DNS Apply cannot leave a Routing Preview actionable and preserves the Rout
   await page.getByLabel('Rule 1 display name').fill('Preserved routing draft')
   await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
   await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toBeVisible()
-  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: 'DNS', exact: true }).click()
   await makeChange(page)
   await page.getByRole('button', { name: 'Preview DNS changes' }).click()
   await page.getByRole('button', { name: 'Apply DNS changes' }).click()
@@ -410,7 +412,7 @@ test('Routing Apply cannot leave a DNS Preview actionable and preserves the DNS 
   await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
   await page.getByRole('button', { name: 'Apply routing changes' }).click()
   await expect.poll(() => requestsFor(state, '/api/v1/appliance/dns-observatory/cancel', 'POST').length).toBe(1)
-  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: 'DNS', exact: true }).click()
   await expect(page.getByLabel('Parallel queries')).not.toBeChecked()
   await expect(page.getByRole('region', { name: 'DNS Preview confirmation' })).toHaveCount(0)
 })
@@ -432,7 +434,7 @@ test('Routing and DNS peer Preview invalidation cancels late peer tokens without
   await page.getByRole('button', { name: 'Apply routing changes' }).click()
   release.resolve()
   await expect.poll(() => requestsFor(state, '/api/v1/appliance/dns-observatory/cancel', 'POST').length).toBe(1)
-  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: 'DNS', exact: true }).click()
   await expect(page.getByLabel('Parallel queries')).not.toBeChecked()
   await expect(page.getByRole('region', { name: 'DNS Preview confirmation' })).toHaveCount(0)
 })
@@ -477,7 +479,7 @@ test('an unproven DNS Apply re-invalidates Routing and blocks both workspaces un
   await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toHaveCount(0)
   await expect(page.getByLabel('Rule 1 display name')).toHaveValue('Preserved after DNS uncertainty')
   await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toBeDisabled()
-  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: 'DNS', exact: true }).click()
   await expect(page.getByLabel('Parallel queries')).not.toBeChecked()
   await expect(page.getByRole('button', { name: 'Preview DNS changes' })).toBeDisabled()
 
@@ -485,6 +487,7 @@ test('an unproven DNS Apply re-invalidates Routing and blocks both workspaces un
   await expect(page.getByRole('button', { name: 'Preview DNS changes' })).toBeEnabled()
   await expect(page.getByLabel('Parallel queries')).not.toBeChecked()
   await expect(page.getByRole('region', { name: 'DNS and Observatory editor' }).getByText('Unsaved')).toBeVisible()
+  await revealDetails(page, 'Protected DNS and Observatory')
   await expect(page.getByRole('region', { name: 'DNS source-owned facts' }).getByText('7', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Routing', exact: true }).click()
   await expect(page.getByLabel('Rule 1 display name')).toHaveValue('Preserved after DNS uncertainty')
@@ -519,7 +522,7 @@ test('an unknown Routing Apply re-invalidates DNS and blocks both workspaces unt
   await page.getByLabel('Rule 1 display name').fill('Routing outcome pending')
   await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
   await page.getByRole('button', { name: 'Apply routing changes' }).click()
-  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: 'DNS', exact: true }).click()
   await makeChange(page)
   await page.getByRole('button', { name: 'Preview DNS changes' }).click()
   await expect(page.getByRole('region', { name: 'DNS Preview confirmation' })).toBeVisible()
@@ -538,8 +541,9 @@ test('an unknown Routing Apply re-invalidates DNS and blocks both workspaces unt
   await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toBeEnabled()
   await expect(page.getByLabel('Rule 1 display name')).toHaveValue('Routing outcome pending')
   await expect(page.getByRole('region', { name: 'Custom routing rule editor' }).getByText('Unsaved')).toBeVisible()
+  await revealDetails(page, 'Protected routing policy')
   await expect(page.getByRole('region', { name: 'Routing source-owned facts' }).getByText('6', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: 'DNS', exact: true }).click()
   await expect(page.getByLabel('Parallel queries')).not.toBeChecked()
   await expect(page.getByRole('button', { name: 'Preview DNS changes' })).toBeEnabled()
 })

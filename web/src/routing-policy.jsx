@@ -1,3 +1,4 @@
+import { Disclosure, WorkflowSteps } from './ui.jsx'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const EDITABILITY = Object.freeze(['editable', 'drift-detected', 'unavailable'])
@@ -568,9 +569,11 @@ export function RoutingPolicySection({ controller, lifecycle }) {
 
   return <div className="section-stack routing-section">
     <section className="panel routing-heading">
-      <div><span className="panel-label">Routing</span><h2>Typed custom rules</h2><p>Only the supported custom region is editable. Protected routing, proxy DNS relationships, and Observatory settings remain source-owned and read only.</p></div>
+      <div><span className="panel-label">Routing</span><h2>Custom rules</h2><p>Choose how matching traffic is routed. Protected rules remain read only.</p></div>
       <div className="routing-heading-actions"><small>{projection.observedAt ? `Observed ${formatTime(projection.observedAt)}` : 'Not loaded this session'}</small><button className="ghost" type="button" onClick={controller.requestRefresh} disabled={projection.loading || Boolean(pending)}>{projection.loading ? 'Reading…' : 'Refresh policy'}</button></div>
     </section>
+
+    <WorkflowSteps stage={pending ? 'apply' : preview ? 'preview' : 'edit'} />
 
     {refreshConfirmation && <section className="routing-refresh-confirm" role="alert"><div><strong>Unsaved routing changes</strong><span>Refreshing will replace the current draft with the latest server projection.</span></div><div className="routing-refresh-actions"><button type="button" onClick={controller.discardAndRefresh}>Discard changes and refresh</button><button className="ghost" type="button" onClick={controller.cancelRefresh}>Keep editing</button></div></section>}
     {projection.error && <div className="notice" role="alert">{projection.error}</div>}
@@ -578,18 +581,20 @@ export function RoutingPolicySection({ controller, lifecycle }) {
     {projection.loading && !value && <div className="loading">Reading the current typed routing policy…</div>}
     {!value && !projection.loading && !projection.error && <div className="empty">Open Routing to load the current typed policy projection.</div>}
 
-    {value && <RoutingFacts projection={value} />}
+
     {value?.editability === 'drift-detected' && <div className="routing-blocked" role="alert"><strong>Routing editing is blocked by protected-state drift.</strong><span>Refresh may restore editability after the server proves the source-owned policy is compatible. No repair or adoption is offered here.</span></div>}
     {value?.editability === 'unavailable' && <div className="routing-blocked danger" role="alert"><strong>Routing policy is unavailable.</strong><span>The safe projection could not establish an editable authority. Mutation controls remain disabled.</span></div>}
 
     {editable && <>
       <section className="panel routing-editor" aria-label="Custom routing rule editor">
-        <div className="routing-editor-heading"><div><span className="panel-label">Custom region</span><h2>Ordered rules {dirty && <span className="chip amber">Unsaved</span>}</h2><p>List order is significant. Match members are sent as typed expressions; the server remains the validation and canonicalization authority.</p></div><button type="button" onClick={controller.addRule} disabled={editorDisabled}>Add rule</button></div>
+        <div className="routing-editor-heading"><div><span className="panel-label">Custom region</span><h2>Ordered rules {dirty && <span className="chip amber">Unsaved</span>}</h2><p>Rules are evaluated in order. Review changes before applying.</p></div><button type="button" onClick={controller.addRule} disabled={editorDisabled}>Add rule</button></div>
         {draft.length === 0 && <div className="routing-empty">No custom rules. Add a rule before the protected final direct catch-all.</div>}
         <div className="routing-rule-list">{draft.map((rule, index) => <RoutingRuleEditor key={rule.clientId} rule={rule} index={index} total={draft.length} disabled={editorDisabled} onChange={(patch) => controller.updateRule(index, patch)} onRemove={() => controller.removeRule(index)} onMove={(direction) => controller.moveRule(index, direction)} />)}</div>
         <div className="routing-editor-actions"><div>{controller.lifecycleBlocked && <small className="routing-disabled-note">Lifecycle readiness is unavailable or maintenance/applying is active; new mutation requests are disabled.</small>}{controller.outcomeRequiresFreshRead && <small className="routing-disabled-note">Refresh the policy and verify the outcome before creating another Preview.</small>}{controller.appliancePolicyUncertain && <small className="routing-disabled-note">An appliance-policy Apply has an unknown outcome. New mutations remain blocked until its controller completes a fresh read.</small>}</div><button type="button" onClick={controller.previewDraft} disabled={previewDisabled}>{requestState?.kind === 'preview' ? 'Preparing Preview…' : 'Preview changes'}</button></div>
       </section>
     </>}
+
+    {value && <Disclosure title="Protected routing policy" attention={value.editability !== 'editable'}><RoutingFacts projection={value} /></Disclosure>}
 
     {requestState?.kind === 'preview' && <div className="notice neutral" role="status">{requestState.canceled ? 'Discarding the late Preview response…' : 'Preparing a fresh semantic Preview…'} {!requestState.canceled && <button className="inline-link" type="button" onClick={() => controller.cancelPreview()}>Cancel Preview</button>}</div>}
     {pending && <div className="operation-running routing-operation" role="status" aria-live="polite"><span className="spinner" aria-hidden="true"></span><div><strong>Routing Apply is running</strong><p>No progress percentage is available. The broker may need its bounded transaction and recovery window.</p></div></div>}

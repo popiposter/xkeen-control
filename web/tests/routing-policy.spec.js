@@ -1,3 +1,4 @@
+import { revealDetails, revealNavigation } from './fixtures/disclosures.js'
 import { expect, test } from '@playwright/test'
 
 const origin = 'http://127.0.0.1:4173'
@@ -147,9 +148,10 @@ async function prepare(page, options = {}) {
 async function openRouting(page) {
   await page.goto('/')
   await expect(page).toHaveTitle('XKeen Control')
-  await expect(page.getByRole('button', { name: 'Routing', exact: true })).toBeVisible()
+  await revealNavigation(page)
   await page.getByRole('button', { name: 'Routing', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Typed custom rules' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Custom rules' })).toBeVisible()
+  await revealDetails(page, 'Protected routing policy')
 }
 
 async function addNamedRule(page, name) {
@@ -161,7 +163,7 @@ async function signInAfterSessionChange(page) {
   await expect(page.getByLabel('Panel password')).toBeVisible()
   await page.getByLabel('Panel password').fill('synthetic-password')
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Routing', exact: true })).toBeVisible()
+  await revealNavigation(page)
 }
 
 const requestsFor = (state, path, method) => state.requests.filter((request) => request.path === path && (!method || request.method === method))
@@ -176,7 +178,8 @@ test('adds Routing after Nodes, loads policy lazily, and never adds policy to da
   await page.goto('/')
   expect(requestsFor(state, '/api/v1/appliance/policy')).toHaveLength(0)
   await page.getByRole('button', { name: 'Routing', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Typed custom rules' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Custom rules' })).toBeVisible()
+  await revealDetails(page, 'Protected routing policy')
   await expect.poll(() => requestsFor(state, '/api/v1/appliance/policy').length).toBe(1)
   const policyReads = requestsFor(state, '/api/v1/appliance/policy').length
   await page.waitForTimeout(5_300)
@@ -338,7 +341,8 @@ test('invalidates a completed Preview when navigating away from Routing', async 
   await expect.poll(() => requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST').length).toBe(1)
   expect(requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST')[0].body).toEqual({ previewToken: 'synthetic-routing-preview-1' })
   await page.getByRole('button', { name: 'Routing', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Typed custom rules' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Custom rules' })).toBeVisible()
+  await revealDetails(page, 'Protected routing policy')
   await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toHaveCount(0)
   expect(requestsFor(state, '/api/v1/appliance/policy/apply', 'POST')).toHaveLength(0)
 })
@@ -358,7 +362,8 @@ test('invalidates an in-flight Preview when navigating away from Routing and can
   await expect.poll(() => requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST').length).toBe(1)
   expect(requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST')[0].body).toEqual({ previewToken: 'synthetic-routing-preview-1' })
   await page.getByRole('button', { name: 'Routing', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Typed custom rules' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Custom rules' })).toBeVisible()
+  await revealDetails(page, 'Protected routing policy')
   await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toHaveCount(0)
   expect(requestsFor(state, '/api/v1/appliance/policy/apply', 'POST')).toHaveLength(0)
 })
@@ -531,7 +536,8 @@ test('keeps preview and draft state out of browser storage and remains usable on
   expect(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } }))).toEqual({ local: {}, session: {} })
   await page.screenshot({ path: testInfo.outputPath('routing-desktop.png'), fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })
-  await expect(page.getByRole('heading', { name: 'Typed custom rules' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Custom rules' })).toBeVisible()
+  await revealDetails(page, 'Protected routing policy')
   await page.screenshot({ path: testInfo.outputPath('routing-mobile.png'), fullPage: true })
   expect(state.issues).toEqual([])
 })

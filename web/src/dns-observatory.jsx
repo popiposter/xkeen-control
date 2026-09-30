@@ -1,3 +1,4 @@
+import { Disclosure, WorkflowSteps } from './ui.jsx'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const EDITABILITY = Object.freeze(['editable', 'drift-detected', 'unavailable'])
@@ -493,14 +494,16 @@ export function DNSObservatorySection({ controller }) {
 
   return <div className="section-stack dns-section">
     <section className="panel dns-heading">
-      <div><span className="panel-label">DNS + Observatory</span><h2>Typed resolver policy</h2><p>Edit only safe resolver selections and bounded runtime behavior. Resolver endpoints, protected objects, domains and raw configuration remain hidden and source-owned.</p></div>
+      <div><span className="panel-label">DNS + Observatory</span><h2>Resolvers and sampling</h2><p>Choose resolvers, caching and RTT sampling. Protected settings remain read only.</p></div>
       <div className="dns-heading-actions"><small>{projection.observedAt ? `Observed ${formatTime(projection.observedAt)}` : 'Not loaded this session'}</small><button className="ghost" type="button" onClick={controller.requestRefresh} disabled={projection.loading || Boolean(pending)}>{projection.loading ? 'Reading…' : 'Refresh DNS policy'}</button></div>
     </section>
+    <WorkflowSteps stage={pending ? 'apply' : preview ? 'preview' : 'edit'} />
+
     {refreshConfirmation && <section className="dns-refresh-confirm" role="alert"><div><strong>Unsaved DNS changes</strong><span>Refreshing will replace the current draft with the latest server projection.</span></div><div className="dns-refresh-actions"><button type="button" onClick={controller.discardAndRefresh}>Discard changes and refresh</button><button className="ghost" type="button" onClick={controller.cancelRefresh}>Keep editing</button></div></section>}
     {projection.error && <div className="notice" role="alert">{projection.error}</div>}
     {refreshError && <div className="notice" role="alert">{refreshError}</div>}
     {projection.loading && !value && <div className="loading">Reading the current safe DNS and Observatory policy…</div>}
-    {value && <DNSFacts projection={value} />}
+
     {value?.editability === 'drift-detected' && <div className="dns-blocked" role="alert"><strong>DNS editing is blocked by protected-state drift.</strong><span>Explicit Refresh may restore editability after the server proves compatibility. No repair or adoption is offered here.</span></div>}
     {value?.editability === 'unavailable' && <div className="dns-blocked danger" role="alert"><strong>DNS and Observatory policy is unavailable.</strong><span>No editable defaults were synthesized. Mutation controls remain disabled.</span></div>}
 
@@ -516,6 +519,8 @@ export function DNSObservatorySection({ controller }) {
       {!controller.draftValid && <div className="notice warning" role="alert">Keep at least one resolver selected and use a whole stale TTL from 60 to 86400 seconds when Serve stale is enabled.</div>}
       <div className="dns-editor-actions"><div>{controller.lifecycleBlocked && <small className="dns-disabled-note">Lifecycle readiness is unavailable or maintenance/applying is active; new mutation requests are disabled.</small>}{controller.outcomeRequiresFreshRead && <small className="dns-disabled-note">Refresh and inspect the policy before creating another Preview.</small>}{controller.appliancePolicyUncertain && <small className="dns-disabled-note">An appliance-policy Apply has an unknown outcome. New mutations remain blocked until its controller completes a fresh read.</small>}</div><button type="button" onClick={controller.previewDraft} disabled={editorDisabled || projection.loading || !controller.draftValid}>{requestState?.kind === 'preview' ? 'Preparing Preview…' : 'Preview DNS changes'}</button></div>
     </section>}
+
+    {value && <Disclosure title="Protected DNS and Observatory" attention={value.editability !== 'editable'}><DNSFacts projection={value} /></Disclosure>}
 
     {requestState?.kind === 'preview' && <div className="notice neutral" role="status">{requestState.canceled ? 'Discarding the late DNS Preview response…' : 'Preparing a fresh DNS semantic Preview…'} {!requestState.canceled && <button className="inline-link" type="button" onClick={() => controller.cancelPreview()}>Cancel Preview</button>}</div>}
     {pending && <div className="operation-running dns-operation" role="status" aria-live="polite"><span className="spinner" aria-hidden="true"></span><div><strong>DNS Apply is running</strong><p>No progress percentage is available. The broker may need its bounded transaction and recovery window.</p></div></div>}

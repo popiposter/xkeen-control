@@ -1,3 +1,4 @@
+import { revealDetails, revealSystemSettings } from './fixtures/disclosures.js'
 import { expect, test } from '@playwright/test'
 
 const csrfToken = 'synthetic-nodes-csrf'
@@ -177,6 +178,7 @@ async function openNodes(page) {
   await expect(page).toHaveTitle('XKeen Control')
   await page.getByRole('button', { name: /^Nodes/ }).click()
   await expect(page.getByRole('heading', { name: /^Nodes/ })).toBeVisible()
+  if (await page.locator('.subscriptions-disclosure').count()) await revealDetails(page, 'Subscriptions')
 }
 
 test.afterEach(async ({ page }) => {
@@ -261,10 +263,7 @@ test('gates toolbar actions and sends one exact batch state preview', async ({ p
   await openNodes(page)
 
   const button = (name) => page.getByRole('button', { name, exact: true })
-  await expect(button('Edit / replace profile')).toBeDisabled()
-  await expect(button('Enable')).toBeDisabled()
-  await expect(button('Disable')).toBeDisabled()
-  await expect(button('Delete')).toBeDisabled()
+  await expect(page.getByRole('toolbar', { name: 'Selected node actions' })).toHaveCount(0)
 
   await page.getByLabel('Select Node 001').check()
   await expect(button('Enable')).toBeDisabled()
@@ -289,7 +288,7 @@ test('allows Full speed test beside another manual override and polls only while
   await openNodes(page)
 
   const speedTest = page.getByRole('button', { name: 'Full speed test', exact: true })
-  await expect(speedTest).toBeDisabled()
+  await expect(page.getByRole('toolbar', { name: 'Selected node actions' })).toHaveCount(0)
   await page.getByLabel('Select Node 001').check()
   expect(prepared.state.status.selection.manualOverride).toBe(`proxy-${nodeID(2)}`)
   await expect(speedTest).toBeEnabled()
@@ -325,6 +324,7 @@ test('stops manual performance polling when the Nodes workspace unmounts', async
   const performanceRequestsBeforeUnmount = prepared.state.requests.filter((request) => request.path === '/api/v1/performance').length
 
   await page.getByRole('button', { name: 'Overview', exact: true }).click()
+  await revealDetails(page, 'Selection details')
   await expect(page.getByText('Panel readiness')).toBeVisible()
   await page.waitForTimeout(1200)
   expect(prepared.state.requests.filter((request) => request.path === '/api/v1/performance')).toHaveLength(performanceRequestsBeforeUnmount)

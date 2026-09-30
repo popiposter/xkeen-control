@@ -167,4 +167,9 @@ feature is introduced. The panel remains trusted-LAN/management-VPN only.
 
 ## Maintenance rule
 
+Issue #102 separately tracks the operator-selected compact dark workspace
+redesign. Its source implementation and Draft PR qualification do not accept
+Issue #99 B, change the Slice E gate or authorize a release/live qualification.
+PR #101 remains the independently reviewable private-management hardening.
+
 After every merge, update this file only when status/sequencing changed, refresh master issue #1 if stale, and remove contradictory planning evidence. Do not duplicate detailed active-issue architecture here.

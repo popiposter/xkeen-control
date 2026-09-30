@@ -67,7 +67,7 @@ test('exposes one fixed in-memory setup flow and applies only its session token'
   const state = await prepare(page, { state: 'fresh', eligible: true, reasonCode: 'fresh', runtime: 'setup' })
   await expect(page.getByRole('button', { name: 'Prepare setup' })).toBeVisible()
   await page.getByRole('button', { name: 'Prepare setup' }).click()
-  await expect(page.getByText('Fixed setup plan')).toBeVisible()
+  await expect(page.getByText('Fixed setup plan', { exact: true })).toBeVisible()
   await expect(page.getByText('Product default', { exact: true })).toBeVisible()
   await expect(page.getByText('Empty canonical registry', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Apply setup' }).click()

@@ -1,3 +1,4 @@
+import { revealDetails, revealSystemSettings } from './fixtures/disclosures.js'
 import { expect, test } from '@playwright/test'
 
 const csrfToken = 'synthetic-backup-csrf'
@@ -94,6 +95,7 @@ test('destructive restore requires confirmation and blockers keep Apply disabled
 
 test('encrypted export validates passphrase bytes and handles reauthentication locally', async ({ page }) => {
   await prepare(page, { secretExportStatus: 401 })
+  await revealDetails(page, 'Encrypted backup')
   await page.getByLabel('Current panel password').fill('synthetic-current-password')
   await page.getByLabel('Encryption passphrase').fill('пароль')
   await page.getByLabel('Confirm passphrase').fill('пароль')
