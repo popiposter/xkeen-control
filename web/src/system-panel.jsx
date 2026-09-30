@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { NotificationsCard, useNotifications } from './notifications'
 
 const EDITABILITY = Object.freeze(['editable', 'drift-detected', 'environment-owned', 'unavailable'])
 const SOURCES = Object.freeze(['default', 'file', 'environment'])
@@ -103,7 +104,7 @@ const addressText = (address) => {
 
 const sourceLabel = (source) => source === 'environment' ? 'Environment override' : source === 'file' ? 'Persisted listener file' : 'Source default'
 const editabilityLabel = (value) => value === 'editable' ? 'Editable' : value === 'environment-owned' ? 'Environment-owned' : value === 'drift-detected' ? 'Drift detected' : 'Unavailable'
-const modeLabel = (mode) => mode === 'notify' ? 'Notify metadata' : mode === 'auto-stable' ? 'Auto-stable metadata' : 'Manual'
+const modeLabel = (mode) => mode === 'notify' ? 'Notify' : mode === 'auto-stable' ? 'Auto-stable metadata' : 'Manual'
 
 const safeCancel = (token, csrfToken) => {
   if (!token || !csrfToken) return
@@ -111,6 +112,7 @@ const safeCancel = (token, csrfToken) => {
 }
 
 export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized, active }) {
+  const notifications = useNotifications({ csrfToken, onUnauthorized, active })
   const [listener, setListener] = useState({ value: null, loading: false, error: '' })
   const [update, setUpdate] = useState({ value: null, loading: false, error: '' })
   const [preview, setPreview] = useState(null)
@@ -119,6 +121,8 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
   const [password, setPassword] = useState({ newPassword: '', confirmation: '', pending: false, error: '' })
   const [channelDraft, setChannelDraft] = useState('stable')
   const [channelPending, setChannelPending] = useState(false)
+  const [modeDraft, setModeDraft] = useState('manual')
+  const [cadenceDraft, setCadenceDraft] = useState(360)
   const [checkVersion, setCheckVersion] = useState('')
   const [checkPending, setCheckPending] = useState(false)
   const [rollbackPending, setRollbackPending] = useState(false)
@@ -166,6 +170,8 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
       setListener({ value: listenerValue, loading: false, error: '' })
       setUpdate({ value: updateValue, loading: false, error: '' })
       setChannelDraft(updateValue.policy.channel)
+      setModeDraft(updateValue.policy.mode)
+      setCadenceDraft(updateValue.policy.checkCadenceMinutes)
       return true
     } catch (cause) {
       if (requestEpoch !== epoch.current) return false
@@ -270,6 +276,23 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
       setChannelPending(false)
     }
   }, [channelDraft, channelPending, csrfToken, onUnauthorized, update.value])
+
+  const saveNotifyPolicy = async () => {
+    if (!update.value || channelPending) return
+    const requestEpoch = epoch.current
+    setChannelPending(true)
+    try {
+      const value = await postJSON('/api/v1/update/policy', csrfToken, { ...update.value.policy, mode: modeDraft, checkCadenceMinutes: Number(cadenceDraft) })
+      if (requestEpoch !== epoch.current) return
+      if (!validUpdate(value)) throw new Error('invalid')
+      setUpdate({ value, loading: false, error: '' })
+      setResult({ tone: 'success', title: 'Panel notify policy saved', message: 'Background discovery never authorizes Apply.' })
+    } catch (cause) {
+      if (requestEpoch !== epoch.current) return
+      if (cause.status === 401) onUnauthorized()
+      setResult({ tone: 'error', title: 'Panel notify policy was not saved', message: 'Refresh panel state before retrying.' })
+    } finally { if (requestEpoch === epoch.current) setChannelPending(false) }
+  }
 
   const checkUpdate = useCallback(async () => {
     const current = update.value
@@ -414,6 +437,7 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
     && !update.value.rollbackVerificationRequired
 
   return {
+    notifications, sessionKey: csrfToken, modeDraft, setModeDraft, cadenceDraft, setCadenceDraft, saveNotifyPolicy,
     listener: listener.value ? { ...listener.value, selectedHost } : null,
     update: update.value,
     listenerLoading: listener.loading,
@@ -484,7 +508,13 @@ export function SystemPanelSection({ controller, status, onOpenComponents, onOpe
         <div className="system-card-heading"><div><span className="panel-label">Signed panel release</span><h2>{update?.installed?.version || 'Unavailable'}</h2><p className="muted">Checks use the fixed signed release source. Apply is pinned to the exact checked version.</p></div>{update && <span className={`chip ${update.signingKeyConfigured ? 'green' : 'amber'}`}>{update.signingKeyConfigured ? 'Signing key configured' : 'Signing key unavailable'}</span>}</div>
         {update && <>
           <div className="system-facts-grid"><Fact label="Installed source" value={update.installed?.sourceCommit ? 'Signed release commit' : 'Unknown'} /><Fact label="Effective channel" value={update.policy.channel} /><Fact label="Rollback" value={update.rollbackVerificationRequired ? 'Verify required' : update.rollbackAvailable ? 'Available' : 'None'} /><Fact label="Policy mode" value={modeLabel(update.policy.mode)} /></div>
-          {update.policy.mode !== 'manual' && <p className="system-blocked">{modeLabel(update.policy.mode)} is persisted metadata only. No automatic panel update scheduler is active.</p>}
+          {update.policy.mode === 'notify' && update.policy.channel === 'stable' && <p className="system-blocked">Stable notify performs signed release discovery after the configured cadence. It never authorizes Apply. Scheduler: {['waiting', 'running', 'completed', 'skipped', 'failed'].includes(update.scheduler?.state) ? update.scheduler.state : 'unavailable'}. Notification: {['idle', 'notified', 'failed', 'unconfigured', 'disabled'].includes(update.scheduler?.notificationState) ? update.scheduler.notificationState : 'idle'}.</p>}
+          {update.policy.mode === 'notify' && update.policy.channel === 'beta' && <p className="system-blocked">Unsupported channel: beta notify requires an explicit version and performs no background discovery.</p>}
+          {update.policy.mode === 'auto-stable' && <p className="system-blocked">Unsupported mode: auto-stable is persisted metadata only. No automatic download or install is active.</p>}
+          {update.policy.mode === 'notify' && update.policy.channel === 'stable' && <div className="system-facts-grid"><Fact label="Next background check" value={Number.isFinite(Date.parse(update.scheduler?.nextDueAt)) ? new Date(update.scheduler.nextDueAt).toLocaleString() : '—'} /><Fact label="Last background check" value={Number.isFinite(Date.parse(update.scheduler?.lastCheckAt)) ? new Date(update.scheduler.lastCheckAt).toLocaleString() : '—'} /><Fact label="Background skip" value={['lifecycle-unavailable', 'maintenance', 'applying', 'policy-changed', 'lifecycle-changed'].includes(update.scheduler?.lastSkipReason) ? update.scheduler.lastSkipReason : '—'} /><Fact label="Background error" value={['discovery-failed', 'delivery-failed'].includes(update.scheduler?.errorCode) ? update.scheduler.errorCode : '—'} /></div>}
+          <label className="system-select-field">Panel notification mode<select aria-label="Panel notification mode" value={controller.modeDraft} onChange={(event) => controller.setModeDraft(event.target.value)} disabled={controller.channelPending}><option value="manual">Manual</option><option value="notify">Notify</option><option value="auto-stable" disabled>Auto-stable (unsupported)</option></select></label>
+          <label className="system-select-field">Panel check cadence (minutes)<input type="number" min="60" max="10080" value={controller.cadenceDraft} onChange={(event) => controller.setCadenceDraft(event.target.value)} disabled={controller.channelPending} /></label>
+          <div className="system-card-actions"><button type="button" onClick={controller.saveNotifyPolicy} disabled={controller.channelPending || Number(controller.cadenceDraft) < 60 || Number(controller.cadenceDraft) > 10080 || (controller.modeDraft === update.policy.mode && Number(controller.cadenceDraft) === update.policy.checkCadenceMinutes)}>Save notify policy</button></div>
           {controller.handoffState === 'update-unknown' && <p className="system-blocked" role="alert">The panel update handoff outcome is unknown. Reconnect and verify the installed version, then run a fresh explicit Check before another Apply.</p>}
           {controller.handoffState === 'rollback-unknown' && <p className="system-blocked" role="alert">The panel rollback outcome is unknown. Reconnect and verify the retained generation before another action.</p>}
           {update.rollbackVerificationRequired && <p className="system-blocked" role="alert">A previous rollback handoff is unproven in this process. Verification is required; no replay is available.</p>}
@@ -497,6 +527,8 @@ export function SystemPanelSection({ controller, status, onOpenComponents, onOpe
         </>}
         {controller.updateError && <p className="system-blocked" role="alert">{controller.updateError}</p>}
       </section>
+
+      <NotificationsCard controller={controller.notifications} sessionKey={controller.sessionKey} />
 
       <section className="panel system-panel-card" aria-label="Source-owned runtime facts">
         <div><span className="panel-label">Source-owned/runtime facts</span><h2>Operational boundary</h2><p className="muted">System / Panel summarizes safe facts owned by the running control plane. Raw DNS, routing, resolver and generated-outbound data stay in their owning workspaces.</p></div>

@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -20,6 +22,12 @@ type policyCheckStub struct {
 	result    CheckResult
 	resultFor func(CheckRequest) CheckResult
 	err       error
+}
+
+type scheduledCheckFunc func(context.Context, CheckRequest) (CheckResult, error)
+
+func (check scheduledCheckFunc) Check(ctx context.Context, request CheckRequest) (CheckResult, error) {
+	return check(ctx, request)
 }
 
 func (stub *policyCheckStub) Check(_ context.Context, request CheckRequest) (CheckResult, error) {
@@ -331,6 +339,71 @@ func TestCheckSchedulerUsesFixedSequentialTuplesAndRAMNotificationDedupe(t *test
 	}
 }
 
+func TestCheckSchedulerFailedDeliveryRetriesNextNormalCycle(t *testing.T) {
+	manager := newPolicyManager(filepath.Join(t.TempDir(), "component-policy.json"))
+	manager.SetPolicy(ComponentPolicy{SchemaVersion: 1, Mode: ComponentPolicyModeNotify, CheckCadenceMinutes: 60})
+	now := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+	calls := 0
+	fail := true
+	scheduler := NewCheckScheduler(CheckSchedulerConfig{
+		Policy: manager, Now: func() time.Time { return now },
+		Checks: &policyCheckStub{resultFor: func(request CheckRequest) CheckResult {
+			return validPolicyScheduledResult(request, now, "update-available")
+		}},
+		Lifecycle: func() (LifecycleProjection, bool) { return LifecycleProjection{}, true },
+		Notification: NotificationHookFunc(func(context.Context, NotificationEvent) error {
+			calls++
+			if fail {
+				return errors.New("synthetic failure")
+			}
+			return nil
+		}),
+	})
+	epoch := manager.snapshot().epoch
+	scheduler.runCycle(context.Background(), epoch)
+	if calls != 3 || len(scheduler.notified) != 0 || scheduler.status.NotificationState != "failed" || !scheduler.nextDue.Equal(now.Add(time.Hour)) {
+		t.Fatal("failure retried/deduped outside cadence")
+	}
+	now = now.Add(time.Hour)
+	fail = false
+	scheduler.runCycle(context.Background(), epoch)
+	if calls != 6 || len(scheduler.notified) != 3 {
+		t.Fatal("next cycle did not retry")
+	}
+	now = now.Add(time.Hour)
+	scheduler.runCycle(context.Background(), epoch)
+	if calls != 6 {
+		t.Fatal("success did not dedupe")
+	}
+}
+
+func TestCheckSchedulerCycleKeepsFailureVisibleAndRetriesOnlyFailedCandidate(t *testing.T) {
+	manager := newPolicyManager(filepath.Join(t.TempDir(), "component-policy.json"))
+	manager.SetPolicy(ComponentPolicy{SchemaVersion: 1, Mode: ComponentPolicyModeNotify, CheckCadenceMinutes: 60})
+	now := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
+	fail := true
+	calls := 0
+	scheduler := NewCheckScheduler(CheckSchedulerConfig{Policy: manager, Now: func() time.Time { return now }, Lifecycle: func() (LifecycleProjection, bool) { return LifecycleProjection{}, true }, Checks: &policyCheckStub{resultFor: func(request CheckRequest) CheckResult {
+		return validPolicyScheduledResult(request, now, "update-available")
+	}}, Notification: NotificationHookFunc(func(_ context.Context, event NotificationEvent) error {
+		calls++
+		if fail && event.Component == KindXray {
+			return errors.New("synthetic failure")
+		}
+		return nil
+	})})
+	scheduler.runCycle(context.Background(), manager.snapshot().epoch)
+	if scheduler.status.NotificationState != "failed" || len(scheduler.notified) != 2 || calls != 3 {
+		t.Fatal("mixed cycle hid failure")
+	}
+	fail = false
+	now = now.Add(time.Hour)
+	scheduler.runCycle(context.Background(), manager.snapshot().epoch)
+	if scheduler.status.NotificationState != "notified" || len(scheduler.notified) != 3 || calls != 4 {
+		t.Fatal("successful candidates retried or failed candidate suppressed")
+	}
+}
+
 func TestCheckSchedulerBoundsNotificationHook(t *testing.T) {
 	now := time.Date(2026, time.September, 16, 12, 0, 0, 0, time.UTC)
 	manager := newPolicyManager(filepath.Join(t.TempDir(), "component-policy.json"))
@@ -364,6 +437,208 @@ func TestCheckSchedulerBoundsNotificationHook(t *testing.T) {
 	close(release)
 }
 
+func TestCheckSchedulerNotificationLatencyPreservesLaterCheckBudget(t *testing.T) {
+	manager := newPolicyManager(filepath.Join(t.TempDir(), "component-policy.json"))
+	if _, err := manager.SetPolicy(ComponentPolicy{SchemaVersion: 1, Mode: ComponentPolicyModeNotify, CheckCadenceMinutes: 60}); err != nil {
+		t.Fatal(err)
+	}
+	// Scale the production limits together. Wait on deadlines, not sleeps or
+	// scheduler polling: every check consumes its full metadata allowance and
+	// every delivery consumes its full separate allowance.
+	const scale = 300
+	checkTimeout := MaxCheckDuration / scale
+	notificationTimeout := DefaultComponentNotificationTimeout / scale
+	var requests []CheckRequest
+	notifications := make(chan NotificationEvent, len(componentCheckTuples))
+	scheduler := NewCheckScheduler(CheckSchedulerConfig{
+		Policy:              manager,
+		Lifecycle:           func() (LifecycleProjection, bool) { return LifecycleProjection{}, true },
+		CycleTimeout:        DefaultComponentSchedulerCycleTimeout / scale,
+		NotificationTimeout: notificationTimeout,
+		Checks: scheduledCheckFunc(func(ctx context.Context, request CheckRequest) (CheckResult, error) {
+			requests = append(requests, request)
+			deadline, ok := ctx.Deadline()
+			if !ok || time.Until(deadline) < checkTimeout {
+				t.Errorf("%s lost its full check allowance after notification latency", request.Component)
+				return CheckResult{}, ErrCheckTimeout
+			}
+			checkContext, cancel := context.WithTimeout(ctx, checkTimeout)
+			defer cancel()
+			<-checkContext.Done()
+			if ctx.Err() != nil {
+				return CheckResult{}, ErrCheckTimeout
+			}
+			return validPolicyScheduledResult(request, time.Now(), "update-available"), nil
+		}),
+		Notification: NotificationHookFunc(func(ctx context.Context, event NotificationEvent) error {
+			notifications <- event
+			<-ctx.Done()
+			return ctx.Err()
+		}),
+	})
+	scheduler.runCycle(context.Background(), manager.snapshot().epoch)
+	status := scheduler.Status()
+	if !reflect.DeepEqual(requests, fixedComponentCheckTuples()) || len(notifications) != len(componentCheckTuples) || status.State != "completed" || status.NotificationState != "failed" || len(scheduler.notified) != 0 {
+		t.Fatalf("bounded cycle requests=%v status=%+v dedupe=%v", requests, status, scheduler.notified)
+	}
+	if DefaultComponentSchedulerCycleTimeout != time.Duration(len(componentCheckTuples))*(MaxCheckDuration+DefaultComponentNotificationTimeout) {
+		t.Fatal("production cycle must include all check and notification allowances")
+	}
+}
+
+func TestCheckSchedulerPolicyChangeDuringCheckSuppressesNotification(t *testing.T) {
+	for _, mode := range []string{ComponentPolicyModeManual, ComponentPolicyModeOff} {
+		t.Run(mode, func(t *testing.T) {
+			manager := newPolicyManager(filepath.Join(t.TempDir(), "component-policy.json"))
+			policy := ComponentPolicy{SchemaVersion: 1, Mode: ComponentPolicyModeNotify, CheckCadenceMinutes: 60}
+			if _, err := manager.SetPolicy(policy); err != nil {
+				t.Fatal(err)
+			}
+			checkStarted := make(chan struct{})
+			releaseCheck := make(chan struct{})
+			done := make(chan struct{})
+			notifications := make(chan NotificationEvent, len(componentCheckTuples))
+			var requests []CheckRequest
+			scheduler := NewCheckScheduler(CheckSchedulerConfig{
+				Policy:    manager,
+				Lifecycle: func() (LifecycleProjection, bool) { return LifecycleProjection{}, true },
+				Checks: scheduledCheckFunc(func(ctx context.Context, request CheckRequest) (CheckResult, error) {
+					requests = append(requests, request)
+					close(checkStarted)
+					select {
+					case <-releaseCheck:
+						return validPolicyScheduledResult(request, time.Now(), "update-available"), nil
+					case <-ctx.Done():
+						return CheckResult{}, ctx.Err()
+					}
+				}),
+				Notification: NotificationHookFunc(func(_ context.Context, event NotificationEvent) error {
+					notifications <- event
+					return nil
+				}),
+			})
+			manager.SetScheduler(scheduler)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			epoch := manager.snapshot().epoch
+			go func() {
+				defer close(done)
+				scheduler.runCycle(ctx, epoch)
+			}()
+			select {
+			case <-checkStarted:
+			case <-ctx.Done():
+				t.Fatal("scheduled check did not start")
+			}
+			policy.Mode = mode
+			_, err := manager.SetPolicy(policy)
+			// The old Check completes only AFTER the persisted mutation returns.
+			close(releaseCheck)
+			select {
+			case <-done:
+			case <-ctx.Done():
+				t.Fatal("scheduled cycle did not finish")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			status := scheduler.Status()
+			if len(notifications) != 0 || len(scheduler.notified) != 0 || len(requests) != 1 || status.Enabled || status.State != "disabled" || status.NotificationState != "idle" || status.Results[KindXray].State != "checked" {
+				t.Fatalf("delivery after %s mutation: calls=%d requests=%v status=%+v", mode, len(notifications), requests, status)
+			}
+		})
+	}
+}
+
+func TestCheckSchedulerAtomicNotificationAdmission(t *testing.T) {
+	for _, change := range []string{"manual", "off", "notify-new-epoch"} {
+		for _, admitted := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/admitted=%t", change, admitted), func(t *testing.T) {
+				manager := newPolicyManager(filepath.Join(t.TempDir(), "component-policy.json"))
+				policy := ComponentPolicy{SchemaVersion: 1, Mode: ComponentPolicyModeNotify, CheckCadenceMinutes: 60}
+				if _, err := manager.SetPolicy(policy); err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+				var releaseOnce sync.Once
+				unblock := func() { releaseOnce.Do(func() { close(release) }) }
+				defer unblock()
+				calls := atomic.Int32{}
+				scheduler := NewCheckScheduler(CheckSchedulerConfig{
+					Policy: manager,
+					Checks: &policyCheckStub{resultFor: func(request CheckRequest) CheckResult {
+						return validPolicyScheduledResult(request, time.Now(), "update-available")
+					}},
+					Lifecycle: func() (LifecycleProjection, bool) { return LifecycleProjection{}, true },
+					Notification: NotificationHookFunc(func(ctx context.Context, _ NotificationEvent) error {
+						calls.Add(1)
+						if admitted {
+							close(entered)
+							select {
+							case <-release:
+							case <-ctx.Done():
+								return ctx.Err()
+							}
+						}
+						return nil
+					}),
+				})
+				manager.SetScheduler(scheduler)
+				if !admitted {
+					scheduler.beforeNotificationAdmission = func() { close(entered); <-release }
+				}
+				epoch := manager.snapshot().epoch
+				go func() { defer close(done); scheduler.runCycle(ctx, epoch) }()
+				select {
+				case <-entered:
+				case <-ctx.Done():
+					t.Fatal("notification boundary not reached")
+				}
+				mutation := make(chan error, 1)
+				go func() {
+					updated := policy
+					updated.Mode = change
+					if change == "notify-new-epoch" {
+						updated.Mode = ComponentPolicyModeManual
+					}
+					_, err := manager.SetPolicy(updated)
+					if err == nil && change == "notify-new-epoch" {
+						_, err = manager.SetPolicy(policy) // Same values, different epoch.
+					}
+					mutation <- err
+				}()
+				select {
+				case err := <-mutation:
+					if err != nil {
+						t.Fatal(err)
+					}
+				case <-ctx.Done():
+					t.Fatal("policy mutation waited on notification network work")
+				}
+				// Successful mutation must precede release of the old send path.
+				unblock()
+				select {
+				case <-done:
+				case <-ctx.Done():
+					t.Fatal("notification cycle did not finish")
+				}
+				want := int32(0)
+				if admitted {
+					want = 1
+				}
+				if calls.Load() != want || len(scheduler.notified) != int(want) {
+					t.Fatalf("send calls=%d dedupe=%v, want %d", calls.Load(), scheduler.notified, want)
+				}
+				if admitted && scheduler.status.NotificationState != "notified" {
+					t.Fatal("already admitted delivery did not complete successfully")
+				}
+			})
+		}
+	}
+}
+
 func TestCheckSchedulerNotificationIdentityTracksExactCandidates(t *testing.T) {
 	now := time.Date(2026, time.September, 16, 12, 0, 0, 0, time.UTC)
 	manager := newPolicyManager(filepath.Join(t.TempDir(), "component-policy.json"))
@@ -383,21 +658,21 @@ func TestCheckSchedulerNotificationIdentityTracksExactCandidates(t *testing.T) {
 	xray := validPolicyScheduledResult(componentCheckTuples[0], now, "update-available")
 	xrayChanged := validPolicyScheduledResult(componentCheckTuples[0], now, "update-available")
 	xrayChanged.Candidate.SHA256 = strings.Repeat("b", 64)
-	scheduler.notifyCandidate(context.Background(), componentCheckTuples[0], xray)
-	scheduler.notifyCandidate(context.Background(), componentCheckTuples[0], xrayChanged)
+	scheduler.notifyCandidate(context.Background(), manager.snapshot().epoch, componentCheckTuples[0], xray)
+	scheduler.notifyCandidate(context.Background(), manager.snapshot().epoch, componentCheckTuples[0], xrayChanged)
 
 	xkeen := validPolicyScheduledResult(componentCheckTuples[2], now, "changed")
 	xkeenChanged := validPolicyScheduledResult(componentCheckTuples[2], now, "changed")
 	xkeenChanged.Candidate.SHA256 = strings.Repeat("b", 64)
-	scheduler.notifyCandidate(context.Background(), componentCheckTuples[2], xkeen)
-	scheduler.notifyCandidate(context.Background(), componentCheckTuples[2], xkeenChanged)
+	scheduler.notifyCandidate(context.Background(), manager.snapshot().epoch, componentCheckTuples[2], xkeen)
+	scheduler.notifyCandidate(context.Background(), manager.snapshot().epoch, componentCheckTuples[2], xkeenChanged)
 
 	geodata := validPolicyScheduledResult(componentCheckTuples[1], now, "changed")
 	geodataChanged := validPolicyScheduledResult(componentCheckTuples[1], now, "changed")
 	geodataChanged.Items = append([]CheckItem(nil), geodata.Items...)
 	geodataChanged.Items[4].SHA256 = strings.Repeat("f", 64)
-	scheduler.notifyCandidate(context.Background(), componentCheckTuples[1], geodata)
-	scheduler.notifyCandidate(context.Background(), componentCheckTuples[1], geodataChanged)
+	scheduler.notifyCandidate(context.Background(), manager.snapshot().epoch, componentCheckTuples[1], geodata)
+	scheduler.notifyCandidate(context.Background(), manager.snapshot().epoch, componentCheckTuples[1], geodataChanged)
 
 	if len(events) != 6 {
 		t.Fatalf("exact candidate notification count = %d, want 6", len(events))
@@ -434,13 +709,13 @@ func TestCheckSchedulerSuppressesUnknownInstalledState(t *testing.T) {
 	})
 	request := componentCheckTuples[0]
 	unknown := validPolicyScheduledResult(request, now, "unknown")
-	scheduler.notifyCandidate(context.Background(), request, unknown)
+	scheduler.notifyCandidate(context.Background(), manager.snapshot().epoch, request, unknown)
 	if len(events) != 0 {
 		t.Fatalf("unknown installed state emitted %d notifications", len(events))
 	}
 
 	knownAbsent := validPolicyScheduledResult(request, now, "not-installed")
-	scheduler.notifyCandidate(context.Background(), request, knownAbsent)
+	scheduler.notifyCandidate(context.Background(), manager.snapshot().epoch, request, knownAbsent)
 	if len(events) != 1 || events[0].InstalledState != "not-installed" {
 		t.Fatalf("known absent installed state events = %+v", events)
 	}

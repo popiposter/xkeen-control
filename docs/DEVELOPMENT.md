@@ -299,6 +299,30 @@ The HTTP regressions cover authenticated same-origin/CSRF routes, strict query/m
 
 ## Qualification inventory
 
+Issue #99 A focused outbound notification qualification uses synthetic local
+authorities, injected transport/DNS fixtures and locally signed release metadata:
+
+```sh
+go test -count=1 ./internal/notifications ./internal/components ./internal/update ./internal/httpapi ./cmd/xkeen-control
+npm --prefix web run test:components-ui
+npm --prefix web run test:system-panel-ui
+```
+
+It verifies protected strict authority reads/atomic mutations, secretless API
+and log projections, fixed Telegram host/TLS/no-proxy/no-redirect behavior,
+unsafe DNS rejection, bounded sanitized delivery errors, disabled explicit test,
+component success dedupe and next-cadence retry, and read-only panel discovery
+that cannot arm or alter explicit checked Apply. Deterministic concurrency
+fixtures pause both schedulers at final delivery admission, complete policy
+mutation, and verify no old-epoch send starts; already admitted sends finish
+without blocking policy mutation. System browser fixtures cover
+credential clearing/storage absence, the notification controls, stable notify
+and unsupported beta/auto-stable projections. No real Telegram credential,
+provider passthrough, router access or live delivery is part of these tests.
+The final clean exact-HEAD full gate includes these Go/browser regressions and
+the existing component/release/integration suites. Section B remains a separate
+review/implementation gate; A does not close Issue #99.
+
 | Entry point | Unique purpose | Aggregate full behavior |
 | --- | --- | --- |
 | `go test -count=1 ./...` | Complete normal Go package suite | Once |

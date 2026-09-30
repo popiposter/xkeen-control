@@ -20,6 +20,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/components"
 	"github.com/popiposter/xkeen-control/internal/dnsobservatory"
 	"github.com/popiposter/xkeen-control/internal/nodes"
+	"github.com/popiposter/xkeen-control/internal/notifications"
 	"github.com/popiposter/xkeen-control/internal/panellistener"
 	"github.com/popiposter/xkeen-control/internal/performancepolicy"
 	"github.com/popiposter/xkeen-control/internal/release"
@@ -129,6 +130,7 @@ type Server struct {
 	componentPolicy    ComponentPolicyService
 	setup              components.SetupAPI
 	updates            panelupdate.Service
+	notifications      *notifications.Service
 	backup             BackupService
 	restore            RestoreService
 	policy             RoutingPolicyService
@@ -159,6 +161,7 @@ type Config struct {
 	ComponentPolicy    ComponentPolicyService
 	Setup              components.SetupAPI
 	Updates            panelupdate.Service
+	Notifications      *notifications.Service
 	Backup             BackupService
 	Restore            RestoreService
 	Policy             RoutingPolicyService
@@ -171,7 +174,7 @@ func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, updates: config.Updates, backup: config.Backup, restore: config.Restore, policy: config.Policy, dnsObservatory: config.DNSObservatory, performancePolicy: config.PerformancePolicy, listener: config.Listener, restorePreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, restore: config.Restore, policy: config.Policy, dnsObservatory: config.DNSObservatory, performancePolicy: config.PerformancePolicy, listener: config.Listener, restorePreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -196,6 +199,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/performance/policy", "/api/v1/performance/policy/preview", "/api/v1/performance/policy/apply", "/api/v1/performance/policy/cancel",
 		"/api/v1/panel/listener", "/api/v1/panel/listener/preview", "/api/v1/panel/listener/apply", "/api/v1/panel/listener/cancel",
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
+		"/api/v1/notifications", "/api/v1/notifications/configure", "/api/v1/notifications/enabled", "/api/v1/notifications/test", "/api/v1/notifications/clear",
 		"/api/v1/session/password",
 		"/api/v1/benchmark/run", "/api/v1/performance/manual-node",
 		"/api/v1/backup/export", "/api/v1/backup/export-secret",
@@ -234,6 +238,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/api/v1/notifications", "/api/v1/notifications/configure", "/api/v1/notifications/enabled", "/api/v1/notifications/test", "/api/v1/notifications/clear":
+		s.handleNotifications(w, r)
 	case "/api/v1/session/login":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)

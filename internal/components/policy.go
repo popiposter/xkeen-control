@@ -29,8 +29,9 @@ const (
 	MaxComponentPolicyCadenceMinutes     = 7 * 24 * 60
 	MaxComponentPolicyBytes              = 4 << 10
 
-	DefaultComponentSchedulerCycleTimeout = 3 * MaxCheckDuration
-	DefaultComponentNotificationTimeout   = 1 * time.Second
+	DefaultComponentNotificationTimeout = 5 * time.Second
+	// One hard cycle bound includes each fixed metadata check and its delivery.
+	DefaultComponentSchedulerCycleTimeout = time.Duration(len(componentCheckTuples)) * (MaxCheckDuration + DefaultComponentNotificationTimeout)
 )
 
 var (
@@ -419,6 +420,25 @@ func (manager *PolicyManager) allowScheduled(epoch uint64) bool {
 	return evaluation.policy.Mode == ComponentPolicyModeNotify && evaluation.epoch == epoch
 }
 
+// startScheduledNotification linearizes delivery admission with SetPolicy.
+// Launch is part of admission, so no caller can retain an unchecked start
+// callback across a policy mutation. The bounded delivery runs independently;
+// neither this policy mutex nor any lifecycle ownership is held while waiting.
+func (manager *PolicyManager) startScheduledNotification(ctx context.Context, epoch uint64, hook NotificationHook, event NotificationEvent) <-chan error {
+	if manager == nil {
+		return nil
+	}
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	evaluation := manager.snapshotLocked()
+	if !evaluation.valid || evaluation.policy.Mode != ComponentPolicyModeNotify || evaluation.epoch != epoch || ctx.Err() != nil {
+		return nil
+	}
+	result := make(chan error, 1)
+	go func() { result <- hook.Notify(ctx, event) }()
+	return result
+}
+
 type policyEvaluation struct {
 	policy     ComponentPolicy
 	valid      bool
@@ -526,6 +546,8 @@ type CheckScheduler struct {
 	nextDue     time.Time
 	status      SchedulerStatus
 	notified    map[ComponentKind]string
+
+	beforeNotificationAdmission func() // In-package concurrency test seam; nil in production.
 }
 
 func NewCheckScheduler(config CheckSchedulerConfig) *CheckScheduler {
@@ -764,6 +786,7 @@ func (scheduler *CheckScheduler) runCycle(parent context.Context, epoch uint64) 
 	scheduler.mu.Lock()
 	scheduler.status.Enabled = true
 	scheduler.status.State = "running"
+	scheduler.status.NotificationState = "idle"
 	scheduler.status.NextDueAt = nil
 	scheduler.status.LastSkipReason = ""
 	scheduler.mu.Unlock()
@@ -790,7 +813,12 @@ func (scheduler *CheckScheduler) runCycle(parent context.Context, epoch uint64) 
 			continue
 		}
 		results[request.Component] = scheduledCheckStatus(result)
-		scheduler.notifyCandidate(cycleContext, request, result)
+		// A policy mutation may have completed while the metadata Check was
+		// in flight. Skip preparation if its epoch changed; final delivery
+		// admission below also serializes the launch with policy mutation.
+		if scheduler.policy.allowScheduled(epoch) {
+			scheduler.notifyCandidate(cycleContext, epoch, request, result)
+		}
 	}
 
 	completedAt := scheduler.clock()
@@ -983,21 +1011,25 @@ func schedulerErrorCode(err error) string {
 	}
 }
 
-func (scheduler *CheckScheduler) notifyCandidate(ctx context.Context, request CheckRequest, result CheckResult) {
+func (scheduler *CheckScheduler) notifyCandidate(ctx context.Context, epoch uint64, request CheckRequest, result CheckResult) {
 	identity := safeCandidateIdentity(result)
 	installedState := safeInstalledState(result.InstalledState)
 	if !result.Eligible || identity == "" || !actionableInstalledState(installedState) {
+		scheduler.mu.Lock()
+		delete(scheduler.notified, request.Component)
+		scheduler.mu.Unlock()
 		return
 	}
 	fingerprint := string(request.Component) + "\x00" + request.Channel + "\x00" + identity + "\x00" + installedState
 	scheduler.mu.Lock()
 	if scheduler.notified[request.Component] == fingerprint {
+		if scheduler.status.NotificationState == "idle" {
+			scheduler.status.NotificationState = "notified"
+		}
 		scheduler.mu.Unlock()
 		return
 	}
-	// Mark before invoking the hook so a failed hook cannot cause an immediate
-	// retry loop. A later process restart intentionally starts a new RAM epoch.
-	scheduler.notified[request.Component] = fingerprint
+	delete(scheduler.notified, request.Component)
 	scheduler.mu.Unlock()
 
 	eventTime := result.CheckedAt.UTC()
@@ -1013,13 +1045,20 @@ func (scheduler *CheckScheduler) notifyCandidate(ctx context.Context, request Ch
 		ReasonCode:        safeSchedulerReason(result.ReasonCode),
 	}
 	if scheduler.notification == nil {
+		scheduler.mu.Lock()
+		scheduler.status.NotificationState = "unconfigured"
+		scheduler.mu.Unlock()
 		return
 	}
 	notificationContext, cancel := context.WithTimeout(ctx, scheduler.notificationTimeout)
-	notificationResult := make(chan error, 1)
-	go func() {
-		notificationResult <- scheduler.notification.Notify(notificationContext, event)
-	}()
+	defer cancel()
+	if scheduler.beforeNotificationAdmission != nil {
+		scheduler.beforeNotificationAdmission()
+	}
+	notificationResult := scheduler.policy.startScheduledNotification(notificationContext, epoch, scheduler.notification, event)
+	if notificationResult == nil {
+		return
+	}
 	var err error
 	select {
 	case err = <-notificationResult:
@@ -1029,9 +1068,23 @@ func (scheduler *CheckScheduler) notifyCandidate(ctx context.Context, request Ch
 	cancel()
 	scheduler.mu.Lock()
 	if err != nil {
-		scheduler.status.NotificationState = "failed"
+		notificationState := "failed"
+		if state, ok := err.(interface{ NotificationState() string }); ok {
+			switch state.NotificationState() {
+			case "unconfigured", "disabled":
+				notificationState = state.NotificationState()
+			}
+		}
+		if scheduler.status.NotificationState != "failed" {
+			scheduler.status.NotificationState = notificationState
+		}
 	} else {
-		scheduler.status.NotificationState = "notified"
+		// Each fixed component is checked once per normal cycle. Failed sends
+		// are intentionally absent from this bounded successful-delivery map.
+		scheduler.notified[request.Component] = fingerprint
+		if scheduler.status.NotificationState == "idle" {
+			scheduler.status.NotificationState = "notified"
+		}
 	}
 	scheduler.mu.Unlock()
 }

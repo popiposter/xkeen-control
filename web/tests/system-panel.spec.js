@@ -35,6 +35,7 @@ async function prepare(page, options = {}) {
     issues: [],
     previews: new Map(),
     checked: null,
+    notification: { provider: 'telegram', configured: false, enabled: false, authorityState: 'unconfigured', deliveryState: 'idle' },
     lifecycle: Object.hasOwn(options, 'lifecycle') ? options.lifecycle : status.lifecycle,
   }
   page.on('pageerror', (error) => state.issues.push(`pageerror: ${error.message}`))
@@ -73,6 +74,14 @@ async function prepare(page, options = {}) {
       }
       case '/api/v1/panel/listener/cancel': state.previews.delete(body.previewToken); return json(route, { canceled: true })
       case '/api/v1/update': return json(route, state.update)
+      case '/api/v1/notifications': return json(route, state.notification)
+      case '/api/v1/notifications/configure':
+        state.notification = { ...state.notification, configured: true, enabled: false, authorityState: 'configured' }
+        if (options.rejectNotificationConfigure) return json(route, { error: 'synthetic_notification_token_sentinel', code: 'invalid-request' }, 400)
+        return json(route, state.notification)
+      case '/api/v1/notifications/enabled': state.notification.enabled = body.enabled; return json(route, state.notification)
+      case '/api/v1/notifications/test': state.notification.deliveryState = 'delivered'; return json(route, state.notification)
+      case '/api/v1/notifications/clear': state.notification = { provider: 'telegram', configured: false, enabled: false, authorityState: 'unconfigured', deliveryState: 'idle' }; return json(route, state.notification)
       case '/api/v1/update/policy':
         state.update = { ...state.update, channel: body.channel, policy: { ...state.update.policy, ...body }, latestCompatibleVersion: null, latestChannel: null, latestSource: '' }
         return json(route, state.update)
@@ -98,6 +107,81 @@ async function prepare(page, options = {}) {
   return state
 }
 
+test('configures tests enables disables and clears without redisplaying or storing credentials', async ({ page }) => {
+  const state = await prepare(page); page.__systemIssues = state.issues
+  await page.goto('/')
+  await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+  const card = page.getByRole('region', { name: 'Notifications', exact: true })
+  await expect(card).toBeVisible()
+  await page.getByLabel('Telegram bot token').fill('123456:synthetic_notification_token_sentinel')
+  await page.getByLabel('Telegram chat ID').fill('-1234567890123')
+  expect(await page.getByLabel('Telegram bot token').getAttribute('type')).toBe('password')
+  expect(await page.getByLabel('Telegram chat ID').getAttribute('type')).toBe('password')
+  await page.getByRole('button', { name: 'Configure notifications', exact: true }).click()
+  await expect(page.getByLabel('Telegram bot token')).toHaveValue('')
+  await expect(page.getByLabel('Telegram chat ID')).toHaveValue('')
+  await expect(card).toContainText('Disabled')
+  await page.getByRole('button', { name: 'Send test notification', exact: true }).click()
+  await expect(card).toContainText('Test notification delivered.')
+  expect(state.notification.enabled).toBe(false)
+  await page.getByRole('button', { name: 'Enable notifications', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Disable notifications', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'Disable notifications', exact: true }).click()
+  await page.getByRole('button', { name: 'Clear notifications', exact: true }).click()
+  await expect(card).toContainText('unconfigured')
+  const mutations = state.requests.filter(({ path, method }) => path.startsWith('/api/v1/notifications/') && method === 'POST')
+  expect(mutations.map(({ body }) => body)).toEqual([{ botToken: '123456:synthetic_notification_token_sentinel', chatId: '-1234567890123' }, {}, { enabled: true }, { enabled: false }, {}])
+  expect(mutations.every(({ csrf }) => csrf === csrfToken)).toBe(true)
+  expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([0, 0])
+  expect(await page.locator('body').textContent()).not.toContain('synthetic_notification_token_sentinel')
+  expect(await page.locator('body').textContent()).not.toContain('-1234567890123')
+  await page.screenshot({ path: '../dist/qualification/issue99/notifications-desktop.png', fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(card).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.screenshot({ path: '../dist/qualification/issue99/notifications-mobile.png', fullPage: true })
+})
+
+test('clears submitted credentials on rejection and navigation and discards raw errors', async ({ page }) => {
+  const state = await prepare(page, { rejectNotificationConfigure: true }); page.__systemIssues = state.issues
+  await page.goto('/')
+  await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+  await page.getByLabel('Telegram bot token').fill('123456:synthetic_notification_token_sentinel')
+  await page.getByLabel('Telegram chat ID').fill('-1234567890123')
+  await page.getByRole('button', { name: 'Configure notifications', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Notifications' })).toContainText('Notification operation failed.')
+  await expect(page.getByLabel('Telegram bot token')).toHaveValue('')
+  await expect(page.getByLabel('Telegram chat ID')).toHaveValue('')
+  expect(await page.locator('body').textContent()).not.toContain('synthetic_notification_token_sentinel')
+  await page.getByLabel('Telegram bot token').fill('unsent_secret_sentinel')
+  await page.getByRole('button', { name: 'Overview', exact: true }).click()
+  await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+  await expect(page.getByLabel('Telegram bot token')).toHaveValue('')
+})
+
+for (const [channel, mode, text] of [['stable', 'notify', 'Background discovery never'], ['beta', 'notify', 'Unsupported channel'], ['stable', 'auto-stable', 'Unsupported mode']]) {
+  test(`projects ${channel} ${mode} without arming Apply or explicit Check`, async ({ page }) => {
+    const state = await prepare(page, { update: { channel, policy: { channel, mode, checkCadenceMinutes: 60 }, scheduler: { state: mode === 'auto-stable' ? 'unsupported-mode' : channel === 'beta' ? 'unsupported-channel' : 'completed', notificationState: 'notified' } } }); page.__systemIssues = state.issues
+    await page.goto('/')
+    await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+    await expect(page.getByRole('region', { name: 'Signed panel release' })).toContainText(channel === 'stable' && mode === 'notify' ? 'It never authorizes Apply' : text)
+    await expect(page.getByRole('button', { name: 'Apply checked release', exact: true })).toBeDisabled()
+    expect(state.requests.filter(({ path }) => ['/api/v1/update/check', '/api/v1/update/apply'].includes(path))).toHaveLength(0)
+  })
+}
+
+test('saves stable notify policy without checking or enabling Apply', async ({ page }) => {
+  const state = await prepare(page); page.__systemIssues = state.issues
+  await page.goto('/')
+  await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+  await page.getByLabel('Panel notification mode').selectOption('notify')
+  await page.getByLabel('Panel check cadence (minutes)').fill('60')
+  await page.getByRole('button', { name: 'Save notify policy', exact: true }).click()
+  await expect(page.getByText('Panel notify policy saved', { exact: true })).toBeVisible()
+  expect(state.requests.find(({ path }) => path === '/api/v1/update/policy').body).toEqual({ channel: 'stable', mode: 'notify', checkCadenceMinutes: 60 })
+  await expect(page.getByRole('button', { name: 'Apply checked release', exact: true })).toBeDisabled()
+})
+
 test.afterEach(async ({ page }) => {
   if (page.__systemIssues) expect(page.__systemIssues).toEqual([])
 })
@@ -107,7 +191,7 @@ test('keeps System / Panel lazy and uses the final tail navigation', async ({ pa
   await page.goto('/')
   await expect(page.locator('.section-nav button')).toHaveCount(8)
   expect(await page.locator('.section-nav button').allTextContents()).toEqual(['Overview', 'Nodes 0', 'Routing', 'DNS', 'Performance', 'Components / Updates', 'Backup & Restore', 'System / Panel'])
-  expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener' || path === '/api/v1/update')).toHaveLength(0)
+  expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener' || path === '/api/v1/update' || path === '/api/v1/notifications')).toHaveLength(0)
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
   await expect(page.getByText('Management listener', { exact: true })).toBeVisible()
   await expect.poll(() => state.requests.filter(({ path }) => path === '/api/v1/panel/listener')).toHaveLength(1)

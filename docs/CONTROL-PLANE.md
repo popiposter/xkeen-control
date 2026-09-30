@@ -537,14 +537,68 @@ notification transport.
 
 ## Product Slice E / Issue #99 — active source boundary
 
-Issue #99 is the active post-#5 source contract. It reuses the existing F3
-check-only notification hook and existing panel release trust boundary rather
-than introducing a generic event bus or scheduler framework. The intended first
-transport is a fixed-host outbound-only Telegram sender with separate root-only
-panel notification credentials; no inbound command, arbitrary webhook URL or
-automatic mutation is authorized. A panel notify scheduler must use an
-independent read-only release check and must never populate the explicit checked
-candidate used by Apply.
+Issue #99 A adds a fixed-host outbound-only Telegram sender, wired through the
+existing F3 component scheduler/hook. Only component update/change, panel stable
+update-available and explicit operator test alerts exist. Messages contain fixed
+product labels, safe channel/state/version, check time and a short candidate
+digest. There is no generic event bus, webhook URL, inbound bot command or
+automatic mutation surface.
+
+The separate panel-local authority is
+`/opt/etc/xkeen-control/secrets/notifications.json`: schema v1, fixed provider
+`telegram`, enabled boolean, bot token and numeric chat ID. The complete strict
+JSON object is at most 4 KiB, mode 0600 and root-owned under a root-only 0700
+secrets directory. Absent means unconfigured; malformed, unsafe or changed files
+fail closed without read-side repair or network. Explicit configure/enable/
+disable/clear writes are atomic and synced. GET/API errors/status never return
+the credentials or upstream content. These credentials are excluded from D.1
+safe export and encrypted node backup. They are separately reconfigurable after
+reinstall; rollback to an older binary leaves this file ignored without changing
+node/appliance/auth authorities.
+
+Authenticated same-origin/CSRF mutations have exact bodies:
+
+```text
+GET  /api/v1/notifications                    safe state only
+POST /api/v1/notifications/configure          {botToken,chatId}; defaults disabled
+POST /api/v1/notifications/enabled            {enabled}
+POST /api/v1/notifications/test               {}; one fixed test, even disabled
+POST /api/v1/notifications/clear              {}
+```
+
+System / Panel contains the Notifications card. Both credential inputs are
+password-style browser RAM values, cleared on submission/session/navigation,
+never stored in localStorage/sessionStorage or read back. Delivery timestamps,
+closed error codes and scheduler/dedupe state are bounded and RAM-only. Component
+send attempts occur once per fixed tuple per normal F3 cycle; successful delivery
+dedupes the fingerprint, while failure may retry only at the next cadence.
+F3 retains one hard 105-second cycle bound: three 30-second metadata Checks plus
+three bounded five-second deliveries. Both component and panel schedulers admit
+and launch delivery under their policy owner's mutation mutex. A successful
+policy change revokes old-epoch attempts still awaiting admission; an already
+admitted delivery may finish. Policy, scheduler and lifecycle ownership are not
+held across network delivery or its result wait.
+
+The sender uses only HTTPS `api.telegram.org:443` / fixed `sendMessage`, plain
+text, no redirect/proxy configuration, a five-second whole-request/connect cap
+and a 16 KiB response cap. Connect-time DNS checks reject private/special-use
+answers and dial checked numeric IPs with the fixed TLS ServerName. Native
+token-in-path errors and provider bodies never reach public projections.
+
+The update owner now has a separate read-only `DiscoverStable` path and one
+panel notify scheduler. It verifies signed manifest identity/compatibility,
+downloads no artifact bodies and never calls explicit `Manager.Check`, changes
+`m.latest`/operator check status or authorizes `ApplyChecked`. It sends only for
+a compatible stable version strictly newer than the running installed version.
+Persisted stable `notify` waits a full 60-minute..7-day cadence before first run
+and after policy changes, observes policy with a bounded read-only rescan, skips
+unavailable/maintenance/applying lifecycle states, and has no catch-up burst.
+One check runs at a time. Successful dedupe and next-cadence-only failure retries
+stay RAM-only. The safe update status includes the scheduler projection, without
+placing its discovery result into the operator's checked candidate fields.
+Beta notify is `unsupported-channel`; auto-stable is `unsupported-mode`; neither
+does background discovery/download/install. Explicit Check remains the only
+normal UI path to arm checked Apply.
 
 The second Issue #99 gate is a bounded private-management hardening pass over
 the existing auth/listener/HTTP boundary: bounded RAM auth cardinality,
