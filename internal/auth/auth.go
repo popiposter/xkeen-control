@@ -26,6 +26,8 @@ const (
 	PasswordHashPath    = "/opt/etc/xkeen-control/auth/password.bcrypt"
 	BootstrapMarkerPath = "/opt/etc/xkeen-control/auth/bootstrap-required"
 	passwordCost        = 12
+	maxSessions         = 32
+	maxAttempts         = 256
 )
 
 var (
@@ -95,14 +97,13 @@ func (m *Manager) Login(remoteIP, password string) (Session, string, error) {
 	now := m.config.Now()
 	remoteIP = boundedRemoteIP(remoteIP)
 	m.mu.Lock()
-	current := m.attempts[remoteIP]
-	if now.Before(current.lockedUntil) {
+	if !m.admitAttempt(remoteIP, now) {
 		m.mu.Unlock()
 		return Session{}, "", ErrLocked
 	}
 	m.mu.Unlock()
 
-	hash, err := os.ReadFile(m.config.HashPath)
+	hash, err := readPasswordAuthority(m.config.HashPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return Session{}, "", ErrNotConfigured
@@ -110,7 +111,9 @@ func (m *Manager) Login(remoteIP, password string) (Session, string, error) {
 		return Session{}, "", ErrNotConfigured
 	}
 	if bcrypt.CompareHashAndPassword(bytesTrimSpace(hash), []byte(password)) != nil {
-		m.recordFailure(remoteIP, now)
+		if !m.recordFailure(remoteIP, now) {
+			return Session{}, "", ErrLocked
+		}
 		return Session{}, "", ErrInvalidCredentials
 	}
 
@@ -124,7 +127,22 @@ func (m *Manager) Login(remoteIP, password string) (Session, string, error) {
 	}
 	s := session{csrfToken: csrf, expiresAt: now.Add(m.config.SessionTTL)}
 	m.mu.Lock()
+	if !m.admitAttempt(remoteIP, m.config.Now()) {
+		m.mu.Unlock()
+		return Session{}, "", ErrLocked
+	}
 	delete(m.attempts, remoteIP)
+	m.pruneSessions(now)
+	if len(m.sessions) >= maxSessions {
+		var oldest string
+		for token, value := range m.sessions {
+			if oldest == "" || value.expiresAt.Before(m.sessions[oldest].expiresAt) ||
+				(value.expiresAt.Equal(m.sessions[oldest].expiresAt) && token < oldest) {
+				oldest = token
+			}
+		}
+		delete(m.sessions, oldest)
+	}
 	m.sessions[token] = s
 	m.mu.Unlock()
 	return Session{CSRFToken: csrf, ExpiresAt: s.expiresAt}, token, nil
@@ -140,14 +158,13 @@ func (m *Manager) Reauthenticate(remoteIP, password string) error {
 	now := m.config.Now()
 	remoteIP = boundedRemoteIP(remoteIP)
 	m.mu.Lock()
-	current := m.attempts[remoteIP]
-	if now.Before(current.lockedUntil) {
+	if !m.admitAttempt(remoteIP, now) {
 		m.mu.Unlock()
 		return ErrLocked
 	}
 	m.mu.Unlock()
 
-	hash, err := os.ReadFile(m.config.HashPath)
+	hash, err := readPasswordAuthority(m.config.HashPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrNotConfigured
@@ -155,10 +172,16 @@ func (m *Manager) Reauthenticate(remoteIP, password string) error {
 		return ErrNotConfigured
 	}
 	if bcrypt.CompareHashAndPassword(bytesTrimSpace(hash), []byte(password)) != nil {
-		m.recordFailure(remoteIP, now)
+		if !m.recordFailure(remoteIP, now) {
+			return ErrLocked
+		}
 		return ErrReauthenticationFailed
 	}
 	m.mu.Lock()
+	if !m.admitAttempt(remoteIP, m.config.Now()) {
+		m.mu.Unlock()
+		return ErrLocked
+	}
 	delete(m.attempts, remoteIP)
 	m.mu.Unlock()
 	return nil
@@ -213,7 +236,7 @@ func (m *Manager) CredentialState() string {
 	if m == nil {
 		return "unavailable"
 	}
-	if _, err := os.Stat(m.config.HashPath); err != nil {
+	if _, err := readPasswordAuthority(m.config.HashPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "bootstrap-required"
 		}
@@ -291,9 +314,51 @@ func (m *Manager) OriginAllowed(r *http.Request) bool {
 	return strings.EqualFold(parsed.Scheme, expectedScheme)
 }
 
-func (m *Manager) recordFailure(remoteIP string, now time.Time) {
+// admitAttempt runs under mu, including when an in-flight bcrypt check returns
+// after its non-locked entry has been displaced. Active lockouts are never evicted.
+func (m *Manager) admitAttempt(remoteIP string, now time.Time) bool {
+	for key, value := range m.attempts {
+		if !now.Before(value.lockedUntil) && !now.Before(value.firstAt.Add(m.config.LockoutFor)) {
+			delete(m.attempts, key)
+		}
+	}
+	if value, exists := m.attempts[remoteIP]; exists {
+		return !now.Before(value.lockedUntil)
+	}
+	if len(m.attempts) >= maxAttempts {
+		var oldest string
+		for key, value := range m.attempts {
+			if now.Before(value.lockedUntil) {
+				continue
+			}
+			if oldest == "" || value.firstAt.Before(m.attempts[oldest].firstAt) ||
+				(value.firstAt.Equal(m.attempts[oldest].firstAt) && key < oldest) {
+				oldest = key
+			}
+		}
+		if oldest == "" {
+			return false
+		}
+		delete(m.attempts, oldest)
+	}
+	m.attempts[remoteIP] = attempt{firstAt: now}
+	return true
+}
+
+func (m *Manager) pruneSessions(now time.Time) {
+	for key, value := range m.sessions {
+		if !now.Before(value.expiresAt) {
+			delete(m.sessions, key)
+		}
+	}
+}
+
+func (m *Manager) recordFailure(remoteIP string, now time.Time) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if !m.admitAttempt(remoteIP, now) {
+		return false
+	}
 	value := m.attempts[remoteIP]
 	if value.firstAt.IsZero() || now.Sub(value.firstAt) > m.config.LockoutFor {
 		value = attempt{firstAt: now}
@@ -303,6 +368,7 @@ func (m *Manager) recordFailure(remoteIP string, now time.Time) {
 		value.lockedUntil = now.Add(m.config.LockoutFor)
 	}
 	m.attempts[remoteIP] = value
+	return true
 }
 
 func SetPassword(path string, password []byte) error {

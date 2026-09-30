@@ -494,6 +494,14 @@ export function SystemPanelSection({ controller, status, onOpenComponents, onOpe
         {controller.preview && <ListenerPreview preview={controller.preview} busy={controller.pending || lifecycleBlocked} onCancel={controller.cancelPreview} onApply={controller.applyListener} />}
       </section>
 
+      <section className="panel system-panel-card" aria-label="Private management">
+        <span className="panel-label">Private management</span><h2>VPN or SSH tunnel</h2>
+        <p>For remote administration, use an operator-managed VPN to the router or an SSH tunnel to loopback.</p>
+        <p className="muted">Active listener: {listener ? addressText(listener) : 'Unavailable'}. For a management VPN, select only an exact server-listed private or ULA address in Management listener.</p>
+        <p className="muted">An SSH tunnel may use localhost with the listener port only when the panel is bound to loopback. Private listeners require the exact numeric address and port.</p>
+        <p className="muted">Never bind to WAN or open a WAN firewall rule. Hostname and wildcard binds are unavailable. Configure VPN, firewall and DDNS yourself; this panel does not automate them.</p>
+      </section>
+
       <section className="panel system-panel-card" aria-label="Panel password">
         <div><span className="panel-label">Panel password</span><h2>Replace credential</h2><p className="muted">The bcrypt hash never enters the browser. Success invalidates every session and returns to login.</p></div>
         <form className="system-password-form" onSubmit={controller.replacePassword}>
