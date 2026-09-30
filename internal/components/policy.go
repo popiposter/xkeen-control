@@ -29,8 +29,9 @@ const (
 	MaxComponentPolicyCadenceMinutes     = 7 * 24 * 60
 	MaxComponentPolicyBytes              = 4 << 10
 
-	DefaultComponentSchedulerCycleTimeout = 3 * MaxCheckDuration
-	DefaultComponentNotificationTimeout   = 5 * time.Second
+	DefaultComponentNotificationTimeout = 5 * time.Second
+	// One hard cycle bound includes each fixed metadata check and its delivery.
+	DefaultComponentSchedulerCycleTimeout = time.Duration(len(componentCheckTuples)) * (MaxCheckDuration + DefaultComponentNotificationTimeout)
 )
 
 var (
@@ -791,7 +792,11 @@ func (scheduler *CheckScheduler) runCycle(parent context.Context, epoch uint64) 
 			continue
 		}
 		results[request.Component] = scheduledCheckStatus(result)
-		scheduler.notifyCandidate(cycleContext, request, result)
+		// A policy mutation may have completed while the metadata Check was
+		// in flight. Admit delivery only under the same notify policy epoch.
+		if scheduler.policy.allowScheduled(epoch) {
+			scheduler.notifyCandidate(cycleContext, request, result)
+		}
 	}
 
 	completedAt := scheduler.clock()
