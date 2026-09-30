@@ -64,7 +64,7 @@ notifications + private-management security hardening (#99 active; source-only)
 | D.2 — component lifecycle | **Active — trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-F complete; G merged source-only via #81/#82** | Issue #4 / current `main` + live `v0.3.0-beta.2` trial | The prior Xray live pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the diagnostic source correction. Issue #81 / PR #82 deliver typed fresh installation plus recognized takeover/convergence, sole-writer retirement and IPv4-only LAN/policy-scoped Hybrid interception ownership with owned-subset rollback. This remains source-only and does not independently lead to a release |
 | D.3 — foundation A-F (#46) | **Done source-only through Issue #78** | Issue #46 / #68 / #70 / #72 / #74 / #76 / #78 | Selection-first Nodes/atomic batch mutations, exact subscription reconciliation, bounded automatic subscription refresh, fixed one-node diagnostic performance, the single adaptive quality-switch path and the integrated automatic-quality operator UX/source qualification are complete; no release, router access or live qualification is implied |
 | D.3/#5 — visual configuration | **Done source-only; not deployed** | Issue #5 / #91 | Routing, DNS/Observatory, bounded Performance, System/Panel, and final Dashboard integration are complete in source. Production-qualified stable remains `v0.2.0` |
-| E — notifications/security hardening | **Active source work** | Issue #99 / master #1 | Fixed-host outbound alerts, panel/component notify-mode wiring, management-VPN guidance and final private-management attack-surface hardening |
+| E — notifications/security hardening | **Active — #99 B security hardening** | Issue #99 / master #1 | PR #100 delivers fixed-host outbound alerts + panel/component notify-mode wiring source-only; B is the immediate private-management/auth/Host/guidance closeout gate |
 
 ## Pre-D / Issue #8 — complete
 
@@ -159,10 +159,11 @@ safe browser projections. #5 is complete on source only; it remains undeployed.
 Stable `v0.2.0` remains the production-qualified baseline. No release, router
 access or live qualification is implied.
 
-Product Slice E is now active under Issue #99. It adds fixed-host outbound
-notifications and private-management security hardening without creating a
-remote command plane, arbitrary webhook surface or WAN-management feature. The
-panel remains trusted-LAN/management-VPN only.
+Product Slice E remains active under Issue #99. PR #100 delivers the fixed-host
+outbound notification half source-only; the immediate remaining B gate is
+private-management/auth/Host/security-header hardening plus management-VPN
+guidance. No remote command plane, arbitrary webhook surface or WAN-management
+feature is introduced. The panel remains trusted-LAN/management-VPN only.
 
 ## Maintenance rule
 
