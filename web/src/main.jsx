@@ -446,7 +446,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const openDNS = useCallback(() => setSection('dns'), [])
   const openBackup = useCallback(() => setSection('backup'), [])
   const lifecycleBlocked = componentController.lifecycleMutationBlocked
-  const manualLifecycleBlocked = !status.lifecycle || status.lifecycle.maintenance || status.lifecycle.applying
+  const manualLifecycleBlocked = lifecycleBlocked
   const manualRunning = performance?.manual?.state === 'running'
   const adaptiveRunning = performance?.adaptive?.state === 'running'
   const performancePolling = (section === 'overview' && adaptiveRunning)

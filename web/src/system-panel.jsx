@@ -13,6 +13,11 @@ class SystemPanelError extends Error {
 }
 
 const safeText = (value, max = 256) => typeof value === 'string' && value.length > 0 && value.length <= max
+const lifecycleBlocksMutations = (lifecycle) => !lifecycle
+  || typeof lifecycle.maintenance !== 'boolean'
+  || typeof lifecycle.applying !== 'boolean'
+  || lifecycle.maintenance
+  || lifecycle.applying
 
 const requestJSON = async (path, options = {}) => {
   let response
@@ -130,6 +135,7 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
   const activeRef = useRef(active)
   const csrfRef = useRef(csrfToken)
   const sessionCSRFRef = useRef(csrfToken)
+  const lifecycleBlocked = lifecycleBlocksMutations(lifecycle)
 
   activeRef.current = active
   csrfRef.current = csrfToken
@@ -180,7 +186,7 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
   const previewListener = useCallback(async () => {
     const current = listener.value
     const host = current?.selectedHost || current?.host
-    if (listenerHandoffGate.current || listenerHandoffState !== 'idle' || previewGate.current || applyGate.current || pending || !current || current.editability !== 'editable' || !host || host === current.host || lifecycle?.maintenance || lifecycle?.applying) return
+    if (listenerHandoffGate.current || listenerHandoffState !== 'idle' || previewGate.current || applyGate.current || pending || !current || current.editability !== 'editable' || !host || host === current.host || lifecycleBlocked) return
     previewGate.current = true
     const requestEpoch = epoch.current
     setResult(null)
@@ -199,7 +205,7 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
     } finally {
       previewGate.current = false
     }
-  }, [csrfToken, lifecycle, listener.value, listenerHandoffState, onUnauthorized, pending])
+  }, [csrfToken, lifecycleBlocked, listener.value, listenerHandoffState, onUnauthorized, pending])
 
   const chooseHost = useCallback((host) => {
     setListener((current) => current.value ? { ...current, value: { ...current.value, selectedHost: host } } : current)
@@ -209,7 +215,7 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
 
   const applyListener = useCallback(async () => {
     const current = previewRef.current
-    if (!current || listenerHandoffGate.current || listenerHandoffState !== 'idle' || previewGate.current || applyGate.current || lifecycle?.maintenance || lifecycle?.applying) return
+    if (!current || listenerHandoffGate.current || listenerHandoffState !== 'idle' || previewGate.current || applyGate.current || lifecycleBlocked) return
     applyGate.current = true
     previewRef.current = null
     setPreview(null)
@@ -237,7 +243,7 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
       setPending(false)
       applyGate.current = false
     }
-  }, [csrfToken, lifecycle, listenerHandoffState, onUnauthorized])
+  }, [csrfToken, lifecycleBlocked, listenerHandoffState, onUnauthorized])
 
   const cancelPreview = useCallback(() => {
     const token = previewRef.current?.previewToken
@@ -295,7 +301,7 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
   const applyUpdate = useCallback(async () => {
     const current = update.value
     const version = current?.latestCompatibleVersion
-    if (!current || !version || current.latestChannel !== current.policy.channel || current.latestSource === '' || current.latestSource == null || rollbackPending || handoffGate.current || handoffState !== 'idle' || current.rollbackVerificationRequired) return
+    if (!current || lifecycleBlocked || !version || current.latestChannel !== current.policy.channel || current.latestSource === '' || current.latestSource == null || rollbackPending || handoffGate.current || handoffState !== 'idle' || current.rollbackVerificationRequired) return
     handoffGate.current = true
     setHandoffState('update-unknown')
     setUpdate((currentState) => currentState.value ? {
@@ -314,10 +320,10 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
     } finally {
       setRollbackPending(false)
     }
-  }, [csrfToken, handoffState, onUnauthorized, rollbackPending, update.value])
+  }, [csrfToken, handoffState, lifecycleBlocked, onUnauthorized, rollbackPending, update.value])
 
   const rollbackUpdate = useCallback(async () => {
-    if (!update.value?.rollbackAvailable || rollbackPending || handoffGate.current || handoffState !== 'idle' || update.value.rollbackVerificationRequired) return
+    if (!update.value?.rollbackAvailable || lifecycleBlocked || rollbackPending || handoffGate.current || handoffState !== 'idle' || update.value.rollbackVerificationRequired) return
     handoffGate.current = true
     setHandoffState('rollback-unknown')
     setRollbackPending(true)
@@ -338,7 +344,7 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
     } finally {
       setRollbackPending(false)
     }
-  }, [csrfToken, handoffState, onUnauthorized, rollbackPending, update.value])
+  }, [csrfToken, handoffState, lifecycleBlocked, onUnauthorized, rollbackPending, update.value])
 
   const replacePassword = useCallback(async (event) => {
     event.preventDefault()
@@ -400,7 +406,7 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
   }, [clearPreview, csrfToken])
 
   const selectedHost = listener.value?.selectedHost || listener.value?.host || ''
-  const canPreviewListener = listener.value?.editability === 'editable' && selectedHost && selectedHost !== listener.value.host && !listenerHandoffGate.current && listenerHandoffState === 'idle' && !pending && !lifecycle?.maintenance && !lifecycle?.applying
+  const canPreviewListener = listener.value?.editability === 'editable' && selectedHost && selectedHost !== listener.value.host && !listenerHandoffGate.current && listenerHandoffState === 'idle' && !pending && !lifecycleBlocksMutations(lifecycle)
   const checkedCandidate = Boolean(update.value?.latestCompatibleVersion)
     && update.value.latestChannel === update.value.policy.channel
     && update.value.latestSource
@@ -445,7 +451,7 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
 export function SystemPanelSection({ controller, status, onOpenComponents, onOpenBackup }) {
   const listener = controller.listener
   const update = controller.update
-  const lifecycleBlocked = !status?.lifecycle || status.lifecycle.maintenance || status.lifecycle.applying
+  const lifecycleBlocked = lifecycleBlocksMutations(status?.lifecycle)
   return <div className="section-stack system-panel-section">
     {controller.result && <div className={`notice ${controller.result.tone}`} role={controller.result.tone === 'error' ? 'alert' : 'status'}><strong>{controller.result.title}</strong> {controller.result.message}</div>}
     <div className="system-panel-grid">
@@ -487,7 +493,7 @@ export function SystemPanelSection({ controller, status, onOpenComponents, onOpe
           <div className="system-check-row"><label>Beta version (optional for stable)<input aria-label="Beta version" type="text" inputMode="text" maxLength="64" value={controller.checkVersion} onChange={(event) => controller.setCheckVersion(event.target.value)} disabled={controller.checkPending} /></label><button type="button" onClick={controller.checkUpdate} disabled={controller.checkPending}>{controller.checkPending ? 'Checking…' : 'Check fixed release'}</button></div>
           <div className="system-facts-grid"><Fact label="Latest checked" value={update.latestCompatibleVersion || 'Not checked'} /><Fact label="Checked channel" value={update.latestChannel || '—'} /><Fact label="Checked source" value={update.latestSource || '—'} /><Fact label="Last check" value={update.lastCheckAt ? new Date(update.lastCheckAt).toLocaleString() : '—'} /></div>
           {update.releaseNotesUrl && <p><a href={update.releaseNotesUrl} target="_blank" rel="noreferrer">Checked release notes</a></p>}
-          <div className="system-card-actions"><button type="button" onClick={controller.applyUpdate} disabled={!controller.checkedCandidate || controller.rollbackPending}>{controller.rollbackPending && controller.handoffState === 'update-unknown' ? 'Verifying…' : 'Apply checked release'}</button><button className="ghost" type="button" onClick={controller.rollbackUpdate} disabled={!update.rollbackAvailable || update.rollbackVerificationRequired || controller.rollbackPending || controller.handoffState !== 'idle'}>{controller.rollbackPending && controller.handoffState === 'rollback-unknown' ? 'Verifying…' : 'Rollback retained release'}</button></div>
+          <div className="system-card-actions"><button type="button" onClick={controller.applyUpdate} disabled={lifecycleBlocked || !controller.checkedCandidate || controller.rollbackPending}>{controller.rollbackPending && controller.handoffState === 'update-unknown' ? 'Verifying…' : 'Apply checked release'}</button><button className="ghost" type="button" onClick={controller.rollbackUpdate} disabled={lifecycleBlocked || !update.rollbackAvailable || update.rollbackVerificationRequired || controller.rollbackPending || controller.handoffState !== 'idle'}>{controller.rollbackPending && controller.handoffState === 'rollback-unknown' ? 'Verifying…' : 'Rollback retained release'}</button></div>
         </>}
         {controller.updateError && <p className="system-blocked" role="alert">{controller.updateError}</p>}
       </section>

@@ -244,6 +244,26 @@ npm run test:dns-ui
 It does not contact resolver providers, read production policy, access a router
 or perform a live mutation. The aggregate full gate runs it through `test:ui`.
 
+## Issue #91 F integrated Dashboard suite
+
+The final #5 composition suite mounts the real Dashboard and its owner
+controllers against one shared, bounded synthetic appliance model. It verifies
+final navigation order, lazy settings reads, token-only Routing/DNS/Performance
+Preview and Apply paths, the narrow shared Routing/DNS uncertainty gate,
+draft retention through telemetry refresh, lifecycle admission across every
+workspace, System listener reconnect handling, session turnover, safe
+projections, empty browser storage, and desktop/mobile usability:
+
+```sh
+cd web
+npm run test:feature-complete-ui
+```
+
+The separate per-owner suites remain in place. This fixture makes no network
+calls to upstream providers, reads no production state and performs no router
+or live mutation. The complete suite runs once through `npm run test:ui` in the
+final local full gate.
+
 ## Issue #3 Phase B focused fixtures
 
 The typed backup/export qualification fixture is:
