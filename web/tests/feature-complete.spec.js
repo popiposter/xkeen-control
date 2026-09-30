@@ -12,6 +12,8 @@ const lazySettingsPaths = [
 ]
 
 const openSection = (page, name) => page.locator('.section-nav').getByRole('button').filter({ hasText: name }).click()
+const stringValues = (value) => typeof value === 'string' ? [value]
+  : value && typeof value === 'object' ? Object.values(value).flatMap(stringValues) : []
 const setBackupBundle = (page) => page.getByLabel('Backup bundle').setInputFiles({
   name: 'synthetic-feature-backup.json',
   mimeType: 'application/json',
@@ -261,6 +263,33 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
   expect(model.writes).toHaveLength(0)
 })
 
+for (const [label, lifecycle] of [
+  ['missing', null],
+  ['missing applying flag', { maintenance: false }],
+  ['missing maintenance flag', { applying: false }],
+]) {
+  test(`blocks an enabled node's Full speed test with ${label} lifecycle`, async ({ page }) => {
+    const model = await mountFeatureCompleteDashboard(page, { nodeEnabled: true })
+    page.__featureCompleteModel = model
+    await page.goto('/')
+    await openSection(page, 'Nodes')
+    await page.getByLabel('Select Feature test node').check()
+    const speedTest = page.getByRole('button', { name: 'Full speed test', exact: true })
+    await expect(speedTest).toBeEnabled()
+
+    model.lifecycle = lifecycle
+    const previousStatusReads = featureCompleteRequests(model, '/api/v1/status', 'GET').length
+    await page.getByRole('button', { name: 'Refresh dashboard' }).click()
+    await expect.poll(() => featureCompleteRequests(model, '/api/v1/status', 'GET').length).toBe(previousStatusReads + 1)
+    await expect(speedTest).toBeDisabled()
+    // Even a synthetic click on this disabled action must emit no mutation.
+    await speedTest.evaluate((button) => button.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    await expect(page.getByText('Feature test node', { exact: true })).toBeVisible()
+    expect(featureCompleteRequests(model, '/api/v1/performance/manual-node', 'POST')).toHaveLength(0)
+    expect(model.writes).toHaveLength(0)
+  })
+}
+
 test('clears cross-domain previews on session turnover and rejects old tokens after login and password reset', async ({ page }) => {
   const model = await mountFeatureCompleteDashboard(page)
   page.__featureCompleteModel = model
@@ -391,12 +420,31 @@ test('keeps safe projections secretless, browser storage empty, and the Dashboar
   test.setTimeout(35_000)
   const model = await mountFeatureCompleteDashboard(page)
   page.__featureCompleteModel = model
+  const internalValues = stringValues({ nodes: model.nodes, subscriptions: model.subscriptions, dns: model.dns, runtime: model.runtime, performance: model.performance, auth: model.auth })
+  // Prove the private material exists in the very sources used by safe GETs.
+  for (const sentinel of PRIVATE_SENTINELS) expect(internalValues.join('\n')).toContain(sentinel)
   await page.goto('/')
-  for (const section of ['Routing', 'DNS', 'Performance', 'Components / Updates', 'System / Panel']) await openSection(page, section)
+  const renderedSections = [await page.locator('body').innerText(), await page.locator('body').evaluate((body) => body.outerHTML)]
+  for (const [section, ready] of [
+    ['Nodes', page.getByText('Feature test node', { exact: true })],
+    ['Routing', page.getByText('Policy boundary', { exact: true })],
+    ['DNS', page.getByText('Proxy resolver 1', { exact: true })],
+    ['Performance', page.getByText('Fixed traffic and time envelope', { exact: true })],
+    ['Components / Updates', page.getByText('Xray', { exact: true })],
+    ['Backup & Restore', page.getByLabel('Backup bundle')],
+    ['System / Panel', page.getByRole('heading', { name: '0.2.0', exact: true })],
+  ]) {
+    await openSection(page, section)
+    await expect(ready).toBeVisible()
+    renderedSections.push(await page.locator('body').innerText(), await page.locator('body').evaluate((body) => body.outerHTML))
+  }
   await expect(page.getByRole('heading', { name: '0.2.0', exact: true })).toBeVisible()
 
-  const projections = model.safeProjectionBodies.join('\n')
-  const rendered = await page.locator('body').innerText()
+  for (const path of ['/api/v1/session', '/api/v1/status', '/api/v1/nodes', '/api/v1/performance', ...lazySettingsPaths]) {
+    expect(featureCompleteRequests(model, path, 'GET').length).toBeGreaterThan(0)
+  }
+  const projections = [...model.safeProjectionBodies, ...model.safeProjectionBodies.flatMap((body) => stringValues(JSON.parse(body)))].join('\n')
+  const rendered = renderedSections.join('\n')
   for (const sentinel of PRIVATE_SENTINELS) {
     expect(projections).not.toContain(sentinel)
     expect(rendered).not.toContain(sentinel)

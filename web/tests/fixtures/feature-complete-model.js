@@ -1,5 +1,15 @@
 const csrf = 'synthetic-feature-complete-csrf-1'
 
+// These lists describe safe DTOs, never copies of internal authority objects.
+const allowlist = (value, fields) => Object.fromEntries(fields.filter((field) => Object.hasOwn(value, field)).map((field) => [field, value[field]]))
+const performancePolicyFields = ['schemaVersion', 'probeIntervalSeconds', 'failureThreshold', 'adaptiveCadenceMinutes', 'adaptiveChallengerLimit', 'minimumDwellMinutes', 'qualityHysteresisPercent']
+const listenerProjection = (value) => allowlist(value, ['host', 'port', 'source', 'editability', 'allowedHosts'])
+const updateProjection = (value) => ({
+  ...allowlist(value, ['channel', 'rollbackAvailable', 'signingKeyConfigured', 'latestCompatibleVersion', 'latestChannel', 'latestSource', 'latestSourceCommit', 'lastCheckAt']),
+  installed: allowlist(value.installed, ['product', 'version', 'sourceCommit', 'channel']),
+  policy: allowlist(value.policy, ['channel', 'mode', 'checkCadenceMinutes']),
+})
+
 const json = (route, value, status = 200) => route.fulfill({
   status,
   contentType: 'application/json',
@@ -17,7 +27,7 @@ const defaultPerformancePolicy = () => ({
 })
 
 const performanceProjection = (policy = defaultPerformancePolicy()) => ({
-  policy: { ...policy },
+  policy: allowlist(policy, performancePolicyFields),
   source: 'default',
   authorityState: 'editable',
   persistedSource: 'default',
@@ -38,7 +48,7 @@ const performanceProjection = (policy = defaultPerformancePolicy()) => ({
 const routingProjection = (rules = []) => ({
   editability: 'editable',
   schemaVersion: 1,
-  rules: rules.map((rule) => ({ ...rule })),
+  rules: rules.map((rule) => allowlist(rule, ['name', 'action', 'domains', 'ips', 'protocols', 'networks', 'ports'])),
   protected: {
     totalRuleCount: 5,
     prefixRuleCount: 4,
@@ -54,16 +64,12 @@ const dnsProjection = (dns, observatory) => ({
   editability: 'editable',
   schemaVersion: 1,
   dns: {
-    ...dns,
-    resolverCatalog: [
-      { id: 'synthetic-resolver-a', label: 'Proxy resolver 1' },
-      { id: 'synthetic-resolver-b', label: 'Proxy resolver 2' },
-      { id: 'synthetic-resolver-c', label: 'Proxy resolver 3' },
-    ],
+    ...allowlist(dns, ['proxyResolverIds', 'fallbackMode', 'cacheEnabled', 'serveStale', 'staleTTLSeconds', 'parallelQueries']),
+    resolverCatalog: dns.resolverCatalog.map((resolver) => allowlist(resolver, ['id', 'label'])),
     locked: { queryStrategy: 'UseIPv4', leakPreventionEnabled: true, systemFallbackPresent: true },
     proxyDomainCounts: { baseline: 14, derived: 2 },
   },
-  observatory: { ...observatory, minIntervalMinutes: 1, maxIntervalMinutes: 5 },
+  observatory: { probeIntervalMinutes: observatory.probeIntervalMinutes, minIntervalMinutes: 1, maxIntervalMinutes: 5 },
 })
 
 const emptyMatchCounts = () => ({ rules: 0, domains: 0, ips: 0, protocols: 0, networks: 0, ports: 0 })
@@ -167,7 +173,7 @@ const componentState = (overrides = {}) => ({
   ...overrides,
 })
 
-const nodeProjection = () => ({
+const nodeState = () => ({
   id: 'node-00000001',
   name: 'Feature test node',
   displayName: 'Feature test node',
@@ -189,23 +195,45 @@ const nodeProjection = () => ({
   missing: false,
 })
 
+const nodeProjection = (node) => allowlist(node, ['id', 'name', 'displayName', 'address', 'countryCode', 'outboundTag', 'enabled', 'sourceType', 'subscriptionName', 'alive', 'latencyMs', 'lastError', 'lastThroughputKBps', 'lastBenchmarkAt', 'isNativeSelected', 'isOverride', 'isEffective', 'stale', 'missing'])
+const inventoryProjection = (inventory) => ({
+  schemaVersion: inventory.schemaVersion,
+  ...Object.fromEntries(['panel', 'xkeen', 'xray', 'geodata', 'keeneticos', 'entware'].map((kind) => [kind, allowlist(inventory[kind], ['kind', 'state', 'present', 'version', 'versionUnknown', 'capability', 'channel', 'architecture', 'items', 'reasonCode'])])),
+})
+const componentPolicyProjection = (policy) => ({
+  ...allowlist(policy, ['schemaVersion', 'mode', 'checkCadenceMinutes']),
+  scheduler: allowlist(policy.scheduler, ['enabled', 'state', 'notificationState']),
+})
+
+const privateUUID = 'feature-private-uuid-sentinel'
+const privateRealityKey = 'feature-private-reality-key-sentinel'
+const privateShortID = 'feature-private-short-id-sentinel'
+const privateResolverURL = 'https://resolver.example.invalid/feature-private-resolver-url-sentinel'
+const privateSubscriptionToken = 'feature-private-subscription-token'
+const privateSubscriptionURL = `https://subscriptions.example.invalid/${privateSubscriptionToken}`
+const privateGeneratedOutbounds = '{"feature-private-generated-outbounds-sentinel":"synthetic-only"}'
+const privatePasswordHash = '$2a$10$feature-private-password-hash-sentinel'
+
 const privateVPNProfile = [
   'vless:',
   '/',
-  '/feature-private-node@198.51.100.50:443?security=reality&pbk=feature-private-reality-key-sentinel&sid=feature-private-short-id-sentinel#feature-private-uuid-sentinel',
+  `/${privateUUID}@198.51.100.50:443?security=reality&pbk=${privateRealityKey}&sid=${privateShortID}`,
 ].join('')
 
 const PRIVATE_SENTINELS = Object.freeze([
   privateVPNProfile,
-  'https://subscriptions.example.invalid/feature-private-subscription-token',
-  '{"feature-private-generated-outbounds-sentinel":"synthetic-only"}',
-  '$2a$10$feature-private-password-hash-sentinel',
+  privateUUID, privateRealityKey, privateShortID, privateResolverURL,
+  privateSubscriptionURL, privateSubscriptionToken,
+  privateGeneratedOutbounds, 'feature-private-generated-outbounds-sentinel', privatePasswordHash,
 ])
 
 export class FeatureCompleteModel {
   constructor(options = {}) {
     this.lifecycle = Object.hasOwn(options, 'lifecycle') ? options.lifecycle : { maintenance: false, applying: false }
-    this.nodes = [nodeProjection()]
+    this.nodes = [{ ...nodeState(), enabled: options.nodeEnabled ?? false, uuid: privateUUID, reality: { publicKey: privateRealityKey, shortID: privateShortID }, profile: privateVPNProfile }]
+    this.subscriptions = [{ id: 'subscription-00000001', name: 'Synthetic subscription', url: privateSubscriptionURL, token: privateSubscriptionToken }]
+    this.runtime = { ...componentState(), generatedOutbounds: privateGeneratedOutbounds }
+    this.performance = { nodes: [], manual: { state: 'idle', phase: 'done' }, adaptive: { state: 'waiting' }, generatedOutbounds: privateGeneratedOutbounds }
     this.routingRules = []
     this.dns = {
       proxyResolverIds: ['synthetic-resolver-a', 'synthetic-resolver-b'],
@@ -214,6 +242,11 @@ export class FeatureCompleteModel {
       serveStale: true,
       staleTTLSeconds: 3600,
       parallelQueries: true,
+      resolverCatalog: [
+        { id: 'synthetic-resolver-a', label: 'Proxy resolver 1', url: privateResolverURL },
+        { id: 'synthetic-resolver-b', label: 'Proxy resolver 2', url: privateResolverURL },
+        { id: 'synthetic-resolver-c', label: 'Proxy resolver 3', url: privateResolverURL },
+      ],
     }
     this.observatory = { probeIntervalMinutes: 5 }
     this.performancePolicy = defaultPerformancePolicy()
@@ -241,18 +274,28 @@ export class FeatureCompleteModel {
     this.writes = []
     this.tokenSequence = 0
     this.sessionSequence = 1
-    this.csrfToken = csrf
+    this.auth = { csrfToken: csrf, passwordHash: privatePasswordHash }
     this.failNextApply = new Set()
     this.failReadCounts = new Map()
     this.reconnect = false
     this.reconnectListenerCandidate = ''
-    this.privateMaterial = PRIVATE_SENTINELS
   }
 
+  get csrfToken() { return this.auth.csrfToken }
+  set csrfToken(value) { this.auth.csrfToken = value }
+
   status() {
-    const value = componentState()
-    if (this.lifecycle == null) delete value.lifecycle
-    else value.lifecycle = this.lifecycle
+    const value = {
+      controlPlane: allowlist(this.runtime.controlPlane, ['version', 'uptimeSeconds']),
+      xray: allowlist(this.runtime.xray, ['running', 'apiReachable', 'probeReachable']),
+      xkeen: allowlist(this.runtime.xkeen, ['running']),
+      balancer: allowlist(this.runtime.balancer, ['effective']),
+      observatory: allowlist(this.runtime.observatory, ['healthy', 'total', 'apiReachable']),
+      benchmark: { controlPlane: allowlist(this.runtime.benchmark.controlPlane, ['running', 'state']) },
+      selection: allowlist(this.runtime.selection, ['state']),
+      setup: allowlist(this.runtime.setup, ['state', 'eligible', 'runtime', 'credential', 'xkeen', 'xray', 'configuration']),
+    }
+    if (this.lifecycle != null) value.lifecycle = allowlist(this.lifecycle, ['maintenance', 'applying'])
     return value
   }
 
@@ -317,11 +360,11 @@ export class FeatureCompleteModel {
           this.sessionSequence++
           this.csrfToken = `synthetic-feature-complete-csrf-${this.sessionSequence}`
         }
-        return this.recordProjection(route, { csrfToken: this.csrfToken })
+        return this.recordProjection(route, allowlist(this.auth, ['csrfToken']))
       case '/api/v1/session/login':
         this.sessionSequence++
         this.csrfToken = `synthetic-feature-complete-csrf-${this.sessionSequence}`
-        return json(route, { csrfToken: this.csrfToken })
+        return json(route, allowlist(this.auth, ['csrfToken']))
       case '/api/v1/session/logout':
         this.invalidatedTokens.push(...this.previewTokens.keys())
         this.previewTokens.clear()
@@ -330,13 +373,13 @@ export class FeatureCompleteModel {
       case '/api/v1/status':
         return this.recordProjection(route, this.status())
       case '/api/v1/nodes':
-        return this.recordProjection(route, { total: this.nodes.length, nodes: this.nodes.map((node) => ({ ...node })), subscriptions: [] })
+        return this.recordProjection(route, { total: this.nodes.length, nodes: this.nodes.map(nodeProjection), subscriptions: this.subscriptions.map((subscription) => allowlist(subscription, ['id', 'name'])) })
       case '/api/v1/performance':
-        return this.recordProjection(route, { nodes: [], manual: { state: 'idle', phase: 'done' }, adaptive: { state: 'waiting' } })
+        return this.recordProjection(route, { nodes: this.performance.nodes.map(nodeProjection), manual: allowlist(this.performance.manual, ['state', 'phase']), adaptive: allowlist(this.performance.adaptive, ['state']) })
       case '/api/v1/config-summary':
         return this.recordProjection(route, { routing: {}, dns: {}, observatory: {} })
       case '/api/v1/panel/listener':
-        return this.recordProjection(route, { ...this.listener })
+        return this.recordProjection(route, listenerProjection(this.listener))
       case '/api/v1/panel/listener/preview': {
         const host = body?.host
         const previewToken = this.createPreview('listener', host)
@@ -354,7 +397,7 @@ export class FeatureCompleteModel {
         return json(route, { accepted: true, state: 'rebind-started', before, after, noop: false, reconnectClassification: 'loopback-to-lan', restartRequired: true, sessionInvalidated: true, loginRequired: true }, 202)
       }
       case '/api/v1/update':
-        return this.recordProjection(route, { ...this.update, installed: { ...this.update.installed }, policy: { ...this.update.policy } })
+        return this.recordProjection(route, updateProjection(this.update))
       case '/api/v1/update/check': {
         const channel = body?.channel || this.update.policy.channel
         const version = channel === 'beta' ? body?.version : '1.2.3'
@@ -366,7 +409,7 @@ export class FeatureCompleteModel {
           latestSourceCommit: 'b'.repeat(40),
           lastCheckAt: new Date().toISOString(),
         }
-        return json(route, this.update)
+        return json(route, updateProjection(this.update))
       }
       case '/api/v1/update/apply':
         if (Object.keys(body || {}).sort().join(',') !== 'channel,version') this.issues.push('panel update Apply payload was not the checked channel and version')
@@ -375,7 +418,7 @@ export class FeatureCompleteModel {
         return json(route, { accepted: true, state: 'rollback-attempt-started' }, 202)
       case '/api/v1/update/policy':
         this.update = { ...this.update, policy: { ...body }, channel: body.channel, latestCompatibleVersion: null, latestChannel: null, latestSource: '' }
-        return json(route, this.update)
+        return json(route, updateProjection(this.update))
       case '/api/v1/appliance/policy':
         return this.recordProjection(route, routingProjection(this.routingRules))
       case '/api/v1/appliance/policy/preview': {
@@ -417,7 +460,7 @@ export class FeatureCompleteModel {
         const pending = await this.applyPreview(route, entry, 'dns')
         if (pending?.owner !== 'dns') return pending
         const before = { dns: this.dns, observatory: this.observatory }
-        this.dns = { ...pending.candidate.dns }
+        this.dns = { ...this.dns, ...pending.candidate.dns }
         this.observatory = { ...pending.candidate.observatory }
         const after = { dns: this.dns, observatory: this.observatory }
         const noop = JSON.stringify(dnsBody(before)) === JSON.stringify(dnsBody(after))
@@ -447,9 +490,9 @@ export class FeatureCompleteModel {
         return json(route, { policy: this.performancePolicy, source: 'persisted', changes: [], noop: false, restartRequired: false, nextRunTimeChanged: true })
       }
       case '/api/v1/components':
-        return this.recordProjection(route, this.inventory)
+        return this.recordProjection(route, inventoryProjection(this.inventory))
       case '/api/v1/components/policy':
-        return this.recordProjection(route, this.componentsPolicy)
+        return this.recordProjection(route, componentPolicyProjection(this.componentsPolicy))
       case '/api/v1/components/cancel': {
         const token = body?.previewToken
         this.previewTokens.delete(token)
