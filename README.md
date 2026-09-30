@@ -75,8 +75,8 @@ The historical repository `popiposter/xkeen-keenetic` is private quarantine/hist
 | **D / #2 — done** | Public signed releases, one-command bootstrap, setup mode, transactional panel self-update/rollback |
 | **D.1 / #3 — done** | Production-qualified local typed appliance state, portable backup/import/export, optional encrypted VPN-secret backup |
 | **D.2 / #4 — source-only** | Component lifecycle, bounded policy and typed Setup source delivered; not deployed |
-| **D.3 / #5 — active source work** | Routing broker/UI and the shared DNS + Observatory broker are merged source-only; visual DNS + Observatory is active in #89; not deployed |
-| **E** | Notifications, management-VPN guidance and final attack-surface hardening |
+| **D.3 / #5 — done source-only** | Routing, DNS/Observatory, bounded Performance, System/Panel and final Dashboard integration are complete in source; not deployed |
+| **E / #99 — active source work** | Outbound notifications, management-VPN guidance and final private-management attack-surface hardening |
 
 The authoritative sequence is always [ROADMAP.md](docs/ROADMAP.md).
 
