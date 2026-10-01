@@ -4,7 +4,19 @@ This is the sequencing/status authority. The active GitHub issue is the detailed
 
 ## Current production baseline
 
-Slices A/B/C/C.1 and D remain production-qualified. The validated fresh-source migration baseline merged as #7, the canonical Go module/import identity cleanup merged as #9 / Issue #8, and Slice D completed through Issue #2 with historical signed stable release `v0.1.1` from source `8f15246099538426ef08163b832c3aa6f73e8265` plus bounded live Keenetic adoption → rollback → re-adoption qualification. D.1 / Issue #3 is also production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. Issue #78 Slice F is present on source main as source-qualified-only work and is not a production-qualification or release claim.
+Slices A/B/C/C.1 and D remain production-qualified. The validated fresh-source migration baseline merged as #7, the canonical Go module/import identity cleanup merged as #9 / Issue #8, and Slice D completed through Issue #2 with historical signed stable release `v0.1.1` from source `8f15246099538426ef08163b832c3aa6f73e8265` plus bounded live Keenetic adoption → rollback → re-adoption qualification. D.1 / Issue #3 is also production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. The feature-complete source program is included in the installed beta.3 trial; panel installation does not establish production qualification of every included feature.
+
+Signed trial `v0.3.0-beta.3 / beta` is published and installed from immutable
+source `8b76a9696995b6edb6d62bc425876cd894260e57`, tree
+`1471e2730c01dd849371cd50b76055a9874e80eb`. [Issue #108 publication evidence](https://github.com/popiposter/xkeen-control/issues/108#issuecomment-5933236574)
+records protected build/publish PASS, independent seven-public-file verification
+and the exact resource worksheet. [Issue #4 installation evidence](https://github.com/popiposter/xkeen-control/issues/4#issuecomment-5933237084)
+records fresh admission, exactly one typed Apply and independent running
+identity/process/hash/health/settlement PASS. Stable remains `v0.2.0`; this is
+not stable promotion. Immediate `previous/panel` now contains verified beta.2;
+the original stable panel assets/marker are retained and signed-byte verified
+off-router. These rollback locations are distinct. Later status documentation
+does not change the immutable release source.
 
 Current runtime facts:
 
@@ -43,13 +55,15 @@ public source + signed GitHub Releases (#2, done)
         ↓
 local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
-managed XKeen / Xray / geodata lifecycle (#4, active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-F delivered through PRs #69/#71/#73/#75 and Issues #76/#78; D.2 G merged source-only via #81/#82; one feature-complete candidate afterward)
+managed XKeen / Xray / geodata lifecycle (#4, active; beta.3 panel installed and independently verified; component pairs remain separately scoped)
         ↓
-visual typed configuration + transactional render/apply (#5 complete source-only through #91 F; not deployed)
+visual typed configuration + transactional render/apply (#5 complete through #91 F; included in beta.3 trial)
         ↓
-notifications + private-management security hardening (#99 done source-only)
+notifications + private-management security hardening (#99 complete; included in beta.3 trial)
         ↓
-feature freeze + exact-main integrated qualification (#106 active; no release/router mutation)
+feature freeze + exact-main integrated qualification (#106 complete)
+        ↓
+protected publication + independent public-byte verification (#108 complete; beta.3 panel installation PASS under #4)
 ```
 
 ## Delivery sequence
@@ -63,11 +77,12 @@ feature freeze + exact-main integrated qualification (#106 active; no release/ro
 | Pre-D — canonical Go module/import identity | Done | Issue #8 / PR #9 | Canonical `github.com/popiposter/xkeen-control` provenance; no runtime behavior change |
 | D — releases/bootstrap/panel self-update | Done | Issue #2 / `v0.1.1` | Public signed Releases, protected release pipeline, one-command bootstrap, setup mode, transactional panel update/rollback |
 | D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
-| D.2 — component lifecycle | **Active — trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-F complete; G merged source-only via #81/#82** | Issue #4 / current `main` + live `v0.3.0-beta.2` trial | The prior Xray live pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the diagnostic source correction. Issue #81 / PR #82 deliver typed fresh installation plus recognized takeover/convergence, sole-writer retirement and IPv4-only LAN/policy-scoped Hybrid interception ownership with owned-subset rollback. This remains source-only and does not independently lead to a release |
-| D.3 — foundation A-F (#46) | **Done source-only through Issue #78** | Issue #46 / #68 / #70 / #72 / #74 / #76 / #78 | Selection-first Nodes/atomic batch mutations, exact subscription reconciliation, bounded automatic subscription refresh, fixed one-node diagnostic performance, the single adaptive quality-switch path and the integrated automatic-quality operator UX/source qualification are complete; no release, router access or live qualification is implied |
-| D.3/#5 — visual configuration | **Done source-only; not deployed** | Issue #5 / #91 | Routing, DNS/Observatory, bounded Performance, System/Panel, and final Dashboard integration are complete in source. Production-qualified stable remains `v0.2.0` |
-| E — notifications/security hardening | **Done source-only; not deployed** | Issue #99 / PRs #100/#101 | Fixed-host outbound notifications, panel stable-notify discovery, bounded auth state, protected credential reads, accepted-socket Host authority, strict password objects and private-management guidance are complete in source |
-| Feature freeze / candidate qualification | **Active — #106** | Issue #106 / master #1 | Restore deterministic embedded-asset parity after the final parallel-PR integration, run one clean exact-HEAD full gate, freeze source, then await a separate operator release decision |
+| D.2 — component lifecycle | **Active — beta.3 panel installed; broader component qualification pending** | Issue #4 / immutable beta.3 source | Historical ambiguous Xray outcome remains no-replay; a later fresh attempt stopped at pre-commit `candidate-rejected`. #64/#65 diagnostic correction, F3 and #81/#82 Setup are included in the trial. No component mutation was performed during beta.3 installation |
+| D.3 — foundation A-F (#46) | **Complete source-qualified; included in beta.3 trial** | Issue #46 / #68 / #70 / #72 / #74 / #76 / #78 | Selection-first Nodes/atomic batches, subscription reconciliation/refresh, one-node diagnostics and the single adaptive quality owner are delivered; panel install is not broader feature qualification |
+| D.3/#5 — visual configuration | **Complete; included in beta.3 trial** | Issue #5 / #91 | Routing, DNS/Observatory, bounded Performance, System/Panel and Dashboard integration are delivered. Stable remains `v0.2.0` |
+| E — notifications/security hardening | **Complete; included in beta.3 trial** | Issue #99 / PRs #100/#101 | Fixed-host notifications, bounded auth state, protected credential reads, accepted-socket Host authority and strict password objects are delivered; not stable promotion |
+| Feature freeze / candidate qualification | **Complete — #106/#107 plus reviewed Release repairs #109/#110** | Issue #106 / master #1 | Exact merged release source passed clean local full qualification and protected hosted full qualification |
+| Feature-complete publication / panel install | **PASS — #108 completed; #4 panel install verified** | Immutable `v0.3.0-beta.3` / #108 / #4 | Exact seven public assets independently verified; one typed Apply completed; running process/hash/health, D.1 and state preservation verified |
 
 ## Pre-D / Issue #8 — complete
 
@@ -98,7 +113,7 @@ Safe export excludes secrets by default; secret-bearing export is explicit and e
 
 Pre-adoption compatibility is explicit: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit and unknown/manual drift fails closed.
 
-## D.2 / Issue #4 — active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered; #46 A-F complete; G merged source-only
+## D.2 / Issue #4 — active; beta.3 panel installed and independently verified
 
 Phase A merged via PR #23 to `main` `bda9dd0cc7bb142a4cb1468811fff9b5146b1e8e`; source main gained the bounded read-only component inventory and authenticated `GET /api/v1/components` for panel, XKeen, Xray, geodata, KeeneticOS and Entware.
 
@@ -136,17 +151,17 @@ The current [Issue #4](https://github.com/popiposter/xkeen-control/issues/4) rem
 
 The simplicity decisions in [master issue #1](https://github.com/popiposter/xkeen-control/issues/1) remain in force: one Go process, embedded UI, distinct component gate → runtime Coordinator → authority lease boundaries, fixed trust adapters and bounded journals/rollback. Q1 adds no generic transaction/form/pipeline framework, job queue/history, database, metrics agent or runtime dependencies; F3 adds only its two typed authenticated policy endpoints. Existing F2 behavior is the subject of qualification, not a reason to expand the product.
 
-**Gate 3 and the initial Xray live pair are complete historical evidence.** The live router remains on trial `v0.3.0-beta.2`; production-qualified stable remains `v0.2.0` and its fresh rollback snapshot is retained. The Xray pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the #64 diagnostic source correction. Per operator sequencing, live qualification now pauses: no beta.3/publication/install and no further component mutation while the feature-complete source sequence is implemented and qualified offline.
+**Gate 3 and the earlier Xray attempts are historical evidence.** A lost Xray Apply outcome remains unknown/ambiguous and must not be replayed; a later fresh attempt stopped at pre-commit `candidate-rejected`, with the #64 correction delivered by PR #65. The source-development pause is complete: the feature-complete beta.3 panel is now installed under its explicit operator authorization. Stable remains `v0.2.0`. No component update/rollback pair or live performance qualification was executed in this panel task.
 
 F3 is delivered by PR #67: bounded persisted `off|notify|manual` component policy with a check-only scheduler/notification hook. It must not introduce automatic component mutation. #46 A-F are delivered by PRs #69/#71/#73/#75 plus Issues #76/#78. D.2 G is delivered source-only by Issue #81 / PR #82: typed Setup fresh/takeover convergence using qualified component primitives, with sole-writer retirement and source-owned Hybrid interception, without generic package/command/file surfaces or blanket `opkg upgrade`.
 
-The sequence is **#46 A-F foundation → D.2 G Setup Mode source (merged #82) → #5 A/B Routing (merged #84/#86) → #5 C1/C2 DNS + Observatory broker/UI (merged #88/#90) → #91 D Performance (merged #92) → #91 E System/Panel (merged #97) → #91 F integration/#5 source closeout (complete source-only) → planned product E notifications/security hardening → one feature-complete signed candidate plus integrated live qualification**. These source slices do not independently trigger release publication, router install or live qualification. Only after that integrated candidate is installed may live Xray/geodata/XKeen update+rollback qualification resume, restoring each component baseline before the next class and settling all component state before the original stable panel return.
+The completed source sequence is **#46 A-F → D.2 G Setup → #5/#91 visual configuration → #99 notifications/security → #102/#104 integration → #106 freeze → reviewed Release repairs #109/#110 → #108 publication → one beta.3 panel install under #4**. Future integrated feature/component qualification remains governed by exact pair authorization and fresh admission; restore each component baseline before the next class and settle all component state before any separately authorized panel return. Immediate typed rollback now targets beta.2; an original stable return must account for the off-router stable snapshot rather than assume it remains in `previous/panel`.
 
-## D.3 / Issue #46 foundation — Slices A-F delivered; not deployed
+## D.3 / Issue #46 foundation — Slices A-F delivered in beta.3 trial
 
-PR #69 delivered Slice A (selection-first Nodes and atomic batch mutations). PR #71 delivered Slice B (exact subscription membership reconciliation). PR #73 delivered Slice C (bounded automatic subscription refresh with non-preemptive background admission). PR #75 delivered Slice D (fixed manual-node down/up diagnostics and bounded progress). Issue #76 delivers Slice E (fresh RTT shortlist, fixed down/up quality generation, deterministic scoring, hysteresis/dwell and the one Coordinator performance owner). Issue #78 delivers Slice F (integrated automatic-quality Overview/Nodes presentation, closed state/reason vocabulary, view-scoped performance polling, legacy-trigger retirement and source qualification). The #46 slices remain source-only and do not deploy to production; no release, router access or live qualification is implied.
+PR #69 delivered Slice A (selection-first Nodes and atomic batch mutations). PR #71 delivered Slice B (exact subscription membership reconciliation). PR #73 delivered Slice C (bounded automatic subscription refresh with non-preemptive background admission). PR #75 delivered Slice D (fixed manual-node down/up diagnostics and bounded progress). Issue #76 delivers Slice E (fresh RTT shortlist, fixed down/up quality generation, deterministic scoring, hysteresis/dwell and the one Coordinator performance owner). Issue #78 delivers Slice F (integrated automatic-quality Overview/Nodes presentation, closed state/reason vocabulary, view-scoped performance polling, legacy-trigger retirement and source qualification). These slices are included in the installed beta.3 trial; their source qualification and panel delivery do not establish broader production qualification.
 
-## D.3 / Issue #5 — complete source-only; not deployed
+## D.3 / Issue #5 — complete; included in beta.3 trial
 
 Issues #83/#85 and PRs #84/#86 deliver Routing broker/UI. Issue #87 / PR #88
 deliver the shared managed-policy envelope plus closed DNS/Observatory backend,
@@ -158,21 +173,22 @@ owners. Issue #91 F completes the final Dashboard integration/drift and
 feature-complete UX gate. The integrated browser suite verifies lazy settings
 reads, narrow Routing/DNS uncertainty coordination, lifecycle exclusion,
 cross-domain draft retention, System handoff semantics, session turnover and
-safe browser projections. #5 is complete on source only; it remains undeployed.
-Stable `v0.2.0` remains the production-qualified baseline. No release, router
-access or live qualification is implied.
+safe browser projections. #5 is complete and included in the installed beta.3
+trial. Stable `v0.2.0` remains the production-qualified baseline; broader live
+feature qualification is not implied by the panel installation.
 
-Product Slice E is complete source-only under Issue #99 after PRs #100/#101.
+Product Slice E is complete under Issue #99 after PRs #100/#101.
 The later operator workspace redesign (#102 / PR #103) and RU/BY subscription
-default policy (#104 / PR #105) are also merged source-only. Current main after
-those merges is `d4a78d99a54bd7dcc24e04b16ccaf43f3148c385`; production-qualified
-stable remains `v0.2.0` and the live router remains on the retained
-`v0.3.0-beta.2` trial.
+default policy (#104 / PR #105) are also included in beta.3. The later exact
+feature freeze and reviewed release-only fixes produced immutable release
+source `8b76a9696995b6edb6d62bc425876cd894260e57`. Production-qualified stable
+remains `v0.2.0`; the live trial panel is beta.3.
 
-Issue #106 is the active source gate. It restores deterministic tracked
-webasset parity after the final parallel-PR integration, re-proves the combined
-security/UI/node contracts, and requires one clean exact-HEAD full qualification
-before source freeze. It does not dispatch a Release or access/mutate Keenetic.
+Issue #106 is complete: deterministic tracked webasset parity and the combined
+security/UI/node contracts passed exact-HEAD qualification. Reviewed PRs
+#109/#110 corrected only the hosted Release build boundary. Issue #108 then
+completed protected publication, independent public-byte verification and the
+resource worksheet; #4 records the separately authorized beta.3 panel install.
 Issue #80 remains a separate reliability follow-up and is not silently
 re-sequenced into this gate.
 
