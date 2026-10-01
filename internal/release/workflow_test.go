@@ -19,13 +19,17 @@ func releaseQualificationBoundary(workflow, devCheck string) bool {
 		return false
 	}
 	full := strings.Index(build, "\n          bash scripts/dev-check.sh --full\n")
+	root := strings.Index(build, "\n          test \"$(id -u)\" -eq 0\n")
+	tools := strings.Index(build, "\n          apt-get install --yes --no-install-recommends build-essential git jq\n")
 	handoff := strings.Index(build, "\n      - name: Assemble unsigned deterministic release inputs\n")
 	install := strings.Index(devCheck, "\tnpm --prefix web ci --ignore-scripts --prefer-offline\n")
 	browser := strings.Index(devCheck, "\t\tnpm --prefix web run test:ui\n")
-	return full >= 0 && handoff > full && install >= 0 && browser > install &&
+	return root >= 0 && tools > root && full > tools && handoff > full && install >= 0 && browser > install &&
+		strings.Contains(build, "\n    container:\n      image: node:24-bookworm\n      options: --user 0\n") &&
+		strings.Contains(build, "\n    defaults:\n      run:\n        shell: bash\n") &&
 		strings.Contains(build, "XKEEN_PLAYWRIGHT_INSTALL: \"1\"") &&
 		!strings.Contains(build, "continue-on-error:") && !strings.Contains(build, "environment:") &&
-		!strings.Contains(build[full:handoff], "|| true") &&
+		!strings.Contains(build[root:handoff], "|| true") &&
 		!strings.Contains(devCheck[install:browser+len("\t\tnpm --prefix web run test:ui\n")], "|| true") &&
 		!strings.Contains(publish, "playwright") && !strings.Contains(publish, "test:ui")
 }
@@ -39,12 +43,18 @@ func TestReleaseQualificationBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workflow := string(data)
-	devCheck := string(devCheckData)
+	workflow := strings.ReplaceAll(string(data), "\r\n", "\n")
+	devCheck := strings.ReplaceAll(string(devCheckData), "\r\n", "\n")
 	if !releaseQualificationBoundary(workflow, devCheck) {
-		t.Fatal("release build must run the shared full qualification with pinned Chromium before unsigned handoff; publish must depend on build")
+		t.Fatal("release build must admit UID 0 in its Bash job container and run the shared full qualification with pinned Chromium before unsigned handoff; publish must depend on build")
 	}
 	for name, pair := range map[string][2]string{
+		"removed container":     {strings.ReplaceAll(workflow, "    container:\n      image: node:24-bookworm\n      options: --user 0\n", ""), devCheck},
+		"nonroot container":     {strings.ReplaceAll(workflow, "options: --user 0", "options: --user 1001"), devCheck},
+		"removed Bash default":  {strings.ReplaceAll(workflow, "shell: bash", "shell: sh"), devCheck},
+		"removed UID admission": {strings.ReplaceAll(workflow, "test \"$(id -u)\" -eq 0", "true"), devCheck},
+		"ignored UID failure":   {strings.ReplaceAll(workflow, "test \"$(id -u)\" -eq 0", "test \"$(id -u)\" -eq 0 || true"), devCheck},
+		"missing fixture tools": {strings.ReplaceAll(workflow, "build-essential git jq", "git"), devCheck},
 		"removed full gate":     {strings.ReplaceAll(workflow, "bash scripts/dev-check.sh --full", "true"), devCheck},
 		"ignored full failure":  {strings.ReplaceAll(workflow, "bash scripts/dev-check.sh --full", "bash scripts/dev-check.sh --full || true"), devCheck},
 		"removed browser suite": {workflow, strings.ReplaceAll(devCheck, "npm --prefix web run test:ui", "true")},

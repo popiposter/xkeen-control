@@ -115,6 +115,7 @@ The protected manual Release workflow:
 
 - takes explicit `version`, `channel` and full `source_ref` inputs;
 - checks that `source_ref` equals the exact checkout and current remote `main`;
+- runs the read-only-permission build job in a `node:24-bookworm` container with explicit UID 0 and Bash, admits UID 0 and installs `build-essential`, Git and jq before qualification; Linux auth/notification fixtures require root-owned synthetic authorities and ownership-negative cases;
 - runs `scripts/dev-check.sh --full`, including the lockfile-pinned, single-worker Chromium `test:ui` suite, before unsigned assembly; a failure blocks `publish` through `needs: build`;
 - assembles unsigned deterministic assets in the unprivileged build job;
 - transfers only secretless release inputs to the protected `release` environment;
@@ -124,6 +125,14 @@ The protected manual Release workflow:
 - re-checks current `main` before publishing the verified draft.
 
 Actions artifacts are build handoff only, not release authority.
+
+UID 0 is confined to the build job's container; it grants no protected signing
+environment or repository-write permission. Qualification and unsigned assembly
+share that container, so fixture/output ownership remains consistent. The publish
+job keeps its separate protected `release` environment and source-pinned signing
+checks. Do not weaken production ownership checks or skip fixtures to accommodate
+the hosted runner's ordinary user. A workflow repair changes release source and
+requires a new reviewed exact-main freeze before a fresh publication decision.
 
 ## Issue #99 B focused hardening qualification
 

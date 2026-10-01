@@ -24,6 +24,12 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    container:
+      image: node:24-bookworm
+      options: --user 0
+    defaults:
+      run:
+        shell: bash
     permissions:
       contents: read
     steps:
@@ -49,6 +55,11 @@ jobs:
             echo "release source must be the current reviewed main commit" >&2
             exit 1
           }
+      - name: Prepare root-owned qualification fixtures
+        run: |
+          test "$(id -u)" -eq 0
+          apt-get update
+          apt-get install --yes --no-install-recommends build-essential git jq
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
