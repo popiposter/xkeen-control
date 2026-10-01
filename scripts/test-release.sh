@@ -46,6 +46,7 @@ if grep -Fq 'XKEEN_CONTROL_LISTEN="$LISTEN"' "$ROOT/packaging/S99xkeen-control";
 fi
 grep -Fq 'release-assets.githubusercontent.com' "$ROOT/scripts/install.sh"
 
+bash "$ROOT/scripts/test-release-git-trust.sh"
 bash "$ROOT/scripts/test-bootstrap.sh"
 bash "$ROOT/scripts/test-updater.sh"
 bash "$ROOT/scripts/test-legacy-reconcile.sh"
