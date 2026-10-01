@@ -2139,7 +2139,7 @@ func (s *SetupService) setupConfigured(paths SetupPaths, managed []string, inter
 	if !setupAliasesAbsent(paths.XrayAssetDir) {
 		return false
 	}
-	if interception.Owner != setupInterceptionOwner || !interception.Complete || !interception.TCPRedirect || !interception.UDPTProxy {
+	if interception.Owner != setupInterceptionOwner || interception.PreviousHook || !interception.Complete || !interception.TCPRedirect || !interception.UDPTProxy {
 		return false
 	}
 	for _, path := range managed {

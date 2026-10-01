@@ -1171,6 +1171,60 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 	if current, err := os.ReadFile(paths.Nodes); err != nil || !bytes.Equal(current, oldNodes) {
 		t.Fatal("successful alias convergence changed node authority")
 	}
+
+	// A panel-only update preserves the exact beta.4 hook. Ownership remains
+	// admissible, but readiness must require the new reference so the actual
+	// SetupService Preview/Apply can migrate it, including rollback on failure.
+	if err := os.WriteFile(paths.InterceptionHook, beta4SourceOwnedHybridHookFixture, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if projection := service.Status(); projection.State != "takeover" || !projection.Eligible || projection.ReasonCode != SetupReasonManagedTakeover {
+		t.Fatalf("prior hook prevented typed convergence: %+v", projection)
+	}
+	prior, err := service.config.Interception.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.emptyFails = 1
+	selection.reconciled = false
+	failedMigration, err := service.Preview(context.Background(), "prior-hook-failure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Apply(context.Background(), "prior-hook-failure", failedMigration.PreviewToken); !errors.Is(err, ErrSetupTransactionRestored) {
+		t.Fatalf("prior hook migration rollback = %v", err)
+	}
+	if restored, err := os.ReadFile(paths.InterceptionHook); err != nil || !bytes.Equal(restored, beta4SourceOwnedHybridHookFixture) {
+		t.Fatal("migration rollback did not restore exact prior hook")
+	}
+	if err := service.config.Interception.VerifyRestored(context.Background(), prior); err != nil {
+		t.Fatalf("migration rollback did not prove prior generation: %v", err)
+	}
+	if projection := service.Status(); projection.State != "takeover" || !projection.Eligible {
+		t.Fatalf("restored prior hook was mistaken for current: %+v", projection)
+	}
+	migration, err := service.Preview(context.Background(), "prior-hook-success")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migration.Plan.SetupClass != "managed-takeover" || migration.Plan.Profiles.Action != "preserve" || migration.Plan.Policy.Action != "preserve" {
+		t.Fatalf("prior hook migration changed authority plan: %+v", migration.Plan)
+	}
+	if _, err := service.Apply(context.Background(), "prior-hook-success", migration.PreviewToken); err != nil {
+		t.Fatalf("prior hook migration: %v", err)
+	}
+	if current, err := os.ReadFile(paths.InterceptionHook); err != nil || !bytes.Equal(current, setupSourceOwnedHybridHookBytes()) {
+		t.Fatal("typed migration did not install current hook")
+	}
+	if err := service.config.Interception.Verify(context.Background(), setupHybridInterceptionGeneration()); err != nil {
+		t.Fatalf("typed migration failed current proof: %v", err)
+	}
+	if projection := service.Status(); projection.State != "ready" || projection.Eligible {
+		t.Fatalf("typed migration post-state = %+v", projection)
+	}
+	if current, err := os.ReadFile(paths.Nodes); err != nil || !bytes.Equal(current, oldNodes) {
+		t.Fatal("typed hook migration changed node authority")
+	}
 }
 
 func TestSetupTakeoverPreservesAuthoritiesPanelStateAndRetiresReviewedWriters(t *testing.T) {

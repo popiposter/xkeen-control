@@ -46,6 +46,19 @@ func TestSetupInterceptionPreviousSourceHookAdmissionAndExactRollback(t *testing
 	if err := os.WriteFile(paths.InterceptionHook, beta4SourceOwnedHybridHookFixture, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	prior, err := owner.Inspect(ctx)
+	if err != nil || !prior.PreviousHook || !prior.Complete {
+		t.Fatalf("prior ownership identity = %+v, %v", prior, err)
+	}
+	if err := owner.Verify(ctx, setupHybridInterceptionGeneration()); !errors.Is(err, ErrSetupInterceptionConflict) {
+		t.Fatalf("prior hook proved current candidate: %v", err)
+	}
+	kernel := prior
+	kernel.PreviousHook = false
+	merged, err := mergeNativeInterceptionEvidence(prior, finalizeSetupInterceptionEvidence(kernel))
+	if err != nil || !merged.PreviousHook || !validSetupInterceptionEvidence(merged) {
+		t.Fatalf("native merge lost prior-template identity: %+v, %v", merged, err)
+	}
 	previous, err := owner.Snapshot(ctx)
 	if err != nil {
 		t.Fatalf("previous released generation cannot be inspected: %v", err)

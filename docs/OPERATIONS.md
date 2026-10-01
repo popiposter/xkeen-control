@@ -249,8 +249,10 @@ Existing sources retain the same resource and rollback checks. Native route
 verification accepts iproute2's `local default dev lo` spelling as the same
 family-specific zero-prefix route; unrelated routes and devices remain rejected.
 The exact source-owned Hybrid hook emitted by beta.4 remains recognized by its
-pinned SHA-256 after a panel update, including exact snapshot rollback. Setup
-Apply emits the current hook; edited prior hooks remain conflicting.
+pinned SHA-256 after a panel update, including exact snapshot rollback. It
+requires typed managed takeover until Setup Apply emits the current hook;
+current reference verification rejects the prior hook, and edited prior hooks
+remain conflicting. Settle recovery with this compatible panel before downgrade.
 
 Snapshots containing these aliases use private manifest version 2. Older
 panels, including beta.3, reject that snapshot; settle Setup recovery with the

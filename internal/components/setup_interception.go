@@ -135,6 +135,7 @@ type SetupInterceptionEvidence struct {
 	PolicyRouting  bool   `json:"policyRouting"`
 	IPv6Disabled   bool   `json:"ipv6Disabled"`
 	Complete       bool   `json:"complete"`
+	PreviousHook   bool   `json:"previousHook,omitempty"`
 	Digest         string `json:"digest"`
 }
 
@@ -190,6 +191,9 @@ func finalizeSetupInterceptionEvidence(evidence SetupInterceptionEvidence) Setup
 
 func validSetupInterceptionEvidence(evidence SetupInterceptionEvidence) bool {
 	if evidence.SchemaVersion != setupInterceptionSchemaVersion || !isHexSHA256(evidence.Digest) || setupInterceptionEvidenceDigest(evidence) != evidence.Digest {
+		return false
+	}
+	if evidence.PreviousHook && evidence.Owner != setupInterceptionOwner {
 		return false
 	}
 	if evidence.Owner == "" {
@@ -532,7 +536,7 @@ func (o *fileHybridInterceptionOwner) Inspect(context.Context) (SetupInterceptio
 	if o == nil || o.hookPath == "" || o.schedulePath == "" || o.statePath == "" {
 		return SetupInterceptionEvidence{}, ErrSetupInterceptionUnavailable
 	}
-	hookKind, _, err := setupInterceptionFileKind(o.hookPath, setupKnownSourceOwnedHybridHook, setupReviewedLegacyNetfilterHook)
+	hookKind, hook, err := setupInterceptionFileKind(o.hookPath, setupKnownSourceOwnedHybridHook, setupReviewedLegacyNetfilterHook)
 	if err != nil {
 		return SetupInterceptionEvidence{}, err
 	}
@@ -575,6 +579,9 @@ func (o *fileHybridInterceptionOwner) Inspect(context.Context) (SetupInterceptio
 		evidence.PolicyRouting = true
 		evidence.IPv6Disabled = true
 		evidence.Complete = hookKind == "source" && scheduleKind == "source" && stateSource
+		// A prior byte-pinned template is admitted ownership for migration and
+		// rollback, but cannot prove the current reference or block its Preview.
+		evidence.PreviousHook = hookKind == "source" && !bytes.Equal(hook, setupSourceOwnedHybridHookBytes())
 	}
 	return finalizeSetupInterceptionEvidence(evidence), nil
 }
@@ -632,7 +639,7 @@ func (o *fileHybridInterceptionOwner) Verify(ctx context.Context, generation Set
 		return ErrSetupInterceptionConflict
 	}
 	evidence, err := o.Inspect(ctx)
-	if err != nil || evidence.Owner != setupInterceptionOwner || evidence.Generation != generation.Generation || !evidence.Complete || !evidence.TCPRedirect || !evidence.UDPTProxy {
+	if err != nil || evidence.Owner != setupInterceptionOwner || evidence.Generation != generation.Generation || evidence.PreviousHook || !evidence.Complete || !evidence.TCPRedirect || !evidence.UDPTProxy {
 		return ErrSetupInterceptionConflict
 	}
 	return nil
