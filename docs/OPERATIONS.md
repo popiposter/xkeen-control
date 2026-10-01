@@ -148,7 +148,20 @@ For local browser access, an SSH tunnel remains safe:
 ssh -L 8787:127.0.0.1:8787 <router>
 ```
 
-An exact private LAN bind may be configured; wildcard/public/hostname binds fail closed. No WAN firewall opening is required or authorized.
+Preferred remote administration is an operator-managed VPN to the router or
+this SSH tunnel to loopback. For management VPN/private interfaces, select only
+an exact server-listed private IPv4 or ULA IPv6 address. Never bind directly to
+WAN or open a WAN firewall rule. Hostname/wildcard binds are unavailable; the
+panel does not automate VPN, firewall or DDNS configuration.
+
+The Issue #99 B source HTTP boundary requires the numeric address and exact
+listener port, including bracketed IPv6, to match the accepted local socket.
+`http://localhost:8787` is valid for the example tunnel only with a loopback
+panel listener; retain the same local/remote port. Arbitrary hostnames and
+proxy Host headers cannot authorize access. An omitted HTTP port means 80 and
+works only with an actual port-80 listener. The updater's numeric private
+`/healthz` probes retain this same authority check. This is source-only guidance;
+it is not a deployment or live-router qualification claim.
 
 ## Current distribution / update authority
 

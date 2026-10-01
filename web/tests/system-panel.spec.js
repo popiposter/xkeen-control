@@ -208,6 +208,28 @@ test('keeps System / Panel lazy and uses the final tail navigation', async ({ pa
   expect(state.requests.filter(({ path }) => path === '/api/v1/update')).toHaveLength(1)
 })
 
+for (const host of ['127.0.0.1', '10.0.0.4', 'fd00::4']) {
+  test(`private management guidance uses loaded ${host} listener without extra work`, async ({ page }) => {
+    const state = await prepare(page, { listener: { host } }); page.__systemIssues = state.issues
+    await page.goto('/')
+    await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+    await revealDetails(page, 'Private management')
+    const card = page.getByRole('region', { name: 'Private management', exact: true })
+    await expect(card).toBeVisible()
+    await expect(card).toContainText(host.includes(':') ? `[${host}]:8787` : `${host}:8787`)
+    await expect(card).toContainText('operator-managed VPN')
+    await expect(card).toContainText('SSH tunnel to loopback')
+    await expect(card).toContainText('exact numeric address and port')
+    await expect(card).toContainText('Never bind to WAN or open a WAN firewall rule')
+    await expect(card).toContainText('does not automate')
+    await expect(card.locator('button, input, select, a')).toHaveCount(0)
+    await page.waitForTimeout(5_300)
+    expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener')).toHaveLength(1)
+    expect(state.requests.filter(({ method }) => method !== 'GET')).toHaveLength(0)
+    expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 })
+  })
+}
+
 test('sends only the server-listed host and presents rebind 202 as a handoff', async ({ page }) => {
   const state = await prepare(page); page.__systemIssues = state.issues
   await page.goto('/')

@@ -121,3 +121,17 @@ Agents should start at [AGENTS.md](AGENTS.md).
 | Agent workflow | [AGENTS.md](AGENTS.md) |
 
 Detailed implementation architecture lives in the active GitHub issue rather than being duplicated across every document.
+
+## Private management
+
+Use an operator-managed VPN to the router or an SSH tunnel to the loopback
+listener for remote administration. A management VPN/private interface must use
+one exact server-listed private IPv4 or ULA IPv6 address. Connect with that numeric
+address and the listener port; bracket IPv6. `localhost` with the same port is
+accepted only for a loopback listener (for example, an SSH tunnel on port 8787).
+An omitted HTTP port is valid only when the listener actually uses port 80.
+
+Never bind directly to WAN or open a WAN firewall rule. Hostname/wildcard binds
+are unavailable. VPN, firewall and DDNS configuration remain operator-managed;
+the panel offers read-only guidance and no automation for these facilities.
+This source hardening does not change the production-qualified `v0.2.0` baseline.

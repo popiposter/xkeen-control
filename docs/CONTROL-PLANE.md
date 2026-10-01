@@ -607,12 +607,39 @@ Beta notify is `unsupported-channel`; auto-stable is `unsupported-mode`; neither
 does background discovery/download/install. Explicit Check remains the only
 normal UI path to arm checked Apply.
 
-The second Issue #99 gate is a bounded private-management hardening pass over
-the existing auth/listener/HTTP boundary: bounded RAM auth cardinality,
-fail-closed password-authority reads, request Host authority bound to the actual
-local listener, strict auth request parsing and management-VPN/SSH-tunnel
-guidance. Direct WAN exposure, VPN/firewall automation, TLS termination and
-generic remote administration remain out of scope.
+Issue #99 B hardens the existing private-management boundary. RAM sessions are
+capped at 32 (expired-first, oldest expiry/token eviction); remote attempt entries
+at 256 (expired-first, deterministic non-locked eviction, all-locked fail closed).
+Login/Reauthenticate/CredentialState share a protected <=256-byte bcrypt reader
+with Linux root ownership, real 0700 parent, regular non-symlink hash without
+group/world bits, no-follow open and pre/open/post identity checks. Unsafe state
+is unavailable and is never repaired on read.
+
+Password replacement retires the Manager's RAM credential generation and
+invalidates sessions under a separate credential write lock. Login and
+Reauthenticate compare bcrypt outside that lock, but stale generations cannot
+complete success/admission after rotation. Ordinary session/CSRF work retains
+its existing boundary. Valid-length replacement attempts also retire the old
+generation on writer/marker errors, which can occur after hash commit; invalid
+lengths leave sessions unchanged. No persistent auth state is added.
+
+An early Host guard uses only the accepted socket's http.LocalAddrContextKey.
+Exact numeric private/ULA/loopback IP plus effective port is required, bracketed
+IPv6 without zones. The sole hostname exception is localhost on loopback; an
+omitted port means 80 only for a port-80 listener. Missing/invalid local context
+and proxy-host substitutions fail closed before API/assets/health dispatch.
+Numeric updater/rebind health probes remain compatible.
+
+Only login {password}, password replacement {newPassword} and secret backup
+export {currentPassword,passphrase} receive the strict password-object boundary:
+one exact application/json Content-Type, no query, bounded bodies, case-sensitive
+required strings, no duplicate/unknown/missing/null/trailing data. The small
+password replacement bound is 16 KiB; secret export retains its existing bound.
+Security headers retain CSP/nosniff/DENY/no-referrer/Permissions-Policy/API no-store
+and add COOP/CORP same-origin, without COEP. System / Panel's Private management
+card uses already-loaded listener facts and adds no endpoint, polling or write.
+Remote administration uses operator-managed VPN or an SSH tunnel to loopback;
+WAN, hostname/wildcard binds and VPN/firewall/DDNS automation remain out of scope.
 
 Issue #99 remains source-only. It does not dispatch a Release, access the live
 router or change the production-qualified `v0.2.0` baseline.
@@ -646,9 +673,8 @@ from environment, listener file or default. Later file drift is shown without
 being silently adopted. A typed listener rebind uses the fixed updater and a
 202 response means the handoff started; reconnect and verify the active bind.
 Signed release Check remains explicit, Apply uses the checked version, and a
-202 update/rollback response does not prove the final outcome. Persisted
-`notify` and `auto-stable` panel modes remain metadata because no automatic panel
-update scheduler is active. Components and Backup & Restore retain their own
+202 update/rollback response does not prove the final outcome. Stable `notify` performs the separate check-only discovery described above.
+Beta notify and `auto-stable` remain unsupported without background mutation. Components and Backup & Restore retain their own
 existing forms and transaction owners. No raw JSON editor is exposed.
 
 The existing listener handoff API remains typed and purpose-specific:

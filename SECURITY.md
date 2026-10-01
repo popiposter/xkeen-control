@@ -78,7 +78,48 @@ Never expose the panel directly to WAN or add a WAN firewall opening for conveni
 
 Authenticated node projections may include a display name and endpoint host/port for operator identification, but must never return UUIDs, REALITY key material, short IDs, subscription URLs, VLESS strings, raw secret registry/outbound JSON or raw upstream error payloads that can contain secrets.
 
-Sessions, throttling and high-churn runtime state stay in RAM.
+Sessions, throttling and high-churn runtime state stay in RAM. Issue #99 B caps
+sessions at 32 and remote attempt entries at 256. Expired state is pruned before
+admission; sessions evict by oldest expiry with a stable token tie-break. Attempt
+pressure may displace only non-locked entries. A table of active lockouts rejects
+new remotes without adding state or evicting any lockout. Real TCP RemoteAddr,
+never proxy headers, identifies login and reauthentication attempts.
+
+Login, Reauthenticate and CredentialState share one bounded bcrypt reader.
+Linux requires a real root-owned 0700 parent and a root-owned regular non-symlink
+hash with no group/world permissions, at most 256 bytes. No-follow open and
+pre/open/post identity checks reject unsafe or changed authority; reads never
+repair permissions or disclose native errors. CLI/bootstrap retain their existing
+protected atomic writer.
+
+Each Manager snapshots the RAM credential generation with the protected hash,
+compares bcrypt concurrently, then checks the generation under a credential
+read lock before admitting a session or completing reauthentication. Password
+replacement holds the credential write lock through hash mutation, generation
+retirement and session invalidation. A valid-length write attempt retires the
+generation even on error because the hash may already have committed; invalid
+password lengths leave the current authority and sessions unchanged. Ordinary
+session reads and CSRF work do not acquire this credential lock.
+
+Every HTTP request, including assets and health, validates Host against the
+accepted socket's `http.LocalAddrContextKey`. Numeric private/loopback IP and
+effective port must match; IPv6 is bracketed with no zone. Only `localhost` is
+allowed as a hostname and only on loopback. Missing ports mean 80 only for an
+actual port-80 listener. Missing/unparseable socket context fails closed; config
+and Forwarded/X-Forwarded headers confer no Host trust.
+
+Only the three password-bearing routes (login, password replacement and secret
+backup export) require one exact application/json Content-Type, no query, bounded
+bodies and exact required case-sensitive string fields, rejecting duplicate,
+unknown, missing, null and trailing data. Existing browser security headers are
+preserved with COOP/CORP same-origin on shell/assets/API/health/rejections.
+
+The separate panel-local notification authority is
+`/opt/etc/xkeen-control/secrets/notifications.json`, root-owned 0600 under a 0700
+secrets directory. Telegram token/chat ID never appear in safe responses or
+logs; this authority is excluded from safe export and encrypted node backup.
+It is separately reconfigurable after reinstall; older binaries ignore it.
+No inbound command, generic webhook or VPN/firewall/DDNS automation is added.
 
 ## Backup / restore
 
