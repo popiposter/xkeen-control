@@ -17,11 +17,33 @@ func TestSubscriptionCountryHints(t *testing.T) {
 		{"РОССИЯ", "edge.example.com", "RU"},
 		{"Белоруссия", "edge.example.com", "BY"},
 		{"Беларусь", "edge.example.com", "BY"},
+		{"РФ", "edge.example.com", "RU"},
+		{"RUS", "edge.example.com", "RU"},
+		{"Belarusian edge", "edge.example.com", "BY"},
 		{"Russian edge", "edge.example.com", "RU"},
 		{"Belarus", "edge.example.com", "BY"},
+		{"BLR", "edge.example.com", "BY"},
+		{"BY", "edge.example.com", "BY"},
+		{"[BY] Edge", "edge.example.com", "BY"},
+		{"BY-1", "edge.example.com", "BY"},
+		{"edge-by-01", "edge.example.com", "BY"},
+		{"edge_ru_01", "edge.example.com", "RU"},
+		{"RU", "edge.example.com", "RU"},
 		{"RU-1", "edge.example.com", "RU"},
+		{"Edge", "edge-by.example.com", "BY"},
+		{"Edge", "edge.by.example.com", "BY"},
 		{"Edge", "edge-blr.example.com", "BY"},
 		{"Edge", "edge.ru.example.com", "RU"},
+		{"Hosted by Provider", "edge.example.com", ""},
+		{"Powered by Example", "edge.example.com", ""},
+		{"by", "edge.example.com", ""},
+		{"By Example", "edge.example.com", ""},
+		{"Hosted bY Provider", "edge.example.com", ""},
+		{"ru", "edge.example.com", ""},
+		{"Stand by Provider", "edge.example.com", ""},
+		{"by-example", "edge.example.com", ""},
+		{"ruby-1", "edge.example.com", ""},
+		{"bypass-1", "edge.example.com", ""},
 		{"🇩🇪 Edge", "edge.ru.example.com", "DE"},
 		{"🇷🇺 Edge", "edge-deu.example.com", "RU"},
 		{"Brussels ruby bypass", "edge.example.com", ""},
@@ -38,21 +60,36 @@ func TestSubscriptionCountryHints(t *testing.T) {
 	}
 }
 
+var countrySubscriptionFixtures = []struct {
+	name    string
+	enabled bool
+}{
+	{"🇷🇺 Edge", false}, {"Беларусь", false}, {"BY-1", false}, {"RU-1", false},
+	{"Germany", true}, {"Unknown", true}, {"Hosted by Provider", true}, {"Powered by Example", true},
+}
+
 func countrySubscriptionBody() []byte {
 	var profiles []string
-	for _, name := range []string{"🇷🇺 Edge", "Беларусь", "Germany", "Unknown"} {
-		profiles = append(profiles, strings.Replace(syntheticProfile, "#Primary", "#"+url.PathEscape(name), 1))
+	for _, fixture := range countrySubscriptionFixtures {
+		profiles = append(profiles, strings.Replace(syntheticProfile, "#Primary", "#"+url.PathEscape(fixture.name), 1))
 	}
 	return []byte(strings.Join(profiles, "\n"))
 }
 
 func assertCountryDefaults(t *testing.T, registry Registry, parentEnabled bool) {
 	t.Helper()
-	if len(registry.Nodes) != 4 {
+	if len(registry.Nodes) != len(countrySubscriptionFixtures) {
 		t.Fatalf("node count = %d", len(registry.Nodes))
 	}
+	wantByName := make(map[string]bool)
+	for _, fixture := range countrySubscriptionFixtures {
+		wantByName[fixture.name] = parentEnabled && fixture.enabled
+	}
 	for _, node := range registry.Nodes {
-		want := parentEnabled && !subscriptionCountryDisabledByDefault(node.Name, node.VLESS.Host)
+		want, known := wantByName[node.Name]
+		if !known {
+			t.Fatalf("unexpected fixture member %q", node.Name)
+		}
 		if node.Enabled != want {
 			t.Fatalf("unexpected enabled state for %q", node.Name)
 		}
@@ -79,7 +116,7 @@ func TestCountryDefaultsCandidateRetainsChoicesAndOtherAuthorities(t *testing.T)
 		t.Fatal(err)
 	}
 	for i := range before.Nodes {
-		if strings.Contains(before.Nodes[i].Name, "🇷🇺") {
+		if strings.Contains(before.Nodes[i].Name, "🇷🇺") || before.Nodes[i].Name == "Беларусь" {
 			before.Nodes[i].Enabled = true
 		}
 	}
@@ -133,8 +170,8 @@ func TestCountryDefaultsManualPreviewApplyAndExplicitEnable(t *testing.T) {
 	}
 	var russianID string
 	for _, node := range registry.Nodes {
-		if subscriptionCountryDisabledByDefault(node.Name, node.VLESS.Host) && strings.Contains(string(rendered), node.OutboundTag) {
-			t.Fatal("default-disabled member entered runtime outbounds")
+		if node.Enabled != strings.Contains(string(rendered), node.OutboundTag) {
+			t.Fatal("runtime outbounds differ from saved country defaults")
 		}
 		if strings.Contains(node.Name, "🇷🇺") {
 			russianID = node.ID
@@ -183,8 +220,8 @@ func TestCountryDefaultsAutomaticRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, node := range updated.Nodes {
-		if !node.Enabled && strings.Contains(string(rendered), node.OutboundTag) {
-			t.Fatal("automatic refresh rendered disabled member")
+		if node.Enabled != strings.Contains(string(rendered), node.OutboundTag) {
+			t.Fatal("automatic runtime outbounds differ from saved country defaults")
 		}
 	}
 	result, err = manager.refreshSavedSubscription(context.Background(), "sub-12345678")
