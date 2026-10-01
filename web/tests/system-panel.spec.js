@@ -1,4 +1,4 @@
-import { revealDetails, revealSystemSettings } from './fixtures/disclosures.js'
+import { revealDetails, revealNavigation, revealSystemSettings } from './fixtures/disclosures.js'
 import { expect, test } from '@playwright/test'
 
 const csrfToken = 'synthetic-system-panel-csrf'
@@ -304,17 +304,31 @@ test('safe-cancels a late listener Preview after navigation', async ({ page }) =
   expect(await page.getByRole('heading', { name: 'Review management listener rebind' }).count()).toBe(0)
 })
 
-test('checks then applies the exact checked release and never reports install success', async ({ page }) => {
+for (const width of [1440, 375]) test(`shows checked version/channel/source before exact Apply at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 })
   const state = await prepare(page); page.__systemIssues = state.issues
   await page.goto('/')
-  await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+  const navigation = await revealNavigation(page)
+  await navigation.getByRole('button', { name: 'System / Panel', exact: true }).click()
   await revealSystemSettings(page)
   await page.getByRole('button', { name: 'Check fixed release' }).click()
   await expect(page.getByText('Explicit release Check completed')).toBeVisible()
-  await page.getByRole('button', { name: 'Apply checked release' }).click()
+  const release = page.getByRole('region', { name: 'Signed panel release' })
+  for (const [label, value] of [['Latest checked', '1.2.3'], ['Checked channel', 'stable'], ['Checked source', 'github-release']]) {
+    const fact = release.locator('.system-facts-grid > div').filter({ has: page.getByText(label, { exact: true }) })
+    await expect(fact.locator('strong')).toHaveText(value)
+    await expect(fact.locator('strong')).toBeVisible()
+  }
+  const apply = release.getByRole('button', { name: 'Apply checked release' })
+  await expect(apply).toBeEnabled()
+  expect(state.requests.filter(({ path }) => path === '/api/v1/update/apply')).toHaveLength(0)
+  if (process.env.XKEEN_REVIEW_EVIDENCE) await page.screenshot({ path: `${process.env.XKEEN_REVIEW_EVIDENCE}/checked-release-${width}.png`, fullPage: true })
+  await apply.click()
   await expect(page.getByText('Panel update attempt started')).toBeVisible()
   expect(state.checked).toEqual({ channel: 'stable' })
   expect(state.requests.find(({ path }) => path === '/api/v1/update/apply').body).toEqual({ channel: 'stable', version: '1.2.3' })
+  expect(state.requests.filter(({ path }) => path === '/api/v1/update/apply')).toHaveLength(1)
+  expect(state.requests.find(({ path }) => path === '/api/v1/update/apply').csrf).toBe(csrfToken)
   await expect(page.getByText(/final install success is not proven/i)).toBeVisible()
 })
 
