@@ -115,6 +115,7 @@ The protected manual Release workflow:
 
 - takes explicit `version`, `channel` and full `source_ref` inputs;
 - checks that `source_ref` equals the exact checkout and current remote `main`;
+- admits UID 0 immediately after checkout and adds only `$GITHUB_WORKSPACE` to the build job's global Git `safe.directory` before reading Git identity; checkout's own trust configuration is temporary and does not cover subsequent steps;
 - runs the read-only-permission build job in a `node:24-bookworm` container with explicit UID 0 and Bash, admits UID 0 and installs `build-essential`, Git and jq before qualification; Linux auth/notification fixtures require root-owned synthetic authorities and ownership-negative cases;
 - runs `scripts/dev-check.sh --full`, including the lockfile-pinned, single-worker Chromium `test:ui` suite, before unsigned assembly; a failure blocks `publish` through `needs: build`;
 - assembles unsigned deterministic assets in the unprivileged build job;
@@ -125,6 +126,11 @@ The protected manual Release workflow:
 - re-checks current `main` before publishing the verified draft.
 
 Actions artifacts are build handoff only, not release authority.
+
+`scripts/test-release-git-trust.sh` executes that workflow trust step against
+synthetic foreign-owned repositories. It proves the next shell can read the
+exact checkout while unrelated repositories and a wrong expected SHA remain
+rejected. It runs through the release fixture lane and uses no router state.
 
 UID 0 is confined to the build job's container; it grants no protected signing
 environment or repository-write permission. Qualification and unsigned assembly

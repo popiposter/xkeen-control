@@ -38,6 +38,10 @@ jobs:
           ref: ${{ inputs.source_ref }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Trust exact checkout in root build job
+        run: |
+          test "$(id -u)" -eq 0
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Verify exact current main source
         env:
           SOURCE_REF: ${{ inputs.source_ref }}
