@@ -6,8 +6,8 @@ const json = (route, value, status = 200) => route.fulfill({ status, contentType
 
 const baseStatus = (setup) => ({
   controlPlane: { version: 'test', uptimeSeconds: 12 },
-  xray: {},
-  xkeen: {},
+  xray: setup.runtime === 'running' ? { running: true, apiReachable: true } : {},
+  xkeen: setup.runtime === 'running' ? { running: true } : {},
   balancer: {},
   observatory: {},
   benchmark: { controlPlane: {} },
@@ -16,8 +16,8 @@ const baseStatus = (setup) => ({
   lifecycle: { maintenance: false, applying: false },
 })
 
-async function prepare(page, setup) {
-  const state = { setup, requests: [] }
+async function prepare(page, setup, statusOverrides = {}) {
+  const state = { setup, requests: [], statusOverrides }
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
@@ -28,7 +28,7 @@ async function prepare(page, setup) {
     state.requests.push({ path, method: request.method(), body, csrf: request.headers()['x-csrf-token'] })
     switch (path) {
       case '/api/v1/session': return json(route, { csrfToken })
-      case '/api/v1/status': return json(route, baseStatus(state.setup))
+      case '/api/v1/status': return json(route, { ...baseStatus(state.setup), ...state.statusOverrides })
       case '/api/v1/nodes': return json(route, { total: 0, nodes: [], subscriptions: [] })
       case '/api/v1/performance': return json(route, { nodes: [] })
       case '/api/v1/config-summary': return json(route, { routing: {}, dns: {}, observatory: {} })
@@ -90,3 +90,26 @@ test('shows a closed reason and no Apply action for a blocked layout', async ({ 
   await expect(page.getByRole('button', { name: 'Apply setup' })).toHaveCount(0)
   expect(state.requests.filter((request) => request.path.startsWith('/api/v1/setup/'))).toHaveLength(0)
 })
+
+test('separates healthy runtime from blocked Setup admission without enabling Setup', async ({ page }) => {
+  const state = await prepare(page, { state: 'blocked', eligible: false, reasonCode: 'layout-mixed', runtime: 'running', configuration: 'ready', xkeen: 'ready', xray: 'ready' })
+  await expect(page.getByText('Runtime ready', { exact: true })).toBeVisible()
+  await expect(page.getByText('A mixed or unsupported layout was found', { exact: true })).not.toBeVisible()
+  await page.locator('summary').filter({ hasText: 'Setup compatibility' }).click()
+  await expect(page.getByText('A mixed or unsupported layout was found', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Prepare setup' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Apply setup' })).toHaveCount(0)
+  expect(state.requests.filter((request) => request.path.startsWith('/api/v1/setup/'))).toHaveLength(0)
+})
+
+for (const contour of ['degraded', 'journal-pending', 'writer-conflict', 'maintenance', 'applying']) {
+  test(`keeps ${contour} Setup warning prominent`, async ({ page }) => {
+    const reasonCode = ['journal-pending', 'writer-conflict'].includes(contour) ? contour : 'layout-mixed'
+    const state = await prepare(page, { state: 'blocked', eligible: false, reasonCode, runtime: contour === 'degraded' ? 'degraded' : 'running', configuration: 'ready', xkeen: 'ready', xray: 'ready' }, {
+      lifecycle: { maintenance: contour === 'maintenance', applying: contour === 'applying' },
+    })
+    await expect(page.locator('.setup-flow-blocked')).toBeVisible()
+    await expect(page.locator('summary').filter({ hasText: 'Setup compatibility' })).toHaveCount(0)
+    expect(state.requests.filter((request) => request.path.startsWith('/api/v1/setup/'))).toHaveLength(0)
+  })
+}

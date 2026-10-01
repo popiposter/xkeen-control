@@ -167,15 +167,17 @@ func parseFinalMask(raw string) (*FinalMask, error) {
 	return result, nil
 }
 
-// ParseSubscriptionBody accepts either raw VLESS lines or a bounded base64
-// encoded list. The response is never retained after reconciliation.
+// ParseSubscriptionBody accepts a bounded raw or base64 URI list, importing
+// only VLESS/REALITY. Other protocols/security modes are ignored; an invalid
+// eligible profile or zero eligible profiles rejects the entire snapshot.
+// The response is never retained after reconciliation.
 func ParseSubscriptionBody(body []byte) ([]ParsedProfile, error) {
 	if len(body) > MaxProfileInput {
 		return nil, errors.New("subscription response exceeds bounded size")
 	}
 	text := strings.TrimSpace(string(body))
 	if strings.Contains(strings.ToLower(text), "vless://") {
-		return ParseProfiles(text)
+		return parseSubscriptionProfiles(text)
 	}
 	compact := strings.Map(func(r rune) rune {
 		if r == '\r' || r == '\n' || r == ' ' || r == '\t' {
@@ -192,11 +194,80 @@ func ParseSubscriptionBody(body []byte) ([]ParsedProfile, error) {
 		if err != nil || len(decoded) > MaxProfileInput {
 			continue
 		}
-		if result, parseErr := ParseProfiles(string(decoded)); parseErr == nil {
+		if result, parseErr := parseSubscriptionProfiles(string(decoded)); parseErr == nil {
 			return result, nil
 		}
 	}
 	return nil, errors.New("invalid subscription response")
+}
+
+func parseSubscriptionProfiles(input string) ([]ParsedProfile, error) {
+	if len(input) == 0 || len(input) > MaxProfileInput {
+		return nil, errors.New("subscription response exceeds bounded size")
+	}
+	result := make([]ParsedProfile, 0, 4)
+	for _, line := range strings.Split(strings.ReplaceAll(input, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(strings.ToLower(line), "vless://") {
+			scheme, _, hasScheme := strings.Cut(line, "://")
+			uri, err := url.Parse(scheme + ":")
+			if !hasScheme || err != nil || uri.Scheme == "" {
+				return nil, errors.New("invalid subscription URI list")
+			}
+			continue
+		}
+		eligible, err := subscriptionRealityProfile(line)
+		if err != nil {
+			return nil, err
+		}
+		if !eligible {
+			continue
+		}
+		if len(result) >= MaxProfileCount {
+			return nil, errors.New("profile count exceeds bounded limit")
+		}
+		profile, err := ParseProfile(line)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, profile)
+	}
+	if len(result) == 0 {
+		return nil, errors.New("no VLESS REALITY profiles supplied")
+	}
+	return result, nil
+}
+
+// Classify security before strict profile parsing so fields of an explicitly
+// unsupported security mode cannot reject a supported provider snapshot.
+// Query errors and ambiguous/missing security must not hide a broken REALITY
+// row. ParseProfile still validates every eligible field without relaxation.
+func subscriptionRealityProfile(raw string) (bool, error) {
+	parsed, err := url.Parse(raw)
+	if err != nil || !strings.EqualFold(parsed.Scheme, "vless") || len(parsed.RawQuery) > 8192 {
+		return false, errors.New("invalid VLESS profile")
+	}
+	values, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return false, errors.New("invalid VLESS query")
+	}
+	security := ""
+	for key, items := range values {
+		if !strings.EqualFold(key, "security") {
+			continue
+		}
+		if security != "" || len(items) != 1 || items[0] == "" {
+			return false, errors.New("ambiguous VLESS security")
+		}
+		security = items[0]
+	}
+	if security == "" {
+		return false, errors.New("missing VLESS security")
+	}
+	return strings.EqualFold(security, "reality"), nil
 }
 
 func firstValue(values url.Values, key, fallback string) string {

@@ -161,6 +161,17 @@ UI, while the manual-delete reappearance warning remains limited to explicit
 manual node deletion. Slice B is source-qualified behavior; it is not deployed or
 production-qualified.
 
+Issue #112 corrects subscription parsing to accept mixed raw/base64 URI lists
+by retaining VLESS/REALITY only, silently ignoring other protocols and explicit
+non-REALITY security modes. Invalid or ambiguous eligible profiles, zero eligible
+profiles, duplicate identities and existing byte/cardinality bounds still fail
+closed without committing a partial snapshot. Manual profile import remains
+strict. REALITY shortId accepts empty or even hexadecimal strings up to 16
+characters, matching Xray's client format; canonical/rendered empty values are
+preserved and complete candidate validation remains mandatory. Operator-entered
+subscription URLs are readable only in the transient edit field; saved URLs
+remain excluded from projections and browser storage.
+
 Source-main Slice C / Issue #72 adds one purpose-built, in-process refresher
 for enabled saved subscriptions. It uses a fixed six-hour cadence, a
 five-minute startup wait plus deterministic safe-ID jitter, no catch-up or
@@ -522,7 +533,12 @@ subset in the root-only rollback payload, commits the fixed setup-owned paths,
 starts/proves the runtime and interception owner, and restores both on failure
 or crash.
 Partial, mixed, manual or uncertain layouts are blocked; there is no generic
-repair or command surface. Ordinary component update/rollback contracts remain
+repair or forced admission. Issue #112 separates this Setup admission result
+from operational health: a complete running runtime with only `layout-mixed`
+admission blocked keeps the unchanged reason/disabled Setup actions in a
+collapsed Setup compatibility disclosure. Degraded/incomplete runtime,
+pending recovery, writer conflicts, applying and maintenance remain prominent.
+Ordinary component update/rollback contracts remain
 unchanged, including their non-empty outbound verification.
 
 This is source-qualified behavior only. It is not a release, router-install,

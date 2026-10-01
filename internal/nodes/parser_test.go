@@ -3,6 +3,7 @@ package nodes
 import (
 	"encoding/base64"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -68,6 +69,95 @@ func TestParseSubscriptionBodyRejectsEmptySnapshot(t *testing.T) {
 	for _, body := range [][]byte{nil, []byte("\r\n \t")} {
 		if _, err := ParseSubscriptionBody(body); err == nil {
 			t.Fatalf("empty subscription snapshot was accepted: %q", body)
+		}
+	}
+}
+
+func subscriptionEncodings(raw string) map[string][]byte {
+	result := map[string][]byte{"raw": []byte(raw)}
+	for name, encoding := range map[string]*base64.Encoding{
+		"std": base64.StdEncoding, "raw-std": base64.RawStdEncoding,
+		"url": base64.URLEncoding, "raw-url": base64.RawURLEncoding,
+	} {
+		encoded := encoding.EncodeToString([]byte(raw))
+		result[name] = []byte(" \n" + encoded[:len(encoded)/2] + "\r\n\t" + encoded[len(encoded)/2:] + "\n")
+	}
+	return result
+}
+
+func TestMixedSubscriptionImportsOnlyReality(t *testing.T) {
+	tls := strings.Replace(syntheticProfile, "security=reality", "security=tls&alpn=h2&extra=unsupported", 1)
+	raw := "trojan://synthetic@example.com:443\r\n" + syntheticProfile + "\nss://synthetic\n" + tls + "\n" + syntheticXHTTPFinalMaskProfile + "\nvmess://synthetic\n" + syntheticProfileTwo
+	want, err := ParseProfiles(syntheticProfile + "\n" + syntheticXHTTPFinalMaskProfile + "\n" + syntheticProfileTwo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range subscriptionEncodings(raw) {
+		t.Run(name, func(t *testing.T) {
+			got, err := ParseSubscriptionBody(body)
+			if err != nil || !reflect.DeepEqual(got, want) {
+				t.Fatalf("mixed subscription did not retain exact supported profiles: count=%d error=%v", len(got), err)
+			}
+		})
+	}
+	if _, err := ParseProfiles(raw); err == nil {
+		t.Fatal("manual import silently filtered unsupported profiles")
+	}
+}
+
+func TestMixedSubscriptionRejectsInvalidEligibleSnapshot(t *testing.T) {
+	for _, bad := range []string{
+		"unexpected non-URI content",
+		"vless:/truncated-profile",
+		strings.Replace(syntheticProfile, "sid=abcd", "sid=xyz", 1),
+		strings.Replace(syntheticProfile, "&sid=abcd", "&unknown=ignored&sid=abcd", 1),
+		strings.Replace(syntheticProfile, "security=reality", "security=tls&security=reality", 1),
+		strings.Replace(syntheticProfile, "security=reality", "security=tls&SECURITY=reality", 1),
+		strings.Replace(syntheticProfile, "security=reality", "security=%ZZ", 1),
+		strings.Replace(syntheticProfile, "security=reality", "security=", 1),
+		strings.Replace(syntheticProfile, "security=reality&", "", 1),
+		strings.Replace(syntheticProfile, "security=reality", "security=REALITY", 1),
+		strings.Replace(syntheticProfile, "type=tcp", "type=unrecognized", 1),
+	} {
+		for name, body := range subscriptionEncodings(syntheticProfileTwo + "\nss://synthetic\n" + bad) {
+			if got, err := ParseSubscriptionBody(body); err == nil || got != nil {
+				t.Fatalf("invalid eligible snapshot returned partial membership for %s", name)
+			}
+		}
+	}
+}
+
+func TestSubscriptionSubsetBoundsAndNoEmptyAuthority(t *testing.T) {
+	unsupported := "ss://synthetic\ntrojan://synthetic@example.com:443\n" + strings.Replace(syntheticProfile, "security=reality", "security=tls", 1)
+	for name, body := range subscriptionEncodings(unsupported) {
+		if got, err := ParseSubscriptionBody(body); err == nil || got != nil {
+			t.Fatalf("unsupported-only snapshot accepted for %s", name)
+		}
+	}
+	raw := strings.Repeat("ss://synthetic\n", MaxProfileCount+1) + strings.Repeat(syntheticProfile+"\n", MaxProfileCount)
+	if got, err := ParseSubscriptionBody([]byte(raw)); err != nil || len(got) != MaxProfileCount {
+		t.Fatalf("eligible profile boundary rejected: count=%d error=%v", len(got), err)
+	}
+	for _, body := range [][]byte{[]byte(raw + syntheticProfile), []byte(strings.Repeat(" ", MaxProfileInput+1))} {
+		if got, err := ParseSubscriptionBody(body); err == nil || got != nil {
+			t.Fatal("oversize subscription returned partial membership")
+		}
+	}
+}
+
+func TestRealityShortIDCompatibility(t *testing.T) {
+	for _, sid := range []string{"", "00", "ABCDEF0123456789"} {
+		parsed, err := ParseProfile(strings.Replace(syntheticProfile, "sid=abcd", "sid="+sid, 1))
+		if err != nil || parsed.VLESS.ShortID != sid {
+			t.Fatalf("valid shortId rejected: %v", err)
+		}
+	}
+	if parsed, err := ParseProfile(strings.Replace(syntheticProfile, "&sid=abcd", "", 1)); err != nil || parsed.VLESS.ShortID != "" {
+		t.Fatalf("omitted shortId did not resolve to empty: %v", err)
+	}
+	for _, sid := range []string{"a", "abc", "gg", "012345678901234567", "00-0"} {
+		if _, err := ParseProfile(strings.Replace(syntheticProfile, "sid=abcd", "sid="+sid, 1)); err == nil {
+			t.Fatal("invalid shortId accepted")
 		}
 	}
 }

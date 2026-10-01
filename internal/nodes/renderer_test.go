@@ -70,6 +70,23 @@ func TestRenderXHTTPAndFinalMask(t *testing.T) {
 	}
 }
 
+func TestEmptyRealityShortIDCanonicalAndRender(t *testing.T) {
+	registry := NewRegistry()
+	registry.Nodes = []Node{testNode(t, strings.Replace(syntheticProfile, "sid=abcd", "sid=", 1), "node-44444444", true)}
+	canonical, err := json.Marshal(registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := ParseCanonical(canonical)
+	if err != nil || len(roundTrip.Nodes) != 1 || roundTrip.Nodes[0].VLESS.ShortID != "" {
+		t.Fatalf("empty shortId registry round trip failed: %v", err)
+	}
+	contents, err := Render(roundTrip)
+	if err != nil || !strings.Contains(string(contents), `"shortId": ""`) {
+		t.Fatalf("empty REALITY shortId was lost during rendering: %v", err)
+	}
+}
+
 func TestStoreAtomicPrivateRegistry(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nested", "nodes.json")

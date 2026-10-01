@@ -534,9 +534,12 @@ function Overview({ status, performance, nodeTotal, nodesByTag, csrfToken, onRef
   const healthText = total ? `${healthy}/${total} healthy` : 'No node data'
   const effective = nodesByTag.get(status.balancer?.effective)
   const ready = status.xray?.running && status.xray?.apiReachable && status.xkeen?.running
+  const setupCompatibilityOnly = ready && status.setup?.runtime === 'running' && status.setup?.configuration === 'ready' && status.setup?.xkeen === 'ready' && status.setup?.xray === 'ready' && status.setup?.state === 'blocked' && status.setup?.eligible === false && status.setup?.reasonCode === 'layout-mixed' && !status.lifecycle?.maintenance && !status.lifecycle?.applying
   return <div className="section-stack">
     <section className="active-node-strip" aria-label="Active node"><span className={ready ? 'good-text' : 'warning'}><span className={`status-dot ${ready ? 'up' : 'down'}`}></span>{ready ? 'Runtime ready' : 'Runtime unavailable'}</span>{effective ? <NodeName node={effective} /> : <strong>No current target</strong>}<span>{status.selection?.manualOverride ? 'Manual override' : 'Automatic selection'}</span><span>{formatAdaptiveLatency(effective?.latencyMs)}</span><span>{Array.from(nodesByTag.values()).filter((node) => node.enabled).length} enabled</span><button type="button" onClick={onOpenNodes}>Manage nodes</button></section>
-    <SetupFlow setup={status.setup} csrfToken={csrfToken} onRefresh={onRefresh} onUnauthorized={onUnauthorized} />
+    {setupCompatibilityOnly
+      ? <Disclosure title="Setup compatibility"><SetupFlow setup={status.setup} csrfToken={csrfToken} onRefresh={onRefresh} onUnauthorized={onUnauthorized} /></Disclosure>
+      : <SetupFlow setup={status.setup} csrfToken={csrfToken} onRefresh={onRefresh} onUnauthorized={onUnauthorized} />}
     <section className="hero-grid">
       <HealthCard label="Xray" ok={status.xray?.running && status.xray?.apiReachable} detail={status.xray?.apiReachable ? 'API reachable' : 'Degraded'} />
       <HealthCard label="Probe" ok={status.xray?.probeReachable} detail={status.xray?.probeReachable ? '127.0.0.1:10808' : 'Unavailable'} />
@@ -859,7 +862,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
       <label htmlFor="subscription-name">Display name</label>
       <input id="subscription-name" value={subscriptionName} onChange={(event) => setSubscriptionName(event.target.value)} placeholder="Home provider" />
       <label htmlFor="subscription-url">Subscription URL</label>
-      <input id="subscription-url" type="password" value={subscriptionUrl} onChange={(event) => setSubscriptionUrl(event.target.value)} placeholder={subscriptionID ? 'Leave blank to keep the saved URL' : 'https://…'} autoComplete="off" />
+      <input id="subscription-url" type="url" value={subscriptionUrl} onChange={(event) => setSubscriptionUrl(event.target.value)} placeholder={subscriptionID ? 'Leave blank to keep the saved URL' : 'https://…'} autoComplete="off" spellCheck={false} />
       <div className="composer-actions"><button className="ghost" type="button" onClick={closeComposer}>Cancel</button><button type="submit" disabled={busy || lifecycleBlocked || (!subscriptionID && !subscriptionUrl.trim())}>{subscriptionID ? 'Preview update' : 'Preview subscription'}</button></div>
     </form>}
 

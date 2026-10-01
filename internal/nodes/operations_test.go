@@ -177,6 +177,41 @@ func TestApplyGateWaitDoesNotConsumeRollbackBudget(t *testing.T) {
 	}
 }
 
+func TestNewMixedSubscriptionCommitsSupportedMembership(t *testing.T) {
+	registry := NewRegistry()
+	manual := testNode(t, syntheticXHTTPFinalMaskProfile, "node-12121212", true)
+	registry.Nodes = []Node{manual}
+	body := "ss://synthetic\n" + syntheticProfile + "\n" + strings.Replace(syntheticProfileTwo, "sid=beef", "sid=", 1)
+	manager, store, _ := testManager(t, &registry, &fakeFetcher{body: []byte(body)})
+	preview, err := manager.PreviewRefresh(context.Background(), "csrf", "", "Provider", "https://subscription.example/synthetic-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.Load()
+	if err != nil || !sameRegistry(before, registry) {
+		t.Fatal("new subscription Preview committed authority")
+	}
+	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.Load()
+	if err != nil || len(after.Subscriptions) != 1 || len(after.Nodes) != 3 || !reflect.DeepEqual(after.Nodes[0], manual) {
+		t.Fatalf("mixed subscription did not preserve unrelated authority: %v", err)
+	}
+	emptyShortID := 0
+	for _, node := range after.Nodes[1:] {
+		if node.Source.Type != "subscription" || node.Source.SubscriptionID != after.Subscriptions[0].ID {
+			t.Fatal("wrong subscription membership")
+		}
+		if node.VLESS.ShortID == "" {
+			emptyShortID++
+		}
+	}
+	if emptyShortID != 1 {
+		t.Fatal("empty REALITY shortId was not preserved")
+	}
+}
+
 func TestSubscriptionRefreshReconcilesExactMembership(t *testing.T) {
 	primary, err := ParseProfile(syntheticProfile)
 	if err != nil {
@@ -225,7 +260,9 @@ func TestSubscriptionRefreshReconcilesExactMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 	fetcher := &fakeFetcher{body: []byte(strings.Join([]string{
+		"trojan://synthetic@example.com:443",
 		strings.Replace(syntheticProfile, "11111111-1111-4111-8111-111111111111", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", 1),
+		strings.Replace(syntheticProfileTwo, "security=reality", "security=tls&alpn=h2", 1),
 		newProfile,
 	}, "\n"))}
 	manager, store, _ := testManager(t, &registry, fetcher)
@@ -418,6 +455,8 @@ func TestSubscriptionRefreshFailuresPreserveCommittedRegistry(t *testing.T) {
 		{name: "fetch", err: errors.New("synthetic fetch failure"), want: ErrSubscriptionFetch},
 		{name: "empty", body: []byte("\n"), want: ErrSubscriptionContent},
 		{name: "unsupported", body: []byte("https://not-a-vless-profile.example"), want: ErrSubscriptionContent},
+		{name: "unsupported-only", body: []byte(strings.Replace(syntheticProfile, "security=reality", "security=tls", 1) + "\nss://synthetic"), want: ErrSubscriptionContent},
+		{name: "invalid-reality-in-mixed", body: []byte(syntheticProfile + "\nss://synthetic\n" + strings.Replace(syntheticProfileTwo, "sid=beef", "sid=odd", 1)), want: ErrSubscriptionContent},
 		{name: "duplicate", body: []byte(syntheticProfile + "\n" + syntheticProfile), want: ErrSubscriptionDuplicate},
 	}
 	for _, test := range cases {
