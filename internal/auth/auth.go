@@ -53,6 +53,11 @@ type Manager struct {
 	mu       sync.Mutex
 	sessions map[string]session
 	attempts map[string]attempt
+
+	// Lock order is credentialMu, then mu. Bcrypt runs outside both locks;
+	// only authority snapshots and final admission share the rotation boundary.
+	credentialMu         sync.RWMutex
+	credentialGeneration uint64
 }
 
 type session struct {
@@ -94,6 +99,12 @@ func NewManager(config Config) *Manager {
 }
 
 func (m *Manager) Login(remoteIP, password string) (Session, string, error) {
+	return m.login(remoteIP, password, bcrypt.CompareHashAndPassword)
+}
+
+// The comparison argument allows deterministic in-flight rotation tests without
+// a mutable/global hook or a production configuration surface.
+func (m *Manager) login(remoteIP, password string, compare func([]byte, []byte) error) (Session, string, error) {
 	now := m.config.Now()
 	remoteIP = boundedRemoteIP(remoteIP)
 	m.mu.Lock()
@@ -103,14 +114,14 @@ func (m *Manager) Login(remoteIP, password string) (Session, string, error) {
 	}
 	m.mu.Unlock()
 
-	hash, err := readPasswordAuthority(m.config.HashPath)
+	hash, generation, err := m.passwordAuthority()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return Session{}, "", ErrNotConfigured
 		}
 		return Session{}, "", ErrNotConfigured
 	}
-	if bcrypt.CompareHashAndPassword(bytesTrimSpace(hash), []byte(password)) != nil {
+	if compare(bytesTrimSpace(hash), []byte(password)) != nil {
 		if !m.recordFailure(remoteIP, now) {
 			return Session{}, "", ErrLocked
 		}
@@ -126,6 +137,11 @@ func (m *Manager) Login(remoteIP, password string) (Session, string, error) {
 		return Session{}, "", ErrNotConfigured
 	}
 	s := session{csrfToken: csrf, expiresAt: now.Add(m.config.SessionTTL)}
+	m.credentialMu.RLock()
+	defer m.credentialMu.RUnlock()
+	if generation != m.credentialGeneration {
+		return Session{}, "", ErrInvalidCredentials
+	}
 	m.mu.Lock()
 	if !m.admitAttempt(remoteIP, m.config.Now()) {
 		m.mu.Unlock()
@@ -152,6 +168,10 @@ func (m *Manager) Login(remoteIP, password string) (Session, string, error) {
 // operation without creating a session. It shares the same in-memory
 // remote-IP failure and lockout accounting as Login.
 func (m *Manager) Reauthenticate(remoteIP, password string) error {
+	return m.reauthenticate(remoteIP, password, bcrypt.CompareHashAndPassword)
+}
+
+func (m *Manager) reauthenticate(remoteIP, password string, compare func([]byte, []byte) error) error {
 	if m == nil {
 		return ErrNotConfigured
 	}
@@ -164,17 +184,22 @@ func (m *Manager) Reauthenticate(remoteIP, password string) error {
 	}
 	m.mu.Unlock()
 
-	hash, err := readPasswordAuthority(m.config.HashPath)
+	hash, generation, err := m.passwordAuthority()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return ErrNotConfigured
 		}
 		return ErrNotConfigured
 	}
-	if bcrypt.CompareHashAndPassword(bytesTrimSpace(hash), []byte(password)) != nil {
+	if compare(bytesTrimSpace(hash), []byte(password)) != nil {
 		if !m.recordFailure(remoteIP, now) {
 			return ErrLocked
 		}
+		return ErrReauthenticationFailed
+	}
+	m.credentialMu.RLock()
+	defer m.credentialMu.RUnlock()
+	if generation != m.credentialGeneration {
 		return ErrReauthenticationFailed
 	}
 	m.mu.Lock()
@@ -185,6 +210,13 @@ func (m *Manager) Reauthenticate(remoteIP, password string) error {
 	delete(m.attempts, remoteIP)
 	m.mu.Unlock()
 	return nil
+}
+
+func (m *Manager) passwordAuthority() ([]byte, uint64, error) {
+	m.credentialMu.RLock()
+	defer m.credentialMu.RUnlock()
+	hash, err := readPasswordAuthority(m.config.HashPath)
+	return hash, m.credentialGeneration, err
 }
 
 // The random session identifier is passed only to the HttpOnly cookie setter;
@@ -236,6 +268,8 @@ func (m *Manager) CredentialState() string {
 	if m == nil {
 		return "unavailable"
 	}
+	m.credentialMu.RLock()
+	defer m.credentialMu.RUnlock()
 	if _, err := readPasswordAuthority(m.config.HashPath); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "bootstrap-required"
@@ -255,13 +289,23 @@ func (m *Manager) ReplacePassword(password []byte) error {
 	if m == nil {
 		return ErrNotConfigured
 	}
+	if len(password) < 12 || len(password) > 72 {
+		return ErrInvalidPassword
+	}
+	m.credentialMu.Lock()
+	defer m.credentialMu.Unlock()
+	// A writer error can follow hash commit (chmod or marker removal). Retire
+	// the previous generation even on failure rather than admit stale checks.
+	defer func() {
+		m.credentialGeneration++
+		m.InvalidateAll()
+	}()
 	if err := SetPassword(m.config.HashPath, password); err != nil {
 		return err
 	}
 	if err := os.Remove(m.config.BootstrapMarkerPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	m.InvalidateAll()
 	return nil
 }
 

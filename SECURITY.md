@@ -92,6 +92,15 @@ pre/open/post identity checks reject unsafe or changed authority; reads never
 repair permissions or disclose native errors. CLI/bootstrap retain their existing
 protected atomic writer.
 
+Each Manager snapshots the RAM credential generation with the protected hash,
+compares bcrypt concurrently, then checks the generation under a credential
+read lock before admitting a session or completing reauthentication. Password
+replacement holds the credential write lock through hash mutation, generation
+retirement and session invalidation. A valid-length write attempt retires the
+generation even on error because the hash may already have committed; invalid
+password lengths leave the current authority and sessions unchanged. Ordinary
+session reads and CSRF work do not acquire this credential lock.
+
 Every HTTP request, including assets and health, validates Host against the
 accepted socket's `http.LocalAddrContextKey`. Numeric private/loopback IP and
 effective port must match; IPv6 is bracketed with no zone. Only `localhost` is

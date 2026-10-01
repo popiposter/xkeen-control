@@ -608,6 +608,14 @@ with Linux root ownership, real 0700 parent, regular non-symlink hash without
 group/world bits, no-follow open and pre/open/post identity checks. Unsafe state
 is unavailable and is never repaired on read.
 
+Password replacement retires the Manager's RAM credential generation and
+invalidates sessions under a separate credential write lock. Login and
+Reauthenticate compare bcrypt outside that lock, but stale generations cannot
+complete success/admission after rotation. Ordinary session/CSRF work retains
+its existing boundary. Valid-length replacement attempts also retire the old
+generation on writer/marker errors, which can occur after hash commit; invalid
+lengths leave sessions unchanged. No persistent auth state is added.
+
 An early Host guard uses only the accepted socket's http.LocalAddrContextKey.
 Exact numeric private/ULA/loopback IP plus effective port is required, bracketed
 IPv6 without zones. The sole hostname exception is localhost on loopback; an
