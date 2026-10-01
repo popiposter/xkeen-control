@@ -1706,9 +1706,15 @@ func setupResourceDemand(paths SetupPaths, class string, xrayArchive, geodataByt
 		{path: filepath.Dir(paths.XkeenActivation), bytes: uint64(MaxXKeenGenerationBytes) + generationBytes},
 	}
 	for _, path := range paths.CronPaths {
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		persistent = append(persistent, setupSpaceRequirement{path: filepath.Dir(path), bytes: uint64(setupMaxCronBytes)})
 	}
 	for _, path := range paths.WriterScripts {
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		persistent = append(persistent, setupSpaceRequirement{path: filepath.Dir(path), bytes: uint64(setupMaxCronBytes)})
 	}
 	if class != "fresh" {
@@ -2133,7 +2139,7 @@ func (s *SetupService) setupConfigured(paths SetupPaths, managed []string, inter
 	if !setupAliasesAbsent(paths.XrayAssetDir) {
 		return false
 	}
-	if interception.Owner != setupInterceptionOwner || !interception.Complete || !interception.TCPRedirect || !interception.UDPTProxy {
+	if interception.Owner != setupInterceptionOwner || interception.PreviousHook || !interception.Complete || !interception.TCPRedirect || !interception.UDPTProxy {
 		return false
 	}
 	for _, path := range managed {

@@ -129,6 +129,12 @@ not migrated or forcibly disabled. Explicit node/subscription enable and manual
 profile import retain their existing semantics. The registry remains the sole
 saved state authority; no geolocation request or scheduler is added.
 
+New manual imports and subscription members with a standalone case-insensitive
+`WL` name token (including punctuation separators) default to disabled.
+Subscription refresh preserves their saved per-node choices under the existing
+parent disabled gate. Explicit enable remains available; existing registries,
+legacy adoption and backup restoration are not migrated by this default.
+
 The source-main Slice A batch node preview routes are:
 
 ```text
@@ -532,6 +538,16 @@ journal/recovery path snapshots the previous generation's typed interception
 subset in the root-only rollback payload, commits the fixed setup-owned paths,
 starts/proves the runtime and interception owner, and restores both on failure
 or crash.
+
+Issue #117 retains the exact beta.4 source-owned Hybrid hook as admitted prior
+ownership, pinned to SHA256
+`6adf15e026864cf2b860eedefac3adee2b10f8ae1fbbb919bcae1c13818b77c2`.
+Its typed interception evidence binds `previousHook` for snapshot/recovery and
+managed takeover eligibility. It cannot prove current readiness or candidate
+verification: a fresh Setup Preview/Apply replaces it with the current hook,
+while failure restores and verifies the exact prior bytes. Unknown edits remain
+conflicting. Settle a journal containing this prior identity with the compatible
+panel before downgrading to an older snapshot reader.
 
 Issue #114 admits one additional closed historical `S05xkeen` source:
 `jameszeroX/XKeen@e2d7a5f052f20ae4315eb2f248fedf8e564ddf1f`,

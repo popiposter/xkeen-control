@@ -3,11 +3,15 @@ package components
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -21,6 +25,74 @@ import (
 //
 //go:embed testdata/reviewed-upstream-proxy.sh
 var reviewedUpstreamProxyHookFixture []byte
+
+// Exact source-owned template extracted from released beta.4 source
+// 2c4d4f97ade2f968a1d2f0e1e27f480f12c9f735, without EOL normalization.
+//
+//go:embed testdata/beta4-source-owned-proxy.sh
+var beta4SourceOwnedHybridHookFixture []byte
+
+func TestSetupInterceptionPreviousSourceHookAdmissionAndExactRollback(t *testing.T) {
+	digest := sha256.Sum256(beta4SourceOwnedHybridHookFixture)
+	if fmt.Sprintf("%x", digest) != setupPreviousSourceOwnedHybridHookSHA256 || bytes.Equal(beta4SourceOwnedHybridHookFixture, setupSourceOwnedHybridHookBytes()) {
+		t.Fatal("previous released hook fixture identity drifted")
+	}
+	paths := setupTestPaths(t.TempDir())
+	owner := NewFileHybridInterceptionOwner(paths, func(string) error { return nil })
+	ctx := context.Background()
+	if err := owner.Apply(ctx, setupHybridInterceptionGeneration()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.InterceptionHook, beta4SourceOwnedHybridHookFixture, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	prior, err := owner.Inspect(ctx)
+	if err != nil || !prior.PreviousHook || !prior.Complete {
+		t.Fatalf("prior ownership identity = %+v, %v", prior, err)
+	}
+	if err := owner.Verify(ctx, setupHybridInterceptionGeneration()); !errors.Is(err, ErrSetupInterceptionConflict) {
+		t.Fatalf("prior hook proved current candidate: %v", err)
+	}
+	kernel := prior
+	kernel.PreviousHook = false
+	merged, err := mergeNativeInterceptionEvidence(prior, finalizeSetupInterceptionEvidence(kernel))
+	if err != nil || !merged.PreviousHook || !validSetupInterceptionEvidence(merged) {
+		t.Fatalf("native merge lost prior-template identity: %+v, %v", merged, err)
+	}
+	previous, err := owner.Snapshot(ctx)
+	if err != nil {
+		t.Fatalf("previous released generation cannot be inspected: %v", err)
+	}
+	service := NewSetupService(SetupConfig{Paths: paths})
+	files, err := service.captureSetupSnapshot(ctx, "managed-takeover", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.Apply(ctx, setupHybridInterceptionGeneration()); err != nil {
+		t.Fatal(err)
+	}
+	if current, err := os.ReadFile(paths.InterceptionHook); err != nil || !bytes.Equal(current, setupSourceOwnedHybridHookBytes()) {
+		t.Fatal("Apply did not emit current hook")
+	}
+	if err := service.restoreSetupSnapshot(files); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.Restore(ctx, previous); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.VerifyRestored(ctx, previous); err != nil {
+		t.Fatalf("previous hook rollback failed verification: %v", err)
+	}
+	if restored, err := os.ReadFile(paths.InterceptionHook); err != nil || !bytes.Equal(restored, beta4SourceOwnedHybridHookFixture) {
+		t.Fatal("previous hook bytes not restored exactly")
+	}
+	if err := os.WriteFile(paths.InterceptionHook, append(append([]byte(nil), beta4SourceOwnedHybridHookFixture...), []byte("# drift\n")...), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.Inspect(ctx); !errors.Is(err, ErrSetupInterceptionConflict) {
+		t.Fatalf("modified previous hook admitted: %v", err)
+	}
+}
 
 func TestReviewedLegacyHookFixtureBindsReviewedUpstreamS05(t *testing.T) {
 	if reviewedUpstreamS05SourceCommit != "da20a5e4d739101f951417754038acaee614631f" || reviewedUpstreamS05SourcePath != "scripts/_xkeen/02_install/07_install_register/04_register_init.sh" || reviewedUpstreamS05SHA256 != "6e2998bd8c471637ed4d0128eebc2d10bf72dc15b1600208601d70f0a1d0ee13" {
@@ -95,6 +167,32 @@ func TestSetupSourceOwnedHybridHookIsLANScopedIPv4OnlyAndFailClosed(t *testing.T
 	for _, forbidden := range []string{"ip6tables", "-A PREROUTING -p", "|| true", "ip -6"} {
 		if strings.Contains(hook, forbidden) {
 			t.Fatalf("source hook contains forbidden blanket/IPv6/suppressed operation %q", forbidden)
+		}
+	}
+}
+
+func TestSetupHybridHookDoesNotDuplicateAnExistingDefaultRoute(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("source shell fixture runs in Docker/Linux")
+	}
+	for _, route := range []string{"local default dev lo scope host", "local 0.0.0.0/0 dev lo scope host"} {
+		root := t.TempDir()
+		files := map[string]string{
+			"iptables": "#!/bin/sh\nexit 0\n",
+			"ip":       "#!/bin/sh\ncase \"$*\" in\n'-4 link show dev br0') exit 0;;\n'-4 rule show') printf '%s\\n' '111: from all fwmark 0x111/0xfff lookup 111';;\n'-4 route show table 111') printf '%s\\n' \"$TEST_EXISTING_ROUTE\";;\n*) printf '%s\\n' 'unexpected route mutation' >&2; exit 99;;\nesac\n",
+			"hook":     string(setupSourceOwnedHybridHookBytes()),
+		}
+		for name, contents := range files {
+			if err := os.WriteFile(filepath.Join(root, name), []byte(contents), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for attempt := 0; attempt < 2; attempt++ {
+			command := exec.Command("sh", filepath.Join(root, "hook"))
+			command.Env = append(os.Environ(), "PATH="+root+":"+os.Getenv("PATH"), "TEST_EXISTING_ROUTE="+route)
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("existing route reconciliation mutated routing: %v %s", err, output)
+			}
 		}
 	}
 }
@@ -259,6 +357,24 @@ COMMIT
 	routes = []byte("local 0.0.0.0/0 dev lo scope host\n")
 	link = []byte("2: br0: <BROADCAST,UP,LOWER_UP> mtu 1500\n")
 	return ipv4, rules, routes, link
+}
+
+func TestNativeInterceptionParserAcceptsDefaultRouteSpelling(t *testing.T) {
+	ipv4, rules, _, link := nativeSourceSaveFixture()
+	for _, route := range []string{"local default dev lo scope host\n", "local 0.0.0.0/0 dev lo scope host\n"} {
+		evidence, _, err := parseNativeInterceptionState(ipv4, nil, nil, rules, []byte(route), nil, nil, link)
+		if err != nil || !evidence.Complete {
+			t.Fatalf("equivalent route rejected: %v", err)
+		}
+	}
+	for _, route := range []string{"local default dev eth0 scope host\n", "default via 192.0.2.1 dev eth0\n", "local default dev lo\nlocal 0.0.0.0/0 dev lo\n"} {
+		if _, _, err := parseNativeInterceptionState(ipv4, nil, nil, rules, []byte(route), nil, nil, link); !errors.Is(err, ErrSetupInterceptionConflict) {
+			t.Fatalf("unknown or duplicate route admitted: %v", err)
+		}
+	}
+	if _, found, err := nativePolicyExact([]byte("local default dev lo metric 1024\n"), "route", "ipv6"); err != nil || !found {
+		t.Fatalf("IPv6 legacy default rejected: %v", err)
+	}
 }
 
 func TestNativeInterceptionParserRequiresScopedShapeAndRoutingProof(t *testing.T) {

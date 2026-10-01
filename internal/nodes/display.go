@@ -106,6 +106,14 @@ func subscriptionCountryDisabledByDefault(name, host string) bool {
 	return ok && (hint.code == "RU" || hint.code == "BY")
 }
 
+func nodeNameWL(name string) bool {
+	return hintWords(name)["wl"]
+}
+
+func subscriptionNodeDisabledByDefault(name, host string) bool {
+	return nodeNameWL(name) || subscriptionCountryDisabledByDefault(name, host)
+}
+
 func hintWords(value string) map[string]bool {
 	return exactHintWords(strings.ToLower(value))
 }

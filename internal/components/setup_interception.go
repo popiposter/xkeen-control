@@ -135,6 +135,7 @@ type SetupInterceptionEvidence struct {
 	PolicyRouting  bool   `json:"policyRouting"`
 	IPv6Disabled   bool   `json:"ipv6Disabled"`
 	Complete       bool   `json:"complete"`
+	PreviousHook   bool   `json:"previousHook,omitempty"`
 	Digest         string `json:"digest"`
 }
 
@@ -190,6 +191,9 @@ func finalizeSetupInterceptionEvidence(evidence SetupInterceptionEvidence) Setup
 
 func validSetupInterceptionEvidence(evidence SetupInterceptionEvidence) bool {
 	if evidence.SchemaVersion != setupInterceptionSchemaVersion || !isHexSHA256(evidence.Digest) || setupInterceptionEvidenceDigest(evidence) != evidence.Digest {
+		return false
+	}
+	if evidence.PreviousHook && evidence.Owner != setupInterceptionOwner {
 		return false
 	}
 	if evidence.Owner == "" {
@@ -268,7 +272,7 @@ ip -4 link show dev br0 >/dev/null
 if ! ip -4 rule show | grep -F "fwmark 0x111/0xfff lookup 111" >/dev/null 2>&1; then
   ip -4 rule add fwmark 0x111/0xfff table 111 pref 111
 fi
-if ! ip -4 route show table 111 | grep -F "local 0.0.0.0/0 dev lo" >/dev/null 2>&1; then
+if ! ip -4 route show table 111 | grep -E '^local (0\.0\.0\.0/0|default) dev lo( |$)' >/dev/null 2>&1; then
   ip -4 route add local 0.0.0.0/0 dev lo table 111
 fi
 `
@@ -280,7 +284,21 @@ set -eu
 [ -x /opt/etc/ndm/netfilter.d/proxy.sh ] && /opt/etc/ndm/netfilter.d/proxy.sh
 `
 
-func setupSourceOwnedHybridHookBytes() []byte   { return []byte(setupSourceOwnedHybridHook) }
+func setupSourceOwnedHybridHookBytes() []byte { return []byte(setupSourceOwnedHybridHook) }
+
+// beta.4 at source 2c4d4f97ade2f968a1d2f0e1e27f480f12c9f735 emitted
+// this exact prior hybrid-v1 hook. Panel updates preserve appliance files;
+// retain its ownership identity for inspection and exact snapshot rollback.
+// Unknown edits remain conflicting, and Apply always writes the current hook.
+const setupPreviousSourceOwnedHybridHookSHA256 = "6adf15e026864cf2b860eedefac3adee2b10f8ae1fbbb919bcae1c13818b77c2"
+
+func setupKnownSourceOwnedHybridHook(contents []byte) bool {
+	if bytes.Equal(contents, setupSourceOwnedHybridHookBytes()) {
+		return true
+	}
+	digest := sha256.Sum256(contents)
+	return hex.EncodeToString(digest[:]) == setupPreviousSourceOwnedHybridHookSHA256
+}
 func setupSourceOwnedScheduleHookBytes() []byte { return []byte(setupSourceOwnedScheduleHook) }
 
 func validSetupHybridConfig(files map[string][]byte) bool {
@@ -518,7 +536,7 @@ func (o *fileHybridInterceptionOwner) Inspect(context.Context) (SetupInterceptio
 	if o == nil || o.hookPath == "" || o.schedulePath == "" || o.statePath == "" {
 		return SetupInterceptionEvidence{}, ErrSetupInterceptionUnavailable
 	}
-	hookKind, _, err := setupInterceptionFileKind(o.hookPath, func(contents []byte) bool { return bytes.Equal(contents, setupSourceOwnedHybridHookBytes()) }, setupReviewedLegacyNetfilterHook)
+	hookKind, hook, err := setupInterceptionFileKind(o.hookPath, setupKnownSourceOwnedHybridHook, setupReviewedLegacyNetfilterHook)
 	if err != nil {
 		return SetupInterceptionEvidence{}, err
 	}
@@ -561,6 +579,9 @@ func (o *fileHybridInterceptionOwner) Inspect(context.Context) (SetupInterceptio
 		evidence.PolicyRouting = true
 		evidence.IPv6Disabled = true
 		evidence.Complete = hookKind == "source" && scheduleKind == "source" && stateSource
+		// A prior byte-pinned template is admitted ownership for migration and
+		// rollback, but cannot prove the current reference or block its Preview.
+		evidence.PreviousHook = hookKind == "source" && !bytes.Equal(hook, setupSourceOwnedHybridHookBytes())
 	}
 	return finalizeSetupInterceptionEvidence(evidence), nil
 }
@@ -618,7 +639,7 @@ func (o *fileHybridInterceptionOwner) Verify(ctx context.Context, generation Set
 		return ErrSetupInterceptionConflict
 	}
 	evidence, err := o.Inspect(ctx)
-	if err != nil || evidence.Owner != setupInterceptionOwner || evidence.Generation != generation.Generation || !evidence.Complete || !evidence.TCPRedirect || !evidence.UDPTProxy {
+	if err != nil || evidence.Owner != setupInterceptionOwner || evidence.Generation != generation.Generation || evidence.PreviousHook || !evidence.Complete || !evidence.TCPRedirect || !evidence.UDPTProxy {
 		return ErrSetupInterceptionConflict
 	}
 	return nil
@@ -649,7 +670,7 @@ func (o *fileHybridInterceptionOwner) removePartialSourceOwned() error {
 	if o == nil {
 		return ErrSetupInterceptionUnavailable
 	}
-	hookKind, _, err := setupInterceptionFileKind(o.hookPath, func(contents []byte) bool { return bytes.Equal(contents, setupSourceOwnedHybridHookBytes()) }, setupReviewedLegacyNetfilterHook)
+	hookKind, _, err := setupInterceptionFileKind(o.hookPath, setupKnownSourceOwnedHybridHook, setupReviewedLegacyNetfilterHook)
 	if err != nil {
 		return err
 	}
@@ -1163,6 +1184,13 @@ func nativePolicyExact(contents []byte, kind string, family string) (nativeOwned
 			prefix := "0.0.0.0/0"
 			if family == "ipv6" {
 				prefix = "::/0"
+			}
+			// iproute2 renders the zero prefix as "default" on Keenetic.
+			// Normalize only this exact token before the same ownership checks.
+			for index, field := range fields {
+				if field == "default" {
+					fields[index] = prefix
+				}
 			}
 			marker := false
 			for _, field := range fields {
