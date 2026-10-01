@@ -207,6 +207,20 @@ RAM or `/tmp` holds sessions/rate limits, status caches, RTT/liveness windows, p
 
 Persistent writes are tied to real explicit state changes and bounded generations: auth/listener settings, typed `appliance.json` adoption/restore changes, `nodes.json`, generated active outbounds, stable-selection changes, one compact benchmark snapshot, one previous panel generation and compact panel release/update policy markers. No growing metrics or update-history database belongs on the router.
 
+## Source security evolution / Issue #99 B
+
+The existing auth/listener owners retain their contracts with bounded RAM
+sessions/attempt maps, active-lockout preservation, one protected bounded bcrypt
+reader and an early request Host check against the actual accepted local socket.
+Numeric private/ULA/loopback authorities and loopback-only localhost preserve
+private management and updater health probes. Strict JSON applies only to the
+three password-bearing routes; existing browser headers gain COOP/CORP
+same-origin. System guidance consumes loaded listener facts with no automation.
+Merged A's outbound-only notification/provider/scheduler architecture and all
+routing/DNS/selection owners remain unchanged. These are source-only changes;
+review/merge B is still the Slice E acceptance gate, and signed stable `v0.2.0`
+remains the production-qualified baseline.
+
 ## Source evolution beyond the deployed runtime
 
 `docs/ROADMAP.md` is the sole sequencing/status authority; do not copy its volatile issue order here.

@@ -125,6 +125,28 @@ The protected manual Release workflow:
 
 Actions artifacts are build handoff only, not release authority.
 
+## Issue #99 B focused hardening qualification
+
+During iteration, use synthetic protected authorities and local sockets:
+
+```sh
+go test -count=1 ./internal/auth ./internal/httpapi ./cmd/xkeen-control
+npm --prefix web run test:system-panel-ui
+npm --prefix web run test:feature-complete-ui
+bash scripts/test-release.sh --fixtures-only
+```
+
+Auth fixtures cover 32-session eviction/pruning and 256-attempt admission without
+active-lockout eviction, including concurrent pressure. Linux bcrypt fixtures
+cover ownership, parent/file permissions, symlinks, type/size and replacement
+races without read-side repair. HTTP fixtures inject LocalAddrContextKey only
+for direct handler tests and verify private/loopback/ULA numeric health
+authorities, loopback localhost, strict password objects and security headers.
+Browser fixtures verify read-only guidance from loaded listener facts without
+new polling/mutation/storage, and retain notification and #5 integration checks.
+Finish with the clean exact-HEAD full gate above. This is local source evidence;
+no live credential/delivery, router access or release qualification is implied.
+
 ## Issue #2 focused fixtures
 
 The release/bootstrap/updater qualification fixture is:

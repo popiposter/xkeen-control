@@ -127,6 +127,7 @@ func TestComponentWriteWindowPreservesLateRecoveryHTTPResponse(t *testing.T) {
 	// scaled network write window, including under the race detector. Preview
 	// and Apply below still use real HTTP with the resulting session and CSRF.
 	loginRequest := httptest.NewRequest(http.MethodPost, server.URL+"/api/v1/session/login", strings.NewReader(`{"password":"synthetic-control-password"}`))
+	loginRequest = loginRequest.WithContext(context.WithValue(loginRequest.Context(), http.LocalAddrContextKey, server.Listener.Addr()))
 	loginRequest.Header.Set("Content-Type", "application/json")
 	loginRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(loginRecorder, loginRequest)
