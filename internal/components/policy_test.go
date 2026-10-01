@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -438,52 +439,61 @@ func TestCheckSchedulerBoundsNotificationHook(t *testing.T) {
 }
 
 func TestCheckSchedulerNotificationLatencyPreservesLaterCheckBudget(t *testing.T) {
-	manager := newPolicyManager(filepath.Join(t.TempDir(), "component-policy.json"))
-	if _, err := manager.SetPolicy(ComponentPolicy{SchemaVersion: 1, Mode: ComponentPolicyModeNotify, CheckCadenceMinutes: 60}); err != nil {
-		t.Fatal(err)
-	}
-	// Scale the production limits together. Wait on deadlines, not sleeps or
-	// scheduler polling: every check consumes its full metadata allowance and
-	// every delivery consumes its full separate allowance.
-	const scale = 300
-	checkTimeout := MaxCheckDuration / scale
-	notificationTimeout := DefaultComponentNotificationTimeout / scale
-	var requests []CheckRequest
-	notifications := make(chan NotificationEvent, len(componentCheckTuples))
-	scheduler := NewCheckScheduler(CheckSchedulerConfig{
-		Policy:              manager,
-		Lifecycle:           func() (LifecycleProjection, bool) { return LifecycleProjection{}, true },
-		CycleTimeout:        DefaultComponentSchedulerCycleTimeout / scale,
-		NotificationTimeout: notificationTimeout,
-		Checks: scheduledCheckFunc(func(ctx context.Context, request CheckRequest) (CheckResult, error) {
-			requests = append(requests, request)
-			deadline, ok := ctx.Deadline()
-			if !ok || time.Until(deadline) < checkTimeout {
-				t.Errorf("%s lost its full check allowance after notification latency", request.Component)
-				return CheckResult{}, ErrCheckTimeout
-			}
-			checkContext, cancel := context.WithTimeout(ctx, checkTimeout)
-			defer cancel()
-			<-checkContext.Done()
-			if ctx.Err() != nil {
-				return CheckResult{}, ErrCheckTimeout
-			}
-			return validPolicyScheduledResult(request, time.Now(), "update-available"), nil
-		}),
-		Notification: NotificationHookFunc(func(ctx context.Context, event NotificationEvent) error {
-			notifications <- event
-			<-ctx.Done()
-			return ctx.Err()
-		}),
+	synctest.Test(t, func(t *testing.T) {
+		manager := newPolicyManager(filepath.Join(t.TempDir(), "component-policy.json"))
+		if _, err := manager.SetPolicy(ComponentPolicy{SchemaVersion: 1, Mode: ComponentPolicyModeNotify, CheckCadenceMinutes: 60}); err != nil {
+			t.Fatal(err)
+		}
+		// Virtual time exercises the actual production allowances without letting
+		// runner/race scheduling overhead consume a compressed wall-clock budget.
+		checkTimeout := MaxCheckDuration
+		notificationTimeout := DefaultComponentNotificationTimeout
+		var requests []CheckRequest
+		notifications := make(chan NotificationEvent, len(componentCheckTuples))
+		scheduler := NewCheckScheduler(CheckSchedulerConfig{
+			Policy:              manager,
+			Lifecycle:           func() (LifecycleProjection, bool) { return LifecycleProjection{}, true },
+			CycleTimeout:        DefaultComponentSchedulerCycleTimeout,
+			NotificationTimeout: notificationTimeout,
+			Checks: scheduledCheckFunc(func(ctx context.Context, request CheckRequest) (CheckResult, error) {
+				requests = append(requests, request)
+				deadline, ok := ctx.Deadline()
+				if !ok || time.Until(deadline) < checkTimeout {
+					t.Errorf("%s lost its full check allowance after notification latency", request.Component)
+					return CheckResult{}, ErrCheckTimeout
+				}
+				checkContext, cancel := context.WithTimeout(ctx, checkTimeout)
+				defer cancel()
+				<-checkContext.Done()
+				if ctx.Err() != nil {
+					return CheckResult{}, ErrCheckTimeout
+				}
+				return validPolicyScheduledResult(request, time.Now(), "update-available"), nil
+			}),
+			Notification: NotificationHookFunc(func(ctx context.Context, event NotificationEvent) error {
+				deadline, ok := ctx.Deadline()
+				if !ok || time.Until(deadline) != notificationTimeout {
+					t.Errorf("%s lost its full notification allowance", event.Component)
+				}
+				notifications <- event
+				<-ctx.Done()
+				return ctx.Err()
+			}),
+		})
+		started := time.Now()
+		scheduler.runCycle(context.Background(), manager.snapshot().epoch)
+		synctest.Wait()
+		if elapsed := time.Since(started); elapsed != DefaultComponentSchedulerCycleTimeout {
+			t.Fatalf("virtual cycle elapsed=%s, want full check and delivery allowances %s", elapsed, DefaultComponentSchedulerCycleTimeout)
+		}
+		status := scheduler.Status()
+		if !reflect.DeepEqual(requests, fixedComponentCheckTuples()) || len(notifications) != len(componentCheckTuples) || status.State != "completed" || status.NotificationState != "failed" || len(scheduler.notified) != 0 {
+			t.Fatalf("bounded cycle requests=%v notifications=%d status=%+v dedupe=%v", requests, len(notifications), status, scheduler.notified)
+		}
+		if DefaultComponentSchedulerCycleTimeout != time.Duration(len(componentCheckTuples))*(MaxCheckDuration+DefaultComponentNotificationTimeout) {
+			t.Fatal("production cycle must include all check and notification allowances")
+		}
 	})
-	scheduler.runCycle(context.Background(), manager.snapshot().epoch)
-	status := scheduler.Status()
-	if !reflect.DeepEqual(requests, fixedComponentCheckTuples()) || len(notifications) != len(componentCheckTuples) || status.State != "completed" || status.NotificationState != "failed" || len(scheduler.notified) != 0 {
-		t.Fatalf("bounded cycle requests=%v status=%+v dedupe=%v", requests, status, scheduler.notified)
-	}
-	if DefaultComponentSchedulerCycleTimeout != time.Duration(len(componentCheckTuples))*(MaxCheckDuration+DefaultComponentNotificationTimeout) {
-		t.Fatal("production cycle must include all check and notification allowances")
-	}
 }
 
 func TestCheckSchedulerPolicyChangeDuringCheckSuppressesNotification(t *testing.T) {

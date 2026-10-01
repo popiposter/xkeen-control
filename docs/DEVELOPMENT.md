@@ -360,6 +360,12 @@ The final clean exact-HEAD full gate includes these Go/browser regressions and
 the existing component/release/integration suites. Section B remains a separate
 review/implementation gate; A does not close Issue #99.
 
+Issue #115's scheduler notification-budget regression uses standard
+`testing/synctest` virtual time with the actual production check/delivery/cycle
+allowances. It verifies every later check's remaining budget, all bounded
+delivery attempts, failed-delivery dedupe and exact virtual elapsed time; it
+does not scale a wall-clock deadline or change production limits.
+
 | Entry point | Unique purpose | Aggregate full behavior |
 | --- | --- | --- |
 | `go test -count=1 ./...` | Complete normal Go package suite | Once |
