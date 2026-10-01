@@ -532,6 +532,32 @@ journal/recovery path snapshots the previous generation's typed interception
 subset in the root-only rollback payload, commits the fixed setup-owned paths,
 starts/proves the runtime and interception owner, and restores both on failure
 or crash.
+
+Issue #114 admits one additional closed historical `S05xkeen` source:
+`jameszeroX/XKeen@e2d7a5f052f20ae4315eb2f248fedf8e564ddf1f`,
+`scripts/_xkeen/02_install/07_install_register/04_register_init.sh`, normalized
+SHA256 `f1aab626fddaf2026a92741e2506fb9550cbb1d3242892dcb1b36a03998ea484`.
+Only the four exact top-level `ipv4_exclude`, `ipv6_exclude`, `proxy_dns` and
+`ipv6_support` assignments may differ: bounded address/prefix lists of the
+matching family and closed `on`/`off` values. Duplicate/ambiguous assignments,
+shell expressions and every other source change fail closed. This identity is
+classification and rollback evidence only; foreign lifecycle execution stays
+prohibited and the existing direct process adapter owns quiescence.
+
+Only the historical `zkeen.dat` → `geosite_zkeen.dat` and `zkeenip.dat` →
+`geoip_zkeenip.dat` aliases are admitted under the fixed asset root, with exact
+same-root absolute or basename-relative text and regular catalog targets.
+Preview binds the literal link text; the protected snapshot records it once,
+without following links or rereading target bytes. Apply retires these entries
+after snapshot capture and geodata commit, and final reference verification
+requires their absence. Rollback/crash recovery restores exact link text and
+the previous generation. Unknown, escaped, chained or dangling links remain
+blocked. Alias snapshots use private manifest version 2 so older readers reject
+them before replacing live directories; version 1 snapshots without links stay
+readable. Public Setup DTOs and the shared journal remain version 1. The plan's
+profile count uses the existing registry bound (256); only display labels are
+capped at 32.
+
 Partial, mixed, manual or uncertain layouts are blocked; there is no generic
 repair or forced admission. Issue #112 separates this Setup admission result
 from operational health: a complete running runtime with only `layout-mixed`

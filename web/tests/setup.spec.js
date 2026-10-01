@@ -50,6 +50,7 @@ async function prepare(page, setup, statusOverrides = {}) {
           geodata: { generation: 'geo-generation', items: [{ id: 'geoip' }, { id: 'geosite' }, { id: 'geoip-ir' }, { id: 'geosite-ir' }, { id: 'geoip-ru' }, { id: 'geosite-ru' }] },
           xkeen: { version: 'dev-test', generationSha256: 'b'.repeat(64) },
           lifecycle: { name: 'S05xkeen', sha256: 'c'.repeat(64) },
+          ...state.planOverrides,
         },
       })
       case '/api/v1/setup/cancel': return json(route, { canceled: true })
@@ -89,6 +90,25 @@ test('shows a closed reason and no Apply action for a blocked layout', async ({ 
   await expect(page.getByRole('button', { name: 'Prepare setup' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Apply setup' })).toHaveCount(0)
   expect(state.requests.filter((request) => request.path.startsWith('/api/v1/setup/'))).toHaveLength(0)
+})
+
+test('accepts complete takeover membership above the bounded display-label count', async ({ page }) => {
+  const state = await prepare(page, { state: 'takeover', eligible: true, reasonCode: 'managed-takeover', runtime: 'setup' })
+  state.planOverrides = { setupClass: 'managed-takeover', productDefault: false, emptyRegistry: false, profiles: { action: 'preserve', count: 59, labels: ['Synthetic node'] }, policy: { action: 'preserve' } }
+  await page.getByRole('button', { name: 'Prepare setup' }).click()
+  await expect(page.getByText('59 supported profiles', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Apply setup', exact: true })).toBeVisible()
+  expect(state.requests.filter((request) => request.path === '/api/v1/setup/preview')).toHaveLength(1)
+  expect(state.requests.filter((request) => request.path === '/api/v1/setup/apply')).toHaveLength(0)
+})
+
+test('rejects takeover cardinality outside the canonical registry bound', async ({ page }) => {
+  const state = await prepare(page, { state: 'takeover', eligible: true, reasonCode: 'managed-takeover', runtime: 'setup' })
+  state.planOverrides = { setupClass: 'managed-takeover', productDefault: false, emptyRegistry: false, profiles: { action: 'preserve', count: 257 }, policy: { action: 'preserve' } }
+  await page.getByRole('button', { name: 'Prepare setup' }).click()
+  await expect(page.getByText('The setup plan was not recognized. No action was started.', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Apply setup', exact: true })).toHaveCount(0)
+  expect(state.requests.filter((request) => request.path === '/api/v1/setup/apply')).toHaveLength(0)
 })
 
 test('separates healthy runtime from blocked Setup admission without enabling Setup', async ({ page }) => {
