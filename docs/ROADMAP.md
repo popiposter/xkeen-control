@@ -43,13 +43,13 @@ public source + signed GitHub Releases (#2, done)
         ↓
 local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
-managed XKeen / Xray / geodata lifecycle (#4, active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-F delivered through PRs #69/#71/#73/#75 and Issues #76/#78; D.2 G merged source-only via #81/#82; one feature-complete candidate afterward)
+managed XKeen / Xray / geodata lifecycle (#4 active; beta.4 panel installed/verified; source corrections delivered; managed convergence and quality pending)
         ↓
-visual typed configuration + transactional render/apply (#5 complete source-only through #91 F; not deployed)
+visual typed configuration + transactional render/apply (#5 source delivery complete through #91 F; trial panel installed, integrated acceptance pending)
         ↓
 notifications + private-management security hardening (#99 done source-only)
         ↓
-feature freeze + exact-main integrated qualification (#106 active; no release/router mutation)
+feature freeze + exact-main integrated qualification (#106 complete; reviewed successor corrections delivered through #117)
 ```
 
 ## Delivery sequence
@@ -98,7 +98,7 @@ Safe export excludes secrets by default; secret-bearing export is explicit and e
 
 Pre-adoption compatibility is explicit: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit and unknown/manual drift fails closed.
 
-## D.2 / Issue #4 — active; trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered; #46 A-F complete; G merged source-only
+## D.2 / Issue #4 — active trial continuation; stable qualification unchanged
 
 Phase A merged via PR #23 to `main` `bda9dd0cc7bb142a4cb1468811fff9b5146b1e8e`; source main gained the bounded read-only component inventory and authenticated `GET /api/v1/components` for panel, XKeen, Xray, geodata, KeeneticOS and Entware.
 
@@ -142,11 +142,11 @@ F3 is delivered by PR #67: bounded persisted `off|notify|manual` component polic
 
 The sequence is **#46 A-F foundation → D.2 G Setup Mode source (merged #82) → #5 A/B Routing (merged #84/#86) → #5 C1/C2 DNS + Observatory broker/UI (merged #88/#90) → #91 D Performance (merged #92) → #91 E System/Panel (merged #97) → #91 F integration/#5 source closeout (complete source-only) → planned product E notifications/security hardening → one feature-complete signed candidate plus integrated live qualification**. These source slices do not independently trigger release publication, router install or live qualification. Only after that integrated candidate is installed may live Xray/geodata/XKeen update+rollback qualification resume, restoring each component baseline before the next class and settling all component state before the original stable panel return.
 
-## D.3 / Issue #46 foundation — Slices A-F delivered; not deployed
+## D.3 / Issue #46 foundation — Slices A-F delivered; integrated acceptance pending
 
-PR #69 delivered Slice A (selection-first Nodes and atomic batch mutations). PR #71 delivered Slice B (exact subscription membership reconciliation). PR #73 delivered Slice C (bounded automatic subscription refresh with non-preemptive background admission). PR #75 delivered Slice D (fixed manual-node down/up diagnostics and bounded progress). Issue #76 delivers Slice E (fresh RTT shortlist, fixed down/up quality generation, deterministic scoring, hysteresis/dwell and the one Coordinator performance owner). Issue #78 delivers Slice F (integrated automatic-quality Overview/Nodes presentation, closed state/reason vocabulary, view-scoped performance polling, legacy-trigger retirement and source qualification). The #46 slices remain source-only and do not deploy to production; no release, router access or live qualification is implied.
+PR #69 delivered Slice A (selection-first Nodes and atomic batch mutations). PR #71 delivered Slice B (exact subscription membership reconciliation). PR #73 delivered Slice C (bounded automatic subscription refresh with non-preemptive background admission). PR #75 delivered Slice D (fixed manual-node down/up diagnostics and bounded progress). Issue #76 delivers Slice E (fresh RTT shortlist, fixed down/up quality generation, deterministic scoring, hysteresis/dwell and the one Coordinator performance owner). Issue #78 delivers Slice F (integrated automatic-quality Overview/Nodes presentation, closed state/reason vocabulary, view-scoped performance polling, legacy-trigger retirement and source qualification). Their source qualification did not imply live acceptance. They are included in the separately installed trial panel; final integrated qualification remains pending in #4.
 
-## D.3 / Issue #5 — complete source-only; not deployed
+## D.3 / Issue #5 — source complete; integrated acceptance pending
 
 Issues #83/#85 and PRs #84/#86 deliver Routing broker/UI. Issue #87 / PR #88
 deliver the shared managed-policy envelope plus closed DNS/Observatory backend,
