@@ -17,10 +17,14 @@ type countryHint struct {
 
 var (
 	genericNodeName = regexp.MustCompile(`(?i)^(node|imported node)(\s+\d+)?$`)
-	countryHints    = []countryHint{
+	// Lowercase ISO hints in names require a deliberate numbered provider form.
+	// A bare natural-language "by" is never a Belarus hint.
+	numberedCountryCode = regexp.MustCompile(`(?:^|[^\pL\pN])(?i:(ru|by))[-_][0-9]+(?:$|[^\pL\pN])`)
+	countryHints        = []countryHint{
 		{code: "AM", name: "Armenia", flag: "🇦🇲", aliases: []string{"armenia", "arm"}},
 		{code: "AT", name: "Austria", flag: "🇦🇹", aliases: []string{"austria", "aut"}},
 		{code: "BG", name: "Bulgaria", flag: "🇧🇬", aliases: []string{"bulgaria", "bgr"}},
+		{code: "BY", name: "Belarus", flag: "🇧🇾", aliases: []string{"belarus", "belarusian", "blr", "беларусь", "белоруссия"}},
 		{code: "CA", name: "Canada", flag: "🇨🇦", aliases: []string{"canada", "can"}},
 		{code: "CZ", name: "Czechia", flag: "🇨🇿", aliases: []string{"czechia", "czech", "cze"}},
 		{code: "DE", name: "Germany", flag: "🇩🇪", aliases: []string{"germany", "deu", "ger"}},
@@ -35,6 +39,7 @@ var (
 		{code: "LV", name: "Latvia", flag: "🇱🇻", aliases: []string{"latvia", "lva"}},
 		{code: "NL", name: "Netherlands", flag: "🇳🇱", aliases: []string{"netherlands", "nld", "nl"}},
 		{code: "PL", name: "Poland", flag: "🇵🇱", aliases: []string{"poland", "pol", "pl"}},
+		{code: "RU", name: "Russia", flag: "🇷🇺", aliases: []string{"russia", "russian", "rus", "россия", "рф"}},
 		{code: "SE", name: "Sweden", flag: "🇸🇪", aliases: []string{"sweden", "swe"}},
 		{code: "SG", name: "Singapore", flag: "🇸🇬", aliases: []string{"singapore", "sgp"}},
 		{code: "TH", name: "Thailand", flag: "🇹🇭", aliases: []string{"thailand", "tha"}},
@@ -69,9 +74,24 @@ func displayAddress(host string, port int) string {
 }
 
 func inferCountry(name, host string) (countryHint, bool) {
+	// A provider's explicit country flag is stronger than a hostname hint.
+	for _, hint := range countryHints {
+		if strings.Contains(name, hint.flag) {
+			return hint, true
+		}
+	}
 	nameWords := hintWords(name)
 	hostWords := hintWords(host)
+	nameCodes := exactHintWords(name)
+	for _, match := range numberedCountryCode.FindAllStringSubmatch(name, -1) {
+		nameCodes[strings.ToUpper(match[1])] = true
+	}
 	for _, hint := range countryHints {
+		// Short policy codes in prose must retain explicit uppercase spelling or
+		// the numbered form above. Host tokens remain case-insensitive hints.
+		if (hint.code == "RU" || hint.code == "BY") && (nameCodes[hint.code] || hostWords[strings.ToLower(hint.code)]) {
+			return hint, true
+		}
 		for _, alias := range hint.aliases {
 			if nameWords[alias] || hostWords[alias] {
 				return hint, true
@@ -81,9 +101,18 @@ func inferCountry(name, host string) (countryHint, bool) {
 	return countryHint{}, false
 }
 
+func subscriptionCountryDisabledByDefault(name, host string) bool {
+	hint, ok := inferCountry(name, host)
+	return ok && (hint.code == "RU" || hint.code == "BY")
+}
+
 func hintWords(value string) map[string]bool {
+	return exactHintWords(strings.ToLower(value))
+}
+
+func exactHintWords(value string) map[string]bool {
 	result := make(map[string]bool)
-	for _, item := range strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
+	for _, item := range strings.FieldsFunc(value, func(r rune) bool {
 		return !(unicode.IsLetter(r) || unicode.IsDigit(r))
 	}) {
 		result[item] = true

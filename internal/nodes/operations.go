@@ -646,7 +646,13 @@ func buildSubscriptionCandidate(before Registry, target Subscription, parsed []P
 			node := before.Nodes[matches[0]]
 			node.VLESS = item.profile.VLESS
 			node.SourceKey = item.key
-			node.Enabled = target.Enabled
+			// A default-disabled member must not be re-enabled by refresh;
+			// retain explicit per-node choices in these countries as well.
+			if subscriptionCountryDisabledByDefault(item.profile.Name, item.profile.VLESS.Host) {
+				node.Enabled = node.Enabled && target.Enabled
+			} else {
+				node.Enabled = target.Enabled
+			}
 			node.Stale, node.Missing = false, false
 			if item.profile.Name != "Imported node" {
 				node.Name = item.profile.Name
@@ -658,7 +664,7 @@ func buildSubscriptionCandidate(before Registry, target Subscription, parsed []P
 		if err != nil {
 			return Registry{}, ErrSubscriptionNode
 		}
-		node.Enabled = target.Enabled
+		node.Enabled = target.Enabled && !subscriptionCountryDisabledByDefault(item.profile.Name, item.profile.VLESS.Host)
 		newNodes = append(newNodes, node)
 	}
 

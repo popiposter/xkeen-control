@@ -114,6 +114,21 @@ GET  /healthz
 
 Typed node/subscription mutations include preview/cancel/apply operations for import, replacement, subscription refresh, node enable/disable/remove and manual selection. Preview candidates are RAM-only, session-bound, bounded, expiring and one-shot. Apply receives a server-issued preview token rather than posting the secret payload again.
 
+Subscription refresh initially disables new nodes whose local country hints
+identify Russia (RU) or Belarus (BY). Known provider flags in the name take
+precedence over tokenized name/hostname aliases; this is metadata inference,
+not verified geographic location. Unknown countries retain existing defaults.
+RU/BY name codes require uppercase ISO tokens or a numbered provider marker
+(for example BY-1, edge-by-01, edge_ru_01); hostname code tokens remain
+case-insensitive. Country names/Russian aliases, BLR/RUS and flags remain
+recognized. Ordinary name text such as Hosted by Provider or Powered by Example
+is unknown and keeps the enabled default; lowercase prose "by" is not a code.
+Repeated manual/automatic refresh preserves saved RU/BY per-node enabled choices,
+subject to the parent subscription's disabled gate. Existing enabled members are
+not migrated or forcibly disabled. Explicit node/subscription enable and manual
+profile import retain their existing semantics. The registry remains the sole
+saved state authority; no geolocation request or scheduler is added.
+
 The source-main Slice A batch node preview routes are:
 
 ```text
