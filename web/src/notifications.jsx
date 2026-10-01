@@ -70,7 +70,7 @@ export function NotificationsCard({ controller, sessionKey }) {
     void run('/configure', credentials)
   }
   return <section className="panel system-panel-card" aria-label="Notifications">
-    <div><span className="panel-label">Notifications</span><h2>Outbound Telegram alerts</h2><p className="muted">Update alerts only. Configure, test, then enable delivery. Credentials are never read back.</p></div>
+    <div><h2>Telegram</h2></div>
     {status && <div className="system-facts-grid">
       <div><span>Authority</span><strong>{status.authorityState}</strong></div>
       <div><span>Delivery</span><strong>{status.enabled ? 'Enabled' : 'Disabled'}</strong></div>
@@ -91,6 +91,6 @@ export function NotificationsCard({ controller, sessionKey }) {
       <button type="button" className="ghost" onClick={() => void run()} disabled={pending}>Refresh notifications</button>
     </div>
     {message && <p role="status">{message}</p>}
-    <p className="muted">Separate panel-local credentials; backups exclude them. Reconfigure after reinstall if needed.</p>
+    <p className="muted">Not included in backups.</p>
   </section>
 }

@@ -1,3 +1,4 @@
+import { revealDetails, revealSystemSettings, revealNavigation } from './fixtures/disclosures.js'
 import { expect, test } from '@playwright/test'
 
 const csrfToken = 'synthetic-csrf-token'
@@ -149,8 +150,9 @@ const openComponents = async (page) => {
   await expect(page).toHaveURL('http://127.0.0.1:4173/')
   await expect(page).toHaveTitle('XKeen Control')
   await expect(page.locator('#root')).toContainText('Overview')
-  await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button', { name: 'Components / Updates' }).click()
-  await expect(page.getByRole('heading', { name: 'Manual, one component at a time' })).toBeVisible()
+  await (await revealNavigation(page)).getByRole('button', { name: 'Components / Updates' }).click()
+  await expect(page.getByRole('heading', { name: 'Installed components' })).toBeVisible()
+  await revealDetails(page, 'Background discovery')
 }
 
 test('loads all six classes lazily and never adds inventory to dashboard polling', async ({ page }, testInfo) => {
@@ -161,6 +163,7 @@ test('loads all six classes lazily and never adds inventory to dashboard polling
 
   await page.getByRole('button', { name: 'Components / Updates' }).click()
   await expect(page.locator('[data-component]')).toHaveCount(6)
+  await revealDetails(page, 'Background discovery')
   await expect(page.getByRole('combobox', { name: 'Component policy mode' })).toHaveValue('manual')
   await expect(page.locator('[data-component="xray"]')).toContainText('25.9.1')
   await expect(page.locator('[data-component="xkeen"]')).toContainText('Present · version unknown')
@@ -170,7 +173,7 @@ test('loads all six classes lazily and never adds inventory to dashboard polling
   await expect(page.locator('[data-component="xray"]')).toContainText('Check stable')
   await expect(page.locator('[data-component="panel"]')).not.toContainText('Preview update')
   await expect(page.locator('[data-component="entware"]')).not.toContainText(/Install|Repair/)
-  await page.locator('[data-component="geodata"] summary').click()
+  await page.locator('[data-component="geodata"]').getByText('Logical set · 6 items', { exact: true }).click()
   await expect(page.locator('[data-component="geodata"] li')).toHaveCount(6)
 
   await page.waitForTimeout(5_200)
@@ -406,13 +409,13 @@ test('shows maintenance across sections and never confuses a benchmark with life
   await expect(page.getByText('Lifecycle maintenance', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'System / Panel' }).click()
   await expect(page.getByText('Lifecycle maintenance', { exact: true })).toBeVisible()
-  await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button', { name: 'Components / Updates' }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: 'Components / Updates' }).click()
   await expect(page.locator('[data-component="xray"]').getByRole('button', { name: 'Preview update' })).toBeDisabled()
   await expect(page.locator('[data-component="xray"]')).toContainText('25.9.1')
 
   scenario.status.lifecycle.maintenance = false
   await page.reload()
-  await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button', { name: 'Components / Updates' }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: 'Components / Updates' }).click()
   await expect(page.locator('[data-component="xray"]').getByRole('button', { name: 'Preview update' })).toBeEnabled()
 })
 

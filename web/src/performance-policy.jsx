@@ -1,3 +1,4 @@
+import { Disclosure, WorkflowSteps } from './ui.jsx'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const POLICY_FIELDS = Object.freeze([
@@ -389,9 +390,11 @@ export function PerformancePolicySection({ controller }) {
 
   return <div className="section-stack performance-policy-section">
     <section className="panel performance-policy-heading">
-      <div><span className="panel-label">Performance</span><h2>Bounded selection policy</h2><p>Configure only conservative liveness and adaptive-selection bounds. Transport identity, traffic ceilings, timeouts, RTT guards and scoring stay source-owned.</p></div>
+      <div><h2>Selection policy</h2></div>
       <div><small>{projection.observedAt ? `Observed ${formatTime(projection.observedAt)}` : 'Not loaded this session'}</small><button className="ghost" type="button" onClick={controller.requestRefresh} disabled={projection.loading || pending}>{projection.loading ? 'Reading…' : 'Refresh policy'}</button></div>
     </section>
+
+    <WorkflowSteps stage={pending ? 'apply' : preview ? 'preview' : 'edit'} />
 
     {controller.refreshConfirmation && <section className="performance-refresh-confirm" role="alert"><div><strong>Unsaved performance changes</strong><span>Refreshing will replace the current draft with the latest server projection.</span></div><div><button type="button" onClick={controller.discardAndRefresh}>Discard changes and refresh</button><button className="ghost" type="button" onClick={controller.cancelRefresh}>Keep editing</button></div></section>}
     {projection.error && <div className="notice" role="alert">{projection.error}</div>}
@@ -400,22 +403,10 @@ export function PerformancePolicySection({ controller }) {
     {value && <>
       {value.authorityState === 'drift-detected' && <div className="performance-fail-closed" role="alert"><strong>Performance policy drift detected.</strong><span>The active runtime policy remains shown below, but the persisted authority is a different generation. Mutation is blocked; inspect and repair the authority outside this editor.</span></div>}
       {value.authorityState === 'editable' && value.reasonCode && <div className="performance-fail-closed" role="alert"><strong>Persisted policy failed closed to source defaults.</strong><span>Reason: {value.reasonCode}. Review the six defaults below, then explicitly Preview and Apply to replace the invalid file.</span></div>}
-      <section className="panel performance-ceilings" aria-label="Source-owned performance ceilings">
-        <div className="performance-card-heading"><div><span className="panel-label">Source-owned ceilings</span><h2>Fixed traffic and time envelope</h2></div><span className="chip neutral">Source-owned</span></div>
-        <div className="performance-facts-grid">
-          <Fact label="Maximum candidates" value={value.hardCeilings.maxCandidates} />
-          <Fact label="Candidate download" value={`${value.hardCeilings.candidateDownloadMiB} MiB`} />
-          <Fact label="Candidate upload" value={`${value.hardCeilings.candidateUploadMiB} MiB`} />
-          <Fact label="Candidate wall time" value={`${value.hardCeilings.candidateMaxSeconds} seconds`} />
-          <Fact label="Generation traffic" value={`${value.hardCeilings.generationMaxMiB} MiB`} />
-          <Fact label="Generation wall time" value={`${value.hardCeilings.generationMaxSeconds} seconds`} />
-          <Fact label="Transport identity" value="Source-owned" />
-          <Fact label="RTT guard and scoring" value="Source-owned" />
-        </div>
-      </section>
+
 
       <section className="panel performance-policy-editor" aria-label="Performance policy editor">
-        <div className="performance-card-heading"><div><span className="panel-label">{controller.authorityDrift ? 'Read-only active policy' : 'Editable policy'}</span><h2>Subsequent-cycle behavior {controller.dirty && <span className="chip amber">Unsaved</span>}</h2><p>Current running operations keep their frozen policy. Apply never runs a benchmark, writes selection state or restarts the runtime.</p></div><span className={`chip ${controller.authorityDrift ? 'amber' : value.source === 'persisted' ? 'green' : 'neutral'}`}>{controller.authorityDrift ? 'Drift detected' : value.source === 'persisted' ? 'Persisted' : 'Source defaults'}</span></div>
+        <div className="performance-card-heading"><div><h2>Health checks and selection {controller.dirty && <span className="chip amber">Unsaved</span>}</h2><p>Changes take effect on the next cycle.</p></div><span className={`chip ${controller.authorityDrift ? 'amber' : value.source === 'persisted' ? 'green' : 'neutral'}`}>{controller.authorityDrift ? 'Drift detected' : value.source === 'persisted' ? 'Persisted' : 'Source defaults'}</span></div>
         {draft && <div className="performance-policy-grid">
           <NumberField label="Active probe interval" suffix="seconds" value={draft.probeIntervalSeconds} min={60} max={300} step={30} disabled={disabled} onChange={(next) => controller.updateField('probeIntervalSeconds', next)} />
           <NumberField label="Failure threshold" suffix="failed cycles" value={draft.failureThreshold} min={2} max={5} step={1} disabled={disabled} onChange={(next) => controller.updateField('failureThreshold', next)} />
@@ -429,6 +420,20 @@ export function PerformancePolicySection({ controller }) {
 
       <section className="panel performance-adaptive-fact" aria-label="Current adaptive status"><span className="panel-label">Current adaptive status</span><div className="performance-facts-grid"><Fact label="State" value={value.adaptive.state} /><Fact label="Next run" value={formatTime(value.adaptive.nextRunAt)} /><Fact label="Generation" value={value.adaptive.generation ?? 0} /><Fact label="Last reason" value={value.adaptive.reasonCode || '—'} /></div></section>
     </>}
+
+    {value && <Disclosure title="Fixed traffic and time limits">      <section className="panel performance-ceilings" aria-label="Source-owned performance ceilings">
+        <div className="performance-card-heading"><div></div><span className="chip neutral">Source-owned</span></div>
+        <div className="performance-facts-grid">
+          <Fact label="Maximum candidates" value={value.hardCeilings.maxCandidates} />
+          <Fact label="Candidate download" value={`${value.hardCeilings.candidateDownloadMiB} MiB`} />
+          <Fact label="Candidate upload" value={`${value.hardCeilings.candidateUploadMiB} MiB`} />
+          <Fact label="Candidate wall time" value={`${value.hardCeilings.candidateMaxSeconds} seconds`} />
+          <Fact label="Generation traffic" value={`${value.hardCeilings.generationMaxMiB} MiB`} />
+          <Fact label="Generation wall time" value={`${value.hardCeilings.generationMaxSeconds} seconds`} />
+          <Fact label="Transport identity" value="Source-owned" />
+          <Fact label="RTT guard and scoring" value="Source-owned" />
+        </div>
+      </section></Disclosure>}
 
     {pending && <div className="operation-running" role="status"><span className="spinner" aria-hidden="true"></span><div><strong>Performance policy Apply is running</strong><p>The request will not be replayed after a lost response.</p></div></div>}
     {result && <div className={`operation-result performance-policy-result ${result.tone}`} role={result.tone === 'error' ? 'alert' : 'status'} data-testid="performance-policy-result"><div><strong>{result.title}</strong><p>{result.message}</p></div></div>}

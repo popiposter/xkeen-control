@@ -1,3 +1,4 @@
+import { revealDetails, revealNavigation } from './fixtures/disclosures.js'
 import { expect, test } from '@playwright/test'
 import path from 'node:path'
 
@@ -123,9 +124,10 @@ const requestsFor = (state, path, method) => state.requests.filter((request) => 
 
 async function openPerformance(page) {
   await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+  await revealNavigation(page)
   await page.getByRole('button', { name: 'Performance', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Bounded selection policy' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Selection policy' })).toBeVisible()
+  await revealDetails(page, 'Fixed traffic and time limits')
 }
 
 test.afterEach(async ({ page }) => {
@@ -217,7 +219,7 @@ test('renders post-start authority drift as the active runtime policy and blocks
   const state = await prepare(page, { projection: { authorityState: 'drift-detected', persistedSource: 'persisted' } }); page.__performancePolicyIssues = state.issues
   await openPerformance(page)
   await expect(page.getByText('Performance policy drift detected.')).toBeVisible()
-  await expect(page.getByText('Read-only active policy')).toBeVisible()
+  await expect(page.getByLabel('Active probe interval')).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Preview performance changes' })).toBeDisabled()
   expect(requestsFor(state, '/api/v1/performance/policy/preview', 'POST')).toHaveLength(0)
 })
@@ -252,7 +254,8 @@ test('consumes failed Apply tokens without replay and keeps browser storage empt
   expect((await page.screenshot()).byteLength).toBeGreaterThan(1_000)
 
   await page.setViewportSize({ width: 390, height: 844 })
-  await expect(page.getByRole('heading', { name: 'Bounded selection policy' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Selection policy' })).toBeVisible()
+  await revealDetails(page, 'Fixed traffic and time limits')
   expect((await page.screenshot({ fullPage: true })).byteLength).toBeGreaterThan(1_000)
 })
 

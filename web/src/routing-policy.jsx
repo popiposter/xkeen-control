@@ -1,3 +1,4 @@
+import { Disclosure, WorkflowSteps, RowAction } from './ui.jsx'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const EDITABILITY = Object.freeze(['editable', 'drift-detected', 'unavailable'])
@@ -568,9 +569,11 @@ export function RoutingPolicySection({ controller, lifecycle }) {
 
   return <div className="section-stack routing-section">
     <section className="panel routing-heading">
-      <div><span className="panel-label">Routing</span><h2>Typed custom rules</h2><p>Only the supported custom region is editable. Protected routing, proxy DNS relationships, and Observatory settings remain source-owned and read only.</p></div>
+      <div><h2>Custom rules</h2></div>
       <div className="routing-heading-actions"><small>{projection.observedAt ? `Observed ${formatTime(projection.observedAt)}` : 'Not loaded this session'}</small><button className="ghost" type="button" onClick={controller.requestRefresh} disabled={projection.loading || Boolean(pending)}>{projection.loading ? 'Reading…' : 'Refresh policy'}</button></div>
     </section>
+
+    <WorkflowSteps stage={pending ? 'apply' : preview ? 'preview' : 'edit'} />
 
     {refreshConfirmation && <section className="routing-refresh-confirm" role="alert"><div><strong>Unsaved routing changes</strong><span>Refreshing will replace the current draft with the latest server projection.</span></div><div className="routing-refresh-actions"><button type="button" onClick={controller.discardAndRefresh}>Discard changes and refresh</button><button className="ghost" type="button" onClick={controller.cancelRefresh}>Keep editing</button></div></section>}
     {projection.error && <div className="notice" role="alert">{projection.error}</div>}
@@ -578,18 +581,20 @@ export function RoutingPolicySection({ controller, lifecycle }) {
     {projection.loading && !value && <div className="loading">Reading the current typed routing policy…</div>}
     {!value && !projection.loading && !projection.error && <div className="empty">Open Routing to load the current typed policy projection.</div>}
 
-    {value && <RoutingFacts projection={value} />}
+
     {value?.editability === 'drift-detected' && <div className="routing-blocked" role="alert"><strong>Routing editing is blocked by protected-state drift.</strong><span>Refresh may restore editability after the server proves the source-owned policy is compatible. No repair or adoption is offered here.</span></div>}
     {value?.editability === 'unavailable' && <div className="routing-blocked danger" role="alert"><strong>Routing policy is unavailable.</strong><span>The safe projection could not establish an editable authority. Mutation controls remain disabled.</span></div>}
 
     {editable && <>
       <section className="panel routing-editor" aria-label="Custom routing rule editor">
-        <div className="routing-editor-heading"><div><span className="panel-label">Custom region</span><h2>Ordered rules {dirty && <span className="chip amber">Unsaved</span>}</h2><p>List order is significant. Match members are sent as typed expressions; the server remains the validation and canonicalization authority.</p></div><button type="button" onClick={controller.addRule} disabled={editorDisabled}>Add rule</button></div>
+        <div className="routing-editor-heading"><div><h2>Ordered rules {dirty && <span className="chip amber">Unsaved</span>}</h2></div><button type="button" onClick={controller.addRule} disabled={editorDisabled}>Add rule</button></div>
         {draft.length === 0 && <div className="routing-empty">No custom rules. Add a rule before the protected final direct catch-all.</div>}
         <div className="routing-rule-list">{draft.map((rule, index) => <RoutingRuleEditor key={rule.clientId} rule={rule} index={index} total={draft.length} disabled={editorDisabled} onChange={(patch) => controller.updateRule(index, patch)} onRemove={() => controller.removeRule(index)} onMove={(direction) => controller.moveRule(index, direction)} />)}</div>
         <div className="routing-editor-actions"><div>{controller.lifecycleBlocked && <small className="routing-disabled-note">Lifecycle readiness is unavailable or maintenance/applying is active; new mutation requests are disabled.</small>}{controller.outcomeRequiresFreshRead && <small className="routing-disabled-note">Refresh the policy and verify the outcome before creating another Preview.</small>}{controller.appliancePolicyUncertain && <small className="routing-disabled-note">An appliance-policy Apply has an unknown outcome. New mutations remain blocked until its controller completes a fresh read.</small>}</div><button type="button" onClick={controller.previewDraft} disabled={previewDisabled}>{requestState?.kind === 'preview' ? 'Preparing Preview…' : 'Preview changes'}</button></div>
       </section>
     </>}
+
+    {value && <Disclosure title="Protected routing policy" attention={value.editability !== 'editable'}><RoutingFacts projection={value} /></Disclosure>}
 
     {requestState?.kind === 'preview' && <div className="notice neutral" role="status">{requestState.canceled ? 'Discarding the late Preview response…' : 'Preparing a fresh semantic Preview…'} {!requestState.canceled && <button className="inline-link" type="button" onClick={() => controller.cancelPreview()}>Cancel Preview</button>}</div>}
     {pending && <div className="operation-running routing-operation" role="status" aria-live="polite"><span className="spinner" aria-hidden="true"></span><div><strong>Routing Apply is running</strong><p>No progress percentage is available. The broker may need its bounded transaction and recovery window.</p></div></div>}
@@ -602,7 +607,7 @@ function RoutingFacts({ projection }) {
   const { protected: protectedFacts, dns, observatory } = projection
   const editabilityLabel = projection.editability === 'editable' ? 'Editable' : projection.editability === 'drift-detected' ? 'Drift detected' : 'Unavailable'
   return <section className="panel routing-facts" aria-label="Routing source-owned facts">
-    <div className="routing-facts-heading"><div><span className="panel-label">Source-owned context</span><h2>Policy boundary</h2></div><span className={`chip ${projection.editability === 'editable' ? 'green' : 'amber'}`}>{editabilityLabel}</span></div>
+    <div className="routing-facts-heading"><div></div><span className={`chip ${projection.editability === 'editable' ? 'green' : 'amber'}`}>{editabilityLabel}</span></div>
     <div className="routing-facts-grid">
       <Fact label="Protected prefix rules" value={protectedFacts.prefixRuleCount} />
       <Fact label="Custom region rules" value={protectedFacts.customRegionRuleCount} />
@@ -644,9 +649,9 @@ function RoutingRuleEditor({ rule, index, total, disabled, onChange, onRemove, o
     <div className="routing-ports" aria-label={`Rule ${index + 1} port ranges`}>
       <div className="routing-subheading"><span>Port ranges</span><button className="ghost" type="button" onClick={addPort} disabled={disabled}>Add port range</button></div>
       {rule.ports.length === 0 && <small className="muted">No port restriction</small>}
-      {rule.ports.map((port, portIndex) => <div className="routing-port-row" key={portIndex}><label>From<input aria-label={`Rule ${index + 1} port ${portIndex + 1} from`} type="number" min="1" max="65535" step="1" value={port.from} disabled={disabled} onChange={(event) => updatePort(portIndex, 'from', event.target.value)} /></label><label>To <span className="muted">(optional)</span><input aria-label={`Rule ${index + 1} port ${portIndex + 1} to`} type="number" min="1" max="65535" step="1" value={port.to} disabled={disabled} onChange={(event) => updatePort(portIndex, 'to', event.target.value)} /></label><button className="ghost" type="button" onClick={() => removePort(portIndex)} disabled={disabled}>Remove port</button></div>)}
+      {rule.ports.map((port, portIndex) => <div className="routing-port-row" key={portIndex}><label>From<input aria-label={`Rule ${index + 1} port ${portIndex + 1} from`} type="number" min="1" max="65535" step="1" value={port.from} disabled={disabled} onChange={(event) => updatePort(portIndex, 'from', event.target.value)} /></label><label>To <span className="muted">(optional)</span><input aria-label={`Rule ${index + 1} port ${portIndex + 1} to`} type="number" min="1" max="65535" step="1" value={port.to} disabled={disabled} onChange={(event) => updatePort(portIndex, 'to', event.target.value)} /></label><RowAction action="remove" label="Remove port" onClick={() => removePort(portIndex)} disabled={disabled} /></div>)}
     </div>
-    <div className="routing-rule-actions"><button className="ghost" type="button" onClick={() => onMove(-1)} disabled={disabled || index === 0} aria-label={`Move rule up: ${rule.name || `rule ${index + 1}`}`}>Move up</button><button className="ghost" type="button" onClick={() => onMove(1)} disabled={disabled || index === total - 1} aria-label={`Move rule down: ${rule.name || `rule ${index + 1}`}`}>Move down</button><button className="ghost danger-action" type="button" onClick={onRemove} disabled={disabled} aria-label={`Remove rule: ${rule.name || `rule ${index + 1}`}`}>Remove rule</button></div>
+    <div className="routing-rule-actions"><RowAction action="up" label={`Move rule up: ${rule.name || `rule ${index + 1}`}`} onClick={() => onMove(-1)} disabled={disabled || index === 0} /><RowAction action="down" label={`Move rule down: ${rule.name || `rule ${index + 1}`}`} onClick={() => onMove(1)} disabled={disabled || index === total - 1} /><RowAction action="remove" label={`Remove rule: ${rule.name || `rule ${index + 1}`}`} onClick={onRemove} disabled={disabled} /></div>
   </fieldset>
 }
 
@@ -659,7 +664,7 @@ function RoutingPreview({ preview, busy, applyDisabled, onCancel, onConfirm }) {
     ['Reordered', diff.reordered],
   ]
   return <section className="panel routing-preview" aria-label="Routing Preview confirmation" aria-live="polite">
-    <div className="routing-preview-heading"><div><span className="panel-label">Semantic Preview</span><h2>{preview.noop ? 'No effective changes' : 'Review routing changes'}</h2><p>Server-derived facts only; candidate configuration and protected rule bodies stay hidden.</p></div><small>Expires {formatTime(preview.expiresAt)}</small></div>
+    <div className="routing-preview-heading"><div><h2>{preview.noop ? 'No effective changes' : 'Review routing changes'}</h2></div><small>Expires {formatTime(preview.expiresAt)}</small></div>
     <div className="routing-diff-groups">{groups.map(([label, changes]) => <div key={label}><span>{label}</span>{changes.length === 0 ? <small>None</small> : <ul>{changes.map((change, index) => <li key={`${change.name}-${index}`}><strong>{change.name}</strong><small>{change.action}</small></li>)}</ul>}</div>)}</div>
     <div className="routing-diff-facts">
       <Fact label="Rules before → after" value={`${diff.beforeMatches.rules} → ${diff.afterMatches.rules}`} />

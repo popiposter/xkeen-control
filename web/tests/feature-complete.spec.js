@@ -1,3 +1,4 @@
+import { revealDetails, revealSystemSettings, revealNavigation } from './fixtures/disclosures.js'
 import { expect, test } from '@playwright/test'
 import { featureCompleteRequests, mountFeatureCompleteDashboard, PRIVATE_SENTINELS } from './fixtures/feature-complete-model.js'
 
@@ -11,7 +12,15 @@ const lazySettingsPaths = [
   '/api/v1/update',
 ]
 
-const openSection = (page, name) => page.locator('.section-nav').getByRole('button').filter({ hasText: name }).click()
+const openSection = async (page, name) => {
+  await (await revealNavigation(page)).getByRole('button').filter({ hasText: name }).click()
+  if (name === 'System / Panel') await revealSystemSettings(page)
+  if (name === 'Components / Updates') await revealDetails(page, 'Background discovery')
+  if (name === 'Routing') await revealDetails(page, 'Protected routing policy')
+  if (name === 'DNS') await revealDetails(page, 'Protected DNS and Observatory')
+  if (name === 'Performance') await revealDetails(page, 'Fixed traffic and time limits')
+}
+
 const stringValues = (value) => typeof value === 'string' ? [value]
   : value && typeof value === 'object' ? Object.values(value).flatMap(stringValues) : []
 const setBackupBundle = (page) => page.getByLabel('Backup bundle').setInputFiles({
@@ -223,19 +232,21 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
     await openSection(page, 'Nodes')
     const previousStatusReads = featureCompleteRequests(model, '/api/v1/status', 'GET').length
     await page.getByRole('button', { name: 'Refresh dashboard' }).click()
-    await expect.poll(() => featureCompleteRequests(model, '/api/v1/status', 'GET').length).toBe(previousStatusReads + 1)
+    // The existing five-second status poll may overlap the explicit refresh.
+    await expect.poll(() => featureCompleteRequests(model, '/api/v1/status', 'GET').length).toBeGreaterThan(previousStatusReads)
 
+    await page.getByLabel('Select Feature test node').check()
     await expect(page.getByRole('button', { name: 'Enable', exact: true })).toBeDisabled()
     await expect(page.getByText('Feature test node', { exact: true })).toBeVisible()
     await openSection(page, 'Routing')
     await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toBeDisabled()
-    await expect(page.getByText('Policy boundary', { exact: true })).toBeVisible()
+    await expect(page.getByLabel('Routing source-owned facts')).toBeVisible()
     await openSection(page, 'DNS')
     await expect(page.getByRole('button', { name: 'Preview DNS changes' })).toBeDisabled()
     await expect(page.getByText('Proxy resolver 1', { exact: true })).toBeVisible()
     await openSection(page, 'Performance')
     await expect(page.getByRole('button', { name: 'Preview performance changes' })).toBeDisabled()
-    await expect(page.getByText('Fixed traffic and time envelope', { exact: true })).toBeVisible()
+    await expect(page.getByLabel('Source-owned performance ceilings')).toBeVisible()
     await openSection(page, 'Components / Updates')
     await expect(page.getByLabel('Component policy mode')).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Save policy' })).toBeDisabled()
@@ -427,9 +438,9 @@ test('keeps safe projections secretless, browser storage empty, and the Dashboar
   const renderedSections = [await page.locator('body').innerText(), await page.locator('body').evaluate((body) => body.outerHTML)]
   for (const [section, ready] of [
     ['Nodes', page.getByText('Feature test node', { exact: true })],
-    ['Routing', page.getByText('Policy boundary', { exact: true })],
+    ['Routing', page.getByLabel('Routing source-owned facts')],
     ['DNS', page.getByText('Proxy resolver 1', { exact: true })],
-    ['Performance', page.getByText('Fixed traffic and time envelope', { exact: true })],
+    ['Performance', page.getByLabel('Source-owned performance ceilings')],
     ['Components / Updates', page.getByText('Xray', { exact: true })],
     ['Backup & Restore', page.getByLabel('Backup bundle')],
     ['System / Panel', page.getByRole('heading', { name: '0.2.0', exact: true })],

@@ -179,6 +179,10 @@ func New(config Config) *Server {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w, strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/healthz")
+	if !requestAuthorityAllowed(r) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
 
 	switch r.URL.Path {
 	case "/healthz":
@@ -703,9 +707,11 @@ func (s *Server) exportSecretBackup(w http.ResponseWriter, r *http.Request) {
 		CurrentPassword string `json:"currentPassword"`
 		Passphrase      string `json:"passphrase"`
 	}
-	if !s.decodeSecretBackupRequest(w, r, &request) {
+	fields, valid := decodePasswordObject(w, r, backup.MaxSecretRequestBody, "currentPassword", "passphrase")
+	if !valid {
 		return
 	}
+	request.CurrentPassword, request.Passphrase = fields["currentPassword"], fields["passphrase"]
 	if request.CurrentPassword == "" {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
@@ -754,18 +760,15 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "authentication unavailable")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxLoginBody)
-	defer r.Body.Close()
-	var request struct {
-		Password string `json:"password"`
+	fields, valid := decodePasswordObject(w, r, maxLoginBody, "password")
+	if !valid {
+		return
 	}
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil || request.Password == "" {
+	if fields["password"] == "" {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	session, token, err := s.auth.Login(remoteIP(r), request.Password)
+	session, token, err := s.auth.Login(remoteIP(r), fields["password"])
 	if err != nil {
 		switch {
 		case errors.Is(err, auth.ErrNotConfigured):
@@ -841,9 +844,11 @@ func (s *Server) replacePassword(w http.ResponseWriter, r *http.Request) {
 	var request struct {
 		NewPassword string `json:"newPassword"`
 	}
-	if !s.decodeMutation(w, r, &request) {
+	fields, valid := decodePasswordObject(w, r, maxLoginBody, "newPassword")
+	if !valid {
 		return
 	}
+	request.NewPassword = fields["newPassword"]
 	if err := s.auth.ReplacePassword([]byte(request.NewPassword)); err != nil {
 		if errors.Is(err, auth.ErrInvalidPassword) {
 			writeError(w, http.StatusBadRequest, "password is outside the allowed bounds")
@@ -1775,23 +1780,6 @@ func (s *Server) decodeComponentMutationRequest(w http.ResponseWriter, r *http.R
 			return false
 		}
 		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid request")
-		return false
-	}
-	return true
-}
-
-func (s *Server) decodeSecretBackupRequest(w http.ResponseWriter, r *http.Request, value any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, backup.MaxSecretRequestBody)
-	defer r.Body.Close()
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(value); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request")
-		return false
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		writeError(w, http.StatusBadRequest, "invalid request")
 		return false
 	}
 	return true
@@ -2919,6 +2907,8 @@ func setSecurityHeaders(w http.ResponseWriter, api bool) {
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 	if api {
 		w.Header().Set("Cache-Control", "no-store")
 	}

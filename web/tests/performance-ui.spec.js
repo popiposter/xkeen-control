@@ -1,3 +1,4 @@
+import { revealDetails, revealSystemSettings, revealNavigation } from './fixtures/disclosures.js'
 import { expect, test } from '@playwright/test'
 
 const csrfToken = 'synthetic-csrf-token'
@@ -101,7 +102,8 @@ async function mockApplication(page, options = {}) {
 const openApplication = async (page, options = {}) => {
   const scenario = await mockApplication(page, options)
   await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+  await page.locator('.workspace').waitFor({ state: 'visible' })
+  await revealDetails(page, 'Selection details')
   return scenario
 }
 
@@ -127,7 +129,8 @@ test('Overview presents automatic quality and never mounts the legacy benchmark 
 test('waiting adaptive state shows its due time without fabricated candidate metrics', async ({ page }) => {
   const scenario = await openApplication(page, { performance: performanceFixture(waitingAdaptive({ reasonCode: 'no-current-target' })) })
   await expect(page.getByTestId('automatic-quality-overview')).toContainText('Next adaptive check')
-  await page.getByRole('button', { name: 'Nodes' }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: /^Nodes/ }).click()
+  await revealDetails(page, 'Automatic quality')
   const card = page.getByTestId('adaptive-performance')
   await expect(card).toContainText('Waiting for next check')
   await expect(card).toContainText('next scheduled adaptive check')
@@ -157,7 +160,8 @@ test('running adaptive quality uses one-second performance-only polling and gate
   expect(scenario.counts['/api/v1/status']).toBe(initialStatus)
   expect(scenario.counts['/api/v1/nodes']).toBe(initialNodes)
 
-  await page.getByRole('button', { name: 'Nodes' }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: /^Nodes/ }).click()
+  await revealDetails(page, 'Automatic quality')
   await page.getByRole('checkbox', { name: 'Select Alpha' }).check()
   await expect(page.getByRole('button', { name: 'Full speed test' })).toBeDisabled()
   const nodesStatus = scenario.counts['/api/v1/status']
@@ -217,7 +221,8 @@ test('completed switch exposes only the actual switched target and bounded candi
   await expect(overview).not.toContainText('Selection reason unavailable')
   await expect(overview).toContainText('Not active')
   await expect(overview).not.toContainText('paused by the explicit manual override')
-  await page.getByRole('button', { name: 'Nodes' }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: /^Nodes/ }).click()
+  await revealDetails(page, 'Automatic quality')
   const card = page.getByTestId('adaptive-performance')
   await expect(card).toContainText('Switched target')
   await expect(card.getByTestId('adaptive-candidate')).toHaveCount(2)
@@ -244,7 +249,8 @@ test('completed no-switch does not label an intermediate winner as selected', as
   const overview = page.getByTestId('automatic-quality-overview')
   await expect(overview).toContainText('No target switch')
   await expect(overview).not.toContainText('Actual switched target')
-  await page.getByRole('button', { name: 'Nodes' }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: /^Nodes/ }).click()
+  await revealDetails(page, 'Automatic quality')
   await expect(page.getByTestId('adaptive-performance')).not.toContainText('Switched target')
 })
 
@@ -257,7 +263,8 @@ test('manual override and every unrecognized adaptive input degrade to safe labe
   const scenario = await openApplication(page, { status, performance })
   await expect(page.getByTestId('automatic-quality-overview')).toContainText('Explicit manual override')
   await expect(page.getByTestId('automatic-quality-overview')).toContainText('paused by the explicit manual override')
-  await page.getByRole('button', { name: 'Nodes' }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: /^Nodes/ }).click()
+  await revealDetails(page, 'Automatic quality')
   await expect(page.getByTestId('adaptive-performance')).toContainText('Adaptive generation skipped')
 
   const hostile = performanceFixture({
@@ -271,7 +278,8 @@ test('manual override and every unrecognized adaptive input degrade to safe labe
   })
   scenario.performance = hostile
   await page.reload()
-  await page.getByRole('button', { name: 'Nodes' }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: /^Nodes/ }).click()
+  await revealDetails(page, 'Automatic quality')
   const card = page.getByTestId('adaptive-performance')
   await expect(card).toContainText('Adaptive state unavailable')
   await expect(card).toContainText('Adaptive result unavailable')
@@ -293,12 +301,13 @@ test('missing nodes retain only the safe canonical tag and browser storage stays
     candidates: [{ tag: 'proxy-missing', rttMs: 55, downloadBps: 12_000_000, uploadBps: 3_000_000, score: 0.5, valid: true }],
   })
   await openApplication(page, { performance })
-  await page.getByRole('button', { name: 'Nodes' }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: /^Nodes/ }).click()
+  await revealDetails(page, 'Automatic quality')
   const card = page.getByTestId('adaptive-performance')
   await expect(card).toContainText('proxy-missing')
   await expect(card).not.toContainText('Unnamed node')
   await expect(card.getByTestId('adaptive-candidate')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Full speed test' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Full speed test', exact: true })).toBeDisabled()
   await expect(await page.evaluate(() => ({ local: { ...localStorage }, session: { ...sessionStorage } }))).toEqual({ local: {}, session: {} })
 })
 
@@ -308,7 +317,8 @@ test('manual diagnostic polling remains Nodes-only', async ({ page }) => {
   const overviewCount = performanceRequests(scenario).length
   await page.waitForTimeout(1_150)
   expect(performanceRequests(scenario).length).toBe(overviewCount)
-  await page.getByRole('button', { name: 'Nodes' }).click()
+  await (await revealNavigation(page)).getByRole('button', { name: /^Nodes/ }).click()
+  await revealDetails(page, 'Automatic quality')
   await page.waitForTimeout(1_150)
   const nodesCount = performanceRequests(scenario).length
   expect(nodesCount).toBeGreaterThan(overviewCount)
