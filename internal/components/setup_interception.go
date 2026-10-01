@@ -280,7 +280,21 @@ set -eu
 [ -x /opt/etc/ndm/netfilter.d/proxy.sh ] && /opt/etc/ndm/netfilter.d/proxy.sh
 `
 
-func setupSourceOwnedHybridHookBytes() []byte   { return []byte(setupSourceOwnedHybridHook) }
+func setupSourceOwnedHybridHookBytes() []byte { return []byte(setupSourceOwnedHybridHook) }
+
+// beta.4 at source 2c4d4f97ade2f968a1d2f0e1e27f480f12c9f735 emitted
+// this exact prior hybrid-v1 hook. Panel updates preserve appliance files;
+// retain its ownership identity for inspection and exact snapshot rollback.
+// Unknown edits remain conflicting, and Apply always writes the current hook.
+const setupPreviousSourceOwnedHybridHookSHA256 = "6adf15e026864cf2b860eedefac3adee2b10f8ae1fbbb919bcae1c13818b77c2"
+
+func setupKnownSourceOwnedHybridHook(contents []byte) bool {
+	if bytes.Equal(contents, setupSourceOwnedHybridHookBytes()) {
+		return true
+	}
+	digest := sha256.Sum256(contents)
+	return hex.EncodeToString(digest[:]) == setupPreviousSourceOwnedHybridHookSHA256
+}
 func setupSourceOwnedScheduleHookBytes() []byte { return []byte(setupSourceOwnedScheduleHook) }
 
 func validSetupHybridConfig(files map[string][]byte) bool {
@@ -518,7 +532,7 @@ func (o *fileHybridInterceptionOwner) Inspect(context.Context) (SetupInterceptio
 	if o == nil || o.hookPath == "" || o.schedulePath == "" || o.statePath == "" {
 		return SetupInterceptionEvidence{}, ErrSetupInterceptionUnavailable
 	}
-	hookKind, _, err := setupInterceptionFileKind(o.hookPath, func(contents []byte) bool { return bytes.Equal(contents, setupSourceOwnedHybridHookBytes()) }, setupReviewedLegacyNetfilterHook)
+	hookKind, _, err := setupInterceptionFileKind(o.hookPath, setupKnownSourceOwnedHybridHook, setupReviewedLegacyNetfilterHook)
 	if err != nil {
 		return SetupInterceptionEvidence{}, err
 	}
@@ -649,7 +663,7 @@ func (o *fileHybridInterceptionOwner) removePartialSourceOwned() error {
 	if o == nil {
 		return ErrSetupInterceptionUnavailable
 	}
-	hookKind, _, err := setupInterceptionFileKind(o.hookPath, func(contents []byte) bool { return bytes.Equal(contents, setupSourceOwnedHybridHookBytes()) }, setupReviewedLegacyNetfilterHook)
+	hookKind, _, err := setupInterceptionFileKind(o.hookPath, setupKnownSourceOwnedHybridHook, setupReviewedLegacyNetfilterHook)
 	if err != nil {
 		return err
 	}

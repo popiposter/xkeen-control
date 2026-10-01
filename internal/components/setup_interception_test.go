@@ -3,9 +3,11 @@ package components
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	_ "embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +25,61 @@ import (
 //
 //go:embed testdata/reviewed-upstream-proxy.sh
 var reviewedUpstreamProxyHookFixture []byte
+
+// Exact source-owned template extracted from released beta.4 source
+// 2c4d4f97ade2f968a1d2f0e1e27f480f12c9f735, without EOL normalization.
+//
+//go:embed testdata/beta4-source-owned-proxy.sh
+var beta4SourceOwnedHybridHookFixture []byte
+
+func TestSetupInterceptionPreviousSourceHookAdmissionAndExactRollback(t *testing.T) {
+	digest := sha256.Sum256(beta4SourceOwnedHybridHookFixture)
+	if fmt.Sprintf("%x", digest) != setupPreviousSourceOwnedHybridHookSHA256 || bytes.Equal(beta4SourceOwnedHybridHookFixture, setupSourceOwnedHybridHookBytes()) {
+		t.Fatal("previous released hook fixture identity drifted")
+	}
+	paths := setupTestPaths(t.TempDir())
+	owner := NewFileHybridInterceptionOwner(paths, func(string) error { return nil })
+	ctx := context.Background()
+	if err := owner.Apply(ctx, setupHybridInterceptionGeneration()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.InterceptionHook, beta4SourceOwnedHybridHookFixture, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	previous, err := owner.Snapshot(ctx)
+	if err != nil {
+		t.Fatalf("previous released generation cannot be inspected: %v", err)
+	}
+	service := NewSetupService(SetupConfig{Paths: paths})
+	files, err := service.captureSetupSnapshot(ctx, "managed-takeover", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.Apply(ctx, setupHybridInterceptionGeneration()); err != nil {
+		t.Fatal(err)
+	}
+	if current, err := os.ReadFile(paths.InterceptionHook); err != nil || !bytes.Equal(current, setupSourceOwnedHybridHookBytes()) {
+		t.Fatal("Apply did not emit current hook")
+	}
+	if err := service.restoreSetupSnapshot(files); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.Restore(ctx, previous); err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.VerifyRestored(ctx, previous); err != nil {
+		t.Fatalf("previous hook rollback failed verification: %v", err)
+	}
+	if restored, err := os.ReadFile(paths.InterceptionHook); err != nil || !bytes.Equal(restored, beta4SourceOwnedHybridHookFixture) {
+		t.Fatal("previous hook bytes not restored exactly")
+	}
+	if err := os.WriteFile(paths.InterceptionHook, append(append([]byte(nil), beta4SourceOwnedHybridHookFixture...), []byte("# drift\n")...), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.Inspect(ctx); !errors.Is(err, ErrSetupInterceptionConflict) {
+		t.Fatalf("modified previous hook admitted: %v", err)
+	}
+}
 
 func TestReviewedLegacyHookFixtureBindsReviewedUpstreamS05(t *testing.T) {
 	if reviewedUpstreamS05SourceCommit != "da20a5e4d739101f951417754038acaee614631f" || reviewedUpstreamS05SourcePath != "scripts/_xkeen/02_install/07_install_register/04_register_init.sh" || reviewedUpstreamS05SHA256 != "6e2998bd8c471637ed4d0128eebc2d10bf72dc15b1600208601d70f0a1d0ee13" {
