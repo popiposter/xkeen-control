@@ -268,7 +268,7 @@ ip -4 link show dev br0 >/dev/null
 if ! ip -4 rule show | grep -F "fwmark 0x111/0xfff lookup 111" >/dev/null 2>&1; then
   ip -4 rule add fwmark 0x111/0xfff table 111 pref 111
 fi
-if ! ip -4 route show table 111 | grep -F "local 0.0.0.0/0 dev lo" >/dev/null 2>&1; then
+if ! ip -4 route show table 111 | grep -E '^local (0\.0\.0\.0/0|default) dev lo( |$)' >/dev/null 2>&1; then
   ip -4 route add local 0.0.0.0/0 dev lo table 111
 fi
 `
@@ -1163,6 +1163,13 @@ func nativePolicyExact(contents []byte, kind string, family string) (nativeOwned
 			prefix := "0.0.0.0/0"
 			if family == "ipv6" {
 				prefix = "::/0"
+			}
+			// iproute2 renders the zero prefix as "default" on Keenetic.
+			// Normalize only this exact token before the same ownership checks.
+			for index, field := range fields {
+				if field == "default" {
+					fields[index] = prefix
+				}
 			}
 			marker := false
 			for _, field := range fields {

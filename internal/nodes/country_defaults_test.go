@@ -66,6 +66,62 @@ var countrySubscriptionFixtures = []struct {
 }{
 	{"🇷🇺 Edge", false}, {"Беларусь", false}, {"BY-1", false}, {"RU-1", false},
 	{"Germany", true}, {"Unknown", true}, {"Hosted by Provider", true}, {"Powered by Example", true},
+	{"Germany WL Mobile Vless", false}, {"Poland wl Mobile Vless", false}, {"Newland", true},
+}
+
+func TestWLNameDefaultsAndSavedRefreshChoices(t *testing.T) {
+	for name, want := range map[string]bool{"Germany WL Mobile Vless": true, "Poland wl Mobile Vless": true, "WL-Mobile": true, "Newland": false, "SWL": false, "ordinary": false} {
+		if nodeNameWL(name) != want {
+			t.Fatalf("WL token mismatch: %q", name)
+		}
+	}
+	profile, err := ParseProfile(syntheticProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := Subscription{ID: "sub-12345678", Name: "Provider", URL: "https://subscription.example/token", Enabled: true}
+	for _, enabled := range []bool{false, true} {
+		node, err := NewNodeWithID(profile.VLESS, "Germany WL Mobile Vless", Source{Type: "subscription", SubscriptionID: target.ID}, "node-12345678")
+		if err != nil {
+			t.Fatal(err)
+		}
+		node.Enabled = enabled
+		before := NewRegistry()
+		before.Subscriptions = []Subscription{target}
+		before.Nodes = []Node{node}
+		candidate, err := buildSubscriptionCandidate(before, target, []ParsedProfile{{VLESS: profile.VLESS, Name: node.Name}})
+		if err != nil || len(candidate.Nodes) != 1 || candidate.Nodes[0].Enabled != enabled {
+			t.Fatalf("refresh lost explicit WL choice: %v", err)
+		}
+		target.Enabled = false
+		candidate, err = buildSubscriptionCandidate(before, target, []ParsedProfile{{VLESS: profile.VLESS, Name: node.Name}})
+		if err != nil || candidate.Nodes[0].Enabled {
+			t.Fatalf("disabled parent did not gate WL choice: %v", err)
+		}
+		target.Enabled = true
+	}
+	manager, store, active := testManager(t, nil, nil)
+	input := syntheticProfile + "\n" + strings.Replace(syntheticProfileTwo, "#Secondary", "#Germany%20WL%20Mobile%20Vless", 1)
+	preview, err := manager.PreviewImport("csrf", input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outbounds, err := os.ReadFile(active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, node := range registry.Nodes {
+		if node.Enabled == nodeNameWL(node.Name) || strings.Contains(string(outbounds), node.OutboundTag) != node.Enabled {
+			t.Fatal("WL import/default runtime mismatch")
+		}
+	}
 }
 
 func countrySubscriptionBody() []byte {

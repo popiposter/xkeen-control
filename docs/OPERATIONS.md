@@ -243,6 +243,12 @@ catalog/config and generation marker, source-owned lifecycle/interception,
 absence of retired aliases/competing writers, D.1 verification and runtime
 health before claiming convergence.
 
+Setup reserves write/rollback space for existing cron/writer sources only;
+an absent system cron file on Keenetic's read-only `/etc` needs no allocation.
+Existing sources retain the same resource and rollback checks. Native route
+verification accepts iproute2's `local default dev lo` spelling as the same
+family-specific zero-prefix route; unrelated routes and devices remain rejected.
+
 Snapshots containing these aliases use private manifest version 2. Older
 panels, including beta.3, reject that snapshot; settle Setup recovery with the
 compatible panel before a panel downgrade. Existing version 1 snapshots without

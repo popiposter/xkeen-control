@@ -444,6 +444,45 @@ func TestSetupResourceAdmissionUsesPerFilesystemDemand(t *testing.T) {
 	}
 }
 
+func TestSetupResourceAdmissionDoesNotChargeAbsentWriterSources(t *testing.T) {
+	persistent, readOnly := t.TempDir(), t.TempDir()
+	paths := setupTestPaths(persistent)
+	paths.CronPaths = []string{filepath.Join(readOnly, "crontabs", "root")}
+	paths.WriterScripts = []string{filepath.Join(readOnly, "missing-writer")}
+	service := NewSetupService(SetupConfig{
+		Paths: paths,
+		SameFilesystem: func(left, right string) (bool, error) {
+			return strings.HasPrefix(left, readOnly) == strings.HasPrefix(right, readOnly), nil
+		},
+		AvailableSpace: func(path string) (uint64, error) {
+			if strings.HasPrefix(path, readOnly) {
+				return 0, nil
+			}
+			return 1 << 40, nil
+		},
+	})
+	demand := func() []setupSpaceRequirement {
+		return setupResourceDemand(paths, "managed-takeover", 40, 30, 20, 10, 100, 120, 80, 32, 64)
+	}
+	if err := service.checkSetupResources(demand()); err != nil {
+		t.Fatalf("absent sources charged a read-only filesystem: %v", err)
+	}
+	for _, source := range []string{paths.CronPaths[0], paths.WriterScripts[0]} {
+		if err := os.MkdirAll(filepath.Dir(source), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(source, []byte("synthetic writer\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := service.checkSetupResources(demand()); !errors.Is(err, ErrSetupResourceInsufficient) {
+			t.Fatalf("existing source on zero-free filesystem was admitted: %v", err)
+		}
+		if err := os.Remove(source); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestSetupFreshResourceAdmissionDoesNotReservePreviousSnapshot(t *testing.T) {
 	staging := t.TempDir()
 	persistent := t.TempDir()

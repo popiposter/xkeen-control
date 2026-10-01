@@ -314,6 +314,7 @@ func (m *Manager) PreviewImport(binding, profiles string) (Preview, error) {
 		if err != nil {
 			return Preview{}, errors.New("profile rejected")
 		}
+		node.Enabled = !nodeNameWL(node.Name)
 		registry.Nodes = append(registry.Nodes, node)
 	}
 	return m.createPreview(binding, before, registry, "import", false)
@@ -647,8 +648,8 @@ func buildSubscriptionCandidate(before Registry, target Subscription, parsed []P
 			node.VLESS = item.profile.VLESS
 			node.SourceKey = item.key
 			// A default-disabled member must not be re-enabled by refresh;
-			// retain explicit per-node choices in these countries as well.
-			if subscriptionCountryDisabledByDefault(item.profile.Name, item.profile.VLESS.Host) {
+			// retain explicit per-node choices for matching names as well.
+			if subscriptionNodeDisabledByDefault(item.profile.Name, item.profile.VLESS.Host) {
 				node.Enabled = node.Enabled && target.Enabled
 			} else {
 				node.Enabled = target.Enabled
@@ -664,7 +665,7 @@ func buildSubscriptionCandidate(before Registry, target Subscription, parsed []P
 		if err != nil {
 			return Registry{}, ErrSubscriptionNode
 		}
-		node.Enabled = target.Enabled && !subscriptionCountryDisabledByDefault(item.profile.Name, item.profile.VLESS.Host)
+		node.Enabled = target.Enabled && !subscriptionNodeDisabledByDefault(item.profile.Name, item.profile.VLESS.Host)
 		newNodes = append(newNodes, node)
 	}
 

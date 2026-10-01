@@ -129,6 +129,12 @@ not migrated or forcibly disabled. Explicit node/subscription enable and manual
 profile import retain their existing semantics. The registry remains the sole
 saved state authority; no geolocation request or scheduler is added.
 
+New manual imports and subscription members with a standalone case-insensitive
+`WL` name token (including punctuation separators) default to disabled.
+Subscription refresh preserves their saved per-node choices under the existing
+parent disabled gate. Explicit enable remains available; existing registries,
+legacy adoption and backup restoration are not migrated by this default.
+
 The source-main Slice A batch node preview routes are:
 
 ```text

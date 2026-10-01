@@ -95,7 +95,7 @@ const validUpdate = (value) => value && value.installed && typeof value.installe
   && typeof value.rollbackAvailable === 'boolean'
   && typeof value.signingKeyConfigured === 'boolean'
   && (value.rollbackVerificationRequired == null || typeof value.rollbackVerificationRequired === 'boolean')
-  && (value.latestCompatibleVersion == null || safeText(value.latestCompatibleVersion, 64))
+  && (value.latestCompatibleVersion == null || value.latestCompatibleVersion === '' || safeText(value.latestCompatibleVersion, 64))
   && (value.latestChannel == null || ['stable', 'beta'].includes(value.latestChannel))
 
 const addressText = (address) => {

@@ -108,6 +108,26 @@ async function prepare(page, options = {}) {
   return state
 }
 
+test('loads the cold empty release version without a metadata check', async ({ page }) => {
+  const state = await prepare(page, { update: { latestCompatibleVersion: '' } }); page.__systemIssues = state.issues
+  await page.goto('/')
+  await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+  await revealSystemSettings(page)
+  await expect(page.getByRole('heading', { name: '127.0.0.1:8787', exact: true })).toBeVisible()
+  await expect(page.getByLabel('New management host')).toBeEnabled()
+  await expect(page.getByText('Reading listener…', { exact: true })).toHaveCount(0)
+  expect(state.requests.filter(({ method }) => method === 'POST')).toHaveLength(0)
+})
+
+test('rejects a malformed cold release version without a metadata check', async ({ page }) => {
+  const state = await prepare(page, { update: { latestCompatibleVersion: false } }); page.__systemIssues = state.issues
+  await page.goto('/')
+  await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+  await revealSystemSettings(page)
+  await expect(page.getByText('Signed panel release state is unavailable.', { exact: true })).toBeVisible()
+  expect(state.requests.filter(({ method }) => method === 'POST')).toHaveLength(0)
+})
+
 test('configures tests enables disables and clears without redisplaying or storing credentials', async ({ page }) => {
   const state = await prepare(page); page.__systemIssues = state.issues
   await page.goto('/')
