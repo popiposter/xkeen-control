@@ -47,7 +47,9 @@ managed XKeen / Xray / geodata lifecycle (#4, active; trial beta.2 VERIFIED BETA
         ↓
 visual typed configuration + transactional render/apply (#5 complete source-only through #91 F; not deployed)
         ↓
-notifications + private-management security hardening (#99 active; source-only)
+notifications + private-management security hardening (#99 done source-only)
+        ↓
+feature freeze + exact-main integrated qualification (#106 active; no release/router mutation)
 ```
 
 ## Delivery sequence
@@ -64,7 +66,8 @@ notifications + private-management security hardening (#99 active; source-only)
 | D.2 — component lifecycle | **Active — trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-F complete; G merged source-only via #81/#82** | Issue #4 / current `main` + live `v0.3.0-beta.2` trial | The prior Xray live pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the diagnostic source correction. Issue #81 / PR #82 deliver typed fresh installation plus recognized takeover/convergence, sole-writer retirement and IPv4-only LAN/policy-scoped Hybrid interception ownership with owned-subset rollback. This remains source-only and does not independently lead to a release |
 | D.3 — foundation A-F (#46) | **Done source-only through Issue #78** | Issue #46 / #68 / #70 / #72 / #74 / #76 / #78 | Selection-first Nodes/atomic batch mutations, exact subscription reconciliation, bounded automatic subscription refresh, fixed one-node diagnostic performance, the single adaptive quality-switch path and the integrated automatic-quality operator UX/source qualification are complete; no release, router access or live qualification is implied |
 | D.3/#5 — visual configuration | **Done source-only; not deployed** | Issue #5 / #91 | Routing, DNS/Observatory, bounded Performance, System/Panel, and final Dashboard integration are complete in source. Production-qualified stable remains `v0.2.0` |
-| E — notifications/security hardening | **Active — #99 B security hardening** | Issue #99 / master #1 | PR #100 delivers fixed-host outbound alerts + panel/component notify-mode wiring source-only; B is the immediate private-management/auth/Host/guidance closeout gate |
+| E — notifications/security hardening | **Done source-only; not deployed** | Issue #99 / PRs #100/#101 | Fixed-host outbound notifications, panel stable-notify discovery, bounded auth state, protected credential reads, accepted-socket Host authority, strict password objects and private-management guidance are complete in source |
+| Feature freeze / candidate qualification | **Active — #106** | Issue #106 / master #1 | Restore deterministic embedded-asset parity after the final parallel-PR integration, run one clean exact-HEAD full gate, freeze source, then await a separate operator release decision |
 
 ## Pre-D / Issue #8 — complete
 
@@ -159,11 +162,19 @@ safe browser projections. #5 is complete on source only; it remains undeployed.
 Stable `v0.2.0` remains the production-qualified baseline. No release, router
 access or live qualification is implied.
 
-Product Slice E remains active under Issue #99. PR #100 delivers the fixed-host
-outbound notification half source-only; the immediate remaining B gate is
-private-management/auth/Host/security-header hardening plus management-VPN
-guidance. No remote command plane, arbitrary webhook surface or WAN-management
-feature is introduced. The panel remains trusted-LAN/management-VPN only.
+Product Slice E is complete source-only under Issue #99 after PRs #100/#101.
+The later operator workspace redesign (#102 / PR #103) and RU/BY subscription
+default policy (#104 / PR #105) are also merged source-only. Current main after
+those merges is `d4a78d99a54bd7dcc24e04b16ccaf43f3148c385`; production-qualified
+stable remains `v0.2.0` and the live router remains on the retained
+`v0.3.0-beta.2` trial.
+
+Issue #106 is the active source gate. It restores deterministic tracked
+webasset parity after the final parallel-PR integration, re-proves the combined
+security/UI/node contracts, and requires one clean exact-HEAD full qualification
+before source freeze. It does not dispatch a Release or access/mutate Keenetic.
+Issue #80 remains a separate reliability follow-up and is not silently
+re-sequenced into this gate.
 
 ## Maintenance rule
 
