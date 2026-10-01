@@ -31,6 +31,13 @@ Current local state includes:
 
 The binary contains the React/Vite UI. Go/Node toolchains stay off-router.
 
+The source-only operator workspace redesign in Issue #102 uses a compact dark
+sidebar, dense paginated Nodes and task-first editors with optional facts behind
+native disclosures. [UI-DESIGN.md](UI-DESIGN.md) records the approved density and
+workflow coverage; [design-qa.md](../design-qa.md) records synthetic visual QA.
+This presentation layer retains the existing typed operation owners and does
+not change the production-qualified runtime described below.
+
 ## Security boundary
 
 Default listener:

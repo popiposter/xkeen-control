@@ -1,3 +1,4 @@
+import { WorkflowSteps } from './ui.jsx'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 const SETUP_STATES = new Set(['fresh', 'takeover', 'previewable', 'applying', 'blocked', 'maintenance', 'ready'])
@@ -194,9 +195,10 @@ export function SetupFlow({ setup, csrfToken, onRefresh, onUnauthorized }) {
 
   return <section className="panel setup-flow" aria-label="Setup Mode">
     <div className="setup-flow-heading">
-      <div><span className="panel-label">Setup Mode</span><h2>Converge the managed appliance</h2><p>One server-owned transaction preserves or losslessly migrates supported authorities, retires reviewed automatic writers, and activates the fixed qualified component set.</p></div>
+      <div><span className="panel-label">Setup Mode</span><h2>Initial setup</h2><p>Review the fixed setup plan before making changes. Supported existing settings are preserved or migrated by the setup transaction.</p></div>
       <span className={`chip ${eligible ? 'amber' : currentState === 'applying' ? 'blue' : 'neutral'}`}>{currentState}</span>
     </div>
+    <WorkflowSteps first="Prepare" stage={request === 'apply' || confirming ? 'apply' : preview ? 'preview' : 'edit'} />
     {currentState === 'blocked' || currentState === 'maintenance'
       ? <div className="setup-flow-blocked" role="status"><strong>{setupReasonLabel(setup.reasonCode)}</strong><small>Setup accepts no repair or partial-install operation. Resolve the reported state through the supported authority/recovery path.</small><code>{setup.reasonCode || 'maintenance'}</code></div>
       : currentState === 'applying'

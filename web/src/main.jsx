@@ -1,6 +1,9 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles.css'
+import { Disclosure, MobileNavigationDrawer } from './ui.jsx'
+import { IconHome, IconServer, IconSitemap, IconWorld, IconChartBar, IconCube, IconHistory, IconSettings, IconLogout, IconMenu2 } from '@tabler/icons-react'
+import { IconPlus, IconLink, IconRefresh, IconPencil, IconPower, IconTrash, IconX, IconChevronLeft, IconChevronRight, IconSearch, IconGauge, IconFocus2, IconArrowUp, IconArrowDown, IconArrowsSort, IconSquareCheck, IconPlayerPlay, IconPlayerPause } from '@tabler/icons-react'
 import { ComponentLifecycleNotices, ComponentsUpdatesSection, useComponentsController } from './components-updates.jsx'
 import { DNSLifecycleNotice, DNSObservatorySection, useDNSObservatoryController } from './dns-observatory.jsx'
 import { PerformancePolicySection, usePerformancePolicyController } from './performance-policy.jsx'
@@ -90,7 +93,6 @@ const formatTime = (value) => {
 }
 
 const visibleNodeName = (node) => String(node?.displayName || node?.name || '').replace(FLAG_PREFIX, '').trim() || 'Unnamed node'
-const nodeSource = (node) => node.subscriptionName || (node.sourceType === 'subscription' ? 'Unnamed subscription' : node.sourceType) || 'legacy'
 const nodeRole = (node) => node.isEffective ? 'effective' : node.isOverride ? 'override' : node.isNativeSelected ? 'native' : 'none'
 const matchesNodeRole = (node, role) => role === 'all'
   || (role === 'native' && node.isNativeSelected)
@@ -264,7 +266,8 @@ const sortNodes = (nodes, key, direction) => {
       case 'health': return healthRank(node)
       case 'latency': return node.alive && node.latencyMs ? node.latencyMs : Number.MAX_SAFE_INTEGER
       case 'role': return roleRank(node)
-      case 'source': return stringValue(nodeSource(node))
+      case 'source': return stringValue(node.sourceType)
+      case 'subscription': return stringValue(node.subscriptionName)
       case 'country': return stringValue(node.countryCode)
       default: return stringValue(visibleNodeName(node))
     }
@@ -285,6 +288,7 @@ const createNodeViewState = () => ({
   statusFilter: 'all',
   roleFilter: 'all',
   sourceFilter: 'all',
+  subscriptionFilter: 'all',
   countryFilter: 'all',
   sort: { key: 'name', direction: 'asc' },
   page: 1,
@@ -408,6 +412,8 @@ function Login({ error, password, setPassword, onSubmit }) {
 function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh, onLogout, onUnauthorized }) {
   const { status, nodes, performance } = dashboard
   const [section, setSection] = useState('overview')
+  const [navigationOpen, setNavigationOpen] = useState(false)
+  const closeNavigation = useCallback(() => setNavigationOpen(false), [])
   const [nodeView, setNodeView] = useState(createNodeViewState)
   const [restoreState, setRestoreState] = useState({ preview: null })
   const registryNodes = nodes.nodes || []
@@ -476,29 +482,29 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     }
   }, [performancePolling, onPerformanceRefresh])
 
+  const sections = [
+    ['overview', 'Overview', IconHome, () => setSection('overview')],
+    ['nodes', 'Nodes', IconServer, () => setSection('nodes')],
+    ['routing', 'Routing', IconSitemap, openRouting],
+    ['dns', 'DNS', IconWorld, openDNS],
+    ['performance', 'Performance', IconChartBar, () => setSection('performance')],
+    ['components', 'Components / Updates', IconCube, openComponents],
+    ['backup', 'Backup & Restore', IconHistory, openBackup],
+    ['system', 'System / Panel', IconSettings, () => setSection('system')],
+  ]
+  const pageTitle = { components: 'Components', system: 'System' }[section] || sections.find(([key]) => key === section)?.[1]
   return <Shell>
-    <header className="topbar">
-      <strong className="product-name">XKeen Control</strong>
-      <div className="top-actions">
-        <span className="chip neutral">{status.controlPlane?.version || 'dev'}</span>
-        <button className="ghost" type="button" onClick={onLogout}>Sign out</button>
-      </div>
-    </header>
-    <nav className="section-nav" aria-label="Dashboard sections">
-      <button type="button" className={section === 'overview' ? 'active' : ''} onClick={() => setSection('overview')}>Overview</button>
-      <button type="button" className={section === 'nodes' ? 'active' : ''} onClick={() => setSection('nodes')}>Nodes <span>{nodes.total || 0}</span></button>
-      <button type="button" className={section === 'routing' ? 'active' : ''} onClick={openRouting}>Routing</button>
-      <button type="button" className={section === 'dns' ? 'active' : ''} onClick={openDNS}>DNS</button>
-      <button type="button" className={section === 'performance' ? 'active' : ''} onClick={() => setSection('performance')}>Performance</button>
-      <button type="button" className={section === 'components' ? 'active' : ''} onClick={openComponents}>Components / Updates</button>
-      <button type="button" className={section === 'backup' ? 'active' : ''} onClick={openBackup}>Backup &amp; Restore</button>
-      <button type="button" className={section === 'system' ? 'active' : ''} onClick={() => setSection('system')}>System / Panel</button>
-    </nav>
+    <a className="skip-link" href="#workspace">Skip to workspace</a>
+    <header className="mobile-bar"><button type="button" className="ghost" aria-label="Toggle navigation" aria-expanded={navigationOpen} aria-controls="mobile-dashboard-navigation" aria-haspopup="dialog" onClick={() => setNavigationOpen(!navigationOpen)}><IconMenu2 size={18} /></button><strong>XKeen Control</strong></header>
+    <aside className="sidebar"><NavigationContent sections={sections} section={section} total={nodes.total || 0} version={status.controlPlane?.version || 'dev'} onSelect={closeNavigation} onLogout={onLogout} /></aside>
+    <MobileNavigationDrawer open={navigationOpen} onClose={closeNavigation}><div className="mobile-navigation-panel"><NavigationContent mobile sections={sections} section={section} total={nodes.total || 0} version={status.controlPlane?.version || 'dev'} onSelect={closeNavigation} onLogout={onLogout} /></div></MobileNavigationDrawer>
+    <div id="workspace" className="workspace" tabIndex="-1">
+    {section !== 'nodes' && <header className="page-heading"><h1>{pageTitle}</h1>{section === 'overview' && <button className="ghost" type="button" onClick={onRefresh}><Icon name="refresh" />Refresh</button>}</header>}
     <ComponentLifecycleNotices controller={componentController} lifecycle={status.lifecycle} onOpenComponents={openComponents} />
     <RoutingLifecycleNotice controller={routingController} active={section === 'routing'} onOpenRouting={openRouting} />
     <DNSLifecycleNotice controller={dnsController} active={section === 'dns'} onOpenDNS={openDNS} />
     {error && <Notice message={error} />}
-    {section === 'overview' && <Overview status={status} performance={performance} nodeTotal={nodes.total || 0} nodesByTag={nodesByTag} csrfToken={session.csrfToken} onRefresh={onRefresh} onUnauthorized={onUnauthorized} />}
+    {section === 'overview' && <Overview status={status} performance={performance} nodeTotal={nodes.total || 0} nodesByTag={nodesByTag} csrfToken={session.csrfToken} onRefresh={onRefresh} onUnauthorized={onUnauthorized} onOpenNodes={() => setSection('nodes')} />}
     {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} performance={performance} manualOverride={status.selection?.manualOverride || ''} benchmarkRunning={Boolean(status.benchmark?.controlPlane?.running)} csrf={session.csrfToken} onRefresh={onRefresh} onPerformanceRefresh={onPerformanceRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} manualLifecycleBlocked={manualLifecycleBlocked} />}
     {section === 'routing' && <RoutingPolicySection controller={routingController} lifecycle={status.lifecycle} />}
     {section === 'dns' && <DNSObservatorySection controller={dnsController} />}
@@ -506,15 +512,28 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     {section === 'components' && <ComponentsUpdatesSection controller={componentController} lifecycle={status.lifecycle} onOpenSystem={() => setSection('system')} />}
     {section === 'backup' && <BackupRestoreSection csrf={session.csrfToken} restoreState={restoreState} setRestoreState={setRestoreState} onRefresh={onRefresh} onUnauthorized={onUnauthorized} lifecycleBlocked={lifecycleBlocked} />}
     {section === 'system' && <SystemPanelSection controller={systemPanelController} status={status} onOpenComponents={openComponents} onOpenBackup={openBackup} />}
+    </div>
   </Shell>
 }
 
-function Overview({ status, performance, nodeTotal, nodesByTag, csrfToken, onRefresh, onUnauthorized }) {
+function NavigationContent({ mobile = false, sections, section, total, version, onSelect, onLogout }) {
+  return <>
+    <div className="navigation-heading"><strong className="product-name">XKeen <span>Control</span></strong>{mobile && <button type="button" className="icon-button ghost" aria-label="Close navigation" onClick={onSelect}><IconX size={20} aria-hidden="true" /></button>}</div>
+    <nav id={mobile ? 'mobile-dashboard-navigation' : 'dashboard-navigation'} className="section-nav" aria-label="Dashboard sections">
+      {sections.map(([key, label, NavigationIcon, open]) => <button key={key} type="button" className={section === key ? 'active' : ''} aria-label={key === 'nodes' ? `Nodes ${total}` : label} aria-current={section === key ? 'page' : undefined} onClick={() => { open(); onSelect() }}><NavigationIcon size={18} aria-hidden="true" /><span>{label === 'Components / Updates' ? <>Components<span className="nav-suffix"> / Updates</span></> : label === 'System / Panel' ? <>System<span className="nav-suffix"> / Panel</span></> : label}</span>{key === 'nodes' && <span className="nav-count"> {total}</span>}</button>)}
+    </nav>
+    <div className="sidebar-footer"><small>{version}</small><button className="ghost" type="button" onClick={onLogout}><IconLogout size={18} aria-hidden="true" />Sign out</button></div>
+  </>
+}
+
+function Overview({ status, performance, nodeTotal, nodesByTag, csrfToken, onRefresh, onUnauthorized, onOpenNodes }) {
   const healthy = status.observatory?.healthy || 0
   const total = status.observatory?.total || nodeTotal
   const healthText = total ? `${healthy}/${total} healthy` : 'No node data'
+  const effective = nodesByTag.get(status.balancer?.effective)
+  const ready = status.xray?.running && status.xray?.apiReachable && status.xkeen?.running
   return <div className="section-stack">
-    <section className="panel setup-banner"><div><span className="panel-label">Panel readiness</span><strong>{status.setup?.runtime || 'setup'} · credential {status.setup?.credential || 'unknown'}</strong><small>XKeen {status.setup?.xkeen || 'missing'} · Xray {status.setup?.xray || 'missing'} · configuration {status.setup?.configuration || 'missing'}</small></div></section>
+    <section className="active-node-strip" aria-label="Active node"><span className={ready ? 'good-text' : 'warning'}><span className={`status-dot ${ready ? 'up' : 'down'}`}></span>{ready ? 'Runtime ready' : 'Runtime unavailable'}</span>{effective ? <NodeName node={effective} /> : <strong>No current target</strong>}<span>{status.selection?.manualOverride ? 'Manual override' : 'Automatic selection'}</span><span>{formatAdaptiveLatency(effective?.latencyMs)}</span><span>{Array.from(nodesByTag.values()).filter((node) => node.enabled).length} enabled</span><button type="button" onClick={onOpenNodes}>Manage nodes</button></section>
     <SetupFlow setup={status.setup} csrfToken={csrfToken} onRefresh={onRefresh} onUnauthorized={onUnauthorized} />
     <section className="hero-grid">
       <HealthCard label="Xray" ok={status.xray?.running && status.xray?.apiReachable} detail={status.xray?.apiReachable ? 'API reachable' : 'Degraded'} />
@@ -522,12 +541,17 @@ function Overview({ status, performance, nodeTotal, nodesByTag, csrfToken, onRef
       <HealthCard label="Observatory" ok={status.observatory?.apiReachable} detail={healthText} />
       <HealthCard label="XKeen" ok={status.xkeen?.running} detail={status.xkeen?.running ? 'Running' : 'Not detected'} />
     </section>
+    <section className="selection-summary-strip" aria-label="Selection status"><div><small>Mode</small><strong>{status.selection?.manualOverride ? 'Manual override' : 'Automatic'}</strong></div><div><small>State</small><strong>{selectionStateLabel(status.selection?.state)}</strong></div><div><small>Adaptive check</small><strong>{adaptiveStateLabel(performance?.adaptive)}</strong></div></section>
+    <Disclosure title="Selection details" attention={performance?.adaptive?.state === 'running' || performance?.adaptive?.state === 'cleanup-pending'}>
     <section className="selection-grid">
       <SelectionCard label="Native leastPing" node={nodesByTag.get(status.balancer?.nativeSelected)} tone="blue" />
       <SelectionCard label="Manual override" node={nodesByTag.get(status.selection?.manualOverride)} tone="amber" emptyText="Automatic selection" />
       <SelectionCard label="Effective" node={nodesByTag.get(status.balancer?.effective)} tone="green" />
     </section>
     <AutomaticQualityOverview status={status} performance={performance} nodesByTag={nodesByTag} />
+    <section className="panel setup-banner"><div><span className="panel-label">Panel readiness</span><strong>{status.setup?.runtime || 'setup'} · credential {status.setup?.credential || 'unknown'}</strong><small>XKeen {status.setup?.xkeen || 'missing'} · Xray {status.setup?.xray || 'missing'} · configuration {status.setup?.configuration || 'missing'}</small></div></section>
+    </Disclosure>
+    <section className="overview-node-list"><div className="workspace-heading"><h2>Available nodes <span className="count">{nodeTotal}</span></h2><button type="button" className="inline-link" onClick={onOpenNodes}>Open all nodes</button></div><div className="table-wrap"><table><thead><tr><th>Node</th><th>Address</th><th>Health</th><th>Latency</th><th>Role</th></tr></thead><tbody>{Array.from(nodesByTag.values()).slice(0, 5).map((node) => <tr key={node.id || node.tag}><td><NodeName node={node} /></td><td><code className="address">{node.address || '—'}</code></td><td>{node.alive ? 'Alive' : node.enabled ? 'No data' : 'Disabled'}</td><td>{formatAdaptiveLatency(node.latencyMs)}</td><td><NodeBadges node={node} /></td></tr>)}</tbody></table></div></section>
   </div>
 }
 
@@ -601,7 +625,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
   const manualRunning = manualStatus.state === 'running'
   const adaptiveStatus = performance?.adaptive || { state: 'waiting' }
   const adaptiveRunning = adaptiveStatus.state === 'running'
-  const { query, statusFilter, roleFilter, sourceFilter, countryFilter, sort, page } = viewState
+  const { query, statusFilter, roleFilter, sourceFilter, subscriptionFilter, countryFilter, sort, page } = viewState
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase()
@@ -613,10 +637,11 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
       if (statusFilter === 'stale' && !node.stale && !node.missing) return false
       if (!matchesNodeRole(node, roleFilter)) return false
       if (sourceFilter !== 'all' && node.sourceType !== sourceFilter) return false
+      if (subscriptionFilter !== 'all' && JSON.stringify([node.sourceType === 'subscription', node.subscriptionName || '']) !== subscriptionFilter) return false
       if (countryFilter !== 'all' && node.countryCode !== countryFilter) return false
       return true
     })
-  }, [nodes, query, statusFilter, roleFilter, sourceFilter, countryFilter])
+  }, [nodes, query, statusFilter, roleFilter, sourceFilter, subscriptionFilter, countryFilter])
   const ordered = useMemo(() => sortNodes(filtered, sort.key, sort.direction), [filtered, sort])
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const visibleNodes = ordered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
@@ -628,6 +653,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
   const selectedManual = selectedNode && manualOverride === (selectedNode.outboundTag || selectedNode.tag)
   const countryOptions = useMemo(() => [...new Set(nodes.map((node) => node.countryCode).filter(Boolean))].sort(), [nodes])
   const sourceOptions = useMemo(() => [...new Set(nodes.map((node) => node.sourceType).filter(Boolean))].sort(), [nodes])
+  const subscriptionOptions = useMemo(() => [...new Set(nodes.filter((node) => node.sourceType === 'subscription').map((node) => node.subscriptionName || ''))].sort(), [nodes])
   const statusCounts = useMemo(() => ({
     all: nodes.length,
     alive: nodes.filter((node) => node.alive).length,
@@ -635,7 +661,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
     disabled: nodes.filter((node) => !node.enabled).length,
     stale: nodes.filter((node) => node.stale || node.missing).length,
   }), [nodes])
-  const filtersActive = Boolean(query.trim()) || statusFilter !== 'all' || roleFilter !== 'all' || sourceFilter !== 'all' || countryFilter !== 'all'
+  const filtersActive = Boolean(query.trim()) || statusFilter !== 'all' || roleFilter !== 'all' || sourceFilter !== 'all' || subscriptionFilter !== 'all' || countryFilter !== 'all'
 
   useEffect(() => {
     if (page > totalPages) onViewStateChange((current) => current.page > totalPages ? { ...current, page: totalPages } : current)
@@ -768,9 +794,10 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
     }
   }
 
-  const openEditor = () => {
-    if (!selectedNode) return
-    setEditingID(editingID === selectedNode.id ? '' : selectedNode.id)
+  const openEditor = (node = selectedNode) => {
+    if (!node || busy || lifecycleBlocked) return
+    setSelectedIDs(new Set([node.id]))
+    setEditingID(editingID === node.id ? '' : node.id)
     setReplacement('')
   }
 
@@ -809,10 +836,10 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
 
   return <section className="panel nodes-workspace">
     <div className="workspace-heading">
-      <h2>Nodes <span className="count">{nodes.length}</span></h2>
+      <h1>Nodes <span className="count">{nodes.length}</span></h1>
       <div className="workspace-actions">
-        <IconButton icon="plus" label="Add VLESS profiles" disabled={lifecycleBlocked} onClick={() => setComposer(composer === 'profiles' ? '' : 'profiles')} />
-        <IconButton icon="link" label="Add subscription" disabled={lifecycleBlocked} onClick={() => composer === 'subscription' ? closeComposer() : startNewSubscription()} />
+        <button type="button" aria-label="Add VLESS profiles" disabled={lifecycleBlocked} onClick={() => composer === 'profiles' ? closeComposer() : setComposer('profiles')}><Icon name="plus" />Add profiles</button>
+        <button type="button" className="ghost" disabled={lifecycleBlocked} onClick={() => composer === 'subscription' ? closeComposer() : startNewSubscription()}><Icon name="link" />Add subscription</button>
         <IconButton icon="refresh" label="Refresh dashboard" onClick={onRefresh} />
       </div>
     </div>
@@ -820,13 +847,13 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
     {notice && <Notice message={notice.message} tone={notice.tone} />}
 
     {composer === 'profiles' && <form className="composer" onSubmit={(event) => { event.preventDefault(); requestPreview('/api/v1/nodes/import/preview', { profiles }) }}>
-      <div><span className="panel-label">Add profiles</span><h3>Import VLESS + REALITY links</h3><p>Names are read from link fragments. Keys stay inside the authenticated request and RAM-only preview.</p></div>
+      <div><h3>Import VLESS + REALITY links</h3></div>
       <textarea value={profiles} onChange={(event) => setProfiles(event.target.value)} placeholder="Paste one or more vless:// links" autoFocus />
       <div className="composer-actions"><button className="ghost" type="button" onClick={closeComposer}>Cancel</button><button type="submit" disabled={busy || lifecycleBlocked || !profiles.trim()}>Preview add</button></div>
     </form>}
 
     {composer === 'subscription' && <form className="composer compact" onSubmit={(event) => { event.preventDefault(); requestPreview('/api/v1/subscriptions/refresh/preview', { ...(subscriptionID ? { subscriptionId: subscriptionID } : {}), name: subscriptionName, url: subscriptionUrl }) }}>
-      <div><span className="panel-label">{subscriptionID ? 'Update subscription' : 'New subscription'}</span><h3>Fetch explicitly</h3><p>HTTPS only, with DNS/IP SSRF checks and bounded response parsing.</p></div>
+      <div><h3>{subscriptionID ? 'Update subscription' : 'New subscription'}</h3></div>
       <label htmlFor="subscription-name">Display name</label>
       <input id="subscription-name" value={subscriptionName} onChange={(event) => setSubscriptionName(event.target.value)} placeholder="Home provider" />
       <label htmlFor="subscription-url">Subscription URL</label>
@@ -834,22 +861,10 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
       <div className="composer-actions"><button className="ghost" type="button" onClick={closeComposer}>Cancel</button><button type="submit" disabled={busy || lifecycleBlocked || (!subscriptionID && !subscriptionUrl.trim())}>{subscriptionID ? 'Preview update' : 'Preview subscription'}</button></div>
     </form>}
 
-    {!!subscriptions.length && <div className="subscription-strip">
-      {subscriptions.map((subscription) => { const enabled = subscription.enabled !== false; const name = subscription.name || 'Unnamed subscription'; const autoStatus = subscription.autoRefresh; const autoState = autoRefreshState(autoStatus); return <div className={`subscription-card ${enabled ? '' : 'disabled'}`} key={subscription.id}>
-        <div><strong>{name}</strong><small>{enabled ? 'Enabled' : 'Disabled'} · {subscription.nodeCount} nodes{subscription.staleCount ? ` · ${subscription.staleCount} stale` : ''}</small>{autoStatus && <div className={`subscription-auto-refresh ${autoState}`} data-testid={`subscription-auto-refresh-${subscription.id}`}><span>{autoRefreshStateLabels[autoState]}</span><small>{autoRefreshSummary(autoStatus)}</small></div>}</div>
-        <div className="subscription-actions">
-          <IconButton icon="refresh" label={`Refresh ${name}`} disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/refresh/preview', { subscriptionId: subscription.id })} />
-          <IconButton icon="edit" label={`Edit ${name}`} disabled={busy} onClick={() => openSubscriptionEditor(subscription)} />
-          <IconButton icon="power" label={enabled ? `Disable ${name}` : `Enable ${name}`} active={!enabled} disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/state/preview', { subscriptionId: subscription.id, enabled: !enabled })} />
-          <IconButton icon="trash" label={`Remove ${name}`} tone="danger" disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/remove/preview', { subscriptionId: subscription.id })} />
-        </div>
-      </div> })}
-    </div>}
-
     <div className="node-toolbar">
       <div className="toolbar-main">
         <label className="search-box"><Icon name="search" /><input value={query} onChange={(event) => onViewStateChange((current) => ({ ...current, query: event.target.value, page: 1 }))} placeholder="Search name, address, or source" aria-label="Search nodes" /></label>
-        <span>{filtered.length} / {nodes.length}</span>
+        <span>{filtered.length} / {nodes.length} · <span data-testid="selected-count" aria-live="polite">{selectedIDs.size} selected</span></span>
       </div>
       <div className="filter-row">
         <div className="filter-group" role="group" aria-label="Health filters">
@@ -859,25 +874,25 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
           {[['all', 'Any role'], ['native', 'Native'], ['override', 'Override'], ['effective', 'Effective'], ['none', 'No role']].map(([value, label]) => <button type="button" key={value} className={roleFilter === value ? 'active' : ''} onClick={() => chooseFilter('roleFilter', value)}>{label}</button>)}
         </div>
         <label className="filter-select">Source<select aria-label="Filter by source" value={sourceFilter} onChange={(event) => chooseFilter('sourceFilter', event.target.value)}><option value="all">All</option>{sourceOptions.map((source) => <option value={source} key={source}>{source}</option>)}</select></label>
+        <label className="filter-select">Subscription<select aria-label="Filter by subscription" value={subscriptionFilter} onChange={(event) => chooseFilter('subscriptionFilter', event.target.value)}><option value="all">All</option>{subscriptionOptions.map((name) => <option value={JSON.stringify([true, name])} key={name}>{name || 'Unnamed subscription'}</option>)}</select></label>
         <label className="filter-select">Country<select aria-label="Filter by country" value={countryFilter} onChange={(event) => chooseFilter('countryFilter', event.target.value)}><option value="all">All</option>{countryOptions.map((country) => <option value={country} key={country}>{country}</option>)}</select></label>
         {filtersActive && <button className="clear-filters" type="button" onClick={clearFilters}>Clear</button>}
       </div>
     </div>
 
     <div className="node-selection-toolbar" role="toolbar" aria-label="Selected node actions">
-      <div className="selection-summary"><strong data-testid="selected-count">{selectedIDs.size} selected</strong><button className="clear-filters" type="button" onClick={toggleAllFiltered} disabled={busy || lifecycleBlocked || !filtered.length || allFilteredSelected}>Select all {filtered.length} filtered</button><button className="clear-filters" type="button" onClick={clearSelection} disabled={busy || lifecycleBlocked || !selectedIDs.size}>Clear selection</button></div>
+      <div className="selection-summary"><IconButton icon="select" label={`Select all ${filtered.length} filtered`} onClick={toggleAllFiltered} disabled={busy || lifecycleBlocked || !filtered.length || allFilteredSelected} /><IconButton icon="close" label="Clear selection" onClick={clearSelection} disabled={busy || lifecycleBlocked || !selectedIDs.size} /></div>
       <div className="selection-actions">
-        <button type="button" onClick={() => setManualOverride(selectedManual ? '' : (selectedNode.outboundTag || selectedNode.tag))} disabled={busy || lifecycleBlocked || !selectedNode || (!selectedManual && !selectedNode.enabled)}>{selectedManual ? 'Clear manual override' : 'Set manual override'}</button>
-        <button type="button" onClick={runManualNode} disabled={busy || manualRequestBusy || manualLifecycleBlocked || benchmarkRunning || manualRunning || adaptiveRunning || selectedNodes.length !== 1 || !selectedNode?.enabled}>{manualRequestBusy ? 'Starting speed test…' : 'Full speed test'}</button>
-        <button type="button" onClick={openEditor} disabled={busy || lifecycleBlocked || selectedNodes.length !== 1}>Edit / replace profile</button>
-        <button type="button" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: true })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => node.enabled)}>Enable</button>
-        <button type="button" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: false })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => !node.enabled)}>Disable</button>
-        <button type="button" className="danger-action" onClick={() => requestPreview('/api/v1/nodes/batch/remove/preview', { nodeIds: selectedNodeIDs })} disabled={busy || lifecycleBlocked || !selectedNodes.length}>Delete</button>
+        <IconButton icon="target" label={selectedManual ? 'Clear manual override' : 'Set manual override'} active={Boolean(selectedManual)} onClick={() => setManualOverride(selectedManual ? '' : (selectedNode.outboundTag || selectedNode.tag))} disabled={busy || lifecycleBlocked || !selectedNode || (!selectedManual && !selectedNode.enabled)} />
+        <IconButton icon="gauge" label={manualRequestBusy ? 'Starting speed test…' : 'Full speed test'} onClick={runManualNode} disabled={busy || manualRequestBusy || manualLifecycleBlocked || benchmarkRunning || manualRunning || adaptiveRunning || selectedNodes.length !== 1 || !selectedNode?.enabled} />
+        <IconButton icon="edit" label="Edit / replace profile" onClick={() => openEditor()} disabled={busy || lifecycleBlocked || selectedNodes.length !== 1} />
+        <IconButton icon="enable" label="Enable" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: true })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => node.enabled)} />
+        <IconButton icon="disable" label="Disable" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: false })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => !node.enabled)} />
+        <IconButton icon="trash" label="Delete" tone="danger" onClick={() => requestPreview('/api/v1/nodes/batch/remove/preview', { nodeIds: selectedNodeIDs })} disabled={busy || lifecycleBlocked || !selectedNodes.length} />
       </div>
     </div>
 
     {manualStatus.state !== 'idle' && <ManualPerformanceCard status={manualStatus} node={nodes.find((node) => node.id === manualStatus.targetNodeId)} />}
-    <AdaptiveQualityCard status={adaptiveStatus} nodes={nodes} />
 
     {selectedNode && editingID === selectedNode.id && <div className="selection-editor">
       <div><span className="panel-label">Replace profile</span><NodeName node={selectedNode} /><small>Stable tag: <code>{selectedNode.outboundTag || selectedNode.tag}</code></small></div>
@@ -885,12 +900,25 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
       <div className="inline-editor-actions"><button className="ghost" type="button" onClick={() => { setEditingID(''); setReplacement('') }}>Cancel</button><button type="button" disabled={busy || lifecycleBlocked || !replacement.trim()} onClick={() => requestPreview('/api/v1/nodes/replace/preview', { id: selectedNode.id, profile: replacement })}>Preview replacement</button></div>
     </div>}
 
-    <div className="table-wrap"><table className="nodes-table"><thead><tr><th className="selection-column"><SelectionCheckbox label="Select all filtered nodes" checked={allFilteredSelected} indeterminate={selectedFilteredCount > 0 && !allFilteredSelected} onChange={toggleAllFiltered} /></th><SortHeader label="Name" sortKey="name" sort={sort} onSort={changeSort} /><SortHeader label="Address" sortKey="address" sort={sort} onSort={changeSort} /><SortHeader label="Health" sortKey="health" sort={sort} onSort={changeSort} /><SortHeader label="Latency" sortKey="latency" sort={sort} onSort={changeSort} /><SortHeader label="Role" sortKey="role" sort={sort} onSort={changeSort} /><SortHeader label="Source" sortKey="source" sort={sort} onSort={changeSort} /></tr></thead><tbody>
+    <div className="table-wrap"><table className="nodes-table"><thead><tr><th className="selection-column"><SelectionCheckbox label="Select all filtered nodes" checked={allFilteredSelected} indeterminate={selectedFilteredCount > 0 && !allFilteredSelected} onChange={toggleAllFiltered} /></th><SortHeader label="Name" sortKey="name" sort={sort} onSort={changeSort} /><SortHeader label="Address" sortKey="address" sort={sort} onSort={changeSort} /><SortHeader label="Health" sortKey="health" sort={sort} onSort={changeSort} /><SortHeader label="Latency" sortKey="latency" sort={sort} onSort={changeSort} /><SortHeader label="Role" sortKey="role" sort={sort} onSort={changeSort} /><SortHeader label="Source" sortKey="source" sort={sort} onSort={changeSort} /><SortHeader label="Subscription" sortKey="subscription" sort={sort} onSort={changeSort} /></tr></thead><tbody>
       {visibleNodes.map((node) => <NodeRows key={node.id || node.tag} node={node} selected={selectedIDs.has(node.id)} onToggle={() => toggleSelection(node.id)} />)}
-      {!visibleNodes.length && <tr><td colSpan="7" className="empty">No nodes match this view.</td></tr>}
+      {!visibleNodes.length && <tr><td colSpan="8" className="empty">No nodes match this view.</td></tr>}
     </tbody></table></div>
 
     <Pagination page={page} totalPages={totalPages} onPage={(value) => onViewStateChange((current) => ({ ...current, page: value }))} />
+    {!!subscriptions.length && <Disclosure title={`Subscriptions · ${subscriptions.length}`} className="subscriptions-disclosure"><div className="subscription-strip">
+      {subscriptions.map((subscription) => { const enabled = subscription.enabled !== false; const name = subscription.name || 'Unnamed subscription'; const autoStatus = subscription.autoRefresh; const autoState = autoRefreshState(autoStatus); return <div className={`subscription-card ${enabled ? '' : 'disabled'}`} key={subscription.id}>
+        <div><strong>{name}</strong><small>{enabled ? 'Enabled' : 'Disabled'} · {subscription.nodeCount} nodes{subscription.staleCount ? ` · ${subscription.staleCount} stale` : ''}</small>{autoStatus && <div className={`subscription-auto-refresh ${autoState}`} data-testid={`subscription-auto-refresh-${subscription.id}`}><span>{autoRefreshStateLabels[autoState]}</span><small>{autoRefreshSummary(autoStatus)}</small></div>}</div>
+        <div className="subscription-actions">
+          <IconButton icon="refresh" label={`Refresh ${name}`} disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/refresh/preview', { subscriptionId: subscription.id })} />
+          <IconButton icon="edit" label={`Edit ${name}`} disabled={busy} onClick={() => openSubscriptionEditor(subscription)} />
+          <IconButton icon="power" label={enabled ? `Disable ${name}` : `Enable ${name}`} active={!enabled} disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/state/preview', { subscriptionId: subscription.id, enabled: !enabled })} />
+          <IconButton icon="trash" label={`Remove ${name}`} tone="danger" disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/remove/preview', { subscriptionId: subscription.id })} />
+        </div>
+      </div> })}
+    </div></Disclosure>}
+
+    <Disclosure title={`Automatic quality · ${adaptiveStateLabel(adaptiveStatus)}`} attention={['running', 'failed', 'cleanup-pending'].includes(adaptiveStatus.state)}><AdaptiveQualityCard status={adaptiveStatus} nodes={nodes} /></Disclosure>
     {preview && <PreviewDialog preview={preview} nodes={nodes} manualOverride={manualOverride} busy={busy || lifecycleBlocked} onCancel={cancelPreview} onApply={applyPreview} />}
   </section>
 }
@@ -945,14 +973,15 @@ function ManualPerformanceCard({ status, node }) {
 function NodeRows({ node, selected, onToggle }) {
   const health = node.alive ? 'Alive' : (node.enabled ? (node.lastError || 'No data') : 'Disabled')
   return <>
-    <tr>
+    <tr className={selected ? 'selected' : ''} tabIndex={0} aria-selected={selected} onClick={(event) => { if (!event.target.closest('input, label, button, a')) onToggle() }} onKeyDown={(event) => { if (event.target === event.currentTarget && [' ', 'Enter'].includes(event.key)) { event.preventDefault(); onToggle() } }}>
       <td className="selection-column"><SelectionCheckbox label={`Select ${visibleNodeName(node)}`} checked={selected} onChange={onToggle} /></td>
       <td><NodeName node={node} />{node.stale && <span className="chip amber">stale</span>}</td>
-      <td><code className="address">{node.address || '—'}</code></td>
-      <td><span className={`status-dot ${node.alive ? 'up' : 'down'}`}></span>{health}</td>
-      <td>{formatAdaptiveLatency(node.latencyMs)}</td>
-      <td><NodeBadges node={node} /></td>
-      <td><span>{node.subscriptionName || node.sourceType || 'legacy'}</span></td>
+      <td data-label="Address"><code className="address">{node.address || '—'}</code></td>
+      <td data-label="Health"><span className={`status-dot ${node.alive ? 'up' : 'down'}`}></span>{health}</td>
+      <td data-label="Latency">{formatAdaptiveLatency(node.latencyMs)}</td>
+      <td data-label="Role"><NodeBadges node={node} /></td>
+      <td data-label="Source"><span>{node.sourceType || 'legacy'}</span></td>
+      <td data-label="Subscription">{node.sourceType === 'subscription' ? node.subscriptionName || 'Unnamed subscription' : '—'}</td>
     </tr>
   </>
 }
@@ -989,9 +1018,11 @@ function PreviewDialog({ preview, nodes, manualOverride, busy, onCancel, onApply
 
 function Pagination({ page, totalPages, onPage }) {
   if (totalPages <= 1) return null
+  const pages = [...new Set([1, totalPages, ...Array.from({ length: 5 }, (_, index) => page + index - 2)])].filter((value) => value >= 1 && value <= totalPages).sort((a, b) => a - b)
   return <nav className="pagination" aria-label="Node pages">
+    <span className="muted">Page {page} of {totalPages}</span>
     <IconButton icon="left" label="Previous page" disabled={page <= 1} onClick={() => onPage(page - 1)} />
-    <div>{Array.from({ length: totalPages }, (_, index) => index + 1).map((value) => <button type="button" key={value} className={value === page ? 'active' : ''} aria-current={value === page ? 'page' : undefined} onClick={() => onPage(value)}>{value}</button>)}</div>
+    <div>{pages.map((value, index) => <span key={value}>{index > 0 && value - pages[index - 1] > 1 && <span className="pagination-gap" aria-hidden="true">…</span>}<button type="button" className={value === page ? 'active' : ''} aria-current={value === page ? 'page' : undefined} onClick={() => onPage(value)}>{value}</button></span>)}</div>
     <IconButton icon="right" label="Next page" disabled={page >= totalPages} onClick={() => onPage(page + 1)} />
   </nav>
 }
@@ -1165,18 +1196,18 @@ function BackupRestoreSection({ csrf, restoreState, setRestoreState, onRefresh, 
   return <div className="section-stack backup-restore-section">
     {notice && <Notice message={notice.message} tone={notice.tone} />}
     <section className="panel backup-card">
-      <div className="backup-card-heading"><div><span className="panel-label">Backup</span><h2>Download current settings</h2><p className="muted">Safe export contains appliance policy and no node secrets.</p></div><button type="button" onClick={exportSafe} disabled={safeBusy}>{safeBusy ? 'Preparing…' : 'Download safe backup'}</button></div>
-      <form className="secret-export" onSubmit={exportSecret}>
-        <div><span className="panel-label">Encrypted export</span><h3>Include the node registry</h3><p className="muted">This download contains secret-bearing node material. It is never stored in browser storage.</p></div>
+      <div className="backup-card-heading"><div><h2>Download current settings</h2><p className="muted">Safe export contains appliance policy and no node secrets.</p></div><button type="button" onClick={exportSafe} disabled={safeBusy}>{safeBusy ? 'Preparing…' : 'Download safe backup'}</button></div>
+      <Disclosure title="Encrypted backup · include node secrets"><form className="secret-export" onSubmit={exportSecret}>
+        <p className="muted">Contains node secrets. Keep this download private.</p>
         <label>Current panel password<input type="password" autoComplete="current-password" value={secretForm.currentPassword} onChange={(event) => setSecretForm((current) => ({ ...current, currentPassword: event.target.value }))} /></label>
         <label>Encryption passphrase<input type="password" autoComplete="new-password" value={secretForm.passphrase} onChange={(event) => setSecretForm((current) => ({ ...current, passphrase: event.target.value }))} /></label>
         <label>Confirm passphrase<input type="password" autoComplete="new-password" value={secretForm.confirmation} onChange={(event) => setSecretForm((current) => ({ ...current, confirmation: event.target.value }))} /></label>
         <button type="submit" disabled={secretBusy}>{secretBusy ? 'Preparing…' : 'Download encrypted backup'}</button>
-      </form>
+      </form></Disclosure>
     </section>
 
     <section className="panel backup-card">
-      <div><span className="panel-label">Restore</span><h2>Import a local backup</h2><p className="muted">Choose one JSON bundle. The server enforces the 10 MiB request and 9 MiB bundle limits.</p></div>
+      <div><h2>Import a local backup</h2><p className="muted">Choose one JSON bundle. The server enforces the 10 MiB request and 9 MiB bundle limits.</p></div>
       <div className="restore-form">
         <label>Restore mode<select value={effectiveMode} onChange={(event) => { setMode(event.target.value); setRestoreState({ preview: null }); setDestructiveConfirmed(false) }} disabled={restoreBusy || lifecycleBlocked || Boolean(preview)}><option value="settings-only">Settings only</option><option value="replace-registry">Replace registry (destructive)</option><option value="merge-registry">Merge registry (destructive)</option></select></label>
         <label>Backup bundle<input ref={fileInput} type="file" accept="application/json,.json" onChange={chooseFile} disabled={restoreBusy || lifecycleBlocked || Boolean(preview)} /></label>
@@ -1209,7 +1240,8 @@ function RestorePreviewSummary({ preview, blockers, busy, canApply, onCancel, on
 function SortHeader({ label, sortKey, sort, onSort }) {
   const active = sort.key === sortKey
   const direction = active ? sort.direction : 'none'
-  return <th aria-sort={direction === 'none' ? 'none' : direction === 'asc' ? 'ascending' : 'descending'}><button className={`sort-button ${active ? 'active' : ''}`} type="button" onClick={() => onSort(sortKey)}>{label}<span aria-hidden="true">{active ? (sort.direction === 'asc' ? '↑' : '↓') : '↕'}</span></button></th>
+  const SortIcon = active ? sort.direction === 'asc' ? IconArrowUp : IconArrowDown : IconArrowsSort
+  return <th aria-sort={direction === 'none' ? 'none' : direction === 'asc' ? 'ascending' : 'descending'}><button className={`sort-button ${active ? 'active' : ''}`} type="button" onClick={() => onSort(sortKey)}>{label}<SortIcon size={12} aria-hidden="true" /></button></th>
 }
 
 function SelectionCheckbox({ checked, indeterminate = false, label, onChange }) {
@@ -1217,7 +1249,7 @@ function SelectionCheckbox({ checked, indeterminate = false, label, onChange }) 
   useEffect(() => {
     if (inputRef.current) inputRef.current.indeterminate = indeterminate
   }, [indeterminate])
-  return <input ref={inputRef} type="checkbox" aria-label={label} checked={checked} onChange={onChange} />
+  return <label className="selection-checkbox"><input ref={inputRef} type="checkbox" aria-label={label} checked={checked} onChange={onChange} /></label>
 }
 
 function NodeName({ node }) {
@@ -1230,21 +1262,9 @@ function IconButton({ icon, label, tone = '', active = false, ...props }) {
 }
 
 function Icon({ name }) {
-  const paths = {
-    plus: <><path d="M12 5v14M5 12h14" /></>,
-    link: <><path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1" /><path d="M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1" /></>,
-    refresh: <><path d="M20 11a8 8 0 1 0-2.3 5.7" /><path d="M20 4v7h-7" /></>,
-    edit: <><path d="M4 20h4l11-11-4-4L4 16v4Z" /><path d="m13.5 6.5 4 4" /></>,
-    power: <><path d="M12 2v10" /><path d="M6.3 5.7a8 8 0 1 0 11.4 0" /></>,
-    trash: <><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13" /></>,
-    close: <><path d="m6 6 12 12M18 6 6 18" /></>,
-    left: <><path d="m15 18-6-6 6-6" /></>,
-    right: <><path d="m9 18 6-6-6-6" /></>,
-    search: <><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></>,
-    gauge: <><path d="M4 16a8 8 0 1 1 16 0" /><path d="M12 12l4-4" /><path d="M6 19h12" /></>,
-    target: <><circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="2" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></>,
-  }
-  return <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">{paths[name]}</svg>
+  const icons = { select: IconSquareCheck, enable: IconPlayerPlay, disable: IconPlayerPause, plus: IconPlus, link: IconLink, refresh: IconRefresh, edit: IconPencil, power: IconPower, trash: IconTrash, close: IconX, left: IconChevronLeft, right: IconChevronRight, search: IconSearch, gauge: IconGauge, target: IconFocus2 }
+  const Component = icons[name]
+  return Component ? <Component size={16} aria-hidden="true" focusable="false" /> : null
 }
 
 function Shell({ children }) { return <main className="app-shell">{children}</main> }
