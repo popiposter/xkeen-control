@@ -63,11 +63,11 @@ feature freeze + exact-main integrated qualification (#106 active; no release/ro
 | Pre-D — canonical Go module/import identity | Done | Issue #8 / PR #9 | Canonical `github.com/popiposter/xkeen-control` provenance; no runtime behavior change |
 | D — releases/bootstrap/panel self-update | Done | Issue #2 / `v0.1.1` | Public signed Releases, protected release pipeline, one-command bootstrap, setup mode, transactional panel update/rollback |
 | D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
-| D.2 — component lifecycle | **Active — trial beta.2 VERIFIED BETA; #64 correction delivered; F3 delivered by PR #67; #46 A-F complete; G merged source-only via #81/#82** | Issue #4 / current `main` + live `v0.3.0-beta.2` trial | The prior Xray live pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the diagnostic source correction. Issue #81 / PR #82 deliver typed fresh installation plus recognized takeover/convergence, sole-writer retirement and IPv4-only LAN/policy-scoped Hybrid interception ownership with owned-subset rollback. This remains source-only and does not independently lead to a release |
+| D.2 — component lifecycle | **Active — beta.4 panel installed/verified; managed convergence and quality pending** | Issue #4 / reviewed source + live `v0.3.0-beta.4` trial | #64/F3/#46 A-F/G source work is delivered. #112/#114/#115/#117 corrections are merged; the separately authorized beta.5 successor requires its own exact-main, protected publication and independent public verification gates before installation and fresh typed convergence. Stable promotion is not implied |
 | D.3 — foundation A-F (#46) | **Done source-only through Issue #78** | Issue #46 / #68 / #70 / #72 / #74 / #76 / #78 | Selection-first Nodes/atomic batch mutations, exact subscription reconciliation, bounded automatic subscription refresh, fixed one-node diagnostic performance, the single adaptive quality-switch path and the integrated automatic-quality operator UX/source qualification are complete; no release, router access or live qualification is implied |
-| D.3/#5 — visual configuration | **Done source-only; not deployed** | Issue #5 / #91 | Routing, DNS/Observatory, bounded Performance, System/Panel, and final Dashboard integration are complete in source. Production-qualified stable remains `v0.2.0` |
-| E — notifications/security hardening | **Done source-only; not deployed** | Issue #99 / PRs #100/#101 | Fixed-host outbound notifications, panel stable-notify discovery, bounded auth state, protected credential reads, accepted-socket Host authority, strict password objects and private-management guidance are complete in source |
-| Feature freeze / candidate qualification | **Active — #106** | Issue #106 / master #1 | Restore deterministic embedded-asset parity after the final parallel-PR integration, run one clean exact-HEAD full gate, freeze source, then await a separate operator release decision |
+| D.3/#5 — visual configuration | **Source delivered; integrated live acceptance pending** | Issue #5 / #91 + ledger #4 | Routing, DNS/Observatory, bounded Performance, System/Panel, and final Dashboard integration are in the trial panel. Production-qualified stable remains `v0.2.0` |
+| E — notifications/security hardening | **Source delivered; stable qualification unchanged** | Issue #99 / PRs #100/#101 | Fixed-host notifications, stable-notify discovery and private-management/auth protections are in the trial panel; integrated live acceptance remains separate |
+| Feature freeze / candidate qualification | **#106 completed; successor gates active in #4** | Issue #108 / #117 / master #1 | Reviewed source corrections require a fresh immutable candidate and exact local/protected/public/live gates; old release identities are preserved |
 
 ## Pre-D / Issue #8 — complete
 
@@ -136,7 +136,7 @@ The current [Issue #4](https://github.com/popiposter/xkeen-control/issues/4) rem
 
 The simplicity decisions in [master issue #1](https://github.com/popiposter/xkeen-control/issues/1) remain in force: one Go process, embedded UI, distinct component gate → runtime Coordinator → authority lease boundaries, fixed trust adapters and bounded journals/rollback. Q1 adds no generic transaction/form/pipeline framework, job queue/history, database, metrics agent or runtime dependencies; F3 adds only its two typed authenticated policy endpoints. Existing F2 behavior is the subject of qualification, not a reason to expand the product.
 
-**Gate 3 and the initial Xray live pair are complete historical evidence.** The live router remains on trial `v0.3.0-beta.2`; production-qualified stable remains `v0.2.0` and its fresh rollback snapshot is retained. The Xray pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivers the #64 diagnostic source correction. Per operator sequencing, live qualification now pauses: no beta.3/publication/install and no further component mutation while the feature-complete source sequence is implemented and qualified offline.
+**Gate 3 and the initial Xray live pair are complete historical evidence.** The Xray pair stopped at deterministic pre-commit `candidate-rejected`; PR #65 delivered the #64 diagnostic source correction. The feature-complete source-development pause below is historical. Later separately authorized beta.3/beta.4 publication and panel installation are recorded in #108/#4. Production-qualified stable remains `v0.2.0`; trial panel installation does not promote components or the integrated product to stable qualification.
 
 F3 is delivered by PR #67: bounded persisted `off|notify|manual` component policy with a check-only scheduler/notification hook. It must not introduce automatic component mutation. #46 A-F are delivered by PRs #69/#71/#73/#75 plus Issues #76/#78. D.2 G is delivered source-only by Issue #81 / PR #82: typed Setup fresh/takeover convergence using qualified component primitives, with sole-writer retirement and source-owned Hybrid interception, without generic package/command/file surfaces or blanket `opkg upgrade`.
 
@@ -158,21 +158,36 @@ owners. Issue #91 F completes the final Dashboard integration/drift and
 feature-complete UX gate. The integrated browser suite verifies lazy settings
 reads, narrow Routing/DNS uncertainty coordination, lifecycle exclusion,
 cross-domain draft retention, System handoff semantics, session turnover and
-safe browser projections. #5 is complete on source only; it remains undeployed.
-Stable `v0.2.0` remains the production-qualified baseline. No release, router
-access or live qualification is implied.
+safe browser projections. #5 source delivery is complete and included in the
+trial panel; integrated live acceptance is still pending in #4.
+Stable `v0.2.0` remains the production-qualified baseline.
 
-Product Slice E is complete source-only under Issue #99 after PRs #100/#101.
+Product Slice E is delivered under Issue #99 after PRs #100/#101.
 The later operator workspace redesign (#102 / PR #103) and RU/BY subscription
-default policy (#104 / PR #105) are also merged source-only. Current main after
-those merges is `d4a78d99a54bd7dcc24e04b16ccaf43f3148c385`; production-qualified
-stable remains `v0.2.0` and the live router remains on the retained
-`v0.3.0-beta.2` trial.
+default policy (#104 / PR #105) are also merged. Their historical integration
+checkpoint is `d4a78d99a54bd7dcc24e04b16ccaf43f3148c385`; production-qualified
+stable remains `v0.2.0`. The later trial panel contains this source behavior,
+while integrated runtime/component acceptance remains pending in #4.
 
-Issue #106 is the active source gate. It restores deterministic tracked
-webasset parity after the final parallel-PR integration, re-proves the combined
-security/UI/node contracts, and requires one clean exact-HEAD full qualification
-before source freeze. It does not dispatch a Release or access/mutate Keenetic.
+Issue #106 is completed by PR #107. Reviewed release repairs #109/#110 and
+#115/#116 subsequently qualified protected publication. Immutable signed
+beta.3 source is `8b76a9696995b6edb6d62bc425876cd894260e57`; immutable signed
+beta.4 source is `2c4d4f97ade2f968a1d2f0e1e27f480f12c9f735`. Beta.4 public
+verification and its explicitly authorized manual signed-file installation
+passed in [ledger #4](https://github.com/popiposter/xkeen-control/issues/4#issuecomment-5938849350).
+
+Issue #117 / PR #118 is completed: Keenetic absent-writer resource admission,
+exact default-route spelling and hook compatibility, cold System state, and
+the requested standalone-WL new-node disabled default are reviewed and locally
+qualified. Beta.4's working historical lifecycle remains restored after the
+known Setup resource rejection; operator-added subscriptions are preserved.
+The separately authorized next step is a new immutable beta.5 candidate:
+exact reviewed main qualification, one protected Release, independent seven
+public assets verification, bounded signed panel install, then a fresh typed
+managed takeover and bounded manual/adaptive quality proof. A prior unknown
+Apply is never replayed. Detailed tuples, receipts and final PASS/BLOCKED
+evidence belong in #108/#117/#4; no beta.5 publication, install or managed
+convergence PASS is claimed here.
 Issue #80 remains a separate reliability follow-up and is not silently
 re-sequenced into this gate.
 
