@@ -161,6 +161,17 @@ UI, while the manual-delete reappearance warning remains limited to explicit
 manual node deletion. Slice B is source-qualified behavior; it is not deployed or
 production-qualified.
 
+Issue #112 corrects subscription parsing to accept mixed raw/base64 URI lists
+by retaining VLESS/REALITY only, silently ignoring other protocols and explicit
+non-REALITY security modes. Invalid or ambiguous eligible profiles, zero eligible
+profiles, duplicate identities and existing byte/cardinality bounds still fail
+closed without committing a partial snapshot. Manual profile import remains
+strict. REALITY shortId accepts empty or even hexadecimal strings up to 16
+characters, matching Xray's client format; canonical/rendered empty values are
+preserved and complete candidate validation remains mandatory. Operator-entered
+subscription URLs are readable only in the transient edit field; saved URLs
+remain excluded from projections and browser storage.
+
 Source-main Slice C / Issue #72 adds one purpose-built, in-process refresher
 for enabled saved subscriptions. It uses a fixed six-hour cadence, a
 five-minute startup wait plus deterministic safe-ID jitter, no catch-up or
@@ -521,8 +532,39 @@ journal/recovery path snapshots the previous generation's typed interception
 subset in the root-only rollback payload, commits the fixed setup-owned paths,
 starts/proves the runtime and interception owner, and restores both on failure
 or crash.
+
+Issue #114 admits one additional closed historical `S05xkeen` source:
+`jameszeroX/XKeen@e2d7a5f052f20ae4315eb2f248fedf8e564ddf1f`,
+`scripts/_xkeen/02_install/07_install_register/04_register_init.sh`, normalized
+SHA256 `f1aab626fddaf2026a92741e2506fb9550cbb1d3242892dcb1b36a03998ea484`.
+Only the four exact top-level `ipv4_exclude`, `ipv6_exclude`, `proxy_dns` and
+`ipv6_support` assignments may differ: bounded address/prefix lists of the
+matching family and closed `on`/`off` values. Duplicate/ambiguous assignments,
+shell expressions and every other source change fail closed. This identity is
+classification and rollback evidence only; foreign lifecycle execution stays
+prohibited and the existing direct process adapter owns quiescence.
+
+Only the historical `zkeen.dat` → `geosite_zkeen.dat` and `zkeenip.dat` →
+`geoip_zkeenip.dat` aliases are admitted under the fixed asset root, with exact
+same-root absolute or basename-relative text and regular catalog targets.
+Preview binds the literal link text; the protected snapshot records it once,
+without following links or rereading target bytes. Apply retires these entries
+after snapshot capture and geodata commit, and final reference verification
+requires their absence. Rollback/crash recovery restores exact link text and
+the previous generation. Unknown, escaped, chained or dangling links remain
+blocked. Alias snapshots use private manifest version 2 so older readers reject
+them before replacing live directories; version 1 snapshots without links stay
+readable. Public Setup DTOs and the shared journal remain version 1. The plan's
+profile count uses the existing registry bound (256); only display labels are
+capped at 32.
+
 Partial, mixed, manual or uncertain layouts are blocked; there is no generic
-repair or command surface. Ordinary component update/rollback contracts remain
+repair or forced admission. Issue #112 separates this Setup admission result
+from operational health: a complete running runtime with only `layout-mixed`
+admission blocked keeps the unchanged reason/disabled Setup actions in a
+collapsed Setup compatibility disclosure. Degraded/incomplete runtime,
+pending recovery, writer conflicts, applying and maintenance remain prominent.
+Ordinary component update/rollback contracts remain
 unchanged, including their non-empty outbound verification.
 
 This is source-qualified behavior only. It is not a release, router-install,

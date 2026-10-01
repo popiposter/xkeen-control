@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -152,7 +153,7 @@ func TestSubscriptionRefresherDisabledAndReenabledUsesStartupDelay(t *testing.T)
 
 func TestAutomaticRefreshUsesSavedURLAndManagedAdmission(t *testing.T) {
 	registry := refresherRegistry(t, true)
-	fetcher := &countingSubscriptionFetcher{body: []byte(syntheticProfileTwo)}
+	fetcher := &countingSubscriptionFetcher{body: []byte("ss://synthetic\n" + strings.Replace(syntheticProfileTwo, "sid=beef", "sid=", 1))}
 	manager, store, active := testManager(t, &registry, fetcher)
 	coordinator := &managedRefreshCoordinator{}
 	manager.managedCoordinator = coordinator

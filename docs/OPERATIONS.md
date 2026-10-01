@@ -222,6 +222,33 @@ No forced kill, power-loss, reboot, sustained benchmark or generic repair belong
 to the live trial. D.3/#5 and automated component lifecycle are outside this
 historical live-trial protocol regardless of current source sequencing.
 
+### Typed historical takeover compatibility (#114, source only)
+
+The existing Setup Preview/Apply may recognize the pinned historical lifecycle
+and the two closed geodata aliases described in
+[CONTROL-PLANE.md](CONTROL-PLANE.md#phase-g--typed-setup-takeoverconvergence-source-boundary).
+Recognition does not permit executing a foreign lifecycle or deleting links by
+hand. Unknown source edits, other aliases, manual/partial policy and competing
+writers continue to block admission.
+
+Live convergence requires a reviewed, signed and independently verified panel
+candidate, fresh D.1 validate/verify, settled journals, writer containment and
+resource admission. Inspect the typed Preview's frozen identities and authority
+preservation before its one-shot Apply. The same Setup transaction snapshots
+the prior authorities, files/modes, exact alias text and owned interception
+subset, then installs the source-owned generation and restores coherently on
+failure. A lost response is unknown; inspect recovery and final runtime rather
+than replaying Apply. Prove preserved profiles/subscriptions/policy, exact
+catalog/config and generation marker, source-owned lifecycle/interception,
+absence of retired aliases/competing writers, D.1 verification and runtime
+health before claiming convergence.
+
+Snapshots containing these aliases use private manifest version 2. Older
+panels, including beta.3, reject that snapshot; settle Setup recovery with the
+compatible panel before a panel downgrade. Existing version 1 snapshots without
+aliases remain supported. This source contract records no live takeover PASS
+and grants no force/repair operation or reset to default policy.
+
 ### Q1 record and finite observation boundary
 
 Keep an operator-local record for each gate: authorization, UTC/router-local

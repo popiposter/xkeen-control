@@ -479,7 +479,8 @@ func validPublicKey(value string) bool {
 }
 
 func validShortID(value string) bool {
-	if len(value) == 0 || len(value) > 16 || len(value)%2 != 0 {
+	// REALITY permits an empty client shortId when the server accepts it.
+	if len(value) > 16 || len(value)%2 != 0 {
 		return false
 	}
 	for _, r := range value {

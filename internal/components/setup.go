@@ -1193,12 +1193,26 @@ func (s *SetupService) setupSourceGenerationDigest(writers []setupWriter) (strin
 					return ErrSetupResourceInsufficient
 				}
 				info, infoErr := entry.Info()
-				if infoErr != nil || info.Mode()&os.ModeSymlink != 0 {
+				if infoErr != nil {
 					return errSetupLayoutInvalid
 				}
 				relative, relErr := filepath.Rel(target.Path, path)
 				if relErr != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 					return errSetupLayoutInvalid
+				}
+				if info.Mode()&os.ModeSymlink != 0 {
+					if target.Key != "xray-assets" {
+						return errSetupLayoutInvalid
+					}
+					text, err := readSetupAlias(target.Path, path)
+					n := int64(len(text))
+					if err != nil || rootBytes > maxRootBytes-n || totalBytes > setupMaxSnapshotBytes-n {
+						return errSetupLayoutInvalid
+					}
+					entries = append(entries, setupSnapshotEntry{Key: target.Key, Target: target.Path, Relative: filepath.ToSlash(relative), Kind: "symlink", Size: n, SHA256: digestSetupBytes([]byte(text))})
+					totalBytes += n
+					rootBytes += n
+					return nil
 				}
 				if entry.IsDir() {
 					entries = append(entries, setupSnapshotEntry{Key: target.Key, Target: target.Path, Relative: filepath.ToSlash(relative), Kind: "directory", Mode: uint32(info.Mode().Perm())})
@@ -1829,7 +1843,7 @@ func (s *SetupService) inspectLayoutWithStaging(allowedStagingDir string) (setup
 	for _, entry := range geodataEntries {
 		allowedAssets[entry.Name] = struct{}{}
 	}
-	if conflict, err := setupDirectoryHasUnexpected(paths.XrayAssetDir, allowedAssets); err != nil {
+	if conflict, err := setupAssetDirectoryHasUnexpected(paths.XrayAssetDir, allowedAssets); err != nil {
 		return setupLayout{}, err
 	} else if conflict {
 		return setupLayout{state: "blocked", reason: SetupReasonLayoutMixed}, nil
@@ -2008,7 +2022,7 @@ func setupLifecycleIdentity(path string) string {
 }
 
 func reviewedUpstreamS05(contents []byte) bool {
-	return reviewedLifecycleDigest(contents, reviewedUpstreamS05SHA256)
+	return reviewedLifecycleDigest(contents, reviewedUpstreamS05SHA256) || reviewedConfiguredHistoricalS05(contents, reviewedHistoricalS05SHA256)
 }
 
 func reviewedUpstreamS24(contents []byte) bool {
@@ -2116,6 +2130,9 @@ func setupForbiddenPresent(paths SetupPaths) (bool, error) {
 }
 
 func (s *SetupService) setupConfigured(paths SetupPaths, managed []string, interception SetupInterceptionEvidence) bool {
+	if !setupAliasesAbsent(paths.XrayAssetDir) {
+		return false
+	}
 	if interception.Owner != setupInterceptionOwner || !interception.Complete || !interception.TCPRedirect || !interception.UDPTProxy {
 		return false
 	}
@@ -3047,6 +3064,9 @@ func (s *SetupService) commit(ctx context.Context, journal *setupTransactionJour
 			return ErrSetupCandidateRejected
 		}
 	}
+	if err := s.retireSetupAliases(prepared.snapshot); err != nil {
+		return err
+	}
 	if err := s.updateJournal(journal, setupPhaseGeodataCommitted, setupCreatedGeodata); err != nil {
 		return err
 	}
@@ -3499,7 +3519,7 @@ func (s *SetupService) verifyInstalled(prepared preparedSetup) error {
 		return ErrSetupVerificationFailed
 	}
 	actualGeodata, err := readGeodataFiles(paths.XrayAssetDir, entries, true)
-	if err != nil || !sameGeodataAgainstIdentity(actualGeodata, prepared.candidate.Geodata) {
+	if err != nil || !sameGeodataAgainstIdentity(actualGeodata, prepared.candidate.Geodata) || !setupAliasesAbsent(paths.XrayAssetDir) {
 		return ErrSetupVerificationFailed
 	}
 	actualXray, err := binaryMetadataWithoutProbe(paths.XrayBinary, prepared.candidate.Xray.Version)
@@ -3695,12 +3715,31 @@ func (s *SetupService) captureSetupSnapshot(ctx context.Context, class string, w
 					return ErrSetupResourceInsufficient
 				}
 				info, infoErr := entry.Info()
-				if infoErr != nil || info.Mode()&os.ModeSymlink != 0 {
+				if infoErr != nil {
 					return errSetupLayoutInvalid
 				}
 				relative, relErr := filepath.Rel(target.Path, path)
 				if relErr != nil || relative == "." || strings.HasPrefix(relative, "..") {
 					return errSetupLayoutInvalid
+				}
+				if info.Mode()&os.ModeSymlink != 0 {
+					if target.Key != "xray-assets" {
+						return errSetupLayoutInvalid
+					}
+					text, err := readSetupAlias(target.Path, path)
+					n := int64(len(text))
+					if err != nil || rootBytes > maxRootBytes-n || totalBytes > setupMaxSnapshotBytes-n {
+						return errSetupLayoutInvalid
+					}
+					payload := filepath.Join(root, "payload", strconv.Itoa(len(manifest.Entries)))
+					if err := writeSnapshotPayload(payload, []byte(text), 0o600); err != nil {
+						return err
+					}
+					manifest.Entries = append(manifest.Entries, setupSnapshotEntry{Key: target.Key, Target: target.Path, Relative: filepath.ToSlash(relative), Payload: filepath.Base(payload), Kind: "symlink", Size: n, SHA256: digestSetupBytes([]byte(text))})
+					manifest.SchemaVersion = setupAliasSnapshotSchemaVersion
+					totalBytes += n
+					rootBytes += n
+					return nil
 				}
 				if entry.IsDir() {
 					if len(manifest.Entries) >= setupMaxSnapshotEntries {
@@ -3835,7 +3874,7 @@ func (s *SetupService) readSetupSnapshot(journal setupTransactionJournal) (setup
 	decoder := json.NewDecoder(bytes.NewReader(contents))
 	decoder.DisallowUnknownFields()
 	var extra any
-	if decoder.Decode(&manifest) != nil || decoder.Decode(&extra) != io.EOF || manifest.SchemaVersion != SetupTransactionSchemaVersion || manifest.Owner != setupSnapshotOwner || manifest.Class != journal.SourceClass || len(manifest.Entries) == 0 || len(manifest.Entries) > setupMaxSnapshotEntries || setupSnapshotDigest(manifest) != journal.Previous.SnapshotSHA || validXKeenOwner(root, setupSnapshotOwner) != nil {
+	if decoder.Decode(&manifest) != nil || decoder.Decode(&extra) != io.EOF || (manifest.SchemaVersion != SetupTransactionSchemaVersion && manifest.SchemaVersion != setupAliasSnapshotSchemaVersion) || manifest.Owner != setupSnapshotOwner || manifest.Class != journal.SourceClass || len(manifest.Entries) == 0 || len(manifest.Entries) > setupMaxSnapshotEntries || setupSnapshotDigest(manifest) != journal.Previous.SnapshotSHA || validXKeenOwner(root, setupSnapshotOwner) != nil {
 		return setupSnapshot{}, errSetupJournalInvalid
 	}
 	var interceptionSnapshot []byte
@@ -3861,7 +3900,11 @@ func (s *SetupService) readSetupSnapshot(journal setupTransactionJournal) (setup
 	if interceptionEntries != 1 {
 		return setupSnapshot{}, errSetupJournalInvalid
 	}
-	return setupSnapshot{Dir: root, Manifest: manifest, InterceptionSnapshot: interceptionSnapshot}, nil
+	snapshot := setupSnapshot{Dir: root, Manifest: manifest, InterceptionSnapshot: interceptionSnapshot}
+	if _, err := s.snapshotAliases(snapshot); err != nil {
+		return setupSnapshot{}, errSetupJournalInvalid
+	}
+	return snapshot, nil
 }
 
 func (s *SetupService) removeSnapshot(snapshot setupSnapshot) error {
@@ -3913,6 +3956,10 @@ func (s *SetupService) restoreSetupSnapshot(snapshot setupSnapshot) error {
 	if snapshot.Dir == "" {
 		return nil
 	}
+	aliases, err := s.snapshotAliases(snapshot)
+	if err != nil {
+		return err
+	}
 	if err := s.checkSetupWriterConflictForRestore(snapshot); err != nil {
 		return err
 	}
@@ -3938,7 +3985,7 @@ func (s *SetupService) restoreSetupSnapshot(snapshot setupSnapshot) error {
 			if state, err := setupPathState(target.Path); err != nil {
 				return err
 			} else if state == setupPathDirectory {
-				if err := setupRollbackDirectorySafe(target.Path, maxFileBytes, maxRootBytes); err != nil {
+				if err := setupRollbackDirectorySafe(target.Path, maxFileBytes, maxRootBytes, aliases); err != nil {
 					return err
 				}
 				if err := os.RemoveAll(target.Path); err != nil {
@@ -3970,6 +4017,17 @@ func (s *SetupService) restoreSetupSnapshot(snapshot setupSnapshot) error {
 			path = filepath.Join(path, relative)
 		}
 		switch entry.Kind {
+		case "symlink":
+			text, ok := aliases[path]
+			if !ok || ensureSetupDirectory(filepath.Dir(path)) != nil {
+				return errSetupLayoutInvalid
+			}
+			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+				return errSetupLayoutInvalid
+			}
+			if err := os.Symlink(text, path); err != nil {
+				return err
+			}
 		case "absent":
 			state, err := setupPathState(path)
 			if err != nil {
@@ -4037,7 +4095,7 @@ func (s *SetupService) restoreSetupSnapshot(snapshot setupSnapshot) error {
 	return nil
 }
 
-func setupRollbackDirectorySafe(path string, maxFileBytes, maxRootBytes int64) error {
+func setupRollbackDirectorySafe(path string, maxFileBytes, maxRootBytes int64, allowedAliases ...map[string]string) error {
 	if maxFileBytes <= 0 {
 		maxFileBytes = MaxXKeenGenerationFileBytes
 	}
@@ -4051,8 +4109,19 @@ func setupRollbackDirectorySafe(path string, maxFileBytes, maxRootBytes int64) e
 			return walkErr
 		}
 		entries++
-		if entries > setupMaxSnapshotEntries || entry.Type()&os.ModeSymlink != 0 {
+		if entries > setupMaxSnapshotEntries {
 			return errSetupLayoutInvalid
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			if len(allowedAliases) != 1 {
+				return errSetupLayoutInvalid
+			}
+			expected, ok := allowedAliases[0][current]
+			text, err := os.Readlink(current)
+			if !ok || err != nil || text != expected {
+				return errSetupLayoutInvalid
+			}
+			return nil
 		}
 		if current == path || entry.IsDir() {
 			return nil

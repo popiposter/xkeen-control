@@ -924,6 +924,7 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	aliasesBeforeTakeover := setupTestAliases(t, paths.XrayAssetDir)
 	previousMarker := []byte("{}\n")
 	if err := os.WriteFile(paths.XkeenMarker, previousMarker, 0o600); err != nil {
 		t.Fatal(err)
@@ -957,6 +958,7 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 	if runtime.stopCalls != 2 || runtime.stoppedCalls != 2 || runtime.startCalls != 3 || runtime.emptyCalls != 3 || runtime.stopped {
 		t.Fatalf("late failure lifecycle proof = %+v", runtime)
 	}
+	assertSetupAliases(t, aliasesBeforeTakeover)
 	if selection.restoreWhileStopped {
 		t.Fatal("selection owner was asked to restore a balancer target before the restored runtime started")
 	}
@@ -1089,8 +1091,46 @@ func TestSetupApplyCommitsOneCombinedSyntheticFreshGeneration(t *testing.T) {
 	if got, err := os.ReadFile(paths.XkeenMarker); err != nil || !bytes.Equal(got, previousMarker) {
 		t.Fatalf("crash recovery marker=%q err=%v", got, err)
 	}
+	assertSetupAliases(t, aliasesBeforeTakeover)
 	if _, err := os.Stat(paths.Journal); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("crash recovery journal remains: %v", err)
+	}
+	selection.failureJournal = false
+	staleTakeover, err := service.Preview(context.Background(), "session-stale-aliases")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasPath := filepath.Join(paths.XrayAssetDir, "zkeen.dat")
+	if err := os.Remove(aliasPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("geosite_zkeen.dat", aliasPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Apply(context.Background(), "session-stale-aliases", staleTakeover.PreviewToken); !errors.Is(err, ErrSetupPreviewStale) {
+		t.Fatalf("changed alias did not invalidate Preview: %v", err)
+	}
+	if _, err := os.Stat(paths.Journal); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("stale alias plan wrote a transaction journal")
+	}
+	if err := os.Remove(aliasPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(aliasesBeforeTakeover[aliasPath], aliasPath); err != nil {
+		t.Fatal(err)
+	}
+	finalTakeover, err := service.Preview(context.Background(), "session-final-aliases")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Apply(context.Background(), "session-final-aliases", finalTakeover.PreviewToken); err != nil {
+		t.Fatal(err)
+	}
+	if !setupAliasesAbsent(paths.XrayAssetDir) || service.Status().State != "ready" {
+		t.Fatal("successful takeover did not converge the alias layout")
+	}
+	if current, err := os.ReadFile(paths.Nodes); err != nil || !bytes.Equal(current, oldNodes) {
+		t.Fatal("successful alias convergence changed node authority")
 	}
 }
 

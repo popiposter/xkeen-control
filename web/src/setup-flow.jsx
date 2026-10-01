@@ -88,7 +88,7 @@ const safePlan = (value) => {
   if (!['preserve', 'adopt-supported', 'product-default'].includes(policyAction)) return null
   if (value.productDefault !== (policyAction === 'product-default')) return null
   if (value.emptyRegistry !== (profileAction === 'empty')) return null
-  if (!Number.isSafeInteger(value.profiles?.count) || value.profiles.count < 0 || value.profiles.count > 32) return null
+  if (!Number.isSafeInteger(value.profiles?.count) || value.profiles.count < 0 || value.profiles.count > 256) return null
   if (value.panelPreserved !== true) return null
   if (!value.xray || !value.geodata || !value.xkeen || !value.lifecycle) return null
   return value

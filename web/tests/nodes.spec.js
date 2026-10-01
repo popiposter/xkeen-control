@@ -407,6 +407,31 @@ test('renders exact provider removals without stale or manual-reappearance warni
   expect(applies[0].body).toEqual({ previewToken: 'synthetic-subscription-1', acceptMissing: false })
 })
 
+test('keeps entered subscription URL readable, clears it, and retains saved URL on blank edit', async ({ page }) => {
+  const prepared = await prepare(page)
+  page.__nodesIssues = prepared.issues
+  await openNodes(page)
+  const url = page.getByLabel('Subscription URL', { exact: true })
+  await page.getByRole('button', { name: 'Add subscription', exact: true }).click()
+  await expect(url).toHaveAttribute('type', 'url')
+  await url.fill('https://subscription.example/synthetic-token')
+  await expect(url).toHaveValue('https://subscription.example/synthetic-token')
+  await page.locator('.composer').getByRole('button', { name: 'Cancel', exact: true }).click()
+  await page.getByRole('button', { name: 'Add subscription', exact: true }).click()
+  await expect(url).toHaveValue('')
+  await page.locator('.composer').getByRole('button', { name: 'Cancel', exact: true }).click()
+
+  await page.getByRole('button', { name: 'Edit Provider', exact: true }).click()
+  await expect(url).toHaveValue('')
+  await page.getByRole('button', { name: 'Preview update', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Preview node change' })).toBeVisible()
+  expect(prepared.state.requests.filter((request) => request.path === '/api/v1/subscriptions/refresh/preview')).toEqual([
+    { path: '/api/v1/subscriptions/refresh/preview', method: 'POST', body: { subscriptionId: 'sub-12345678', name: 'Provider', url: '' } },
+  ])
+  expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([0, 0])
+  await expect(page.locator('body')).not.toContainText('synthetic-token')
+})
+
 test('keeps effective and manual impact warnings for exact provider removals', async ({ page }) => {
   const prepared = await prepare(page)
   page.__nodesIssues = prepared.issues
