@@ -142,14 +142,15 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 		}
 	}
 
-	releaseIntent, intentErr := acquireNodeIntent(t.PreviousDir)
+	intent, intentErr := acquireNodeIntent(ctx, t.PreviousDir)
 	if intentErr != nil {
 		return intentErr
 	}
+	defer intent.Close()
 	settled := true
 	defer func() {
 		if settled {
-			if releaseErr := releaseIntent(); releaseErr != nil {
+			if releaseErr := intent.Settle(); releaseErr != nil {
 				err = releaseErr
 			}
 		}

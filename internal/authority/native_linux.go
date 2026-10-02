@@ -5,6 +5,7 @@ package authority
 import (
 	"errors"
 	"github.com/popiposter/xkeen-control/internal/authority/nativegate"
+	"os"
 )
 
 type nativeOwner struct {
@@ -26,4 +27,8 @@ func acquireNative(root string) (nativeClaim, error) {
 func (owner *nativeOwner) Verify() error {
 	_, err := nativegate.Join(owner.root, owner.Token())
 	return err
+}
+
+func (owner *nativeOwner) BindNodeIntent(created *os.File) (NodeIntentBinding, error) {
+	return owner.Lease.BindNodeIntent(created)
 }

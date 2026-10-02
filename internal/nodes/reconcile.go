@@ -105,14 +105,15 @@ func (t Transaction) reconcileRuntime(ctx context.Context, registry Registry, re
 	if t.PreviousDir == "" {
 		t.PreviousDir = filepath.Join(filepath.Dir(t.Store.Path), "previous")
 	}
-	releaseIntent, intentErr := acquireNodeIntent(t.PreviousDir)
+	intent, intentErr := acquireNodeIntent(ctx, t.PreviousDir)
 	if intentErr != nil {
 		return intentErr
 	}
+	defer intent.Close()
 	settled := true
 	defer func() {
 		if settled {
-			if releaseErr := releaseIntent(); releaseErr != nil {
+			if releaseErr := intent.Settle(); releaseErr != nil {
 				err = releaseErr
 			}
 		}

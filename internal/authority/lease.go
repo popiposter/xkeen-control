@@ -25,6 +25,8 @@ type Lease struct {
 	held   nativeClaim
 	fault  bool
 	active *operation
+	// A closed operation's current-intent proof cannot be adopted by recovery.
+	retainedNodeIntent bool
 }
 
 // NewLease creates an available authority lease.
