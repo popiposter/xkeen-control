@@ -15,6 +15,7 @@ import (
 
 	"github.com/popiposter/xkeen-control/internal/configjson"
 	"github.com/popiposter/xkeen-control/internal/redact"
+	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
 
@@ -439,10 +440,13 @@ func (a CommandActivator) Restart(ctx context.Context) error {
 	if restartErr == nil {
 		return nil
 	}
+	if errors.Is(restartErr, xkeen.ErrLifecycleUnknown) {
+		return restartErr
+	}
 	// XKeen can stop Xray and then return a failed -restart. Match the
 	// repository lifecycle contract: if time remains, recover with -start so
 	// activation and rollback can still prove readiness on the selected files.
-	if restartContext.Err() == nil && a.runXkeenLifecycle(restartContext, "-start") == nil {
+	if !errors.Is(restartErr, xkeen.ErrLifecycleUnknown) && restartContext.Err() == nil && a.runXkeenLifecycle(restartContext, "-start") == nil {
 		return nil
 	}
 	return errors.New("Xray restart failed")
@@ -744,43 +748,8 @@ func (a CommandActivator) apiReachable(ctx context.Context) bool {
 }
 
 func (a CommandActivator) runXkeenLifecycle(ctx context.Context, action string) error {
-	previousPIDs := xrayPIDSet(ctx)
-	command := exec.Command(a.XkeenBinary, action)
-	command.Env = xkeenForegroundEnvironment()
-	command.Stdout = io.Discard
-	command.Stderr = io.Discard
-	configureCommandProcessGroup(command)
-	if err := command.Start(); err != nil {
-		return errors.New("Xray restart failed")
-	}
-	done := make(chan error, 1)
-	go func() { done <- command.Wait() }()
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case err := <-done:
-			if err != nil {
-				return errors.New("Xray restart failed")
-			}
-			return nil
-		case <-ticker.C:
-			if a.newXrayRuntimeStarted(ctx, previousPIDs) {
-				// XKeen can leave its launcher attached after the replacement Xray
-				// is already serving. Stop only that launcher; the separate
-				// WaitReady and inventory phases still prove the new daemon.
-				_ = command.Process.Kill()
-				drainCommand(done)
-				return nil
-			}
-		case <-ctx.Done():
-			killCommandProcessGroup(command)
-			drainCommand(done)
-			return errors.New("Xray restart failed")
-		}
-	}
+	return (xkeen.Lifecycle{Binary: a.XkeenBinary, Timeout: a.RestartTimeout}).Run(ctx, xkeen.LifecycleAction(strings.TrimPrefix(action, "-")))
 }
-
 func (a CommandActivator) newXrayRuntimeStarted(ctx context.Context, previous map[string]struct{}) bool {
 	current := xrayPIDSet(ctx)
 	changed := false

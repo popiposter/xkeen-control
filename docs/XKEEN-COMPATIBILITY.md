@@ -88,6 +88,25 @@ All nine snapshot files retained their private SHA256 values; six dat files and
 native default-disabled speed balancing were recognized. No native command or
 service restart was invoked by discovery.
 
+## Attachment candidate
+
+`xkeen-control native attachment-check --json` prepares an owner-scoped candidate
+in a temporary directory and invokes the installed Xray's full configuration
+test. It reports only source/candidate hashes, sizes and filenames. It does not
+commit configuration or start/restart native XKeen. The source is rechecked after
+validation; a concurrent change invalidates the check.
+
+On the clean native installation, the candidate passed the installed Xray test
+and all nine native snapshot files remained unchanged. Four candidate files were
+produced: managed outbounds, routing integration, observatory and loopback API.
+Native DNS, inbounds, policy, init and cron were preserved. Existing catch-all
+rules that could shadow appended per-node probes require explicit integration
+review; they are not silently rewritten. This is candidate validation only.
+
+The native lifecycle adapter waits for foreground command completion. API/PID
+appearance does not finish the command early. A timeout is an unknown outcome
+and must not trigger an automatic second native start.
+
 ## Remaining hardware contracts
 
 Scoped config onboarding, native start/restart/readback, subscription import,
