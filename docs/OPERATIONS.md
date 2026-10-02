@@ -1,5 +1,7 @@
 # Operations
 
+> **Active implementation:** [Native XKeen contract](NATIVE-XKEEN.md) governs Issue #121 on clean Entware. Older panel migration/recovery compatibility is not required. Historical behavior below is not the new installation authority.
+
 This runbook describes the **currently production-qualified** control-plane generation. Slice D / Issue #2 remains complete, and D.1 / Issue #3 is production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86` for `linux/arm64`. Later #4/#5 work exists in source but is not deployed; `docs/ROADMAP.md` owns current source sequencing.
 
 Production is a live router. Prefer typed/repository transactions over ad-hoc edits.

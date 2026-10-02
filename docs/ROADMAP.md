@@ -2,11 +2,11 @@
 
 This is the sequencing/status authority. The active GitHub issue is the detailed architecture/acceptance contract for the slice being implemented.
 
-## Current direction — native XKeen foundation audit
+## Current direction — native XKeen implementation
 
-On 2026-10-02 the operator explicitly stopped the release/install/recovery sequence and requested a deep audit and redesign plan. No further router action is authorized by this roadmap entry; the operator is rebuilding opkg independently.
+After the 2026-10-02 audit the operator authorized full ordered implementation and qualification on clean Entware. The [native implementation contract](NATIVE-XKEEN.md) governs this work: native XKeen first, panel alongside it, no compatibility with older panel installations. Service restarts and local SSH key setup are authorized; no router reboot is planned.
 
-The [audit](../plan/audit-xkeen-foundation-2026-10-02.md) binds findings to source `8adff1e00e89515b37aac1d7d6e7e1df924a9143`. [Issue #121](https://github.com/popiposter/xkeen-control/issues/121) and the [implementation plan](../plan/architecture-xkeen-foundation-v1.md) return install/update/cron/lifecycle/interception ownership to native XKeen, retain the panel updater and node management, and schedule config/geodata UX, reliability, portable backup and Telegram work in separate slices. This is planned architecture, not delivered behavior. Independent review and implementation are pending.
+The [audit](../plan/audit-xkeen-foundation-2026-10-02.md) binds findings to source `8adff1e00e89515b37aac1d7d6e7e1df924a9143`. [Issue #121](https://github.com/popiposter/xkeen-control/issues/121) and the [implementation plan](../plan/architecture-xkeen-foundation-v1.md) return install/update/cron/lifecycle/interception ownership to native XKeen, retain the panel updater and node management, and schedule config/geodata UX, reliability, portable backup and Telegram work in separate slices. Implementation is in progress. Independent plan review reproduced the audit counterexamples and required minimal config onboarding before subscription Apply, plus a real shared lock for any CLI/cron concurrency claim. These corrections are incorporated in the plan; runtime acceptance is pending.
 
 Beta.5 publication/public verification and prior panel-only installation are historical PASS. The subsequent authorized reset/native-file reconstruction did not reach integrated subscription/LAN/quality acceptance. The old router state is no longer a reusable baseline after the operator's planned opkg reset. Preserve unknown/failed operation receipts; do not replay them. Earlier sequencing below is historical except where explicitly retained by the new plan.
 

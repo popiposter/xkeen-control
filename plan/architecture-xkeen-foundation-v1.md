@@ -4,15 +4,15 @@ version: "1.0"
 date_created: "2026-10-02"
 last_updated: "2026-10-02"
 owner: "popiposter/xkeen-control"
-status: "Planned"
+status: "In progress"
 tags: [architecture, refactor, xkeen, routing, reliability]
 ---
 
 # Introduction
 
-![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
+![Status: In progress](https://img.shields.io/badge/status-In_progress-blue)
 
-План основан на [аудите beta.5](audit-xkeen-foundation-2026-10-02.md). Это проект переработки, не разрешение немедленно запускать команды на роутере. Пользователь остановил установку и готовит чистый opkg. Текущий scope — аудит/план; implementation и аппаратная приёмка начинаются отдельным поручением. Все последующие изменения делают в одном обычном checkout, отдельными небольшими Draft PR, без worktrees.
+План основан на [аудите beta.5](audit-xkeen-foundation-2026-10-02.md). Оператор поручил полную последовательную реализацию и подтвердил чистый Entware. Доступ, установка и перезапуски сервисов разрешены; поддержка старых версий панели и миграция исключены. [Обновлённый контракт](../docs/NATIVE-XKEEN.md) имеет приоритет над историческими правилами D.1/D.2. Один обычный checkout, без worktrees.
 
 Архитектурный контракт и отслеживание работ: [Issue #121](https://github.com/popiposter/xkeen-control/issues/121).
 
@@ -31,8 +31,8 @@ tags: [architecture, refactor, xkeen, routing, reliability]
 - **SEC-001**: Сохранить private listener, auth, CSRF, bounded output, SSRF protections, root-only secrets, отсутствие shell/file-manager API. Новые Telegram commands требуют отдельного обновления `SECURITY.md` до реализации.
 - **SEC-002**: Исполнять только установленный поддержанный XKeen и fixed argv; не клонировать/исполнять непроверенный moving branch в panel request. Зафиксировать trust/verification возможностей каждого native канала; неподдержанный режим действия отключать явно.
 - **SEC-003**: Диагностика upstream может содержать секреты. Собирать только проверенные поля; raw stdout/log/config не возвращать в API, GitHub или Telegram.
-- **CON-001**: Не трогать роутер в рамках текущего аудита. Никаких blanket opkg upgrade, reboot, sustained benchmark или новой публикации beta для продолжения старого пути.
-- **CON-002**: Производственные тесты — только на подготовленном чистом окружении после отдельного начала реализации/приёмки; сохранять известный восстановимый конфиг до каждой изменяющей операции.
+- **CON-001**: Разрешена реализация и проверка на чистом роутере, включая SSH key setup, установку и restart сервисов. Без blanket opkg upgrade, reboot или sustained benchmark.
+- **CON-002**: Подготовленный чистый Entware разрешён для аппаратной приёмки. Сохранять текущий восстанавливаемый конфиг перед изменением; старые panel поколения не поддерживать.
 - **CON-003**: Go/Node и сборка только вне роутера. Hot state в RAM; durable writes только при изменении настроек/конечном receipt. Нет постоянного flash event log.
 - **PAT-001**: Один тонкий native adapter + очередь операций, один владелец config transaction, один selection owner. Не создавать общий новый workflow framework.
 - **PAT-002**: Native файлы — исполняемая policy authority; UI projection выводится из них. `nodes.json` остаётся отдельной authority управляемых профилей. Импорт внешних правок explicit с diff, не silent overwrite.
@@ -71,7 +71,7 @@ tags: [architecture, refactor, xkeen, routing, reliability]
 |------|-------------|-----------|------|
 | TASK-008 | Добавить `internal/xkeen/operations.go`: enum actions, fixed argv, очередь одного job, bounded private diagnostic sink, durable compact receipt с operation ID и independent postconditions. В `internal/httpapi/server.go` экспортировать typed endpoints; query/body не содержат executable/path/shell. Не добавлять второй execution coordinator. | | |
 | TASK-009 | Переподключить `nodes.CommandActivator.Restart` в `internal/nodes/transaction.go` к native foreground lifecycle через adapter; оставить validation и readback Xray API. `cmd/xkeen-control/main.go` больше не выбирает panel-owned S05 как нормальный путь. | | |
-| TASK-010 | Переработать `web/src/setup-flow.jsx`: «XKeen обнаружен», «Нужны зависимости/установка», «Поддержано частично» с конкретными шагами. Нормальный Setup больше не вызывает `SetupService.commit`/`commitSetupInterception`; first-run сначала read-only, поддержанные node actions не зависят от совпадения всей appliance layout. | | |
+| TASK-010 | Перед первым node Apply выполнить отдельный scoped onboarding: loopback Xray API, managed outbounds/balancer и необходимые routing/observatory references; сохранить native inbounds, interception и unrelated rules, validate full config → native restart → API/balancer readback. Переработать setup-flow.jsx в понятный attach flow с per-capability состояниями; не вызывать старый SetupService. | | |
 | TASK-011 | На чистом Keenetic: native install → start → отдельно panel install → две операторские подписки через API → candidate validation → native restart → независимый LAN TCP/UDP/DNS/direct/proxy тест. Затем плановая остановка панели и повторный трафик. Ссылки/секреты не входят в отчёт. | | |
 
 ### Implementation Phase 4
@@ -82,9 +82,9 @@ tags: [architecture, refactor, xkeen, routing, reliability]
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
 | TASK-012 | Реализовать adapter действий `-uk/-ux/-ug`, channel и rollback только в границах доказанного native support. Если upstream не даёт полного atomic rollback, UI показывает verified native outcome/recovery instruction; не обещать прежнюю panel transaction гарантию. Параметры версии и источника только из discovered capability. | | |
-| TASK-013 | Управлять существующим native `-ugc/-dgc` и расписанием `xkeen -ug`; сохранять unrelated cron lines. Согласовать межпроцессный lock с native updater/cron через минимальный upstream seam; внутренний mutex Go не защищает от внешнего cron. До seam при update временно приостанавливать только доказанную принадлежащую XKeen задачу, ждать активный native job и восстанавливать её; неоднозначное владение блокирует только mutation. | | |
-| TASK-014 | В `internal/components` удалить нормальные Xray/geodata/XKeen download/install/rollback writers и F3 replacement scheduler после переключения клиентов. Сохранить inventory/read-only compatibility и ограниченный recovery reader старых journal до завершения migration. `web/src/components-updates.jsx` показывает native commands/jobs, а panel update остаётся прежним signed path. | | |
-| TASK-015 | Перед снятием recovery reader инвентаризировать поддерживаемые старые panel поколения, сформировать typed export/import migration в native install и доказать восстановление authorities. Прежний oversized Setup journal не «чинить» слепым повышением общего лимита ради продолжения старого install flow. | | |
+| TASK-013 | Управлять native geodata cron, сохраняя unrelated jobs. Для CLI/cron/panel concurrency требуется общий admission seam до операций; приостановка cron и process scan не устраняют гонку с новым CLI. До появления seam разрешена только явно обозначенная exclusive operator maintenance, без заявления concurrency PASS. | | |
+| TASK-014 | В `internal/components` удалить нормальные Xray/geodata/XKeen download/install/rollback writers и F3 replacement scheduler после переключения клиентов. Удалить legacy recovery вместе с его неиспользуемыми callers; оставить безопасный read-only inventory и recovery текущих операций. `web/src/components-updates.jsx` показывает native commands/jobs, а panel update остаётся прежним signed path. | | |
+| TASK-015 | Удалить migration/adoption старых panel поколений, legacy journal readers и layout whitelists: оператор явно исключил обратную совместимость. Сохранить coherent rollback только операций новой установки. | | |
 
 ### Implementation Phase 5
 
@@ -128,7 +128,7 @@ tags: [architecture, refactor, xkeen, routing, reliability]
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-027 | В `internal/backup` добавить format v2 с native xkeen config/list policies, managed registry, editor/selection preferences, geodata source/category references. Сохранить v1 reader и Argon2id/XChaCha20 envelope; native `-kb/-xb` остаются локальным backup механизмом. Не паковать executable/dat bytes/PID/logs/auth/listener/kernel state. | | |
+| TASK-027 | В `internal/backup` добавить format v2 с native xkeen config/list policies, managed registry, editor/selection preferences, geodata source/category references. Сохранить current-format reader и Argon2id/XChaCha20 envelope; native `-kb/-xb` остаются локальным backup механизмом. Не паковать executable/dat bytes/PID/logs/auth/listener/kernel state. | | |
 | TASK-028 | В `internal/restore` реализовать target mapping для LAN interface/native policy/core versions; показывать неподдержанное до Apply. Telegram credentials переносить только отдельной encrypted opt-in секцией; не включать по умолчанию. На неудаче восстановить предыдущий coherent config, native restart и readback. | | |
 
 ### Implementation Phase 9
@@ -149,7 +149,7 @@ tags: [architecture, refactor, xkeen, routing, reliability]
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-032 | Удалить отключённые duplicate component writers, устаревший Setup UI/recovery UX и неподдержанные обещания из docs. Составить owner/call-path review, проверить CLI↔UI roundtrip и отсутствие ссылок на удалённые API. Не удалять rollback reader раньше явного окончания migration coverage. | | |
+| TASK-032 | Удалить отключённые duplicate component writers, устаревший Setup UI/recovery UX и неподдержанные обещания из docs. Составить owner/call-path review, проверить CLI↔UI roundtrip и отсутствие ссылок на удалённые API. Старые migration/rollback readers удалить; текущий rollback проверить отдельно. | | |
 | TASK-033 | Каждый code PR: focused fixtures, один final exact-HEAD `scripts/dev-check.ps1 -Full`, independent review, затем отдельный operator merge. Повтор полного gate только после изменения HEAD. Docs-only PR — ссылки/согласованность/diff check. | | |
 | TASK-034 | Аппаратный gate: install/uninstall panel; clean restart и, только отдельно разрешённый, reboot; native update+cron collision; потеря связи; остановка panel; отказ node/Xray; invalid subscription; config rollback; router-to-router restore. LAN probes из отдельного клиента, ограниченный traffic budget. Зафиксировать фактическое время установки и действий, не обещать «быстро» по числу кнопок. | | |
 
@@ -185,13 +185,13 @@ tags: [architecture, refactor, xkeen, routing, reliability]
 ## 6. Testing
 
 - **TEST-001**: Нативные artifacts обеих baseline версий, реальные file counts/sizes/config shapes, unknown version/capability, noninteractive EOF/extra prompt, self-detach, long operation и потерянный response.
-- **TEST-002**: Реальный catalog journal regression 86 entries/16 507 bytes; historical recovery не ухудшен во время отключения старого Setup.
+- **TEST-002**: Сохранить offline journal counterexample как audit evidence; не требовать legacy recovery в новой clean-install реализации.
 - **TEST-003**: Installer panel не пишет native executable/init/hooks/cron; штатный XKeen до/после удаления панели эквивалентен, за исключением явно применённых пользовательских config changes.
 - **TEST-004**: Cron/manual-update/config-edit concurrency, неожиданный native exit, readback identity, unknown no-replay, сохранение unrelated cron и config.
 - **TEST-005**: Подписки raw/base64 mixed, invalid supported profile, WL new/default/manual override/refresh, SSRF/redirect, batch atomicity и rollback.
 - **TEST-006**: Deterministic quality replay: AUD-05, равные кандидаты, stale evidence, exploration fairness, dwell, liveness, endpoint outage, panel crash/hang, budget upper bound. Сравнение при равных ресурсах, не сравнение разных объёмов теста.
 - **TEST-007**: Geodata corruption/oversize/unknown fields, suffix vs exact vs regex, IDNA, CIDR, dat generation change, pagination, first-match/DNS effects и target RSS.
-- **TEST-008**: Restore A→B с другим LAN/device policy; v1/v2, passphrase corruption, secrets exclusions, rollback и native runtime proof.
+- **TEST-008**: Restore A→B с другим LAN/device policy; current format, passphrase corruption, secrets exclusions, rollback и native runtime proof.
 - **TEST-009**: Telegram unauthorized/replayed/stale messages, duplicate receiver prohibition, offline device, interrupted command, bounded alerts и отсутствие secret leaks.
 - **TEST-010**: Полный local Linux gate и browser tests на финальном SHA каждого code PR. Hardware evidence отдельно от unit/source/reviewer evidence; «не запущено» никогда не превращать в PASS.
 
@@ -200,7 +200,7 @@ tags: [architecture, refactor, xkeen, routing, reliability]
 - **RISK-001**: У upstream нет стабильного machine API для всех команд. TASK-006 — технический gate; заранее обещать one-click полный install нельзя.
 - **RISK-002**: Native updates могут иметь слабее rollback/trust guarantees, чем нынешние panel transactions. Принять native lifecycle означает явно документировать эту разницу и проверять фактический outcome, а не тайно поддерживать вторую реализацию.
 - **RISK-003**: Сохранение всех неизвестных JSONC fields и native config variants сложно. Editor должен ограничивать область записи и проверять полный Xray candidate; при сомнении недоступна конкретная операция.
-- **RISK-004**: Удаление panel-owned infrastructure до появления native replacement ломает уже установленные beta. Migration reader/export и native qualification предшествуют удалению.
+- **RISK-004**: Новая версия предназначена для чистой установки. Старые panel state/API не поддерживаются; это явно указано в инструкции, без скрытой миграции.
 - **RISK-005**: Панель, держащая override, без независимого release механизма не обеспечивает автономный failover. До TEST-006 default — существующий native mode, не adaptive.
 - **RISK-006**: Общий bot требует отдельного постоянно доступного владельца очереди, а offline router сам не сообщит о своей недоступности. Не обещать fleet monitoring без такого владельца.
 - **ASSUMPTION-001**: Первый вертикальный slice ориентирован на Xray/ARM64. Mihomo/yq команды присутствуют в coverage matrix и подключаются только при соответствующем tested profile; их не удалять из требований незаметно.

@@ -1,5 +1,7 @@
 # Fresh Keenetic / restore
 
+> **Active implementation:** [Native XKeen contract](NATIVE-XKEEN.md) governs Issue #121 on clean Entware. Older panel migration/recovery compatibility is not required. Historical behavior below is not the new installation authority.
+
 This document describes the current qualified panel bootstrap and D.1 portable restore boundaries, and separates them from destructive Entware/KeeneticOS provisioning and later source-only D.2/D.3 work that is not deployed.
 
 Target currently qualified in production: Keenetic `linux/arm64`, KeeneticOS 5+, Entware/Open Package, XKeen + Xray. Signed stable `v0.2.0` is the current production-qualified panel release for that target.

@@ -1,5 +1,7 @@
 # Control plane
 
+> **Active implementation:** [Native XKeen contract](NATIVE-XKEEN.md) governs Issue #121 on clean Entware. Older panel migration/recovery compatibility is not required. Historical behavior below is not the new installation authority.
+
 `xkeen-control` is the lightweight management process around XKeen + Xray. Xray remains the traffic data plane; the panel owns typed local operations, safe projections, stable selection, signed panel lifecycle and bounded coordination.
 
 This document describes the **current production-qualified runtime** after D.1 / Issue #3. Signed stable `v0.2.0` is the qualified `linux/arm64` release. Later #4/#5 work exists in source but is not deployed; `docs/ROADMAP.md` owns current source sequencing.

@@ -1,6 +1,7 @@
 # Architecture
 
-> **2026-10-02 direction change:** the operator stopped installation and requested an architecture audit. The target is now a GUI over native XKeen: upstream owns installation, component updates, cron and interception; the panel retains its own updater and user-facing configuration/observability. The [audit](../plan/audit-xkeen-foundation-2026-10-02.md) and [planned migration](../plan/architecture-xkeen-foundation-v1.md) describe this target. It is not implemented by this documentation change. The authority model below describes existing code/history, not permission to resume the stopped router flow.
+> **Active implementation:** [Native XKeen contract](NATIVE-XKEEN.md) governs Issue #121 on clean Entware. Older panel migration/recovery compatibility is not required. Historical behavior below is not the new installation authority.
+
 
 This document describes the **currently production-qualified architecture**. Slices A/B/C/C.1/D/D.1 are qualified; later D.2/D.3/#5 capabilities on source main, including Setup and the completed source-only #5 visual configuration program, remain source-qualified only and must not be treated as deployed behavior. Detailed design for active work lives in the active GitHub issue.
 
