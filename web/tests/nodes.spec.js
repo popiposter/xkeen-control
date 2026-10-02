@@ -332,7 +332,7 @@ test('projects disabled subscription as non-participating before scheduler resca
   await expect(status).toContainText('Disabled subscriptions do not participate')
   await expect(status).not.toContainText('Next:')
   await expect(status).not.toContainText('Refresh deferred')
-  await expect(page.locator('.subscription-card.disabled')).toContainText('Disabled')
+  await expect(page.getByTestId('subscription-card-sub-12345678')).toHaveAttribute('data-enabled', 'false')
 })
 
 test('selects one, many and all filtered nodes across pages and reconciles selection', async ({ page }) => {
@@ -341,17 +341,17 @@ test('selects one, many and all filtered nodes across pages and reconciles selec
   await openNodes(page)
 
   await expect(page.getByTestId('selected-count')).toHaveText('0 selected')
-  await page.getByLabel('Select Node 001').check()
-  await expect(page.getByLabel('Select all filtered nodes')).toHaveJSProperty('indeterminate', true)
+  await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
+  await expect(page.getByRole('checkbox', { name: 'Select all filtered nodes', exact: true })).toHaveAttribute('aria-checked', 'mixed')
   await page.getByRole('button', { name: 'Next page' }).click()
-  await expect(page.getByLabel('Select Node 026')).toBeVisible()
-  await page.getByLabel('Select Node 026').check()
+  await expect(page.getByRole('checkbox', { name: 'Select Node 026', exact: true })).toBeVisible()
+  await page.getByRole('checkbox', { name: 'Select Node 026', exact: true }).check()
   await expect(page.getByTestId('selected-count')).toHaveText('2 selected')
 
   await page.getByRole('button', { name: 'Select all 51 filtered' }).click()
   await expect(page.getByTestId('selected-count')).toHaveText('51 selected')
   await page.getByRole('button', { name: 'Next page' }).click()
-  await expect(page.getByLabel('Select Node 051')).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Select Node 051', exact: true })).toBeVisible()
   await expect(page.getByTestId('selected-count')).toHaveText('51 selected')
   await page.locator('.sort-button').filter({ hasText: 'Name' }).click()
   await expect(page.getByTestId('selected-count')).toHaveText('51 selected')
@@ -363,11 +363,11 @@ test('selects one, many and all filtered nodes across pages and reconciles selec
 
   await page.getByRole('button', { name: 'Clear', exact: true }).click()
   await page.getByLabel('Search nodes').fill('Node 001')
-  await page.getByLabel('Select Node 001').check()
+  await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
   prepared.state.missingNextRefresh = true
   await page.getByRole('button', { name: 'Refresh dashboard' }).click()
   await expect(page.getByTestId('selected-count')).toHaveText('0 selected')
-  await expect(page.getByLabel('Select Node 001')).toHaveCount(0)
+  await expect(page.getByRole('checkbox', { name: 'Select Node 001', exact: true })).toHaveCount(0)
   await expect(page.locator('tbody .row-actions')).toHaveCount(0)
   await expect(page.locator('tbody tr button')).toHaveCount(0)
   expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 })
@@ -381,10 +381,10 @@ test('gates toolbar actions and sends one exact batch state preview', async ({ p
   const button = (name) => page.getByRole('button', { name, exact: true })
   await expect(page.getByRole('toolbar', { name: 'Selected node actions' })).toBeVisible()
 
-  await page.getByLabel('Select Node 001').check()
+  await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
   await expect(button('Enable')).toBeDisabled()
   await expect(button('Disable')).toBeEnabled()
-  await page.getByLabel('Select Node 002').check()
+  await page.getByRole('checkbox', { name: 'Select Node 002', exact: true }).check()
   await expect(button('Enable')).toBeEnabled()
   await expect(button('Disable')).toBeEnabled()
 
@@ -405,7 +405,7 @@ test('allows Full speed test beside another manual override and polls only while
 
   const speedTest = page.getByRole('button', { name: 'Full speed test', exact: true })
   await expect(page.getByRole('toolbar', { name: 'Selected node actions' })).toBeVisible()
-  await page.getByLabel('Select Node 001').check()
+  await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
   expect(prepared.state.status.selection.manualOverride).toBe(`proxy-${nodeID(2)}`)
   await expect(speedTest).toBeEnabled()
   await speedTest.click()
@@ -423,9 +423,9 @@ test('allows Full speed test beside another manual override and polls only while
   expect(prepared.state.requests.filter((request) => request.path === '/api/v1/performance')).toHaveLength(performanceRequestsAfterCompletion)
 
   await page.getByRole('button', { name: 'Clear selection', exact: true }).click()
-  await page.getByLabel('Select Node 002').check()
+  await page.getByRole('checkbox', { name: 'Select Node 002', exact: true }).check()
   await expect(speedTest).toBeDisabled()
-  await page.getByLabel('Select Node 001').check()
+  await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
   await expect(speedTest).toBeDisabled()
 })
 
@@ -434,7 +434,7 @@ test('stops manual performance polling when the Nodes workspace unmounts', async
   page.__nodesIssues = prepared.issues
   await openNodes(page)
 
-  await page.getByLabel('Select Node 001').check()
+  await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
   await page.getByRole('button', { name: 'Full speed test', exact: true }).click()
   await expect(page.getByTestId('manual-performance')).toContainText('Running')
   const performanceRequestsBeforeUnmount = prepared.state.requests.filter((request) => request.path === '/api/v1/performance').length
@@ -450,9 +450,9 @@ test('sends one batch remove preview, renders warnings, and reconciles after App
   const prepared = await prepare(page)
   page.__nodesIssues = prepared.issues
   await openNodes(page)
-  await page.getByLabel('Select Node 001').check()
-  await page.getByLabel('Select Node 002').check()
-  await page.getByLabel('Select Node 003').check()
+  await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
+  await page.getByRole('checkbox', { name: 'Select Node 002', exact: true }).check()
+  await page.getByRole('checkbox', { name: 'Select Node 003', exact: true }).check()
 
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Preview node change' })).toBeVisible()
@@ -491,7 +491,7 @@ test('renders exact provider removals without stale or manual-reappearance warni
 
   await page.getByRole('button', { name: 'Apply and validate' }).click()
   await expect(page.getByTestId('selected-count')).toHaveText('0 selected')
-  await expect(page.getByLabel('Select Node 003')).toHaveCount(0)
+  await expect(page.getByRole('checkbox', { name: 'Select Node 003', exact: true })).toHaveCount(0)
   const applies = prepared.state.requests.filter((request) => request.path === '/api/v1/node-changes/apply')
   expect(applies).toHaveLength(1)
   expect(applies[0].body).toEqual({ previewToken: 'synthetic-subscription-1', acceptMissing: false })
@@ -545,10 +545,10 @@ test('blocks native selection mutations while retaining profile replacement with
   page.__nodesIssues = prepared.issues
   await openNodes(page)
 
-  await page.getByLabel('Select Node 002').check()
+  await page.getByRole('checkbox', { name: 'Select Node 002', exact: true }).check()
   await expect(page.getByRole('button', { name: 'Clear manual override', exact: true })).toBeDisabled()
   await page.getByRole('button', { name: 'Clear selection', exact: true }).click()
-  await page.getByLabel('Select Node 001').check()
+  await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
   await expect(page.getByRole('button', { name: 'Set manual override', exact: true })).toBeDisabled()
   expect(prepared.state.requests.filter((request) => request.path === '/api/v1/selection/override')).toHaveLength(0)
 

@@ -29,6 +29,29 @@ and is not advertised as a supported alternative yet. Beta was chosen for the
 tested native feature set; the panel's quality algorithm is not evidence that
 the remaining stable/beta differences are irrelevant.
 
+## Source-only planned Stop correction
+
+`scripts/native-xkeen-stop-fix.mjs` prepares an exclusive output from the pinned
+public `04_register_init.sh` template (SHA256
+`fbdba1f1cca6e1923e0c43113b4b6fafc51f92248cad70818f7ac92c937e32e3`).
+It adds the existing native `clean_firewall` call to the already-stopped branch
+of `proxy_stop`, under its existing mutex. It neither installs code nor introduces
+a panel firewall implementation. Source drift and a second application are rejected.
+Upstream fragment attribution is in `scripts/native-xkeen-stop-fix.LICENSE`.
+
+Linux qualification with the public source available outside secret storage:
+
+```sh
+XKEEN_STOP_FIX_SOURCE=/path/to/pinned-public-template node --test scripts/native-xkeen-stop-fix.test.mjs
+```
+
+Six focused fixtures passed; the unmodified upstream fails the three cases
+requiring cleanup when the core is already absent. The fixtures execute the actual
+extracted stop function with stubbed commands; they prove delegation and lock
+behavior, not real firewall-rule preservation. No live installation is claimed.
+Late-crash monitoring, policy-wide killswitch behavior, native update persistence
+and shared CLI/cron admission remain separate work.
+
 ## Native defaults that the panel must understand
 
 - Fresh `xkeen.json` is `{}`. Missing optional keys mean native defaults, not a

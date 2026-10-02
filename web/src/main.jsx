@@ -6,6 +6,11 @@ import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Checkbox } from '@/components/ui/checkbox'
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -862,91 +867,90 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
     }
   }
 
-  return <section className="panel nodes-workspace">
-    <div className="workspace-heading">
-      <h1>Nodes <span className="count">{nodes.length}</span></h1>
-      <div className="workspace-actions">
-        <button type="button" aria-label="Add VLESS profiles" disabled={lifecycleBlocked} onClick={() => composer === 'profiles' ? closeComposer() : setComposer('profiles')}><Icon name="plus" />Add profiles</button>
-        <button type="button" className="ghost" disabled={lifecycleBlocked} onClick={() => composer === 'subscription' ? closeComposer() : startNewSubscription()}><Icon name="link" />Add subscription</button>
-        <IconButton icon="refresh" label="Refresh dashboard" onClick={onRefresh} />
+  return <section className="nodes-workspace flex min-w-0 flex-col gap-3 bg-background font-sans text-foreground">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <h1 className="flex items-center gap-2 text-xl font-semibold">Nodes <Badge variant="secondary">{nodes.length}</Badge></h1>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" aria-label="Add VLESS profiles" disabled={lifecycleBlocked} onClick={() => composer === 'profiles' ? closeComposer() : setComposer('profiles')}><IconPlus data-icon="inline-start" />Add profiles</Button>
+        <Button type="button" variant="outline" disabled={lifecycleBlocked} onClick={() => composer === 'subscription' ? closeComposer() : startNewSubscription()}><IconLink data-icon="inline-start" />Add subscription</Button>
+        <NodeActionButton icon="refresh" label="Refresh dashboard" onClick={onRefresh} />
       </div>
     </div>
 
-    {notice && <Notice message={notice.message} tone={notice.tone} />}
+    {notice && <Alert variant={notice.tone === 'error' ? 'destructive' : 'default'} role="status"><AlertDescription>{notice.message}</AlertDescription></Alert>}
 
-    {composer === 'profiles' && <form className="composer" onSubmit={(event) => { event.preventDefault(); requestPreview('/api/v1/nodes/import/preview', { profiles }) }}>
-      <div><h3>Import VLESS + REALITY links</h3></div>
-      <textarea value={profiles} onChange={(event) => setProfiles(event.target.value)} placeholder="Paste one or more vless:// links" autoFocus />
-      <div className="composer-actions"><button className="ghost" type="button" onClick={closeComposer}>Cancel</button><button type="submit" disabled={busy || lifecycleBlocked || !profiles.trim()}>Preview add</button></div>
-    </form>}
+    {composer === 'profiles' && <Card className="composer"><CardHeader><CardTitle>Import VLESS + REALITY links</CardTitle></CardHeader><CardContent><form onSubmit={(event) => { event.preventDefault(); requestPreview('/api/v1/nodes/import/preview', { profiles }) }}>
+      <FieldGroup><Field><FieldLabel htmlFor="import-profiles">VLESS profiles</FieldLabel>
+      <Textarea id="import-profiles" value={profiles} onChange={(event) => setProfiles(event.target.value)} placeholder="Paste one or more vless:// links" autoFocus /></Field>
+      <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" type="button" onClick={closeComposer}>Cancel</Button><Button type="submit" disabled={busy || lifecycleBlocked || !profiles.trim()}>Preview add</Button></div>
+    </FieldGroup></form></CardContent></Card>}
 
-    {composer === 'subscription' && <form className="composer compact" onSubmit={(event) => { event.preventDefault(); requestPreview('/api/v1/subscriptions/refresh/preview', { ...(subscriptionID ? { subscriptionId: subscriptionID } : {}), name: subscriptionName, url: subscriptionUrl }) }}>
-      <div><h3>{subscriptionID ? 'Update subscription' : 'New subscription'}</h3></div>
-      <label htmlFor="subscription-name">Display name</label>
-      <input id="subscription-name" value={subscriptionName} onChange={(event) => setSubscriptionName(event.target.value)} placeholder="Home provider" />
-      <label htmlFor="subscription-url">Subscription URL</label>
-      <input id="subscription-url" type="url" value={subscriptionUrl} onChange={(event) => setSubscriptionUrl(event.target.value)} placeholder={subscriptionID ? 'Leave blank to keep the saved URL' : 'https://…'} autoComplete="off" spellCheck={false} />
-      <div className="composer-actions"><button className="ghost" type="button" onClick={closeComposer}>Cancel</button><button type="submit" disabled={busy || lifecycleBlocked || (!subscriptionID && !subscriptionUrl.trim())}>{subscriptionID ? 'Preview update' : 'Preview subscription'}</button></div>
-    </form>}
+    {composer === 'subscription' && <Card className="composer"><CardHeader><CardTitle>{subscriptionID ? 'Update subscription' : 'New subscription'}</CardTitle></CardHeader><CardContent><form onSubmit={(event) => { event.preventDefault(); requestPreview('/api/v1/subscriptions/refresh/preview', { ...(subscriptionID ? { subscriptionId: subscriptionID } : {}), name: subscriptionName, url: subscriptionUrl }) }}>
+      <FieldGroup>
+      <Field><FieldLabel htmlFor="subscription-name">Display name</FieldLabel>
+      <Input id="subscription-name" value={subscriptionName} onChange={(event) => setSubscriptionName(event.target.value)} placeholder="Home provider" /></Field>
+      <Field><FieldLabel htmlFor="subscription-url">Subscription URL</FieldLabel>
+      <Input id="subscription-url" type="url" value={subscriptionUrl} onChange={(event) => setSubscriptionUrl(event.target.value)} placeholder={subscriptionID ? 'Leave blank to keep the saved URL' : 'https://…'} autoComplete="off" spellCheck={false} /></Field>
+      <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" type="button" onClick={closeComposer}>Cancel</Button><Button type="submit" disabled={busy || lifecycleBlocked || (!subscriptionID && !subscriptionUrl.trim())}>{subscriptionID ? 'Preview update' : 'Preview subscription'}</Button></div>
+    </FieldGroup></form></CardContent></Card>}
 
-    <div className="node-toolbar">
-      <div className="toolbar-main">
-        <label className="search-box"><Icon name="search" /><input value={query} onChange={(event) => onViewStateChange((current) => ({ ...current, query: event.target.value, page: 1 }))} placeholder="Search name, address, or source" aria-label="Search nodes" /></label>
-        <span>{filtered.length} / {nodes.length} · <span data-testid="selected-count" aria-live="polite">{selectedIDs.size} selected</span></span>
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Field className="max-w-md"><FieldLabel htmlFor="node-search" className="sr-only">Search nodes</FieldLabel><Input id="node-search" value={query} onChange={(event) => onViewStateChange((current) => ({ ...current, query: event.target.value, page: 1 }))} placeholder="Search name, address, or source" aria-label="Search nodes" /></Field>
+        <span className="text-sm text-muted-foreground">{filtered.length} / {nodes.length} · <span data-testid="selected-count" aria-live="polite">{selectedIDs.size} selected</span></span>
       </div>
-      <div className="filter-row">
-        <div className="filter-group" role="group" aria-label="Health filters">
-          {[['all', 'All'], ['alive', 'Alive'], ['unhealthy', 'Not alive'], ['disabled', 'Disabled'], ['stale', 'Stale']].map(([value, label]) => <button type="button" key={value} className={statusFilter === value ? 'active' : ''} onClick={() => chooseFilter('statusFilter', value)}>{label} <span>{statusCounts[value]}</span></button>)}
-        </div>
-        <div className="filter-group" role="group" aria-label="Role filters">
-          {[['all', 'Any role'], ['native', 'Native'], ['override', 'Override'], ['effective', 'Effective'], ['none', 'No role']].map(([value, label]) => <button type="button" key={value} className={roleFilter === value ? 'active' : ''} onClick={() => chooseFilter('roleFilter', value)}>{label}</button>)}
-        </div>
-        <label className="filter-select">Source<select aria-label="Filter by source" value={sourceFilter} onChange={(event) => chooseFilter('sourceFilter', event.target.value)}><option value="all">All</option>{sourceOptions.map((source) => <option value={source} key={source}>{source}</option>)}</select></label>
-        <label className="filter-select">Subscription<select aria-label="Filter by subscription" value={subscriptionFilter} onChange={(event) => chooseFilter('subscriptionFilter', event.target.value)}><option value="all">All</option>{subscriptionOptions.map((name) => <option value={JSON.stringify([true, name])} key={name}>{name || 'Unnamed subscription'}</option>)}</select></label>
-        <label className="filter-select">Country<select aria-label="Filter by country" value={countryFilter} onChange={(event) => chooseFilter('countryFilter', event.target.value)}><option value="all">All</option>{countryOptions.map((country) => <option value={country} key={country}>{country}</option>)}</select></label>
-        {filtersActive && <button className="clear-filters" type="button" onClick={clearFilters}>Clear</button>}
-      </div>
-    </div>
-
-    <div className="node-selection-toolbar" role="toolbar" aria-label="Selected node actions">
-      <div className="selection-summary"><IconButton icon="select" label={`Select all ${filtered.length} filtered`} onClick={toggleAllFiltered} disabled={busy || lifecycleBlocked || !filtered.length || allFilteredSelected} /><IconButton icon="close" label="Clear selection" onClick={clearSelection} disabled={busy || lifecycleBlocked || !selectedIDs.size} /></div>
-      <div className="selection-actions">
-        <IconButton icon="target" label={selectedManual ? 'Clear manual override' : 'Set manual override'} active={Boolean(selectedManual)} onClick={() => setManualOverride(selectedManual ? '' : (selectedNode.outboundTag || selectedNode.tag))} disabled={busy || lifecycleBlocked || !selectionAvailable || !selectedNode || (!selectedManual && !selectedNode.enabled)} />
-        <IconButton icon="gauge" label={manualRequestBusy ? 'Starting speed test…' : 'Full speed test'} onClick={runManualNode} disabled={busy || manualRequestBusy || manualLifecycleBlocked || benchmarkRunning || manualRunning || adaptiveRunning || selectedNodes.length !== 1 || !selectedNode?.enabled} />
-        <IconButton icon="edit" label="Edit / replace profile" onClick={() => openEditor()} disabled={busy || lifecycleBlocked || selectedNodes.length !== 1} />
-        <IconButton icon="enable" label="Enable" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: true })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => node.enabled)} />
-        <IconButton icon="disable" label="Disable" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: false })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => !node.enabled)} />
-        <IconButton icon="trash" label="Delete" tone="danger" onClick={() => requestPreview('/api/v1/nodes/batch/remove/preview', { nodeIds: selectedNodeIDs })} disabled={busy || lifecycleBlocked || !selectedNodes.length} />
+      <div className="flex flex-wrap items-center gap-2">
+        <ToggleGroup variant="outline" className="flex-wrap" aria-label="Health filters" value={[statusFilter]} onValueChange={(values) => { if (values.length) chooseFilter('statusFilter', values[0]) }}>
+          {[['all', 'All'], ['alive', 'Alive'], ['unhealthy', 'Not alive'], ['disabled', 'Disabled'], ['stale', 'Stale']].map(([value, label]) => <ToggleGroupItem key={value} value={value}>{label} <span>{statusCounts[value]}</span></ToggleGroupItem>)}
+        </ToggleGroup>
+        <ToggleGroup variant="outline" className="flex-wrap" aria-label="Role filters" value={[roleFilter]} onValueChange={(values) => { if (values.length) chooseFilter('roleFilter', values[0]) }}>
+          {[['all', 'Any role'], ['native', 'Native'], ['override', 'Override'], ['effective', 'Effective'], ['none', 'No role']].map(([value, label]) => <ToggleGroupItem key={value} value={value}>{label}</ToggleGroupItem>)}
+        </ToggleGroup>
+        <Field orientation="horizontal" className="w-auto"><FieldLabel>Source</FieldLabel><NativeSelect aria-label="Filter by source" value={sourceFilter} onChange={(event) => chooseFilter('sourceFilter', event.target.value)}><NativeSelectOption value="all">All</NativeSelectOption>{sourceOptions.map((source) => <NativeSelectOption value={source} key={source}>{source}</NativeSelectOption>)}</NativeSelect></Field>
+        <Field orientation="horizontal" className="w-auto"><FieldLabel>Subscription</FieldLabel><NativeSelect aria-label="Filter by subscription" value={subscriptionFilter} onChange={(event) => chooseFilter('subscriptionFilter', event.target.value)}><NativeSelectOption value="all">All</NativeSelectOption>{subscriptionOptions.map((name) => <NativeSelectOption value={JSON.stringify([true, name])} key={name}>{name || 'Unnamed subscription'}</NativeSelectOption>)}</NativeSelect></Field>
+        <Field orientation="horizontal" className="w-auto"><FieldLabel>Country</FieldLabel><NativeSelect aria-label="Filter by country" value={countryFilter} onChange={(event) => chooseFilter('countryFilter', event.target.value)}><NativeSelectOption value="all">All</NativeSelectOption>{countryOptions.map((country) => <NativeSelectOption value={country} key={country}>{country}</NativeSelectOption>)}</NativeSelect></Field>
+        {filtersActive && <Button variant="ghost" type="button" onClick={clearFilters}>Clear</Button>}
       </div>
     </div>
 
-    {manualStatus.state !== 'idle' && <ManualPerformanceCard status={manualStatus} node={nodes.find((node) => node.id === manualStatus.targetNodeId)} />}
+    <div className="flex flex-wrap items-center gap-3" role="toolbar" aria-label="Selected node actions">
+      <div className="flex items-center gap-1"><NodeActionButton icon="select" label={`Select all ${filtered.length} filtered`} onClick={toggleAllFiltered} disabled={busy || lifecycleBlocked || !filtered.length || allFilteredSelected} /><NodeActionButton icon="close" label="Clear selection" onClick={clearSelection} disabled={busy || lifecycleBlocked || !selectedIDs.size} /></div>
+      <Separator orientation="vertical" className="h-6" /><div className="flex flex-wrap items-center gap-1">
+        <NodeActionButton icon="target" label={selectedManual ? 'Clear manual override' : 'Set manual override'} active={Boolean(selectedManual)} onClick={() => setManualOverride(selectedManual ? '' : (selectedNode.outboundTag || selectedNode.tag))} disabled={busy || lifecycleBlocked || !selectionAvailable || !selectedNode || (!selectedManual && !selectedNode.enabled)} />
+        <NodeActionButton icon="gauge" label={manualRequestBusy ? 'Starting speed test…' : 'Full speed test'} onClick={runManualNode} disabled={busy || manualRequestBusy || manualLifecycleBlocked || benchmarkRunning || manualRunning || adaptiveRunning || selectedNodes.length !== 1 || !selectedNode?.enabled} />
+        <NodeActionButton icon="edit" label="Edit / replace profile" onClick={() => openEditor()} disabled={busy || lifecycleBlocked || selectedNodes.length !== 1} />
+        <NodeActionButton icon="enable" label="Enable" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: true })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => node.enabled)} />
+        <NodeActionButton icon="disable" label="Disable" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: false })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => !node.enabled)} />
+        <NodeActionButton icon="trash" label="Delete" tone="danger" onClick={() => requestPreview('/api/v1/nodes/batch/remove/preview', { nodeIds: selectedNodeIDs })} disabled={busy || lifecycleBlocked || !selectedNodes.length} />
+      </div>
+    </div>
 
-    {selectedNode && editingID === selectedNode.id && <div className="selection-editor">
-      <div><span className="panel-label">Replace profile</span><NodeName node={selectedNode} /><small>Stable tag: <code>{selectedNode.outboundTag || selectedNode.tag}</code></small></div>
-      <input aria-label="Replacement VLESS profile" value={replacement} onChange={(event) => setReplacement(event.target.value)} placeholder="Replacement vless:// profile" type="password" autoComplete="off" autoFocus />
-      <div className="inline-editor-actions"><button className="ghost" type="button" onClick={() => { setEditingID(''); setReplacement('') }}>Cancel</button><button type="button" disabled={busy || lifecycleBlocked || !replacement.trim()} onClick={() => requestPreview('/api/v1/nodes/replace/preview', { id: selectedNode.id, profile: replacement })}>Preview replacement</button></div>
-    </div>}
+    {manualStatus.state !== 'idle' && <div className="legacy-workspace"><ManualPerformanceCard status={manualStatus} node={nodes.find((node) => node.id === manualStatus.targetNodeId)} /></div>}
 
-    <div className="table-wrap"><table className="nodes-table"><thead><tr><th className="selection-column"><SelectionCheckbox label="Select all filtered nodes" checked={allFilteredSelected} indeterminate={selectedFilteredCount > 0 && !allFilteredSelected} onChange={toggleAllFiltered} /></th><SortHeader label="Name" sortKey="name" sort={sort} onSort={changeSort} /><SortHeader label="Address" sortKey="address" sort={sort} onSort={changeSort} /><SortHeader label="Health" sortKey="health" sort={sort} onSort={changeSort} /><SortHeader label="Latency" sortKey="latency" sort={sort} onSort={changeSort} /><SortHeader label="Role" sortKey="role" sort={sort} onSort={changeSort} /><SortHeader label="Source" sortKey="source" sort={sort} onSort={changeSort} /><SortHeader label="Subscription" sortKey="subscription" sort={sort} onSort={changeSort} /></tr></thead><tbody>
+    {selectedNode && editingID === selectedNode.id && <Card className="selection-editor"><CardHeader><CardTitle>Replace profile</CardTitle><CardDescription><NodeName node={selectedNode} /><span className="block">Stable tag: <code>{selectedNode.outboundTag || selectedNode.tag}</code></span></CardDescription></CardHeader><CardContent><FieldGroup><Field>
+      <FieldLabel htmlFor="replacement-profile">Replacement VLESS profile</FieldLabel><Input id="replacement-profile" aria-label="Replacement VLESS profile" value={replacement} onChange={(event) => setReplacement(event.target.value)} placeholder="Replacement vless:// profile" type="password" autoComplete="off" autoFocus /></Field>
+      <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" type="button" onClick={() => { setEditingID(''); setReplacement('') }}>Cancel</Button><Button type="button" disabled={busy || lifecycleBlocked || !replacement.trim()} onClick={() => requestPreview('/api/v1/nodes/replace/preview', { id: selectedNode.id, profile: replacement })}>Preview replacement</Button></div>
+    </FieldGroup></CardContent></Card>}
+
+    <Table className="nodes-table"><TableHeader><TableRow><TableHead className="selection-column"><SelectionCheckbox label="Select all filtered nodes" checked={allFilteredSelected} indeterminate={selectedFilteredCount > 0 && !allFilteredSelected} onChange={toggleAllFiltered} /></TableHead><SortHeader label="Name" sortKey="name" sort={sort} onSort={changeSort} /><SortHeader label="Address" sortKey="address" sort={sort} onSort={changeSort} /><SortHeader label="Health" sortKey="health" sort={sort} onSort={changeSort} /><SortHeader label="Latency" sortKey="latency" sort={sort} onSort={changeSort} /><SortHeader label="Role" sortKey="role" sort={sort} onSort={changeSort} /><SortHeader label="Source" sortKey="source" sort={sort} onSort={changeSort} /><SortHeader label="Subscription" sortKey="subscription" sort={sort} onSort={changeSort} /></TableRow></TableHeader><TableBody>
       {visibleNodes.map((node) => <NodeRows key={node.id || node.tag} node={node} selected={selectedIDs.has(node.id)} onToggle={() => toggleSelection(node.id)} />)}
-      {!visibleNodes.length && <tr><td colSpan="8" className="empty">No nodes match this view.</td></tr>}
-    </tbody></table></div>
+      {!visibleNodes.length && <TableRow><TableCell colSpan="8" className="empty">No nodes match this view.</TableCell></TableRow>}
+    </TableBody></Table>
 
     <Pagination page={page} totalPages={totalPages} onPage={(value) => onViewStateChange((current) => ({ ...current, page: value }))} />
-    {!!subscriptions.length && <Disclosure title={`Subscriptions · ${subscriptions.length}`} className="subscriptions-disclosure"><div className="subscription-strip">
-      {subscriptions.map((subscription) => { const enabled = subscription.enabled !== false; const name = subscription.name || 'Unnamed subscription'; const autoStatus = subscription.autoRefresh; const autoState = autoRefreshState(autoStatus); return <div className={`subscription-card ${enabled ? '' : 'disabled'}`} key={subscription.id}>
+    {!!subscriptions.length && <Disclosure title={`Subscriptions · ${subscriptions.length}`} className="subscriptions-disclosure"><div className="grid gap-3 md:grid-cols-2">
+      {subscriptions.map((subscription) => { const enabled = subscription.enabled !== false; const name = subscription.name || 'Unnamed subscription'; const autoStatus = subscription.autoRefresh; const autoState = autoRefreshState(autoStatus); return <Card size="sm" key={subscription.id} data-testid={`subscription-card-${subscription.id}`} data-enabled={enabled}><CardContent className="flex flex-wrap items-center justify-between gap-3">
         <div><strong>{name}</strong><small>{enabled ? 'Enabled' : 'Disabled'} · {subscription.nodeCount} nodes{subscription.staleCount ? ` · ${subscription.staleCount} stale` : ''}</small>{autoStatus && <div className={`subscription-auto-refresh ${autoState}`} data-testid={`subscription-auto-refresh-${subscription.id}`}><span>{autoRefreshStateLabels[autoState]}</span><small>{autoRefreshSummary(autoStatus)}</small></div>}</div>
-        <div className="subscription-actions">
-          <IconButton icon="refresh" label={`Refresh ${name}`} disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/refresh/preview', { subscriptionId: subscription.id })} />
-          <IconButton icon="edit" label={`Edit ${name}`} disabled={busy} onClick={() => openSubscriptionEditor(subscription)} />
-          <IconButton icon="power" label={enabled ? `Disable ${name}` : `Enable ${name}`} active={!enabled} disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/state/preview', { subscriptionId: subscription.id, enabled: !enabled })} />
-          <IconButton icon="trash" label={`Remove ${name}`} tone="danger" disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/remove/preview', { subscriptionId: subscription.id })} />
+        <div className="flex flex-wrap gap-1">
+          <NodeActionButton icon="refresh" label={`Refresh ${name}`} disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/refresh/preview', { subscriptionId: subscription.id })} />
+          <NodeActionButton icon="edit" label={`Edit ${name}`} disabled={busy} onClick={() => openSubscriptionEditor(subscription)} />
+          <NodeActionButton icon="power" label={enabled ? `Disable ${name}` : `Enable ${name}`} active={!enabled} disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/state/preview', { subscriptionId: subscription.id, enabled: !enabled })} />
+          <NodeActionButton icon="trash" label={`Remove ${name}`} tone="danger" disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/remove/preview', { subscriptionId: subscription.id })} />
         </div>
-      </div> })}
+      </CardContent></Card> })}
     </div></Disclosure>}
 
-    <Disclosure title={`Automatic quality · ${adaptiveStateLabel(adaptiveStatus)}`} attention={['running', 'failed', 'cleanup-pending'].includes(adaptiveStatus.state)}><AdaptiveQualityCard status={adaptiveStatus} nodes={nodes} /></Disclosure>
+    <Disclosure title={`Automatic quality · ${adaptiveStateLabel(adaptiveStatus)}`} attention={['running', 'failed', 'cleanup-pending'].includes(adaptiveStatus.state)}><div className="legacy-workspace"><AdaptiveQualityCard status={adaptiveStatus} nodes={nodes} /></div></Disclosure>
     {preview && <PreviewDialog preview={preview} nodes={nodes} manualOverride={manualOverride} busy={busy || lifecycleBlocked} onCancel={cancelPreview} onApply={applyPreview} returnFocus={previewTrigger} />}
   </section>
 }
@@ -1001,16 +1005,16 @@ function ManualPerformanceCard({ status, node }) {
 function NodeRows({ node, selected, onToggle }) {
   const health = node.alive ? 'Alive' : (node.enabled ? (node.lastError || 'No data') : 'Disabled')
   return <>
-    <tr className={selected ? 'selected' : ''} tabIndex={0} aria-selected={selected} onClick={(event) => { if (!event.target.closest('input, label, button, a')) onToggle() }} onKeyDown={(event) => { if (event.target === event.currentTarget && [' ', 'Enter'].includes(event.key)) { event.preventDefault(); onToggle() } }}>
-      <td className="selection-column"><SelectionCheckbox label={`Select ${visibleNodeName(node)}`} checked={selected} onChange={onToggle} /></td>
-      <td><NodeName node={node} />{node.stale && <span className="chip amber">stale</span>}</td>
-      <td data-label="Address"><code className="address">{node.address || '—'}</code></td>
-      <td data-label="Health"><span className={`status-dot ${node.alive ? 'up' : 'down'}`}></span>{health}</td>
-      <td data-label="Latency">{formatAdaptiveLatency(node.latencyMs)}</td>
-      <td data-label="Role"><NodeBadges node={node} /></td>
-      <td data-label="Source"><span>{node.sourceType || 'legacy'}</span></td>
-      <td data-label="Subscription">{node.sourceType === 'subscription' ? node.subscriptionName || 'Unnamed subscription' : '—'}</td>
-    </tr>
+    <TableRow data-state={selected ? 'selected' : undefined} tabIndex={0} aria-selected={selected} onClick={(event) => { if (!event.target.closest('input, label, button, a, [role=checkbox]')) onToggle() }} onKeyDown={(event) => { if (event.target === event.currentTarget && [' ', 'Enter'].includes(event.key)) { event.preventDefault(); onToggle() } }}>
+      <TableCell className="selection-column"><SelectionCheckbox label={`Select ${visibleNodeName(node)}`} checked={selected} onChange={onToggle} /></TableCell>
+      <TableCell><NodeName node={node} />{node.stale && <Badge variant="secondary">stale</Badge>}</TableCell>
+      <TableCell data-label="Address"><code className="address">{node.address || '—'}</code></TableCell>
+      <TableCell data-label="Health"><Badge variant={node.alive ? 'secondary' : 'outline'}>{health}</Badge></TableCell>
+      <TableCell data-label="Latency">{formatAdaptiveLatency(node.latencyMs)}</TableCell>
+      <TableCell data-label="Role"><NodeBadges node={node} /></TableCell>
+      <TableCell data-label="Source"><span>{node.sourceType || 'legacy'}</span></TableCell>
+      <TableCell data-label="Subscription">{node.sourceType === 'subscription' ? node.subscriptionName || 'Unnamed subscription' : '—'}</TableCell>
+    </TableRow>
   </>
 }
 
@@ -1045,11 +1049,11 @@ function PreviewDialog({ preview, nodes, manualOverride, busy, onCancel, onApply
 function Pagination({ page, totalPages, onPage }) {
   if (totalPages <= 1) return null
   const pages = [...new Set([1, totalPages, ...Array.from({ length: 5 }, (_, index) => page + index - 2)])].filter((value) => value >= 1 && value <= totalPages).sort((a, b) => a - b)
-  return <nav className="pagination" aria-label="Node pages">
-    <span className="muted">Page {page} of {totalPages}</span>
-    <IconButton icon="left" label="Previous page" disabled={page <= 1} onClick={() => onPage(page - 1)} />
-    <div>{pages.map((value, index) => <span key={value}>{index > 0 && value - pages[index - 1] > 1 && <span className="pagination-gap" aria-hidden="true">…</span>}<button type="button" className={value === page ? 'active' : ''} aria-current={value === page ? 'page' : undefined} onClick={() => onPage(value)}>{value}</button></span>)}</div>
-    <IconButton icon="right" label="Next page" disabled={page >= totalPages} onClick={() => onPage(page + 1)} />
+  return <nav className="flex flex-wrap items-center justify-end gap-1" aria-label="Node pages">
+    <span className="mr-auto text-sm text-muted-foreground">Page {page} of {totalPages}</span>
+    <NodeActionButton icon="left" label="Previous page" disabled={page <= 1} onClick={() => onPage(page - 1)} />
+    <div className="flex flex-wrap gap-1">{pages.map((value, index) => <span key={value}>{index > 0 && value - pages[index - 1] > 1 && <span className="pagination-gap" aria-hidden="true">…</span>}<Button type="button" size="icon" variant={value === page ? 'secondary' : 'ghost'} aria-current={value === page ? 'page' : undefined} onClick={() => onPage(value)}>{value}</Button></span>)}</div>
+    <NodeActionButton icon="right" label="Next page" disabled={page >= totalPages} onClick={() => onPage(page + 1)} />
   </nav>
 }
 
@@ -1267,15 +1271,16 @@ function SortHeader({ label, sortKey, sort, onSort }) {
   const active = sort.key === sortKey
   const direction = active ? sort.direction : 'none'
   const SortIcon = active ? sort.direction === 'asc' ? IconArrowUp : IconArrowDown : IconArrowsSort
-  return <th aria-sort={direction === 'none' ? 'none' : direction === 'asc' ? 'ascending' : 'descending'}><button className={`sort-button ${active ? 'active' : ''}`} type="button" onClick={() => onSort(sortKey)}>{label}<SortIcon size={12} aria-hidden="true" /></button></th>
+  return <TableHead aria-sort={direction === 'none' ? 'none' : direction === 'asc' ? 'ascending' : 'descending'}><Button variant="ghost" size="sm" className="sort-button" type="button" onClick={() => onSort(sortKey)}>{label}<SortIcon data-icon="inline-end" aria-hidden="true" /></Button></TableHead>
 }
 
 function SelectionCheckbox({ checked, indeterminate = false, label, onChange }) {
-  const inputRef = useRef(null)
-  useEffect(() => {
-    if (inputRef.current) inputRef.current.indeterminate = indeterminate
-  }, [indeterminate])
-  return <label className="selection-checkbox"><input ref={inputRef} type="checkbox" aria-label={label} checked={checked} onChange={onChange} /></label>
+  return <label className="selection-checkbox"><Checkbox aria-label={label} checked={checked} indeterminate={indeterminate} onCheckedChange={onChange} /></label>
+}
+
+function NodeActionButton({ icon, label, tone = '', active = false, ...props }) {
+  const ActionIcon = { select: IconSquareCheck, enable: IconPlayerPlay, disable: IconPlayerPause, refresh: IconRefresh, edit: IconPencil, power: IconPower, trash: IconTrash, close: IconX, left: IconChevronLeft, right: IconChevronRight, gauge: IconGauge, target: IconFocus2 }[icon]
+  return <Button type="button" variant={tone === 'danger' ? 'destructive' : active ? 'secondary' : 'outline'} size="icon" aria-label={label} title={label} {...props}><ActionIcon data-icon="inline-start" /></Button>
 }
 
 function NodeName({ node }) {

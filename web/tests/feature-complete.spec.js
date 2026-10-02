@@ -219,7 +219,7 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
   await expect(page.getByRole('button', { name: 'Apply checked release' })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Rollback retained release' })).toBeEnabled()
   await openSection(page, 'Nodes')
-  await page.getByLabel('Select Feature test node').check()
+  await page.getByRole('checkbox', { name: 'Select Feature test node', exact: true }).check()
   await expect(page.getByRole('button', { name: 'Enable', exact: true })).toBeEnabled()
   await openSection(page, 'Routing')
   await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toBeEnabled()
@@ -246,7 +246,7 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
     // The existing five-second status poll may overlap the explicit refresh.
     await expect.poll(() => featureCompleteRequests(model, '/api/v1/status', 'GET').length).toBeGreaterThan(previousStatusReads)
 
-    await page.getByLabel('Select Feature test node').check()
+    await page.getByRole('checkbox', { name: 'Select Feature test node', exact: true }).check()
     await expect(page.getByRole('button', { name: 'Enable', exact: true })).toBeDisabled()
     await expect(page.getByText('Feature test node', { exact: true })).toBeVisible()
     await openSection(page, 'Routing')
@@ -291,7 +291,7 @@ for (const [label, lifecycle] of [
     page.__featureCompleteModel = model
     await page.goto('/')
     await openSection(page, 'Nodes')
-    await page.getByLabel('Select Feature test node').check()
+    await page.getByRole('checkbox', { name: 'Select Feature test node', exact: true }).check()
     const speedTest = page.getByRole('button', { name: 'Full speed test', exact: true })
     await expect(speedTest).toBeEnabled()
 

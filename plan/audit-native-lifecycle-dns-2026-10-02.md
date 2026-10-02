@@ -39,8 +39,25 @@ passed. A separate Start restored Xray/API/balancer. Raw evidence remains local.
 Both regressions were reproduced with failing Linux fixtures before correction.
 After correction, foreground success/failure returns promptly while the background
 child survives; fallback timeout retains candidate/snapshot/pending with exactly
-restart then start and no rollback replay. Focused native/lifecycle/unknown/
-reconciliation fixtures pass. Final full qualification and deployment are pending.
+restart then start and no rollback replay. Exact development source
+`4114f4af81b9a407ae10f0e345997876391b3216` passed the full local Linux gate,
+including 149 browser cases, and its ARM64 artifact was deployed with independent
+hash, process and health verification. It is not a signed public release.
+
+The earlier unknown import was not replayed. Registry/render/native-baseline
+coherence, full Xray validation, one explicit native recovery restart, its new
+process and native `XRAY_LOCATION_CONFDIR` binding were verified. A durable
+recovered-current receipt preceded settlement of the pending marker. The original
+Apply remains unknown; the current generation is recovered. A fresh second
+subscription Preview/Apply then completed with independent readback: two
+subscriptions, 59 profiles, 52 enabled, zero enabled WL profiles, no pending marker,
+and native Xray, panel and cron running.
+
+One router-originated bounded diagnostic completed in 7.4 seconds using 8 MiB:
+approximately 22.6 Mbit/s download, 20.0 Mbit/s upload and 1017 ms HTTP latency.
+This measures one node/sample, not the best node or LAN interception. Router-origin
+DNS and direct HTTPS also passed with the current running generation. The
+development PC's Karing remained enabled throughout.
 
 ## Availability boundaries
 
@@ -55,6 +72,13 @@ reconciliation fixtures pass. Final full qualification and deployment are pendin
 Do not create a second panel firewall implementation. Late-crash and already-stopped
 cleanup require a native-owner correction. Direct Internet should remain independent
 of VPN failure. VPN-only traffic must not accidentally leak directly during recovery.
+
+These are requirements, not established guarantees: the current native emergency
+killswitch drops the entire Keenetic policy mark, including direct destinations.
+With killswitch disabled, removing interception can instead allow VPN destinations
+to go direct. A cleanup fix alone cannot promise both direct availability and
+selective no-leak behavior. The late-crash policy needs explicit design and client
+qualification before enabling automatic recovery.
 
 ## Keenetic policy and split DNS
 
@@ -81,7 +105,7 @@ Sources:
 - https://github.com/jameszeroX/XKeen/blob/main/wiki/Knownissues.md
 - https://xtls.github.io/en/config/dns.html
 
-Next: deploy lifecycle correction; settle the current generation without Apply
-replay; finish subscriptions; qualify native failure cleanup; implement consistent
-domain routing/DNS. Final LAN TCP/UDP/DNS claims require clients inside and outside
-the policy and remain pending.
+Next: qualify native failure cleanup and implement consistent domain routing/DNS.
+Final LAN TCP/UDP/DNS claims require clients inside and outside the policy and
+remain pending. See PR122 comment 5954037252 and Issue121 comment 5954037993 for
+sanitized deployment and recovery evidence.
