@@ -142,32 +142,15 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 		}
 	}
 
-	if err := ensurePrivateDir(t.PreviousDir); err != nil {
-		return err
-	}
-	pending, pendingErr := os.OpenFile(pendingPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if pendingErr != nil {
-		return ErrNodeRecoveryRequired
-	}
-	_, pendingErr = pending.WriteString("node-operation-pending\n")
-	if pendingErr == nil {
-		pendingErr = pending.Sync()
-	}
-	closeErr := pending.Close()
-	if pendingErr != nil || closeErr != nil {
-		return ErrNodeRecoveryRequired
-	}
-	if syncNodeDirectory(t.PreviousDir) != nil {
-		return ErrNodeRecoveryRequired
+	releaseIntent, intentErr := acquireNodeIntent(t.PreviousDir)
+	if intentErr != nil {
+		return intentErr
 	}
 	settled := true
 	defer func() {
 		if settled {
-			if removeErr := os.Remove(pendingPath); removeErr != nil {
-				err = ErrNodeRecoveryRequired
-			}
-			if syncNodeDirectory(t.PreviousDir) != nil {
-				err = ErrNodeRecoveryRequired
+			if releaseErr := releaseIntent(); releaseErr != nil {
+				err = releaseErr
 			}
 		}
 	}()

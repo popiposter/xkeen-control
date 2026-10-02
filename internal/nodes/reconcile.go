@@ -7,9 +7,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"time"
 
 	"github.com/popiposter/xkeen-control/internal/configjson"
+	"github.com/popiposter/xkeen-control/internal/xkeen"
 )
 
 // ReconcileRuntime proves that the authoritative registry and generated active
@@ -53,7 +55,7 @@ func (m *Manager) ReconcileRuntime(ctx context.Context) error {
 	return m.tx.reconcileRuntime(ctx, registry, active)
 }
 
-func (t Transaction) reconcileRuntime(ctx context.Context, registry Registry, rendered []byte) error {
+func (t Transaction) reconcileRuntime(ctx context.Context, registry Registry, rendered []byte) (err error) {
 	budget := t.Budget.normalized()
 	deadline := time.Now().Add(budget.Total)
 	if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(deadline) {
@@ -81,11 +83,43 @@ func (t Transaction) reconcileRuntime(ctx context.Context, registry Registry, re
 		return errors.New("Xray reconciliation candidate validation failed")
 	}
 
+	if t.PreviousDir == "" {
+		t.PreviousDir = filepath.Join(filepath.Dir(t.Store.Path), "previous")
+	}
+	releaseIntent, intentErr := acquireNodeIntent(t.PreviousDir)
+	if intentErr != nil {
+		return intentErr
+	}
+	settled := true
+	defer func() {
+		if settled {
+			if releaseErr := releaseIntent(); releaseErr != nil {
+				err = releaseErr
+			}
+		}
+	}()
+	current, loadErr := t.Store.Load()
+	active, readErr := ReadBoundedFile(t.ActiveOutboundsPath, MaxLegacyDocument)
+	if loadErr != nil || readErr != nil || !reflect.DeepEqual(current, registry) || !bytes.Equal(active, rendered) {
+		return errors.New("node configuration changed during reconciliation")
+	}
+	if err := t.savePrevious(registry, true, rendered, true); err != nil {
+		return err
+	}
+	if syncNodeDirectory(t.PreviousDir) != nil {
+		return ErrNodeRecoveryRequired
+	}
+	settled = false
+
 	activationContext, cancelActivation := context.WithTimeout(reconcileContext, budget.Activation)
 	activationErr := t.activate(activationContext, registry)
 	cancelActivation()
 	if activationErr != nil {
-		return errors.New("Xray runtime reconciliation failed")
+		if errors.Is(activationErr, xkeen.ErrLifecycleUnknown) {
+			return errors.Join(ErrNodeRecoveryRequired, xkeen.ErrLifecycleUnknown)
+		}
+		return ErrNodeRecoveryRequired
 	}
+	settled = true
 	return nil
 }
