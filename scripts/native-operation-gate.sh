@@ -52,6 +52,17 @@ _native_gate_root() {
         _native_gate_directory "$_ng_walk" 0700 || return 76
     done
 }
+
+# Fixed RAM bootstrap after a new boot, shared by native CLI/init and NDM hooks.
+# No recovery/adoption: a pre-existing unsafe path is refused, never repaired.
+native_gate_prepare() {
+    [ "$#" = 0 ] && [ "$(id -u)" = 0 ] || return 76
+    _native_gate_directory / 0755 && _native_gate_directory /tmp 01777 || return 76
+    if [ ! -e /tmp/.xkeen-admission ] && [ ! -L /tmp/.xkeen-admission ]; then
+        (umask 077; mkdir /tmp/.xkeen-admission) 2>/dev/null || :
+    fi
+    _native_gate_root /tmp/.xkeen-admission
+}
 _native_gate_proc() {
     IFS= read -r _ng_stat < "/proc/$1/stat" || return 77
     _ng_rest=${_ng_stat##*) }

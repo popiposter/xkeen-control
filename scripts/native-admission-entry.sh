@@ -140,6 +140,7 @@ native_admission_hook_enter() {
             _na_file_ok /opt/lib/xkeen/native-event-convergence.sh || return 76
         . /opt/lib/xkeen/native-event-notification.sh
         . /opt/lib/xkeen/native-event-convergence.sh
+        native_gate_prepare || return $?
         native_event_converge
         _na_event_rc=$?
         _na_body=0
@@ -227,6 +228,7 @@ native_admission_enter() {
         _na_gate_ok || return $?
     else
         [ -z "${XKEEN_ADMISSION_ROLE-}" ] || return 77
+        native_gate_prepare || return $?
         native_gate_acquire /tmp/.xkeen-admission "$_na_action" || return $?
         _na_gate_identity=$_ng_owned_record
         _na_owns=1

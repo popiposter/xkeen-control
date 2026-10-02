@@ -24,7 +24,7 @@ function fixture({ body = 'echo BODY >> "$evidence"', verifier = 'exit 0', setup
     .replaceAll('/opt/sbin/xkeen', paths.dispatcher)
     .replaceAll('/opt/etc/ndm/netfilter.d/proxy.sh', paths.hook)
     .replaceAll('/opt/bin/sh', '/bin/sh')
-  put(paths.entry, source); put(paths.gate, gateSource)
+  put(paths.entry, source); put(paths.gate, gateSource.replaceAll('/tmp/.xkeen-admission', root))
   put(paths.verifier, '#!/bin/sh\n' + verifier.replaceAll('@ENTRY@', paths.entry).replaceAll('@GATE@', paths.gate) + '\n')
   for (const role of ['init', 'dispatcher']) put(paths[role], `#!/bin/sh
 . '${paths.entry}'
@@ -58,6 +58,10 @@ test('owner runs fixed foreground native body and releases after verified comple
   assert.equal(r.status, 0, r.stderr)
   assert.equal(r.evidence, 'BODY\n')
   assert.equal(r.held, false)
+})
+test('native entry after RAM loss prepares admission before its new operation', () => {
+  const r = fixture({ setup: 'rmdir @ROOT@' })
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.evidence, 'BODY\n'); assert.equal(r.held, false)
 })
 test('untrusted internal marker grants no body authority', () => {
   const r = fixture({ setup: 'export XKEEN_ADMISSION_ROLE=init XKEEN_ADMISSION_ACTION=start XKEEN_ADMISSION_CALL=fake' })

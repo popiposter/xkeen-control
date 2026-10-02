@@ -615,6 +615,14 @@ stopped events and ready drift. They are not real generated-hook, BusyBox or tar
 kernel acceptance. Native candidate fences remain mandatory; native update/boot
 preservation and hardware timing/readback still need qualification before install.
 
+The source entry also prepares its fixed RAM admission root after RAM loss before
+a fresh native operation. Creation uses protected parents and an exclusive mkdir;
+concurrent init/NDM entrants accept the same protected winner. Existing unsafe
+paths or retained unknown operation contents are never chmodded, deleted, adopted
+or settled. Existing pending refusal/config-validation still precedes native body.
+This supplies RAM bootstrap only, not a real boot/reboot qualification or update
+preservation. Root creation and a new operation do not replay a former operation.
+
 ### Bounded native Hybrid kernel proof (source-only)
 
 The source-only foreground seam now gives the init's generated hook one bounded

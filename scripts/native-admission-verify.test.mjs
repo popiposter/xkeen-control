@@ -50,7 +50,7 @@ function fixture({ action = 'start', mode = 'forced', auto = 'on', setup = '', b
     .replaceAll('/opt/libexec/timeout-coreutils', path('timeout'))
     .replaceAll('/opt/bin/pidof', path('pidof'))
     .replaceAll('/opt/bin/sh', '/bin/sh')
-  put('gate', gate)
+  put('gate', gate.replaceAll('/tmp/.xkeen-admission', root))
   put('entry', replace(entry))
   put('verify', replace(verifier).replaceAll('/proc/', path('proc/')))
   put('event', replace(readFileSync('scripts/native-event-reconcile.sh', 'utf8')))
@@ -87,6 +87,15 @@ test('event worker reads current running state and joins native hook without lif
   assert.equal(r.held, false)
   assert.ok(r.hooks.includes('post event start forced running\n'))
   assert.ok(r.hooks.includes('post hook start forced running\n'))
+})
+test('new automatic operation after RAM loss still refuses retained configuration pending', () => {
+  const r = fixture({ mode: 'automatic', pending: true, setup: 'rmdir @ROOT@/native-ready; rmdir @ROOT@' })
+  assert.notEqual(r.status, 0); assert.equal(r.calls, ''); assert.equal(r.held, true)
+})
+test('direct NDM after RAM loss retains pending refusal and the unresolved event', () => {
+  const r = fixture({ event: true, direct: true, action: 'stop', pending: true, setup: 'rmdir @ROOT@/native-ready; rmdir @ROOT@' })
+  assert.equal(r.status, 77); assert.equal(r.calls, '')
+  assert.equal(r.held && r.leader && r.dirty, true)
 })
 test('direct NDM hook elects caller, verifies current native state and settles one operation', () => {
   for (const action of ['start', 'stop']) {
