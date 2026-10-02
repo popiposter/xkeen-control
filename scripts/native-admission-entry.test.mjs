@@ -24,7 +24,7 @@ function fixture({ body = 'echo BODY >> "$evidence"', verifier = 'exit 0', setup
     .replaceAll('/opt/sbin/xkeen', paths.dispatcher)
     .replaceAll('/opt/bin/sh', '/bin/sh')
   put(paths.entry, source); put(paths.gate, gateSource)
-  put(paths.verifier, '#!/bin/sh\n' + verifier + '\n')
+  put(paths.verifier, '#!/bin/sh\n' + verifier.replaceAll('@ENTRY@', paths.entry).replaceAll('@GATE@', paths.gate) + '\n')
   for (const role of ['init', 'dispatcher']) put(paths[role], `#!/bin/sh
 . '${paths.entry}'
 evidence='${evidence}'
@@ -144,6 +144,35 @@ test('dispatcher and init nesting share one owner until both finishes', () => {
 test('missing verifier and refused preflight execute zero native body', () => {
   for (const options of [{ setup: 'rm @VERIFY@' }, { verifier: '[ "$1" != pre ]' }]) {
     const r = fixture(options)
+    assert.notEqual(r.status, 0)
+    assert.equal(r.evidence, '')
+    assert.equal(r.held, true)
+  }
+})
+
+const descendantProof = `. '@ENTRY@'; . '@GATE@'
+_na_role=$2; _na_action=$3; _na_mode=$4
+(
+  _na_descendant_ok || exit $?
+  # A descendant verifier cannot gain the immediate-child finish capability.
+  _na_child_ok && exit 99
+  exit 0
+)`
+test('read-only descendant proof accepts nested verifier without finish authority', () => {
+  const r = fixture({ verifier: descendantProof })
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.evidence, 'BODY\n')
+  assert.equal(r.held, false)
+})
+test('descendant proof rejects mismatched context and a fake wrapper record', () => {
+  for (const corrupt of [
+    'XKEEN_ADMISSION_CALL=00000000000000000000000000000000',
+    '_na_action=stop',
+    `record=$(cat "$XKEEN_GATE_ROOT/operation.lock.d/call.init/context")
+set -- $record
+printf '%s %s %s %s %s %s %s %s\\n' "$1" 1 "$3" "$4" "$5" "$6" "$7" "$8" > "$XKEEN_GATE_ROOT/operation.lock.d/call.init/context"`,
+  ]) {
+    const r = fixture({ verifier: descendantProof.replace('(\n', `(\n${corrupt}\n`) })
     assert.notEqual(r.status, 0)
     assert.equal(r.evidence, '')
     assert.equal(r.held, true)

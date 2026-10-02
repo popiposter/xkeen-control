@@ -66,6 +66,38 @@ _na_read_record() {
     case "$4" in *[!0-9a-f]*) return 77;; esac
     _na_wrapper_pid=$2; _na_wrapper_start=$3; _na_nonce=$4
 }
+# Read-only proof helpers may be nested below a bounded timeout process. This
+# authenticates their invocation context, never body/finish authority.
+_na_descendant_ok() {
+    case "$_na_role:$_na_action:$_na_mode" in
+        dispatcher:start:forced|dispatcher:stop:forced|dispatcher:restart:forced|init:start:forced|init:stop:forced|init:restart:forced|init:start:automatic|init:restart:automatic) ;;
+        *) return 77;;
+    esac
+    [ "${XKEEN_ADMISSION_ROLE-}:${XKEEN_ADMISSION_ACTION-}" = "$_na_role:$_na_action" ] || return 77
+    _na_call_dir=/tmp/.xkeen-admission/operation.lock.d/call.$_na_role
+    _na_gate_ok || return $?
+    _na_read_record || return 77
+    set -- $_na_record
+    [ "$_na_record" = "$1 $2 $3 $4 $5 $6 $7 $8" ] || return 77
+    [ "$_na_nonce" = "${XKEEN_ADMISSION_CALL-}" ] || return 77
+    _na_desc_record=$_na_record
+    _native_gate_self || return 77
+    _na_desc_cursor=$_ng_self_pid; _na_desc_depth=0
+    while [ "$_na_desc_cursor" -gt 0 ] && [ "$_na_desc_depth" -lt 16 ]; do
+        _native_gate_proc "$_na_desc_cursor" || return 77
+        if [ "$_na_desc_cursor" = "$_na_wrapper_pid" ]; then
+            [ "$_ng_proc_start" = "$_na_wrapper_start" ] || return 77
+            _na_gate_ok || return $?
+            _na_read_record || return 77
+            [ "$_na_record" = "$_na_desc_record" ] || return 77
+            return 0
+        fi
+        [ "$_na_desc_cursor" != "$_ng_parent" ] || return 77
+        _na_desc_cursor=$_ng_parent
+        _na_desc_depth=$((_na_desc_depth + 1))
+    done
+    return 77
+}
 _na_child_ok() {
     _na_gate_ok || return $?
     _na_read_record || return 77
