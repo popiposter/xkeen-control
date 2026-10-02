@@ -6,6 +6,7 @@ set -euo pipefail
 : "${XKEEN_ADMISSION_DISPATCHER:?pinned public dispatcher input required}"
 : "${XKEEN_ADMISSION_REGISTER:?pinned public registration input required}"
 : "${XKEEN_ADMISSION_INSTALLER:?pinned public installer input required}"
+: "${XKEEN_ADMISSION_PROFILE_ROOT:?complete pinned public profile root required}"
 [[ ${XKEEN_ADMISSION_UPSTREAM:-0} != 1 ]] || { echo 'upstream counterexamples require individual fixture invocation' >&2; exit 1; }
 node --test \
     scripts/native-admission-patch.test.mjs \
@@ -16,4 +17,5 @@ node --test \
     scripts/native-admission-hook.test.mjs \
     scripts/native-admission-hook-entry.test.mjs \
     scripts/native-admission-connected.test.mjs \
-    scripts/native-admission-background.test.mjs
+    scripts/native-admission-background.test.mjs \
+    scripts/native-update-profile.test.mjs

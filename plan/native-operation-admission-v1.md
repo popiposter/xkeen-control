@@ -671,6 +671,20 @@ dispatcher hash check uses the same bounded protected-file reader.
 Update entry integration, the complete staged-profile writer, module preservation
 and native update postconditions remain pending and fenced.
 
+`native-update-profile.mjs` is a build-time compiler for one complete public
+archive profile, not a runtime installer or patch interpreter. The pinned archive
+from upstream commit `5aaece27a70d5bd002c615248614914ebbc4569d` is 125,747 bytes,
+SHA-256 `1d246871d8fc9df2e68e80cef18562e6222661e40eaea1b6853cf8e0e6348b5f`.
+The checked-in inventory contains all 72 regular files (559,777 content bytes),
+including `import.sh` and every module. Every path, size and hash must match;
+extra/missing/changed files, unknown directories, symlinks and hard links refuse.
+The compiler invokes the existing builders for exactly three overlays:
+dispatcher, registration template and native installer module. The complete
+prepared inventory preserves all other hashes. All overlays remain fenced;
+an exclusive new output directory and manifest-last publication do not install
+anything. The future fixed stage worker still needs to check this whole inventory,
+apply only these prepared overlays and publish the authenticated receipt last.
+
 The disabled `native-admission-update-patch.mjs` experiment pins the actual
 native installer module by SHA-256 and inserts a fixed protected staging callback
 after native extraction/shape checks and before its first live rename. Native

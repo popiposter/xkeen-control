@@ -64,15 +64,20 @@ Git-scope and Go-graph helper changes use their dispatch fixtures; changes to th
 actual `dev-check.ps1`/`dev-check.sh` orchestration retain the browser fallback.
 
 Native source-preservation fixtures have a separate explicit catalogue,
-`scripts/test-native-upstream.sh`. Supply the four hash-pinned **public** inputs;
+`scripts/test-native-upstream.sh`. Supply the four hash-pinned **public** files and
+the complete public profile directory;
 it downloads nothing and never executes a complete native installer/dispatcher:
 
 ```powershell
-docker compose -f docker-compose.dev.yml run --rm -T dev env XKEEN_ADMISSION_INIT=/workspace/dist/native-public.sh XKEEN_ADMISSION_DISPATCHER=/workspace/dist/native-dispatcher-public.sh XKEEN_ADMISSION_REGISTER=/workspace/dist/native-update-contract/02_register_xkeen.sh XKEEN_ADMISSION_INSTALLER=/workspace/dist/native-update-contract/03_install_xkeen.sh bash scripts/test-native-upstream.sh
+docker compose -f docker-compose.dev.yml run --rm -T dev env XKEEN_ADMISSION_INIT=/workspace/dist/native-public.sh XKEEN_ADMISSION_DISPATCHER=/workspace/dist/native-dispatcher-public.sh XKEEN_ADMISSION_REGISTER=/workspace/dist/native-update-contract/02_register_xkeen.sh XKEEN_ADMISSION_INSTALLER=/workspace/dist/native-update-contract/03_install_xkeen.sh XKEEN_ADMISSION_PROFILE_ROOT=/workspace/dist/native-update-contract/public-profile-v1 bash scripts/test-native-upstream.sh
 ```
 
 The builders/fixtures verify exact source hashes. Keep these inputs in ignored
 `dist` storage; never mount operator-local credentials or router artifacts.
+The profile directory contains all regular files from the pinned public beta
+archive; `scripts/native-update-profile-v1.json` records its archive identity and
+complete path/size/hash inventory. Inspect bounded archive entries before
+extraction; reject links, special files, duplicate/absolute/traversing names.
 This opt-in result is separate from the self-contained helper lane and FULL gate;
 their scope does not depend on cache presence. To reproduce an upstream
 counterexample, invoke its individual fixture with `XKEEN_ADMISSION_UPSTREAM=1`;
