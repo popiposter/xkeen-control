@@ -57,6 +57,13 @@ func componentHTTPWriteWindow(admission, operation, recovery, responseGrace time
 }
 
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "native" {
+		if err := runNativeCommand(os.Args[2:], os.Stdout, xkeen.Discovery{}); err != nil {
+			log.Print(err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "version" {
 		if len(os.Args) != 3 || os.Args[2] != "--json" {
 			log.Print("usage: xkeen-control version --json")
@@ -357,6 +364,7 @@ func main() {
 	})
 	componentPolicy.SetScheduler(componentScheduler)
 	handler := httpapi.New(httpapi.Config{
+		Native:             xkeen.Discovery{},
 		Collector:          collector,
 		Auth:               authManager,
 		Nodes:              nodeManager,

@@ -28,6 +28,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/routingpolicy"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
 	panelupdate "github.com/popiposter/xkeen-control/internal/update"
+	"github.com/popiposter/xkeen-control/internal/xkeen"
 )
 
 const (
@@ -49,6 +50,10 @@ const (
 type BackupService interface {
 	Export(context.Context) ([]byte, error)
 	ExportSecret(context.Context, string) ([]byte, error)
+}
+
+type NativeDiscovery interface {
+	Inspect(context.Context) xkeen.Capabilities
 }
 
 type RestoreService interface {
@@ -129,6 +134,7 @@ type Server struct {
 	componentMutations ComponentMutationService
 	componentPolicy    ComponentPolicyService
 	setup              components.SetupAPI
+	native             NativeDiscovery
 	updates            panelupdate.Service
 	notifications      *notifications.Service
 	backup             BackupService
@@ -160,6 +166,7 @@ type Config struct {
 	ComponentMutations ComponentMutationService
 	ComponentPolicy    ComponentPolicyService
 	Setup              components.SetupAPI
+	Native             NativeDiscovery
 	Updates            panelupdate.Service
 	Notifications      *notifications.Service
 	Backup             BackupService
@@ -174,7 +181,7 @@ func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, restore: config.Restore, policy: config.Policy, dnsObservatory: config.DNSObservatory, performancePolicy: config.PerformancePolicy, listener: config.Listener, restorePreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, native: config.Native, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, restore: config.Restore, policy: config.Policy, dnsObservatory: config.DNSObservatory, performancePolicy: config.PerformancePolicy, listener: config.Listener, restorePreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -195,6 +202,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "ok\n")
 		return
 	case "/api/v1/session/login", "/api/v1/session/logout", "/api/v1/session",
+		"/api/v1/xkeen",
 		"/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary", "/api/v1/components", "/api/v1/components/check", "/api/v1/components/policy",
 		"/api/v1/components/preview", "/api/v1/components/apply", "/api/v1/components/rollback", "/api/v1/components/cancel",
 		"/api/v1/setup/preview", "/api/v1/setup/apply", "/api/v1/setup/cancel",
@@ -242,6 +250,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/api/v1/xkeen":
+		if _, ok := s.requireSession(w, r); !ok {
+			return
+		}
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w, http.MethodGet)
+			return
+		}
+		if r.URL.RawQuery != "" {
+			writeError(w, http.StatusBadRequest, "query parameters are not supported")
+			return
+		}
+		if s.native == nil {
+			writeError(w, http.StatusServiceUnavailable, "native discovery unavailable")
+			return
+		}
+		writeJSON(w, http.StatusOK, s.native.Inspect(r.Context()))
 	case "/api/v1/notifications", "/api/v1/notifications/configure", "/api/v1/notifications/enabled", "/api/v1/notifications/test", "/api/v1/notifications/clear":
 		s.handleNotifications(w, r)
 	case "/api/v1/session/login":
