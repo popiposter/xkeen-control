@@ -31,9 +31,20 @@ func RenderNative(existing []byte, previous, next Registry) ([]byte, error) {
 	for _, node := range previous.Nodes {
 		owned[node.OutboundTag] = true
 	}
+	replacements := make(map[string]json.RawMessage, len(next.Nodes))
+	for _, node := range next.SortedNodes() {
+		if !node.Enabled {
+			continue
+		}
+		raw, err := renderNode(node)
+		if err != nil {
+			return nil, err
+		}
+		replacements[node.OutboundTag] = raw
+	}
 	seen := make(map[string]bool, len(current))
 	kept := make([]json.RawMessage, 0, len(current)+len(next.Nodes))
-	for _, raw := range current {
+	for index, raw := range current {
 		var outbound map[string]json.RawMessage
 		if json.Unmarshal(raw, &outbound) != nil || outbound == nil {
 			return nil, errors.New("invalid native outbound")
@@ -52,20 +63,20 @@ func RenderNative(existing []byte, previous, next Registry) ([]byte, error) {
 		}
 		if !owned[tag] {
 			kept = append(kept, raw)
+		} else if replacement, ok := replacements[tag]; ok {
+			kept = append(kept, replacement)
+		} else if index == 0 {
+			return nil, errors.New("change the default outbound before removing or disabling its managed node")
 		}
 	}
 	for _, node := range next.SortedNodes() {
 		if seen[node.OutboundTag] && !owned[node.OutboundTag] {
 			return nil, errors.New("managed node conflicts with native outbound")
 		}
-		if !node.Enabled {
+		if !node.Enabled || seen[node.OutboundTag] {
 			continue
 		}
-		raw, err := renderNode(node)
-		if err != nil {
-			return nil, err
-		}
-		kept = append(kept, raw)
+		kept = append(kept, replacements[node.OutboundTag])
 	}
 	object["outbounds"], err = json.Marshal(kept)
 	if err != nil {

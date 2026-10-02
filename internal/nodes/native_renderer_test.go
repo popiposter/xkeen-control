@@ -101,3 +101,61 @@ func TestRenderNativeFreshTemplate(t *testing.T) {
 		t.Fatalf("empty native template: %s %v", result, err)
 	}
 }
+
+func TestRenderNativePreservesManagedDefaultAndInterleavedSlots(t *testing.T) {
+	registry := NewRegistry()
+	registry.Nodes = []Node{testNode(t, syntheticProfile, "node-11111111", true), testNode(t, syntheticProfileTwo, "node-22222222", true)}
+	first, _ := renderNode(registry.Nodes[0])
+	second, _ := renderNode(registry.Nodes[1])
+	input := []byte(`{"outbounds":[` + string(first) + `,{"tag":"direct","protocol":"freedom"},` + string(second) + `]}`)
+	result, err := RenderNative(input, registry, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document outboundDocument
+	if json.Unmarshal(result, &document) != nil || len(document.Outbounds) != 3 {
+		t.Fatal("invalid render")
+	}
+	for index, expected := range []string{"proxy-node-11111111", "direct", "proxy-node-22222222"} {
+		var outbound struct{ Tag string }
+		_ = json.Unmarshal(document.Outbounds[index], &outbound)
+		if outbound.Tag != expected {
+			t.Fatal("changed native default or interleaved order")
+		}
+	}
+	next := registry
+	next.Nodes = append([]Node(nil), registry.Nodes...)
+	next.Nodes[0].Enabled = false
+	if _, err := RenderNative(input, registry, next); err == nil {
+		t.Fatal("silently changed default by disabling node")
+	}
+	next.Nodes = next.Nodes[1:]
+	if _, err := RenderNative(input, registry, next); err == nil {
+		t.Fatal("silently changed default by deleting node")
+	}
+}
+
+func TestNativeJSONCActivationVerifier(t *testing.T) {
+	dir := t.TempDir()
+	active := filepath.Join(dir, "04_outbounds.json")
+	routing := filepath.Join(dir, "05_routing.json")
+	if err := os.WriteFile(active, []byte(`{/* native comment */"outbounds":[{"tag":"proxy-node-11111111"}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(routing, []byte(`{// native routing
+	"routing":{"balancers":[{"tag":"bal-proxy","selector":["proxy-"],"strategy":{"type":"leastPing"}}]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	activator := CommandActivator{ActiveOutboundsPath: active, RoutingPath: routing, RuntimeVerifier: func(context.Context, string, string, []string) error { called = true; return nil }}
+	if err := activator.VerifyOutboundTags(context.Background(), []string{"proxy-node-11111111"}); err != nil || !called {
+		t.Fatalf("native comments rejected before runtime verification: %v", err)
+	}
+	called = false
+	if err := os.WriteFile(routing, []byte(`{"routing":{},"routing":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := activator.VerifyOutboundTags(context.Background(), []string{"proxy-node-11111111"}); err == nil || called {
+		t.Fatal("ambiguous native routing accepted")
+	}
+}

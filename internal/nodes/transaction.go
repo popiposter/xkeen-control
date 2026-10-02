@@ -3,7 +3,6 @@ package nodes
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -14,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/popiposter/xkeen-control/internal/configjson"
 	"github.com/popiposter/xkeen-control/internal/redact"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
@@ -886,7 +886,7 @@ func (a CommandActivator) VerifyOutboundTags(ctx context.Context, expected []str
 			Tag string `json:"tag"`
 		} `json:"outbounds"`
 	}
-	if err := json.Unmarshal(contents, &document); err != nil {
+	if err := configjson.Decode(contents, &document); err != nil {
 		return errors.New("active outbound artifact is invalid")
 	}
 	tags := make(map[string]struct{}, len(document.Outbounds))
@@ -934,7 +934,7 @@ func (a CommandActivator) VerifyEmptyOutboundTags(ctx context.Context) error {
 			Tag string `json:"tag"`
 		} `json:"outbounds"`
 	}
-	if err := json.Unmarshal(contents, &document); err != nil {
+	if err := configjson.Decode(contents, &document); err != nil {
 		return errors.New("active outbound artifact is invalid")
 	}
 	allowed := map[string]struct{}{"api": {}, "block": {}, "direct": {}, "dns-out": {}}
@@ -984,7 +984,7 @@ func verifyBalancerSelector(path, balancerTag string, expected []string) error {
 			} `json:"balancers"`
 		} `json:"routing"`
 	}
-	if json.Unmarshal(contents, &document) != nil {
+	if configjson.Decode(contents, &document) != nil {
 		return errors.New("active routing policy is invalid")
 	}
 	var selectors []string
@@ -1033,7 +1033,7 @@ func verifyEmptyBalancerSelector(path, balancerTag string) error {
 			} `json:"balancers"`
 		} `json:"routing"`
 	}
-	if json.Unmarshal(contents, &document) != nil {
+	if configjson.Decode(contents, &document) != nil {
 		return errors.New("active routing policy is invalid")
 	}
 	found := 0

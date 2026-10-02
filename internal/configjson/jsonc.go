@@ -10,6 +10,19 @@ import (
 
 var errNativeConfig = errors.New("native configuration is invalid or unsupported")
 
+// Decode validates a JSONC object before decoding its typed projection.
+func Decode(input []byte, target any) error {
+	object, err := DecodeObject(input)
+	if err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(object)
+	if err != nil {
+		return errNativeConfig
+	}
+	return json.Unmarshal(encoded, target)
+}
+
 // DecodeObject accepts the comments used in native XKeen/Xray templates.
 // It preserves unknown values as RawMessage and rejects duplicate keys rather
 // than silently changing their meaning during a later scoped edit.
