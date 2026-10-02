@@ -550,8 +550,18 @@ assuming a future periodic tick. Nine extracted-source fixtures cover these
 paths, including the real bounded restore retry. Six behavioral assertions were
 RED before the patch; the final focused hook/monitor/launch set has 27 passes.
 
-This is error propagation, not complete native proof. Existing deny-MAC helper
-errors can still be swallowed, and `_xkeen_rules_intact` checks weak presence.
+The source candidate additionally checks generated-hook route reads/writes,
+enabled-family ipset creation, bounded geo refill producers and deny-MAC API/JSON
+producers before reporting success. API data is parsed as one supported host
+collection; an error-shaped or null reply cannot replace the live deny set with
+an empty set. Slow deny-MAC synchronization remains after native netfilter-lock
+release and before successful cache/WAN-state publication. Failed membership
+queries refuse rather than treating an unreadable populated set as empty.
+Temporary read files have explicit RAM/file-size bounds and are removed at exit.
+
+This is error propagation, not complete native proof. The separate init-level
+deny-MAC loader and other rendering/load helpers are not qualified by these
+generated-hook changes; `_xkeen_rules_intact` still checks weak presence.
 The separate bounded proof below never invokes that generated hook or its
 runtime-directory, lock, ipset and route writers. Neither successful shell
 status nor weak chain presence is sufficient.

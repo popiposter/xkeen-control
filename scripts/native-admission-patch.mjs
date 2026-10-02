@@ -70,6 +70,140 @@ XKEEN_FOREGROUND=1; export XKEEN_FOREGROUND
 }
 function addEntry(text, role) { return '#!/bin/sh\n' + entryPrelude(role) + text.slice('#!/bin/sh\n'.length) }
 
+function patchNativeHookErrors(text) {
+  const section = (start, end, edit) => {
+    const a = text.indexOf(start), b = text.indexOf(end, a + start.length)
+    if (a < 0 || b < a) throw new Error('native error propagation anchor missing')
+    text = text.slice(0, a) + edit(text.slice(a, b)) + text.slice(b)
+  }
+  section('    _xkeen_sync_deny_mac_ipset() {\n', '\n    command -v ipset', () => `    _xkeen_sync_deny_mac_ipset() {
+        # Keep native atomic set replacement, but never publish a failed API
+        # read or failed JSON producer as an intentional empty deny list.
+        (
+            umask 077
+            _dm_dir="$_xkeen_rundir/deny-read.$$"
+            mkdir "$_dm_dir" || exit 1
+            trap 'rm -f "$_dm_dir/api" "$_dm_dir/macs" "$_dm_dir/upper" "$_dm_dir/restore" && rmdir "$_dm_dir" || exit 1' EXIT
+            # POSIX file-size bound is applied only in this read subprocess.
+            # The explicit byte check also covers implementations with 1KiB units.
+            ulimit -f 64 || exit 1
+            command -v ipset >/dev/null 2>&1 || exit 1
+            ipset create "$name_ipset_deny_mac" hash:mac -exist 2>/dev/null || exit 1
+            _tmp="\${name_ipset_deny_mac}_tmp"
+            ipset create "$_tmp" hash:mac -exist 2>/dev/null || exit 1
+            ipset flush "$_tmp" >/dev/null 2>&1 || exit 1
+            curl_api "\${url_server}/\${url_hotspot}" > "$_dm_dir/api" 2>/dev/null || exit 1
+            [ "$(wc -c < "$_dm_dir/api")" -le 65536 ] && [ -s "$_dm_dir/api" ] || exit 1
+            jq -sr '
+                if length != 1 then error("invalid hotspot response") else .[0] end |
+                (if type == "object" and has("host") then .host else . end) |
+                (if type == "array" then . elif type == "object" and has("mac") then [.] else error("invalid host collection") end) |
+                if all(.[]; type == "object" and (.mac | type) == "string" and (.mac | length) > 0 and
+                    ((has("access") | not) or (.access | type) == "string")) then .[] else error("invalid host record") end |
+                select((.access // "") == "deny") | .mac
+            ' < "$_dm_dir/api" > "$_dm_dir/macs" 2>/dev/null || exit 1
+            tr '[:lower:]' '[:upper:]' < "$_dm_dir/macs" > "$_dm_dir/upper" || exit 1
+            awk -v set="$_tmp" '
+                /^[0-9A-F][0-9A-F]:[0-9A-F][0-9A-F]:[0-9A-F][0-9A-F]:[0-9A-F][0-9A-F]:[0-9A-F][0-9A-F]:[0-9A-F][0-9A-F]$/ {print "add " set " " $0 " -exist"; next}
+                {exit 1}
+            ' < "$_dm_dir/upper" > "$_dm_dir/restore" || exit 1
+            ipset restore -exist < "$_dm_dir/restore" || exit 1
+            ipset swap "$_tmp" "$name_ipset_deny_mac" 2>/dev/null || exit 1
+            ipset destroy "$_tmp" 2>/dev/null || exit 1
+        )
+    }
+`)
+  text = replaceOnce(text,
+    '    command -v ipset >/dev/null 2>&1 && ipset create "$name_ipset_deny_mac" hash:mac -exist 2>/dev/null\n',
+    '    command -v ipset >/dev/null 2>&1 && ipset create "$name_ipset_deny_mac" hash:mac -exist 2>/dev/null || exit 1\n')
+  section('    configure_route() {\n', '\n    # Добавление', route => {
+    route = replaceOnce(route,
+      '            policy_table=$(ip rule show | awk -v policy="$policy_mark" \'$0 ~ policy && /lookup/ && !/blackhole/ {print $(NF); exit}\')\n',
+      '            _policy_rules=$(ip rule show) || return 1\n            policy_table=$(printf \'%s\\n\' "$_policy_rules" | awk -v policy="$policy_mark" \'$0 ~ policy && /lookup/ && !/blackhole/ {print $(NF); exit}\') || return 1\n')
+    route = replaceOnce(route, '        if [ -n "$policy_mark" ]; then\n', '        policy_table=\n        if [ -n "$policy_mark" ]; then\n')
+    route = replaceOnce(route,
+      '            if [ "$ip_version" = "6" ] && ! ip -6 route show default 2>/dev/null | grep -q .; then\n',
+      '            _default_routes=$(ip -"$ip_version" route show default 2>/dev/null) || return 1\n            if [ "$ip_version" = "6" ] && [ -z "$_default_routes" ]; then\n')
+    route = replaceOnce(route,
+      '        _cur_routes=$(ip -"$ip_version" route show table "$table_id" 2>/dev/null)\n',
+      '        _cur_routes=$(ip -"$ip_version" route show table "$table_id" 2>/dev/null) || return 1\n')
+    route = replaceOnce(route,
+      '        _want_routes=$(ip -"$ip_version" route show table "$source_table" 2>/dev/null | \\\n            grep -v \'^default\\|^unreachable\\|^blackhole\')\n',
+      '        _source_routes=$(ip -"$ip_version" route show table "$source_table" 2>/dev/null) || return 1\n        _want_routes=$(printf \'%s\\n\' "$_source_routes" | grep -v \'^default\\|^unreachable\\|^blackhole\' || true)\n        _route_rules=$(ip -"$ip_version" rule show 2>/dev/null) || return 1\n')
+    route = replaceOnce(route,
+      '           ip -"$ip_version" rule show 2>/dev/null | grep -q "fwmark $table_mark lookup $table_id"; then\n',
+      '           printf \'%s\\n\' "$_route_rules" | grep -Fq "fwmark $table_mark lookup $table_id"; then\n')
+    route = replaceOnce(route,
+      '        ip -"$ip_version" rule del fwmark "$table_mark" lookup "$table_id" >/dev/null 2>&1 || true\n',
+      '        if printf \'%s\\n\' "$_route_rules" | grep -Fq "fwmark $table_mark lookup $table_id"; then\n            ip -"$ip_version" rule del fwmark "$table_mark" lookup "$table_id" >/dev/null 2>&1 || return 1\n        fi\n')
+    route = route.replaceAll('>/dev/null 2>&1 || true', '>/dev/null 2>&1 || return 1')
+    route = replaceOnce(route,
+      '        ip -"$ip_version" route show table "$source_table" 2>/dev/null | while read -r route_line; do\n',
+      '        printf \'%s\\n\' "$_source_routes" | while read -r route_line; do\n')
+    route = replaceOnce(route, '                default*|unreachable*|blackhole*) continue ;;', '                \'\'|default*|unreachable*|blackhole*) continue ;;')
+    route = replaceOnce(route, '        done\n        return 0\n', '        done || return 1\n        return 0\n')
+    return route
+  })
+  section('    _xkeen_ensure_ipsets() {\n', '\n    _xkeen_cache_valid()', body =>
+    body.replace('|| return 0', '|| return 1')
+      .replaceAll('-exist 2>/dev/null\n', '-exist 2>/dev/null || return 1\n')
+      .replace('        fi\n    }', '        fi\n        return 0\n    }'))
+  section('    _xkeen_refill_geo_if_empty() {\n', '\n    # Текущий WAN', () => `    _xkeen_refill_geo_if_empty() {
+        # Keep native refill-only-if-empty behavior. A failed producer is never
+        # an empty set/list. Do not capture a populated geo set in a shell value.
+        (
+            _rg_set="$1"; _rg_file="$2"; _rg_family="$3"
+            [ -s "$_rg_file" ] || exit 0
+            umask 077
+            _rg_dir="$_xkeen_rundir/geo-read.$$"
+            mkdir "$_rg_dir" || exit 1
+            trap 'rm -f "$_rg_dir/read" "$_rg_dir/restore" && rmdir "$_rg_dir" || exit 1' EXIT
+            # At most two bounded RAM files, never a persistent cache/journal.
+            # Cap overflow refuses rather than treating a truncated list as empty.
+            ulimit -f 8192 || exit 1
+            ipset save "$_rg_set" > "$_rg_dir/read" 2>/dev/null || exit 1
+            [ "$(wc -c < "$_rg_dir/read")" -le 8388608 ] || exit 1
+            grep -q '^add ' "$_rg_dir/read"
+            _rg_scan=$?
+            case "$_rg_scan" in 0) exit 0;; 1) ;; *) exit 1;; esac
+            _rg_tmp="\${_rg_set}_renew_tmp"
+            ipset create "$_rg_tmp" hash:net family "$_rg_family" -exist 2>/dev/null || exit 1
+            ipset flush "$_rg_tmp" 2>/dev/null || exit 1
+            [ "$(wc -c < "$_rg_file")" -le 8388608 ] || exit 1
+            sed -e 's/\\r$//' -e 's/#.*//' -e '/^[[:space:]]*$/d' "$_rg_file" > "$_rg_dir/read" || exit 1
+            awk -v set="$_rg_tmp" '{print "add " set " " $1}' < "$_rg_dir/read" > "$_rg_dir/restore" || exit 1
+            [ "$(wc -c < "$_rg_dir/restore")" -le 8388608 ] || exit 1
+            ipset restore -exist < "$_rg_dir/restore" || exit 1
+            ipset swap "$_rg_set" "$_rg_tmp" 2>/dev/null || exit 1
+            ipset destroy "$_rg_tmp" 2>/dev/null || exit 1
+        )
+    }
+`)
+  // Every terminal branch must observe these helper failures. Slow deny-MAC
+  // synchronization stays after nf-lock release, before success cache/state.
+  const wan = '        [ -n "$_xkeen_cur_wan" ] && printf \'%s\' "$_xkeen_cur_wan" > "$_xkeen_wan_state"\n'
+  for (const [start, end] of [
+    ['    if [ -n "$_xkeen_cur_wan" ]', '\n    if _xkeen_rules_intact; then'],
+    ['    if _xkeen_rules_intact; then', '\n    # Кэш готовых'],
+    ['    if _xkeen_cache_valid; then', '\n    if [ -n "$port_donor" ]'],
+    ['\n    _xkeen_apply || exit 1\n', '\nelse\n    # mkdir-lock'],
+  ]) section(start, end, body => {
+    const indent = start.startsWith('\n') ? '    ' : '        '
+    const publish = wan.replace(/^ {8}/, indent)
+    const cache = `${indent}_xkeen_cache_save\n`
+    const hasWan = body.includes(publish), hasCache = body.includes(cache)
+    body = body.replace(publish, '').replace(cache, '')
+    body = body.replace(`${indent}_xkeen_sync_deny_mac_ipset\n`, `${indent}_xkeen_sync_deny_mac_ipset || exit 1\n${hasCache ? cache : ''}${hasWan ? publish : ''}`)
+    return body
+  })
+  // Optional families are skipped successfully; enabled family work must pass.
+  text = text.replace(/^( +)\[ "\$(iptables|ip6tables)_supported" = "true" \] && (configure_route [46]|_xkeen_refill_geo_if_empty [^\n]+)$/gm,
+    (_, indent, family, call) => `${indent}if [ "$${family}_supported" = "true" ]; then ${call} || exit 1; fi`)
+  text = text.replace(/^( +)configure_route ([46])$/gm, '$1configure_route $2 || exit 1')
+  text = replaceOnce(text, '        _xkeen_ensure_ipsets\n', '        _xkeen_ensure_ipsets || exit 1\n')
+  return text
+}
+
 export function buildCandidates({ init, dispatcher }) {
   // Validate both sources before producing anything; accept no alternate revision.
   if (!Buffer.isBuffer(init) || digest(init) !== initSHA256 ||
@@ -90,6 +224,7 @@ export function buildCandidates({ init, dispatcher }) {
   text = replaceOnce(text,
     '        _xkeen_release_nf_lock\n        exit 0\n',
     '        _xkeen_release_nf_lock\n        _xkeen_sync_deny_mac_ipset\n        exit 0\n')
+  text = patchNativeHookErrors(text)
   // Exhausted native attempts otherwise fall through successful mutex cleanup.
   // Keep native firewall/killswitch behavior and release only a mutex we acquired.
   text = replaceOnce(text,
