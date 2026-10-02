@@ -55,3 +55,32 @@ The synthetic observations establish bounded score behavior, not actual network
 capacity. Endpoint caps, loss and native SB behavior require further corpus and
 bounded qualification. Native leastPing remains the active safe mode; this
 change provides no independent stale-override expiry owner.
+
+## Exploration and initial-run follow-up
+
+Commit `603347e` adds one RAM stable-ID exploration cursor. With more eligible
+challengers than the configured cap, the last RTT shortlist position rotates
+through the remaining eligible nodes; the fastest preceding positions and
+current node stay included. A cap of one rotates all eligible challengers.
+Removal, reordering and readdition do not reset traversal to the fastest node.
+Freezing a generation advances the cursor, even if that generation is later
+cancelled. No additional candidate or transfer budget is added.
+
+Existing supervisor tick notifications may admit one initial quality generation
+after at least three independent fresh, alive, positive RTT observations. The
+opportunity is consumed before transfer, including a failed/cancelled generation;
+subsequent runs use the normal cadence. Busy, manual, stale, duplicate, failed or
+zero-RTT evidence cannot trigger transfers. There is no extra network poller or
+persistent scheduling write. A process restart starts a new RAM evidence window.
+
+Meaningful pre-fix failures reproduced permanent tail starvation, dependence on
+RTT order rather than stable IDs, waiting the full cadence despite fresh samples,
+and acceptance of failed/zero RTT samples. Author package tests and focused race
+tests passed; independent root verification ran the entire `internal/c1` race
+suite successfully (4.522s). Independent source review approved all six changed
+files. This is source evidence, not a live optimizer comparison.
+
+The 144 MiB / 180 second generation ceilings are unchanged. Native Xray remains
+the deployed selection owner and panel adaptive stays disabled. Traffic/day UI,
+economical preset, native SB comparison and independent stale-override expiry
+remain separate unfinished work.
