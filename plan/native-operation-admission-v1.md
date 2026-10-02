@@ -625,6 +625,24 @@ preservation. Root creation and a new operation do not replay a former operation
 
 ### Native registration/update preservation boundary
 
+The disabled `native-admission-update-patch.mjs` experiment pins the actual
+native installer module by SHA-256 and inserts a fixed protected staging callback
+after native extraction/shape checks and before its first live rename. Native
+archive extraction and the existing `.old` replacement remain upstream-owned.
+Missing or rejected preservation leaves both live dispatcher and module tree
+unchanged in the actual extracted-function fixture. A successful synthetic
+callback proves only replacement ordering, not real admission preservation.
+The module output is unconditionally fenced; the authenticated staging worker,
+updater role/exec handoff, postconditions and long-update event settlement remain
+unimplemented. Nothing from this experiment may be installed.
+
+The opt-in fixture requires the exact **public** installer input, outside the
+default helper catalogue:
+
+```powershell
+docker compose -f docker-compose.dev.yml run --rm -T dev env XKEEN_ADMISSION_INSTALLER=/workspace/dist/native-update-contract/03_install_xkeen.sh node --test scripts/native-admission-update-patch.test.mjs
+```
+
 Pinned upstream `register_xkeen_initd` copies
 `07_install_register/04_register_init.sh`, reapplies declared native settings, then
 atomically renames the result onto the live init. It preserves setting values,
