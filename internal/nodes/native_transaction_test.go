@@ -24,12 +24,24 @@ func (a *nativeTimeoutActivator) Restart(ctx context.Context) error {
 }
 
 func TestTransactionNativeTimeoutRetainsRecoveryAndNeverReplays(t *testing.T) {
+	testNativeTimeout(t, false)
+}
+func TestTransactionNativeFallbackTimeoutRetainsRecoveryAndNeverReplays(t *testing.T) {
+	testNativeTimeout(t, true)
+}
+func testNativeTimeout(t *testing.T, fallback bool) {
 	if runtime.GOOS != "linux" {
 		t.Skip("native timeout fixture requires Linux")
 	}
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "xkeen")
-	if err := os.WriteFile(binary, []byte("#!/bin/sh\nsleep 2\n"), 0700); err != nil {
+	calls := filepath.Join(dir, "calls")
+	t.Setenv("NATIVE_TEST_CALLS", calls)
+	script := "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$NATIVE_TEST_CALLS\"\nsleep 2\n"
+	if fallback {
+		script = "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$NATIVE_TEST_CALLS\"\n[ \"$1\" = -restart ] && exit 7\nsleep 2\n"
+	}
+	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	store := Store{Path: filepath.Join(dir, "secrets", "nodes.json")}
@@ -50,6 +62,13 @@ func TestTransactionNativeTimeoutRetainsRecoveryAndNeverReplays(t *testing.T) {
 	err := tx.Apply(context.Background(), next)
 	if !errors.Is(err, xkeen.ErrLifecycleUnknown) || !errors.Is(err, ErrNodeRecoveryRequired) || a.restarts != 1 {
 		t.Fatalf("unknown was retried or lost: %v calls=%d", err, a.restarts)
+	}
+	wantCalls := "-restart\n"
+	if fallback {
+		wantCalls += "-start\n"
+	}
+	if got, err := os.ReadFile(calls); err != nil || string(got) != wantCalls {
+		t.Fatal("unexpected native lifecycle sequence")
 	}
 	if got, err := os.ReadFile(filepath.Join(tx.PreviousDir, "04_outbounds.json")); err != nil || !bytes.Equal(got, before) {
 		t.Fatal("previous snapshot lost")

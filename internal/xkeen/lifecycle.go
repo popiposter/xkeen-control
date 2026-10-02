@@ -3,7 +3,6 @@ package xkeen
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -59,8 +58,10 @@ func (l Lifecycle) Run(ctx context.Context, action LifecycleAction) error {
 		}
 	}
 	command.Env = append(command.Env, "XKEEN_FOREGROUND=1")
-	// Native output can contain private configuration; never retain or expose it.
-	command.Stdout, command.Stderr = io.Discard, io.Discard
+	// Nil output streams connect directly to os.DevNull. An io.Writer such as
+	// io.Discard makes os/exec create pipes; native background services inherit
+	// those pipes and keep Wait blocked after the foreground command has exited.
+	// Never retain or expose native output, which can contain private config.
 	configureLifecycleProcess(command)
 	if command.Start() != nil {
 		return ErrLifecycleFailed
@@ -78,8 +79,7 @@ func (l Lifecycle) Run(ctx context.Context, action LifecycleAction) error {
 		return nil
 	case <-ctx.Done():
 		killLifecycleProcess(command)
-		// Pipes are discarded directly, so inherited output handles cannot hold
-		// Wait open. Bound cleanup even if the kernel cannot reap immediately.
+		// Bound cleanup even if the kernel cannot reap immediately.
 		select {
 		case <-done:
 		case <-time.After(time.Second):

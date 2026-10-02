@@ -483,8 +483,11 @@ func (a CommandActivator) Restart(ctx context.Context) error {
 	// XKeen can stop Xray and then return a failed -restart. Match the
 	// repository lifecycle contract: if time remains, recover with -start so
 	// activation and rollback can still prove readiness on the selected files.
-	if !errors.Is(restartErr, xkeen.ErrLifecycleUnknown) && restartContext.Err() == nil && a.runXkeenLifecycle(restartContext, "-start") == nil {
-		return nil
+	if restartContext.Err() == nil {
+		startErr := a.runXkeenLifecycle(restartContext, "-start")
+		if startErr == nil || errors.Is(startErr, xkeen.ErrLifecycleUnknown) {
+			return startErr
+		}
 	}
 	return errors.New("Xray restart failed")
 }
