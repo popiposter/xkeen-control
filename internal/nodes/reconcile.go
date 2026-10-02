@@ -3,10 +3,13 @@ package nodes
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/popiposter/xkeen-control/internal/configjson"
 )
 
 // ReconcileRuntime proves that the authoritative registry and generated active
@@ -24,15 +27,23 @@ func (m *Manager) ReconcileRuntime(ctx context.Context) error {
 	if err := registry.Validate(); err != nil {
 		return errors.New("node registry invalid")
 	}
-	rendered, err := Render(registry)
+	active, err := ReadBoundedFile(m.tx.ActiveOutboundsPath, MaxLegacyDocument)
+	if err != nil {
+		return errors.New("active outbound artifact unavailable")
+	}
+	rendered, err := RenderNative(active, registry, registry)
 	if err != nil {
 		return errors.New("node registry render failed")
 	}
-	active, err := ReadBoundedFile(m.tx.ActiveOutboundsPath, MaxLegacyDocument)
-	if err != nil || !bytes.Equal(rendered, active) {
+	object, err := configjson.DecodeObject(active)
+	if err != nil {
+		return errors.New("active outbound artifact invalid")
+	}
+	canonical, err := json.MarshalIndent(object, "", "  ")
+	if err != nil || !bytes.Equal(bytes.TrimSpace(rendered), canonical) {
 		return errors.New("active outbound artifact does not match node registry")
 	}
-	return m.tx.reconcileRuntime(ctx, registry, rendered)
+	return m.tx.reconcileRuntime(ctx, registry, active)
 }
 
 func (t Transaction) reconcileRuntime(ctx context.Context, registry Registry, rendered []byte) error {

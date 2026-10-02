@@ -90,7 +90,24 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 	if err := registry.Validate(); err != nil {
 		return err
 	}
-	rendered, err := Render(registry)
+	previousRegistry, previousRegistryExists, err := loadOptionalRegistry(t.Store)
+	if err != nil {
+		return err
+	}
+	previousOutbounds, previousOutboundsExists, err := readOptional(t.ActiveOutboundsPath, MaxLegacyDocument)
+	if err != nil {
+		return err
+	}
+	var rendered []byte
+	if previousOutboundsExists {
+		baseline := previousRegistry
+		if !previousRegistryExists {
+			baseline = NewRegistry()
+		}
+		rendered, err = RenderNative(previousOutbounds, baseline, registry)
+	} else {
+		rendered, err = Render(registry)
+	}
 	if err != nil {
 		return err
 	}
@@ -116,13 +133,17 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 		}
 	}
 
-	previousRegistry, previousRegistryExists, err := loadOptionalRegistry(t.Store)
+	currentRegistry, currentRegistryExists, err := loadOptionalRegistry(t.Store)
 	if err != nil {
 		return err
 	}
-	previousOutbounds, previousOutboundsExists, err := readOptional(t.ActiveOutboundsPath, MaxLegacyDocument)
+	currentOutbounds, currentOutboundsExists, err := readOptional(t.ActiveOutboundsPath, MaxLegacyDocument)
 	if err != nil {
 		return err
+	}
+	if currentRegistryExists != previousRegistryExists || !reflect.DeepEqual(currentRegistry, previousRegistry) ||
+		currentOutboundsExists != previousOutboundsExists || !bytes.Equal(currentOutbounds, previousOutbounds) {
+		return errors.New("native node configuration changed during validation")
 	}
 	if err := t.savePrevious(previousRegistry, previousRegistryExists, previousOutbounds, previousOutboundsExists); err != nil {
 		return err
