@@ -663,6 +663,17 @@ of downloading/installing components and cron remains unchanged. Long update vs
 NDM deadline/notification settlement also needs explicit qualification before the
 shared native backend is enabled.
 
+Normal long-writer contention has a separate known-no-effect result. If an
+elected NDM invocation reaches its valid monotonic deadline after busy admission,
+and has **never acquired** operation admission, it may retire only its own live
+election while leaving the canonical empty protected dirty marker published.
+It returns queued/deferred `75`, not convergence success. Unknown files,
+ownership/clock failures, missing capabilities and any post-acquisition failure
+retain the existing unresolved boundary; no dead leader is reaped. Notifications
+during cleanup remain dirty and successor elections are untouched. Native updater
+completion still needs an explicit fresh current-state drain after verified
+completion and release; there is no background retry or future-tick guarantee.
+
 ### Bounded native Hybrid kernel proof (source-only)
 
 The source-only foreground seam now gives the init's generated hook one bounded

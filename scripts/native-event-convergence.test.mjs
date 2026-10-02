@@ -56,13 +56,40 @@ test('missing fixed capability preserves explicit event before native effects', 
   const r = fixture("rm '@WORKER@'; native_event_converge")
   assert.equal(r.status, 76); assert.equal(r.leader && r.dirty, true); assert.equal(r.gate, false)
 })
-test('busy admission deadline retains event without consuming or starting worker', () => {
+test('busy-only deadline defers its own election without consuming or starting worker', () => {
   const r = fixture(`native_gate_acquire() { return 75; }
 _nec_tick=0; _nec_clock() { _nec_now=$_nec_tick; }
 sleep() { _nec_tick=$((_nec_tick + 1)); }
 native_event_converge`)
-  assert.equal(r.status, 77); assert.equal(r.observed, '')
-  assert.equal(r.leader && r.dirty, true); assert.equal(r.gate, false)
+  assert.equal(r.status, 75); assert.equal(r.observed, '')
+  assert.equal(r.dirty, true); assert.equal(r.leader || r.gate, false)
+})
+
+test('fresh invocation can reconcile a deferred event after a long writer completes', () => {
+  const r = fixture(`eval "$(sed 's/^native_gate_acquire()/original_acquire()/' '@ROOT@/gate')"
+_nec_busy=1; _nec_tick=0
+native_gate_acquire() { [ "$_nec_busy" = 0 ] || return 75; original_acquire "$@"; }
+_nec_clock() { _nec_now=$_nec_tick; }
+sleep() { _nec_tick=$((_nec_tick + 1)); }
+native_event_converge; [ "$?" = 75 ] || exit 91
+[ ! -e '@ROOT@/events/leader' ] && [ -d '@ROOT@/events/dirty' ] || exit 92
+printf 'stopped\\n' > '@ROOT@/ready'
+_nec_busy=0
+native_event_converge`)
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.observed, 'stopped\n')
+  assert.equal(r.gate || r.leader || r.dirty, false)
+})
+
+test('clock failure while admission is busy retains the unresolved election', () => {
+  const r = fixture(`native_gate_acquire() { return 75; }
+_nec_tick=0
+_nec_clock() { [ "$_nec_tick" = 0 ] || return 77; _nec_now=0; }
+sleep() { _nec_tick=1; }
+native_event_converge`)
+  assert.equal(r.status, 77)
+  assert.equal(r.observed, '')
+  assert.equal(r.leader && r.dirty, true)
 })
 test('Stop winning during admission wait is observed by the subsequently loaded worker', () => {
   const r = fixture(`eval "$(sed 's/^native_gate_acquire()/original_acquire()/' '@ROOT@/gate')"

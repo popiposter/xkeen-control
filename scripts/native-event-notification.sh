@@ -61,6 +61,24 @@ native_event_consume() {
     # Later notifications recreate the directory and require another pass.
     rmdir "$_ne_root/dirty" || return 77
 }
+native_event_defer() {
+    # Only the live elected invocation can give back an unused election.
+    # The caller must prove it never acquired operation admission. Leave dirty
+    # published so the writer's completion can trigger a fresh current-state pass.
+    [ "$#" = 0 ] || return 76
+    _ne_owns || return 77
+    _native_gate_directory "$_ne_root/dirty" 0700 || return 77
+    for _ne_item in "$_ne_root/dirty"/* "$_ne_root/dirty"/.[!.]* "$_ne_root/dirty"/..?*; do
+        [ ! -e "$_ne_item" ] && [ ! -L "$_ne_item" ] || return 77
+    done
+    for _ne_item in "$_ne_root/leader"/* "$_ne_root/leader"/.[!.]* "$_ne_root/leader"/..?*; do
+        [ "$_ne_item" = "$_ne_root/leader/owner" ] && continue
+        [ ! -e "$_ne_item" ] && [ ! -L "$_ne_item" ] || return 77
+    done
+    rm "$_ne_root/leader/owner" && rmdir "$_ne_root/leader" || return 77
+    _ne_owned=
+    return 75
+}
 native_event_retire() {
     [ "$#" = 0 ] || return 76
     _ne_owns || return 77

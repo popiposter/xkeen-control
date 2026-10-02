@@ -22,6 +22,42 @@ test('one invocation owns transient notification election and clean retirement',
   const r = fixture('native_event_notify || exit $?; native_event_consume || exit $?; native_event_retire')
   assert.equal(r.status, 0, r.stderr); assert.equal(r.leader, false); assert.equal(r.dirty, false)
 })
+
+test('own unused election defers while preserving dirty state', () => {
+  const r = fixture('native_event_notify || exit $?; native_event_defer')
+  assert.equal(r.status, 75); assert.equal(r.leader, false); assert.equal(r.dirty, true)
+})
+
+test('deferral refuses unknown dirty or leader entries before unlinking its owner', () => {
+  for (const dir of ['dirty', 'leader']) {
+    const r = fixture(`native_event_notify || exit $?
+touch '@ROOT@/events/${dir}/.foreign'
+native_event_defer; [ "$?" = 77 ] && [ -f '@ROOT@/events/leader/owner' ]`)
+    assert.equal(r.status, 0, r.stderr); assert.equal(r.leader && r.dirty, true)
+  }
+})
+
+test('inherited leader hints do not authorize deferral', () => {
+  const r = fixture(`native_event_notify || exit $?; export _ne_owned
+/bin/sh -c '. "@GATE@"; . "@HELPER@"; native_event_defer; [ "$?" = 77 ]'`)
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.leader && r.dirty, true)
+})
+
+test('notification during deferral cleanup stays dirty without reconstructing a leader', () => {
+  const r = fixture(`native_event_notify || exit $?
+rm() { /bin/rm "$@" || return $?; /bin/sh -c '. "@GATE@"; . "@HELPER@"; native_event_notify; [ "$?" = 77 ]'; }
+native_event_defer; [ "$?" = 75 ] || exit 9
+unset -f rm
+native_event_notify || exit $?; native_event_consume || exit $?; native_event_retire`)
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.leader || r.dirty, false)
+})
+
+test('deferral never removes a successor elected after its leader retirement', () => {
+  const r = fixture(`native_event_notify || exit $?
+rmdir() { /bin/rmdir "$@" || return $?; /bin/sh -c '. "@GATE@"; . "@HELPER@"; native_event_notify' || return $?; }
+native_event_defer; [ "$?" = 75 ] && [ -z "$_ne_owned" ] && [ -f '@ROOT@/events/leader/owner' ]`)
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.leader && r.dirty, true)
+})
 test('concurrent event queues for current leader, without a second executor', () => {
   const r = fixture(`native_event_notify || exit $?
 native_event_consume || exit $?
