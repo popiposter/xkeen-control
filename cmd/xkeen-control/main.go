@@ -216,7 +216,8 @@ func main() {
 		Auth:              authManager,
 		Nodes:             nodeManager,
 		Benchmark:         coordinator,
-		Selection:         coordinator,
+		// Selection writes stay unavailable until native ownership and independent
+		// override expiry are qualified. Not starting the loop alone is insufficient.
 		Assets:            webassets.Handler(),
 		StartedAt:         startedAt,
 		Manual:            coordinator,

@@ -50,6 +50,54 @@ const json = (route, body, status = 200) => route.fulfill({
   body: JSON.stringify(body),
 })
 
+test('node confirmation contains keyboard focus and restores it on Escape', async ({ page }) => {
+  await prepare(page)
+  await openNodes(page)
+  await page.evaluate(() => {
+    window.modalCSPViolations = []
+    document.addEventListener('securitypolicyviolation', (event) => window.modalCSPViolations.push(event.violatedDirective))
+    const policy = document.createElement('meta')
+    policy.httpEquiv = 'Content-Security-Policy'
+    policy.content = "script-src 'self'; style-src 'self'"
+    document.head.append(policy)
+  })
+  const trigger = page.getByRole('button', { name: 'Refresh Provider', exact: true })
+  await trigger.click()
+  const dialog = page.getByRole('dialog', { name: 'Preview node change' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Close preview' })).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(dialog.getByRole('button', { name: 'Apply and validate' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(dialog.getByRole('button', { name: 'Close preview' })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(dialog).not.toBeVisible()
+  await expect(trigger).toBeFocused()
+  expect(await page.evaluate(() => window.modalCSPViolations)).toEqual([])
+})
+
+test('Base UI confirmation stays open during an outstanding Apply', async ({ page }) => {
+  const prepared = await prepare(page)
+  page.__nodesIssues = prepared.issues
+  await openNodes(page)
+  await page.getByRole('button', { name: 'Refresh Provider', exact: true }).click()
+  let release
+  const pending = new Promise((resolve) => { release = resolve })
+  await page.route('**/api/v1/node-changes/apply', async (route) => {
+    await pending
+    await json(route, { operation: 'subscription-refresh', nodes: [], changes: [] })
+  })
+  const dialog = page.getByRole('dialog', { name: 'Preview node change' })
+  await dialog.getByRole('button', { name: 'Apply and validate' }).click()
+  await expect(dialog.getByRole('button', { name: 'Applying…' })).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await page.mouse.click(3, 3)
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled()
+  release()
+  await expect(dialog).not.toBeVisible()
+})
+
 async function prepare(page) {
   const state = {
     nodes: makeNodes(),

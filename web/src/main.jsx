@@ -1,7 +1,8 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { createDashboardReader } from './dashboard-reader.js'
 import './styles.css'
-import { Disclosure, MobileNavigationDrawer } from './ui.jsx'
+import { Disclosure, MobileNavigationDrawer, Modal } from './ui.jsx'
 import { IconHome, IconServer, IconSitemap, IconWorld, IconChartBar, IconCube, IconHistory, IconSettings, IconLogout, IconMenu2 } from '@tabler/icons-react'
 import { IconPlus, IconLink, IconRefresh, IconPencil, IconPower, IconTrash, IconX, IconChevronLeft, IconChevronRight, IconSearch, IconGauge, IconFocus2, IconArrowUp, IconArrowDown, IconArrowsSort, IconSquareCheck, IconPlayerPlay, IconPlayerPause } from '@tabler/icons-react'
 import { ComponentLifecycleNotices, ComponentsUpdatesSection, useComponentsController } from './components-updates.jsx'
@@ -57,13 +58,19 @@ const api = async (path, options = {}) => {
     headers: { Accept: 'application/json', ...(options.headers || {}) },
     ...options,
   })
-  const body = await response.json().catch(() => ({}))
-  if (!response.ok) {
-    const error = new Error(body.error || `Request failed (${response.status})`)
-    error.status = response.status
-    error.code = body.error
+  let body
+  try { body = await response.json() } catch {
+    const error = new Error(response.ok ? 'Invalid response from the panel. Refresh its status before retrying.' : `Request failed (${response.status})`)
+    if (!response.ok) error.status = response.status
     throw error
   }
+  if (!response.ok) {
+    const error = new Error(body?.error || `Request failed (${response.status})`)
+    error.status = response.status
+    error.code = body?.error
+    throw error
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Invalid response from the panel.')
   return body
 }
 
@@ -303,61 +310,60 @@ function App() {
   const [dashboard, setDashboard] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const sessionEpoch = useRef(0)
 
-  const loadDashboard = useCallback(async () => {
-    try {
-      const [status, nodes, performance] = await Promise.all([
-        api('/api/v1/status'),
-        api('/api/v1/nodes'),
-        api('/api/v1/performance'),
-      ])
-      setDashboard({ status, nodes, performance })
+  const reader = useRef(null)
+  if (!reader.current) reader.current = createDashboardReader({
+    api,
+    onData: (data, full) => {
+      setDashboard((current) => full ? data : current ? { ...current, ...data } : current)
       setError('')
-    } catch (cause) {
+    },
+    onError: (cause) => {
       if (cause.status === 401) {
+        sessionEpoch.current++
+        reader.current.invalidate()
         setDashboard(null)
         setSession(null)
       }
       setError(cause.message)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  const loadPerformance = useCallback(async () => {
-    try {
-      const performance = await api('/api/v1/performance')
-      setDashboard((current) => current ? { ...current, performance } : current)
-      setError('')
-    } catch (cause) {
-      if (cause.status === 401) {
-        setDashboard(null)
-        setSession(null)
-      }
-      setError(cause.message)
-    }
-  }, [])
-
+    },
+    onDone: () => setLoading(false),
+  })
+  const loadDashboard = useCallback(() => reader.current.refresh(true), [])
+  const loadPerformance = useCallback(() => reader.current.refresh(false), [])
   useEffect(() => {
+    let current = true
+    const epoch = sessionEpoch.current
     api('/api/v1/session')
       .then((value) => {
+        if (!current || epoch !== sessionEpoch.current) return
         setSession(value)
         return loadDashboard()
       })
       .catch((cause) => {
+        if (!current || epoch !== sessionEpoch.current) return
         if (cause.status !== 401) setError(cause.message)
         setLoading(false)
       })
+    return () => { current = false; reader.current.invalidate() }
   }, [loadDashboard])
 
   useEffect(() => {
     if (!session) return undefined
-    const timer = window.setInterval(loadDashboard, 5000)
-    return () => window.clearInterval(timer)
+    const refreshVisible = () => { if (!document.hidden) loadDashboard() }
+    const timer = window.setInterval(refreshVisible, 5000)
+    document.addEventListener('visibilitychange', refreshVisible)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', refreshVisible)
+    }
   }, [session, loadDashboard])
 
   const login = async (event) => {
     event.preventDefault()
+    const epoch = ++sessionEpoch.current
+    reader.current.invalidate()
     setError('')
     try {
       const value = await api('/api/v1/session/login', {
@@ -365,15 +371,20 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),
       })
+      if (epoch !== sessionEpoch.current) return
+      reader.current.invalidate()
       setPassword('')
       setSession(value)
       await loadDashboard()
     } catch (cause) {
+      if (epoch !== sessionEpoch.current) return
       setError(cause.message)
     }
   }
 
   const logout = async () => {
+    sessionEpoch.current++
+    reader.current.invalidate()
     try {
       await api('/api/v1/session/logout', {
         method: 'POST',
@@ -382,11 +393,14 @@ function App() {
     } catch (cause) {
       setError(cause.message)
     }
+    reader.current.invalidate()
     setDashboard(null)
     setSession(null)
   }
 
   const invalidateSession = useCallback(() => {
+    sessionEpoch.current++
+    reader.current.invalidate()
     setDashboard(null)
     setSession(null)
   }, [])
@@ -470,7 +484,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     if (!performancePolling || !onPerformanceRefresh) return undefined
     let active = true
     const poll = async () => {
-      if (!active || performancePollInFlight.current) return
+      if (!active || document.hidden || performancePollInFlight.current) return
       performancePollInFlight.current = true
       try {
         await onPerformanceRefresh()
@@ -508,7 +522,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     <DNSLifecycleNotice controller={dnsController} active={section === 'dns'} onOpenDNS={openDNS} />
     {error && <Notice message={error} />}
     {section === 'overview' && <Overview status={status} performance={performance} nodeTotal={nodes.total || 0} nodesByTag={nodesByTag} csrfToken={session.csrfToken} onRefresh={onRefresh} onUnauthorized={onUnauthorized} onOpenNodes={() => setSection('nodes')} />}
-    {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} performance={performance} manualOverride={status.selection?.manualOverride || ''} benchmarkRunning={Boolean(status.benchmark?.controlPlane?.running)} csrf={session.csrfToken} onRefresh={onRefresh} onPerformanceRefresh={onPerformanceRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} manualLifecycleBlocked={manualLifecycleBlocked} />}
+    {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} performance={performance} manualOverride={status.selection?.manualOverride || ''} benchmarkRunning={Boolean(status.benchmark?.controlPlane?.running)} csrf={session.csrfToken} onRefresh={onRefresh} onPerformanceRefresh={onPerformanceRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} manualLifecycleBlocked={manualLifecycleBlocked} selectionAvailable={!status.native} />}
     {section === 'routing' && <RoutingPolicySection controller={routingController} lifecycle={status.lifecycle} />}
     {section === 'dns' && <DNSObservatorySection controller={dnsController} />}
     {section === 'performance' && <PerformancePolicySection controller={performancePolicyController} />}
@@ -614,7 +628,7 @@ function AutomaticQualityOverview({ status, performance, nodesByTag }) {
   </section>
 }
 
-function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benchmarkRunning, csrf, onRefresh, onPerformanceRefresh, viewState, onViewStateChange, lifecycleBlocked, manualLifecycleBlocked }) {
+function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benchmarkRunning, csrf, onRefresh, onPerformanceRefresh, viewState, onViewStateChange, lifecycleBlocked, manualLifecycleBlocked, selectionAvailable }) {
   const [profiles, setProfiles] = useState('')
   const [subscriptionUrl, setSubscriptionUrl] = useState('')
   const [subscriptionName, setSubscriptionName] = useState('')
@@ -624,6 +638,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
   const [selectedIDs, setSelectedIDs] = useState(() => new Set())
   const [composer, setComposer] = useState('')
   const [preview, setPreview] = useState(null)
+  const previewTrigger = useRef(null)
   const [notice, setNotice] = useState(null)
   const [busy, setBusy] = useState(false)
   const [manualRequestBusy, setManualRequestBusy] = useState(false)
@@ -758,6 +773,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
 
   const requestPreview = async (path, payload, effectiveImpact = '') => {
     if (lifecycleBlocked) return
+    previewTrigger.current = document.activeElement
     setBusy(true)
     setNotice(null)
     try {
@@ -783,7 +799,10 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
       await onRefresh()
       setNotice({ tone: 'success', message: 'Change applied; the full Xray candidate and active inventory were validated.' })
     } catch (cause) {
-      setNotice({ tone: 'error', message: cause.message })
+      // An interrupted or malformed reply cannot prove that Apply did not run.
+      // Consume the preview in the UI as well; never offer replay of its token.
+      setPreview(null)
+      setNotice({ tone: 'error', message: !cause.status || cause.status >= 500 ? 'The change outcome could not be confirmed. Refresh the current state before making another change.' : cause.message })
     } finally {
       setBusy(false)
     }
@@ -808,7 +827,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
   }
 
   const setManualOverride = async (target) => {
-    if (lifecycleBlocked) return
+    if (lifecycleBlocked || !selectionAvailable) return
     setBusy(true)
     setNotice(null)
     try {
@@ -889,7 +908,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
     <div className="node-selection-toolbar" role="toolbar" aria-label="Selected node actions">
       <div className="selection-summary"><IconButton icon="select" label={`Select all ${filtered.length} filtered`} onClick={toggleAllFiltered} disabled={busy || lifecycleBlocked || !filtered.length || allFilteredSelected} /><IconButton icon="close" label="Clear selection" onClick={clearSelection} disabled={busy || lifecycleBlocked || !selectedIDs.size} /></div>
       <div className="selection-actions">
-        <IconButton icon="target" label={selectedManual ? 'Clear manual override' : 'Set manual override'} active={Boolean(selectedManual)} onClick={() => setManualOverride(selectedManual ? '' : (selectedNode.outboundTag || selectedNode.tag))} disabled={busy || lifecycleBlocked || !selectedNode || (!selectedManual && !selectedNode.enabled)} />
+        <IconButton icon="target" label={selectedManual ? 'Clear manual override' : 'Set manual override'} active={Boolean(selectedManual)} onClick={() => setManualOverride(selectedManual ? '' : (selectedNode.outboundTag || selectedNode.tag))} disabled={busy || lifecycleBlocked || !selectionAvailable || !selectedNode || (!selectedManual && !selectedNode.enabled)} />
         <IconButton icon="gauge" label={manualRequestBusy ? 'Starting speed test…' : 'Full speed test'} onClick={runManualNode} disabled={busy || manualRequestBusy || manualLifecycleBlocked || benchmarkRunning || manualRunning || adaptiveRunning || selectedNodes.length !== 1 || !selectedNode?.enabled} />
         <IconButton icon="edit" label="Edit / replace profile" onClick={() => openEditor()} disabled={busy || lifecycleBlocked || selectedNodes.length !== 1} />
         <IconButton icon="enable" label="Enable" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: true })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => node.enabled)} />
@@ -925,7 +944,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
     </div></Disclosure>}
 
     <Disclosure title={`Automatic quality · ${adaptiveStateLabel(adaptiveStatus)}`} attention={['running', 'failed', 'cleanup-pending'].includes(adaptiveStatus.state)}><AdaptiveQualityCard status={adaptiveStatus} nodes={nodes} /></Disclosure>
-    {preview && <PreviewDialog preview={preview} nodes={nodes} manualOverride={manualOverride} busy={busy || lifecycleBlocked} onCancel={cancelPreview} onApply={applyPreview} />}
+    {preview && <PreviewDialog preview={preview} nodes={nodes} manualOverride={manualOverride} busy={busy || lifecycleBlocked} onCancel={cancelPreview} onApply={applyPreview} returnFocus={previewTrigger} />}
   </section>
 }
 
@@ -992,7 +1011,7 @@ function NodeRows({ node, selected, onToggle }) {
   </>
 }
 
-function PreviewDialog({ preview, nodes, manualOverride, busy, onCancel, onApply }) {
+function PreviewDialog({ preview, nodes, manualOverride, busy, onCancel, onApply, returnFocus }) {
   const byID = new Map(nodes.map((node) => [node.id, node]))
   const changes = preview.changes || []
   const effectiveChanged = changes.some((change) => byID.get(change.id)?.isEffective)
@@ -1005,8 +1024,7 @@ function PreviewDialog({ preview, nodes, manualOverride, busy, onCancel, onApply
     : 0
   const manualSubscriptionRemovals = ['remove', 'batch-remove'].includes(preview.operation)
     && changes.some((change) => change.after === 'removed' && change.sourceType === 'subscription')
-  return <div className="modal-backdrop" role="presentation">
-    <div className="preview-dialog" role="dialog" aria-modal="true" aria-label="Preview node change">
+  return <Modal label="Preview node change" busy={busy} onCancel={onCancel} returnFocus={returnFocus}>
       <div className="dialog-heading"><div><span className="panel-label">Preview · {preview.operation}</span><h3>{preview.noop ? 'No persistent change' : `${preview.changes?.length || 0} node changes`}</h3></div><IconButton icon="close" label="Close preview" onClick={onCancel} disabled={busy} /></div>
       <div className="diff-list">
         {changes.map((change) => <div className="diff-row" key={`${change.action}-${change.id}`}><strong>{change.name}</strong><span>{change.before} → {change.after}</span></div>)}
@@ -1018,8 +1036,7 @@ function PreviewDialog({ preview, nodes, manualOverride, busy, onCancel, onApply
       {manualSubscriptionRemovals && <p className="warning" role="alert">A removed subscription-owned node may return on a later subscription refresh while it remains upstream.</p>}
       {preview.effectiveImpact && !effectiveChanged && <p className="warning" role="alert">This operation will {preview.effectiveImpact} the currently effective node. Active proxy traffic will be reselected after Apply.</p>}
       <div className="preview-actions"><button className="ghost" type="button" onClick={onCancel} disabled={busy}>Cancel</button><button type="button" onClick={onApply} disabled={busy}>{busy ? 'Applying…' : (preview.noop ? 'Confirm no-op' : 'Apply and validate')}</button></div>
-    </div>
-  </div>
+  </Modal>
 }
 
 function Pagination({ page, totalPages, onPage }) {

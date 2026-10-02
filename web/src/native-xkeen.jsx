@@ -2,11 +2,14 @@ export function NativeXkeenStatus({ facts, onOpenNodes }) {
   if (!facts) return null
   const installed = facts.installation === 'available'
   const attached = facts.panelIntegration === 'available'
-  const title = !installed ? 'Install XKeen first' : !attached ? 'Connect the panel to XKeen' : facts.xrayRunning ? 'XKeen is running' : 'Add your VPN profiles'
+  const missing = facts.installation === 'missing'
+  const attachable = installed && facts.panelIntegration === 'missing'
+  const uncertain = !installed && !missing || installed && !attached && !attachable
+  const title = uncertain ? 'Check XKeen status' : missing ? 'Install XKeen first' : attachable ? 'Connect the panel to XKeen' : facts.xrayRunning ? 'XKeen is running' : 'Add your VPN profiles'
   return <section className="panel" aria-label="Native XKeen">
-    <div className="workspace-heading"><h2>{title}</h2><span>{installed ? `XKeen ${facts.version} · ${facts.channel}` : 'Installation not detected'}</span></div>
-    <p>{!installed ? 'Use the official XKeen installer, then refresh this page.' : !attached ? 'The native installation is available. Complete the panel connection to manage VPN profiles.' : facts.xrayRunning ? 'XKeen manages the traffic service. The panel shows its status and manages your profiles.' : 'Import a subscription or add a VPN key to configure your connections.'}</p>
-    {attached && onOpenNodes && <button type="button" onClick={onOpenNodes}>Manage VPN profiles</button>}
+    <div className="workspace-heading"><h2>{title}</h2><span>{installed ? `XKeen ${facts.version} · ${facts.channel}` : missing ? 'Installation not detected' : 'Installation state unavailable'}</span></div>
+    <p>{uncertain ? 'The current state could not be confirmed. Inspect the native installation and refresh its status before making changes.' : missing ? 'Use the official XKeen installer, then refresh this page.' : attachable ? 'The native installation is available. Complete the panel connection to manage VPN profiles.' : facts.xrayRunning ? 'XKeen manages the traffic service. The panel shows its status and manages your profiles.' : 'Import a subscription or add a VPN key to configure your connections.'}</p>
+    {installed && attached && onOpenNodes && <button type="button" onClick={onOpenNodes}>Manage VPN profiles</button>}
   </section>
 }
 

@@ -19,6 +19,7 @@
     "test:system-panel-ui": "playwright test tests/system-panel.spec.js"
   },
   "dependencies": {
+    "@base-ui/react": "1.8.0",
     "@tabler/icons-react": "3.48.0",
     "flag-icons": "7.5.0",
     "react": "19.1.1",

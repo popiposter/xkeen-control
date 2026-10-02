@@ -1,6 +1,24 @@
+import { Dialog } from '@base-ui/react/dialog'
+import { CSPProvider } from '@base-ui/react/csp-provider'
 import { useEffect, useRef } from 'react'
 import { IconChevronRight, IconArrowUp, IconArrowDown, IconTrash } from '@tabler/icons-react'
 
+export function Modal({ label, busy, onCancel, returnFocus, children }) {
+  return <CSPProvider disableStyleElements><Dialog.Root open onOpenChange={(open, details) => {
+    if (busy) { details.cancel(); return }
+    if (!open) onCancel()
+  }}>
+    <Dialog.Portal>
+      <Dialog.Backdrop className="dialog-backdrop" />
+      <Dialog.Viewport className="dialog-viewport">
+        <Dialog.Popup className="preview-dialog" finalFocus={returnFocus}>
+          <Dialog.Title className="visually-hidden">{label}</Dialog.Title>
+          {children}
+        </Dialog.Popup>
+      </Dialog.Viewport>
+    </Dialog.Portal>
+  </Dialog.Root></CSPProvider>
+}
 export function MobileNavigationDrawer({ open, onClose, children }) {
   const dialogRef = useRef(null)
   useEffect(() => {
