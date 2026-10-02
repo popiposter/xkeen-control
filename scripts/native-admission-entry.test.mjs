@@ -7,7 +7,7 @@ import { test } from 'node:test'
 
 const entrySource = readFileSync('scripts/native-admission-entry.sh', 'utf8')
 const gateSource = readFileSync('scripts/native-operation-gate.sh', 'utf8')
-function fixture({ body = 'echo BODY >> "$evidence"', verifier = 'exit 0', setup = '', tail = '', action = 'start', mode = 'forced', role: entryRole = 'init', nested = false } = {}) {
+function fixture({ body = 'echo BODY >> "$evidence"', verifier = 'exit 0', setup = '', tail = '', action = 'start', mode = 'forced', role: entryRole = 'init', nested = false, nestedHook = false, hookBody = 'echo HOOK >> "$evidence"' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'native-entry-gate-'))
   chmodSync(root, 0o700)
   // Runtime executable paths must have protected ancestors; never execute a
@@ -15,13 +15,14 @@ function fixture({ body = 'echo BODY >> "$evidence"', verifier = 'exit 0', setup
   const code = mkdtempSync('/opt/native-entry-fixture-')
   chmodSync(code, 0o700)
   const evidence = join(code, 'evidence')
-  const paths = { gate: join(code, 'gate.sh'), entry: join(code, 'entry.sh'), init: join(code, 'init.sh'), dispatcher: join(code, 'dispatcher.sh'), verifier: join(code, 'verify.sh') }
+  const paths = { gate: join(code, 'gate.sh'), entry: join(code, 'entry.sh'), init: join(code, 'init.sh'), dispatcher: join(code, 'dispatcher.sh'), verifier: join(code, 'verify.sh'), hook: join(code, 'hook.sh') }
   const put = (path, text) => writeFileSync(path, text, { mode: 0o600 })
   let source = entrySource.replaceAll('/tmp/.xkeen-admission', root)
     .replaceAll('/opt/lib/xkeen/native-operation-gate.sh', paths.gate)
     .replaceAll('/opt/lib/xkeen/native-admission-verify.sh', paths.verifier)
     .replaceAll('/opt/etc/init.d/S05xkeen', paths.init)
     .replaceAll('/opt/sbin/xkeen', paths.dispatcher)
+    .replaceAll('/opt/etc/ndm/netfilter.d/proxy.sh', paths.hook)
     .replaceAll('/opt/bin/sh', '/bin/sh')
   put(paths.entry, source); put(paths.gate, gateSource)
   put(paths.verifier, '#!/bin/sh\n' + verifier.replaceAll('@ENTRY@', paths.entry).replaceAll('@GATE@', paths.gate) + '\n')
@@ -32,7 +33,16 @@ _fixture_mode=forced
 if [ '${role}' = init ] && [ "$#" = 1 ] && [ "$1" != stop ]; then _fixture_mode=automatic; fi
 native_admission_enter ${role} "\${1#-}" "$_fixture_mode" || exit $?
 [ "$_na_body" = 1 ] || exit 0
-${nested && role === 'dispatcher' ? `/bin/sh '${paths.init}' "\${1#-}" on || exit $?` : body}
+${nested && role === 'dispatcher' ? `/bin/sh '${paths.init}' "\${1#-}" on || exit $?` : nestedHook ? `/bin/sh '${paths.hook}' || exit $?` : body}
+native_admission_finish 0
+exit $?
+`)
+  put(paths.hook, `#!/bin/sh
+. '${paths.entry}'
+evidence='${evidence}'
+native_admission_hook_enter || exit $?
+[ "$_na_body" = 1 ] || exit 0
+${hookBody}
 native_admission_finish 0
 exit $?
 `)
@@ -139,6 +149,51 @@ test('dispatcher and init nesting share one owner until both finishes', () => {
   assert.equal(r.status, 0, r.stderr)
   assert.equal(r.evidence, 'BODY\n')
   assert.equal(r.held, false)
+})
+
+test('foreground init hook borrows forced or automatic operation until native readback', () => {
+  for (const [action, mode] of [['start', 'forced'], ['restart', 'forced'], ['start', 'automatic']]) {
+    const r = fixture({ action, mode, nestedHook: true, verifier: `[ "$2" = init ] || [ "$2:$3:$4" = hook:${action}:${mode} ]` })
+    assert.equal(r.status, 0, r.stderr)
+    assert.equal(r.evidence, 'HOOK\n')
+    assert.equal(r.held, false)
+  }
+})
+
+test('direct event hook is refused before a gate or native effects', () => {
+  const r = fixture({ role: 'hook' })
+  assert.notEqual(r.status, 0)
+  assert.equal(r.evidence, '')
+  assert.equal(r.held, false)
+})
+
+test('foreground hook failed or premature completion retains its parent operation', () => {
+  for (const hookBody of ['exit 9', 'exit 0', "trap 'exit 0' EXIT; native_admission_finish 1; exit 0"]) {
+    const r = fixture({ nestedHook: true, hookBody })
+    assert.notEqual(r.status, 0)
+    assert.equal(r.held, true)
+  }
+})
+
+test('foreground hook exec-self preserves its strict child and one completion record', () => {
+  const r = fixture({ nestedHook: true, hookBody: 'if [ -z "${ONCE-}" ]; then ONCE=1; export ONCE; exec /bin/sh "$0"; fi; echo HOOK >> "$evidence"' })
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.evidence, 'HOOK\n')
+  assert.equal(r.held, false)
+})
+
+test('dispatcher init and foreground hook share one admission owner', () => {
+  const r = fixture({ role: 'dispatcher', nested: true, nestedHook: true })
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.evidence, 'HOOK\n')
+  assert.equal(r.held, false)
+})
+
+test('inherited hook hints do not authorize an extra child to enter or finish', () => {
+  const r = fixture({ nestedHook: true, hookBody: '/bin/sh "$0" || exit $?' })
+  assert.notEqual(r.status, 0)
+  assert.equal(r.evidence, '')
+  assert.equal(r.held, true)
 })
 
 test('missing verifier and refused preflight execute zero native body', () => {

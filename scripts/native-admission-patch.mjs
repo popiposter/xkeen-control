@@ -24,7 +24,9 @@ function disabled(text) {
   return '#!/bin/sh\n' + fence + text.slice('#!/bin/sh\n'.length)
 }
 function entryPrelude(role) {
-  const normalize = role === 'dispatcher' ? `
+  const normalize = role === 'hook' ? `
+[ "$#" = 0 ] || exit 76
+` : role === 'dispatcher' ? `
 [ "$#" = 1 ] || exit 76
 case "$1" in -start|-stop|-restart) _na_entry_action=\${1#-};; *) exit 76;; esac
 _na_entry_mode=forced
@@ -62,13 +64,33 @@ while :; do
     [ -n "$_na_boot_path" ] || _na_boot_path=/
 done
 . /opt/lib/xkeen/native-admission-entry.sh
-native_admission_enter ${role} "$_na_entry_action" "$_na_entry_mode" || exit $?
+${role === 'hook' ? 'native_admission_hook_enter' : `native_admission_enter ${role} "$_na_entry_action" "$_na_entry_mode"`} || exit $?
 [ "$_na_body" = 1 ] || exit 0
 XKEEN_FOREGROUND=1; export XKEEN_FOREGROUND
 # END NATIVE ADMISSION ENTRY
 `
 }
 function addEntry(text, role) { return '#!/bin/sh\n' + entryPrelude(role) + text.slice('#!/bin/sh\n'.length) }
+
+function patchForegroundHook(text) {
+  text = replaceOnce(text,
+    '# XKeen: Auto-generated file. DO NOT EDIT!\nPATH="/opt/bin:/opt/sbin:/sbin:/bin:/usr/sbin:/usr/bin"\n',
+    '# XKeen: Auto-generated file. DO NOT EDIT!\n' + entryPrelude('hook') + 'PATH="/opt/bin:/opt/sbin:/sbin:/bin:/usr/sbin:/usr/bin"\n')
+  // Only these native successful terminals have completed all hook writers.
+  // Early ready/lock/no-op exits retain an incomplete parent, never settle it.
+  for (const [start, end] of [
+    ['    if [ -n "$_xkeen_cur_wan" ]', '\n    if _xkeen_rules_intact; then'],
+    ['    if _xkeen_rules_intact; then', '\n    # Кэш готовых'],
+    ['    if _xkeen_cache_valid; then', '\n    if [ -n "$port_donor" ]'],
+  ]) {
+    const a = text.indexOf(start), b = text.indexOf(end, a + start.length)
+    if (a < 0 || b < a) throw new Error('hook finish anchor missing')
+    const body = replaceOnce(text.slice(a, b), '        exit 0\n', '        native_admission_finish 0 || exit $?\n        exit 0\n')
+    text = text.slice(0, a) + body + text.slice(b)
+  }
+  text = replaceOnce(text, '\nelse\n    # mkdir-lock', '\n    native_admission_finish 0 || exit $?\nelse\n    # mkdir-lock')
+  return text
+}
 
 function patchNativeHookErrors(text) {
   const section = (start, end, edit) => {
@@ -193,7 +215,7 @@ function patchNativeHookErrors(text) {
     const cache = `${indent}_xkeen_cache_save\n`
     const hasWan = body.includes(publish), hasCache = body.includes(cache)
     body = body.replace(publish, '').replace(cache, '')
-    body = body.replace(`${indent}_xkeen_sync_deny_mac_ipset\n`, `${indent}_xkeen_sync_deny_mac_ipset || exit 1\n${hasCache ? cache : ''}${hasWan ? publish : ''}`)
+    body = replaceOnce(body, `${indent}_xkeen_sync_deny_mac_ipset`, `${indent}_xkeen_sync_deny_mac_ipset || exit 1\n${hasCache ? cache : ''}${hasWan ? publish : ''}`)
     return body
   })
   // Optional families are skipped successfully; enabled family work must pass.
@@ -225,6 +247,7 @@ export function buildCandidates({ init, dispatcher }) {
     '        _xkeen_release_nf_lock\n        exit 0\n',
     '        _xkeen_release_nf_lock\n        _xkeen_sync_deny_mac_ipset\n        exit 0\n')
   text = patchNativeHookErrors(text)
+  text = patchForegroundHook(text)
   // Exhausted native attempts otherwise fall through successful mutex cleanup.
   // Keep native firewall/killswitch behavior and release only a mutex we acquired.
   text = replaceOnce(text,

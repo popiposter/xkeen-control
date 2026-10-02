@@ -85,6 +85,7 @@ test('same WAN and intact rules still refresh schedule-driven deny MAC state', (
 _xkeen_cur_wan=192.0.2.1; _xkeen_prev_wan=192.0.2.1
 iptables_supported=false; ip6tables_supported=false
 _xkeen_rules_intact() { return 0; }; _xkeen_release_nf_lock() { echo RELEASE; }; _xkeen_sync_deny_mac_ipset() { echo SYNC; }
+native_admission_finish() { return "$1"; }
 ${fast}
 `)
   assert.equal(r.status, 0)

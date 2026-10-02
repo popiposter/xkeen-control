@@ -578,6 +578,19 @@ the unconditional whole-candidate fence remains mandatory.
 
 ### Bounded native Hybrid kernel proof (source-only)
 
+The source-only foreground seam now gives the init's generated hook one bounded
+`call.hook` record under the same RAM admission owner. The hook derives its action
+and forced/automatic mode from the authenticated live init record; it executes
+only the fixed generated path. Native exec-self preserves its immediate-child
+body identity. A new child merely inheriting hints cannot enter or finish it.
+The wrapper supplies native pre/post verification and success completion only
+after the reviewed WAN/intact/cache/full terminals finish their writers. Early
+ready/lock exits, failed synchronization or failed readback retain the operation.
+Admission precedes even native runtime-directory repair. Direct NDM/schedule
+hooks remain refused by this incomplete foreground-only candidate; elected
+event convergence must be implemented before installation. No new gate owner,
+persistent journal, renderer or panel dependency is introduced.
+
 `native-admission-hook-verify.sh pre|post ROLE ACTION MODE EXPECTATION` is a
 fixed read-only helper called by the native core verifier. It authenticates the
 live gate and canonical foreground call record through `_na_descendant_ok`;
