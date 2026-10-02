@@ -208,6 +208,7 @@ test('CLI publishes disabled set with manifest last and refuses existing destina
     assert.deepEqual(JSON.parse(manifest), result.manifest)
     assert.deepEqual(readFileSync(join(destination, 'init.disabled.sh')), result.init)
     assert.deepEqual(readFileSync(join(destination, 'dispatcher.disabled.sh')), result.dispatcher)
+    assert.deepEqual(readFileSync(join(destination, 'registration-template.disabled.sh')), result.registrationTemplate)
     const repeated = spawnSync(process.execPath, args, { encoding: 'utf8', timeout: 2000 })
     assert.equal(repeated.status, 1)
     assert.deepEqual(readFileSync(join(destination, 'manifest.json')), manifest)

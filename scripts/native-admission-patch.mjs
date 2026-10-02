@@ -436,10 +436,14 @@ monitor_fd() {
     '    ""|-sbt|-h|-help|-v|-version|-about|-ad|-donate|-af|-feedback) ;;',
     '    -start|-stop|-restart|""|-sbt|-h|-help|-v|-version|-about|-ad|-donate|-af|-feedback) ;;')
   const candidates = { init: Buffer.from(disabled(addEntry(text, 'init'))), dispatcher: Buffer.from(disabled(addEntry(dispatcherText, 'dispatcher'))) }
+  // Native register_xkeen_initd copies this source template and reapplies its
+  // declared settings. Decorate the template too; changing only the live init
+  // cannot survive native registration. This remains an uninstalled fenced file.
+  candidates.registrationTemplate = Buffer.from(candidates.init)
   return { ...candidates, manifest: {
     schema: 1, enabled: false, installed: false,
-    source: { initSHA256, dispatcherSHA256 },
-    candidate: { initSHA256: digest(candidates.init), dispatcherSHA256: digest(candidates.dispatcher) },
+    source: { initSHA256, dispatcherSHA256, registrationTemplateSHA256: initSHA256 },
+    candidate: { initSHA256: digest(candidates.init), dispatcherSHA256: digest(candidates.dispatcher), registrationTemplateSHA256: digest(candidates.registrationTemplate) },
     missing: ['native verifier/hook target integration qualification', 'bounded NDM event convergence',
       'standalone recovery/readback', 'native update persistence', 'BusyBox and hardware qualification'],
   } }
@@ -461,6 +465,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     // interrupted/failed publication is not a complete candidate set.
     mkdirSync(process.argv[4], { mode: 0o700 })
     for (const name of ['dispatcher', 'init']) writeFileSync(join(process.argv[4], name + '.disabled.sh'), candidates[name], { flag: 'wx', mode: 0o600 })
+    writeFileSync(join(process.argv[4], 'registration-template.disabled.sh'), candidates.registrationTemplate, { flag: 'wx', mode: 0o600 })
     writeFileSync(join(process.argv[4], 'manifest.json'), JSON.stringify(candidates.manifest, null, 2) + '\n', { flag: 'wx', mode: 0o600 })
     console.log(JSON.stringify(candidates.manifest))
   } catch {

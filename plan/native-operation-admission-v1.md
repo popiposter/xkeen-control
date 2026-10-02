@@ -623,6 +623,28 @@ or settled. Existing pending refusal/config-validation still precedes native bod
 This supplies RAM bootstrap only, not a real boot/reboot qualification or update
 preservation. Root creation and a new operation do not replay a former operation.
 
+### Native registration/update preservation boundary
+
+Pinned upstream `register_xkeen_initd` copies
+`07_install_register/04_register_init.sh`, reapplies declared native settings, then
+atomically renames the result onto the live init. It preserves setting values,
+not arbitrary added code. A local fixture executes that exact hash-pinned function
+and demonstrates that decorating the live init alone loses the admission seam.
+The source builder now emits a separately named fenced registration template
+identical to its init candidate; native registration from that template retains
+the seam, generated-hook integration and declared settings. This uses the native
+registration function; no second registration writer or installer is introduced.
+
+This is only the regeneration half of persistence. Native `-uk` replaces its
+dispatcher and module tree, then execs the new `-uk_post_update`, which registers
+init again. The archive staging path must preserve a supported integration profile
+before native installation replaces live files. Unknown profiles must refuse at
+staging, not discover lost admission after a successful update. No update command
+is enabled here; the template remains fenced, uninstalled, and native ownership
+of downloading/installing components and cron remains unchanged. Long update vs
+NDM deadline/notification settlement also needs explicit qualification before the
+shared native backend is enabled.
+
 ### Bounded native Hybrid kernel proof (source-only)
 
 The source-only foreground seam now gives the init's generated hook one bounded
