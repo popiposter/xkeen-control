@@ -23,6 +23,7 @@ const (
 	Stop         Action = "stop"
 	Restart      Action = "restart"
 	ConfigChange Action = "config-change"
+	Reconcile    Action = "reconcile"
 )
 
 var (
@@ -41,7 +42,9 @@ type Lease struct {
 	released            bool
 }
 
-func validAction(a Action) bool { return a == Start || a == Stop || a == Restart || a == ConfigChange }
+func validAction(a Action) bool {
+	return a == Start || a == Stop || a == Restart || a == ConfigChange || a == Reconcile
+}
 
 // Acquire attempts immediate admission under an explicit, pre-created root.
 // A leftover directory (including incomplete metadata) is always busy.

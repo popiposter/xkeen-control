@@ -587,6 +587,24 @@ primitives do not yet acquire operation admission, enforce a wait deadline or
 invoke/read back the current hook. The caller must implement and qualify all of
 those before reporting event convergence or enabling the native candidate.
 
+`scripts/native-event-convergence.sh` now provides a source-only elected caller:
+one existing invocation waits outside operation admission, with a fifteen-second
+monotonic budget and at most eight successful passes. `reconcile` is a distinct
+shared shell/Go admission action, not authorization to replay Start/Restart.
+Dirty is consumed only after admission. The caller invokes only the protected
+fixed `native-event-reconcile.sh` under the remaining timeout; failure/timeout
+re-publishes dirty and retains the election and uncertain operation. Successful
+readback must leave no borrower records before release and retirement. A queued
+follower returns 75, which does not mean convergence has completed.
+
+The fixed reconcile worker is still absent in this slice: missing capability
+refuses before native effects and preserves the event. Focused fixtures use a
+synthetic fixed worker joining the real shell gate, including Stop winning while
+waiting, repeat notifications, pass/deadline limits and failed-pass retention.
+They qualify caller orchestration only, not native current-state/kernel readback.
+The generated hook/schedule entry points are not connected to this caller yet;
+whole-candidate fences remain mandatory and nothing from this slice is installed.
+
 ### Bounded native Hybrid kernel proof (source-only)
 
 The source-only foreground seam now gives the init's generated hook one bounded
