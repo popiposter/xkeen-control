@@ -91,8 +91,9 @@ func (d Discovery) attachStoppedWithWriter(ctx context.Context, expected string,
 	}
 	sort.Strings(names)
 	mutated := false
+	candidateVerified := false
 	defer func() {
-		if err == nil || !mutated {
+		if err == nil || !mutated || candidateVerified {
 			return
 		}
 		if !d.stoppedForAttachment(context.Background()) {
@@ -102,6 +103,10 @@ func (d Discovery) attachStoppedWithWriter(ctx context.Context, expected string,
 		// Xray was stopped throughout this exclusive initial operation. Restore
 		// only bytes still owned by this candidate; never overwrite new drift.
 		for _, name := range names {
+			if !d.stoppedForAttachment(context.Background()) {
+				err = ErrAttachmentRecovery
+				return
+			}
 			path := d.path("opt/etc/xray/configs/" + name)
 			active, state := d.read("opt/etc/xray/configs/"+name, maxNativeConfig)
 			old, existed := files[name]
@@ -153,6 +158,10 @@ func (d Discovery) attachStoppedWithWriter(ctx context.Context, expected string,
 	if d.Inspect(ctx).PanelIntegration != CapabilityAvailable || !d.stoppedForAttachment(ctx) {
 		return AttachmentCheck{}, ErrAttachmentRecovery
 	}
+	// Receipt replacement may succeed before its directory sync reports failure.
+	// Keep the verified candidate on any final receipt error; reverting here
+	// could leave a committed-stopped receipt describing the wrong configuration.
+	candidateVerified = true
 	complete, _ := json.Marshal(struct {
 		State string
 		Check AttachmentCheck

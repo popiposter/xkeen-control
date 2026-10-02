@@ -108,7 +108,7 @@ func TestAttachStoppedRejectsUnprovenPreconditionsWithoutActiveWrites(t *testing
 }
 
 func TestAttachStoppedWriteFailureRestoresOnlyOwnedFilesAndRetainsReceipt(t *testing.T) {
-	for _, scenario := range []string{"snapshot", "first-active", "third-active", "receipt", "rollback-drift", "process-starts-after-write"} {
+	for _, scenario := range []string{"snapshot", "first-active", "third-active", "receipt", "receipt-after-rename", "rollback-drift", "process-starts-after-write"} {
 		t.Run(scenario, func(t *testing.T) {
 			d, digest, _ := attachmentFixture(t)
 			activeWrites, receipts := 0, 0
@@ -125,6 +125,9 @@ func TestAttachStoppedWriteFailureRestoresOnlyOwnedFilesAndRetainsReceipt(t *tes
 				}
 				if err := writeAttachmentFile(path, data); err != nil {
 					return err
+				}
+				if scenario == "receipt-after-rename" && receipts == 2 {
+					return errors.New("injected final receipt sync failure")
 				}
 				if active {
 					activeWrites++
@@ -150,10 +153,10 @@ func TestAttachStoppedWriteFailureRestoresOnlyOwnedFilesAndRetainsReceipt(t *tes
 				if string(got) != "{}\n" {
 					t.Fatal("overwrote external drift")
 				}
-			} else if scenario == "process-starts-after-write" {
+			} else if scenario == "process-starts-after-write" || strings.HasPrefix(scenario, "receipt") {
 				_, current, _ := d.attachmentSource(context.Background())
 				if current == digest {
-					t.Fatal("rolled back while process running")
+					t.Fatal("rolled back after uncertain runtime/receipt outcome")
 				}
 			} else {
 				assertAttachmentOriginal(t, d, digest)

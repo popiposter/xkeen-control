@@ -44,7 +44,11 @@ not predicted savings.
    them with native ownership/clean installation contracts. Do not retain dead
    product code solely to satisfy historical tests.
 
-Persistent module/build/npm volumes and bundled Chromium are already useful.
+Live audit found the module volume was mounted at `/go/pkg/mod`, but the Node
+base image defaults Go to `/root/go/pkg/mod`. Modules were downloaded on every
+disposable container run. Compose now explicitly sets `GOPATH=/go`, matching
+the existing module volume. The build and npm cache paths were already correct.
+Bundled Chromium remains useful.
 Aggregate helpers already use fixtures-only to avoid repeating Go sweeps;
 do not claim or remove a duplication that is already eliminated. The repeated
 race stress fixture is intentional until its covered implementation is retired.

@@ -118,6 +118,9 @@ integration files, verifies the entire resulting config set and records a
 `committed-stopped` receipt. It never starts a service. An existing receipt blocks
 replay; interrupted operations retain their snapshot for inspection. Rollback
 only restores still-owned bytes while the service is verifiably stopped. This
+includes preserving a fully verified candidate when final receipt persistence
+fails: a receipt rename may have succeeded before directory synchronization
+reported an error, so automatically reverting could contradict that receipt. This
 CLI flag declares operator-exclusive maintenance; it does not provide native
 CLI/cron exclusion. Focused Linux fixtures pass; live attachment remains pending.
 
