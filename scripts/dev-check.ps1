@@ -31,6 +31,7 @@ if ($Full) {
 $lanes = [ordered]@{ Go = 1; Helpers = 1; Web = 1; Artifact = 1 }
 $changed = @()
 $browserSpecs = @('*')
+$webBuild = 1
 if (-not $Full) {
     $working = @(@(
         Read-CheckGit @('diff', '--name-only', '--no-renames', 'HEAD')
@@ -43,6 +44,7 @@ if (-not $Full) {
     if ($Scope -eq 'branch') { $changed += @(Read-CheckGit @('diff', '--name-only', '--no-renames', "$Base...HEAD")) }
     $changed = @($changed | Where-Object { $_ } | Sort-Object -Unique)
     $lanes = Get-XKeenCheckLanes -Changed $changed
+    $webBuild = Get-XKeenWebBuild -Changed $changed
     $browserSpecs = @(Get-XKeenBrowserSpecs -Changed $changed)
     if (@($browserSpecs | Where-Object { $_ -ne '*' -and -not (Test-Path -LiteralPath (Join-Path $repo "web/$_")) }).Count) {
         $browserSpecs = @('*') # Deleted/renamed specs cannot become an empty green run.
@@ -53,7 +55,7 @@ if (-not $Full) {
 $checkPlan = [ordered]@{
     mode = $mode.Substring(2); scope = $(if ($Full) { 'all' } else { $Scope })
     head = @(Invoke-XKeenGit $repo @('rev-parse', 'HEAD'))[0]
-    changedPaths = @($changed); lanes = $lanes; browserSpecs = @($browserSpecs)
+    changedPaths = @($changed); lanes = $lanes; browserSpecs = @($browserSpecs); webBuild = $webBuild
     omitted = $(if ($Full) { @() } else { @('race', 'dependency audit', 'full release qualification') })
 }
 $checkPlan | ConvertTo-Json -Depth 6
@@ -88,6 +90,7 @@ $runArgs = @(
     '-e', "XKEEN_CHECK_ARTIFACT=$($lanes.Artifact)",
     '-e', "XKEEN_CHECK_PATHS=$(ConvertTo-Json -InputObject @($changed) -Compress)",
     '-e', "XKEEN_CHECK_UI=$($browserSpecs -join ' ')",
+    '-e', "XKEEN_CHECK_WEB_BUILD=$webBuild",
     'dev', 'bash', 'scripts/dev-check.sh', $mode
 )
 & docker @runArgs

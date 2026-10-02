@@ -55,7 +55,12 @@ run_web_checks() {
 	else
 		bash scripts/web-dependencies.sh --reuse
 	fi
-	npm --prefix web run build
+	if [ "$mode" = --full ] || [ "${XKEEN_CHECK_WEB_BUILD:-1}" != 0 ]; then
+		npm --prefix web run build
+		bash scripts/verify-webassets.sh
+	else
+		echo 'Web source unchanged: production build and embedded comparison omitted'
+	fi
 	npm --prefix web run test:unit
 	if [ "$mode" = "--full" ]; then
 		if [ "${XKEEN_PLAYWRIGHT_INSTALL:-0}" = "1" ]; then
@@ -69,7 +74,6 @@ run_web_checks() {
 		read -r -a specs <<< "$XKEEN_CHECK_UI"
 		npm --prefix web run test:ui -- "${specs[@]}"
 	fi
-	bash scripts/verify-webassets.sh
 }
 
 echo "== toolchain =="

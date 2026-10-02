@@ -34,3 +34,13 @@ function Get-XKeenBrowserSpecs {
     }
     return @($specs | Sort-Object)
 }
+
+function Get-XKeenWebBuild {
+    param([string[]]$Changed)
+    foreach ($path in $Changed) {
+        if ($path -match '^web/(tests|unit)/') { continue }
+        if ($path -match '^(web/|internal/webassets/|scripts/|Dockerfile\.dev$|docker-compose\.dev\.yml$|\.github/workflows/)') { return 1 }
+        if ($path -notmatch '^(cmd|internal|config|packaging|docs|plan|\.github)/|^go\.(mod|sum)$|^[^/]+\.md$|^\.git(ignore|attributes)$') { return 1 }
+    }
+    return 0
+}

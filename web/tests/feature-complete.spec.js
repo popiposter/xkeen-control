@@ -61,6 +61,14 @@ test('composes the final navigation lazily and leaves settings out of the dashbo
     for (const lazyPath of lazySettingsPaths) {
       await expect.poll(() => featureCompleteRequests(model, lazyPath, 'GET').length).toBe(openedPaths.has(lazyPath) ? 1 : 0)
     }
+    // Check each mounted workspace too: an active-only poll would be invisible
+    // if time advanced only before navigation and after leaving every editor.
+    const beforeTick = featureCompleteRequests(model, '/api/v1/status', 'GET').length
+    await page.clock.runFor(5_300)
+    await expect.poll(() => featureCompleteRequests(model, '/api/v1/status', 'GET').length).toBeGreaterThan(beforeTick)
+    for (const lazyPath of lazySettingsPaths) {
+      expect(featureCompleteRequests(model, lazyPath, 'GET')).toHaveLength(openedPaths.has(lazyPath) ? 1 : 0)
+    }
   }
   await expect.poll(() => featureCompleteRequests(model, '/api/v1/notifications', 'GET').length).toBe(1)
   await expect.poll(() => featureCompleteRequests(model, '/api/v1/update', 'GET').length).toBe(1)

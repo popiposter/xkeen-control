@@ -53,6 +53,8 @@ inputs broaden to all packages. Test-only edits do not rebuild ARM64 artifacts.
 Frontend iteration runs Node unit tests and selected browser specs; shared shell,
 style, fixture, dependency or HTTP/session changes select the whole browser suite.
 Known page modules also select cross-workspace integration and responsive tests.
+Test-only changes skip the production web build and embedded comparison; the plan
+reports `webBuild: 0`. The browser tests use the Vite development server.
 A deleted spec broadens browser selection instead of producing an empty pass.
 Race tests and dependency audit remain final/release checks.
 

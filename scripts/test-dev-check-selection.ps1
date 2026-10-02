@@ -29,4 +29,14 @@ foreach ($case in @(
     if (($actual -join ',') -ne ($case.Expected -join ',')) { throw "Incorrect browser selection for $($case.Paths): $actual" }
 }
 Write-Output 'Development lane selection fixtures passed'
+foreach ($case in @(
+    @{ Paths = @('web/tests/nodes.spec.js','web/unit/dashboard-reader.test.js'); Expected = 0 },
+    @{ Paths = @('web/src/main.jsx'); Expected = 1 },
+    @{ Paths = @('web/package-lock.json'); Expected = 1 },
+    @{ Paths = @('internal/httpapi/server.go'); Expected = 0 },
+    @{ Paths = @('internal/webassets/dist/index.html'); Expected = 1 },
+    @{ Paths = @('unknown'); Expected = 1 }
+)) {
+    if ((Get-XKeenWebBuild -Changed $case.Paths) -ne $case.Expected) { throw "Incorrect web build selection for $($case.Paths)" }
+}
 exit 0
