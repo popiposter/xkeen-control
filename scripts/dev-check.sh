@@ -56,7 +56,7 @@ run_web_checks() {
 		bash scripts/web-dependencies.sh --reuse
 	fi
 	if [ "$mode" = --full ] || [ "${XKEEN_CHECK_WEB_BUILD:-1}" != 0 ]; then
-		npm --prefix web run build
+		bash scripts/test-web-source-boundary.sh
 		bash scripts/verify-webassets.sh
 	else
 		echo 'Web source unchanged: production build and embedded comparison omitted'
