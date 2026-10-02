@@ -34,6 +34,7 @@ function fixture({ action = 'start', mode = 'forced', auto = 'on', setup = '', b
     .replaceAll('/opt/lib/xkeen/native-admission-verify.sh', path('verify'))
     .replaceAll('/opt/lib/xkeen/native-admission-hook-verify.sh', path('hook-verify'))
     .replaceAll('/opt/etc/init.d/S05xkeen', path('init'))
+    .replaceAll('/opt/etc/ndm/netfilter.d/proxy.sh', path('native-hook'))
     .replaceAll('/opt/etc/xkeen-control/previous/.pending', path('pending'))
     .replaceAll('/opt/etc/xray/configs', path('configs'))
     .replaceAll('/opt/etc/xray/dat', path('assets'))
@@ -47,6 +48,7 @@ function fixture({ action = 'start', mode = 'forced', auto = 'on', setup = '', b
   put('verify', replace(verifier).replaceAll('/proc/', path('proc/')))
   const defaultBody = action === 'stop' || (action === 'restart' && mode === 'automatic' && auto === 'off')
     ? `: > '${path('pids')}'` : mode === 'automatic' && auto === 'off' ? ':' : `echo 123 > '${path('pids')}'`
+  put('native-hook', `#!/bin/sh\n. '${path('entry')}'\nnative_admission_hook_enter || exit $?\n[ "$_na_body" = 1 ] || exit 0\necho HOOKBODY >> '${path('calls')}'\nnative_admission_finish 0\nexit $?\n`)
   put('init', `#!/bin/sh\nname_client="xray"\nstart_auto="${auto}"\n. '${path('entry')}'\nnative_admission_enter init "$1" '${mode}' || exit $?\n[ "$_na_body" = 1 ] || exit 0\necho BODY >> '${path('calls')}'\n${defaultBody}\n${body.replaceAll('@CODE@', code)}\nnative_admission_finish 0\nexit $?\n`)
   try {
     const bind = binding ? `. '${path('gate')}'
@@ -73,6 +75,24 @@ test('fixed native preflight and process proof settle only after hook proof', ()
   assert.equal(r.validation, 'VALIDATE\n')
   assert.equal(r.hooks, 'pre init start forced running\npost init start forced running\n')
   assert.equal(r.held, false)
+})
+
+test('real core verifier covers nested foreground hook in forced and automatic lifecycle', () => {
+  for (const [action, mode] of [['start', 'forced'], ['restart', 'forced'], ['start', 'automatic'], ['restart', 'automatic']]) {
+    const r = fixture({ action, mode, body: '/bin/sh @CODE@/native-hook || exit $?' })
+    assert.equal(r.status, 0, JSON.stringify(r))
+    assert.equal(r.calls, 'BODY\nHOOKBODY\n')
+    assert.equal(r.held, false)
+    assert.ok(r.hooks.includes(`pre hook ${action} ${mode} running\n`))
+    assert.ok(r.hooks.includes(`post hook ${action} ${mode} running\n`))
+  }
+})
+
+test('real nested hook postcondition failure cannot settle the init owner', () => {
+  const r = fixture({ body: '/bin/sh @CODE@/native-hook || exit $?', hook: '[ "$1:$2" != post:hook ]' })
+  assert.notEqual(r.status, 0)
+  assert.equal(r.calls, 'BODY\nHOOKBODY\n')
+  assert.equal(r.held, true)
 })
 
 test('missing hook capability, validation failure and retained config intent precede body', () => {

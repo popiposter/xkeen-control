@@ -440,8 +440,7 @@ monitor_fd() {
     schema: 1, enabled: false, installed: false,
     source: { initSHA256, dispatcherSHA256 },
     candidate: { initSHA256: digest(candidates.init), dispatcherSHA256: digest(candidates.dispatcher) },
-    missing: ['native postcondition verifier', 'foreground hook ownership and settlement',
-      'bounded NDM event convergence',
+    missing: ['native verifier/hook target integration qualification', 'bounded NDM event convergence',
       'standalone recovery/readback', 'native update persistence', 'BusyBox and hardware qualification'],
   } }
 }

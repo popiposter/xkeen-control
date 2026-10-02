@@ -576,6 +576,17 @@ foreground hook borrows its existing admission and never waits for the event
 leader while holding the gate. This convergence protocol is still design-only;
 the unconditional whole-candidate fence remains mandatory.
 
+`scripts/native-event-notification.sh` supplies source-only notification primitives
+for that design, without an executor or retry loop. One protected RAM directory
+coalesces dirty events; an elected existing invocation publishes a boot/PID/start
+record and consumes dirty immediately before its later current-state reconcile.
+Only that live process may consume or retire. A new event during retirement
+requires re-election; an already elected replacement is never deleted. Dead or
+incomplete elections remain unresolved, with no stale-owner reaping. These
+primitives do not yet acquire operation admission, enforce a wait deadline or
+invoke/read back the current hook. The caller must implement and qualify all of
+those before reporting event convergence or enabling the native candidate.
+
 ### Bounded native Hybrid kernel proof (source-only)
 
 The source-only foreground seam now gives the init's generated hook one bounded
