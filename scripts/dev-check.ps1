@@ -29,17 +29,16 @@ if (-not $Full) {
             git -C $repo diff --cached --name-only
             git -C $repo ls-files --others --exclude-standard
         ) | Where-Object { $_ } | Sort-Object -Unique
-        $joined = $changed -join "`n"
-        $lanes.Go = [int]($joined -match '(?m)^(cmd|internal|config)/|(?m)^go\.(mod|sum)$|(?m)^scripts/|(?m)^Dockerfile\.dev$|(?m)^docker-compose\.dev\.yml$|(?m)^\.github/workflows/')
-        $lanes.Helpers = [int]($joined -match '(?m)^(scripts|config|internal|cmd)/|(?m)^Dockerfile\.dev$|(?m)^docker-compose\.dev\.yml$|(?m)^\.github/workflows/')
-        $lanes.Web = [int]($joined -match '(?m)^(web|internal/webassets)/|(?m)^Dockerfile\.dev$|(?m)^docker-compose\.dev\.yml$')
-        $lanes.Artifact = $lanes.Go
+        . (Join-Path $PSScriptRoot 'dev-check-selection.ps1')
+        $lanes = Get-XKeenCheckLanes -Changed $changed
     } else {
         Write-Warning "comparison base $base is unavailable; fast mode will check every lane"
     }
 }
 
 if ($lanes.Helpers) {
+    & (Join-Path $PSScriptRoot 'test-dev-check-selection.ps1')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     & (Join-Path $PSScriptRoot 'test-keenetic-env.ps1')
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE

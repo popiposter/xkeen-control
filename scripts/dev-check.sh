@@ -10,6 +10,18 @@ case "$mode" in
 	*) echo "usage: $0 [--fast|--full]" >&2; exit 2 ;;
 esac
 
+if [ "$mode" = --fast ]; then
+	for name in XKEEN_CHECK_GO XKEEN_CHECK_HELPERS XKEEN_CHECK_WEB XKEEN_CHECK_ARTIFACT; do
+		case "${!name:-}" in
+			0|1) ;;
+			*) echo "fast mode requires an explicit 0/1 selection for $name; use scripts/dev-check.ps1" >&2; exit 2 ;;
+		esac
+	done
+fi
+
+echo "== Repository hygiene =="
+bash scripts/test-public-hygiene.sh
+
 lane_enabled() {
 	local value="${!1:-0}"
 	[ "$mode" = "--full" ] || [ "$value" = "1" ]
@@ -17,7 +29,10 @@ lane_enabled() {
 
 run_shell_fixtures() {
 	echo "== Unique shell and integration fixtures =="
-	bash -n scripts/*.sh scripts/xkeen-control-updater
+	for script in scripts/*.sh scripts/xkeen-control-updater packaging/S99xkeen-control; do
+		bash -n "$script"
+	done
+	bash scripts/test-dev-check-dispatch.sh
 	bash scripts/test-keenetic-env.sh
 	bash scripts/test-benchmark-policy.sh
 	bash scripts/test-xkeen-foreground.sh
@@ -80,6 +95,4 @@ if lane_enabled XKEEN_CHECK_ARTIFACT; then
 	sha256sum dist/xkeen-control-linux-arm64
 fi
 
-echo "== Repository hygiene =="
-bash scripts/test-public-hygiene.sh
 echo "git diff --check is run by scripts/dev-check.ps1 on the host"
