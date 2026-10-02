@@ -23,6 +23,52 @@ function disabled(text) {
   if (!text.startsWith('#!/bin/sh\n')) throw new Error('missing script header')
   return '#!/bin/sh\n' + fence + text.slice('#!/bin/sh\n'.length)
 }
+function entryPrelude(role) {
+  const normalize = role === 'dispatcher' ? `
+[ "$#" = 1 ] || exit 76
+case "$1" in -start|-stop|-restart) _na_entry_action=\${1#-};; *) exit 76;; esac
+_na_entry_mode=forced
+` : `
+case "$#:$1:\${2-}" in
+    1:start:|1:restart:) _na_entry_action=$1; _na_entry_mode=automatic;;
+    1:stop:|2:stop:on) _na_entry_action=stop; _na_entry_mode=forced;;
+    2:start:on|2:restart:on) _na_entry_action=$1; _na_entry_mode=forced;;
+    *) exit 76;;
+esac
+`
+  return `# BEGIN NATIVE ADMISSION ENTRY
+${normalize}
+PATH=/opt/bin:/opt/sbin:/usr/bin:/bin; export PATH
+[ "$(id -u)" = 0 ] || exit 76
+# Validate the fixed entry library before sourcing any of its code.
+_na_boot_path=/opt/lib/xkeen/native-admission-entry.sh
+while :; do
+    [ ! -L "$_na_boot_path" ] || exit 76
+    _na_boot_meta=$(stat -t "$_na_boot_path" 2>/dev/null) || exit 76
+    # Parsing in a subshell preserves original native positional arguments.
+    (
+        set -- $_na_boot_meta
+        [ "$#" -ge 9 ] && [ "$5" = 0 ] || exit 76
+        case "$4" in ''|*[!0-9a-fA-F]*) exit 76;; esac
+        [ "$((0x$4 & 0022))" -eq 0 ] || exit 76
+        if [ "$_na_boot_path" = /opt/lib/xkeen/native-admission-entry.sh ]; then
+            [ -f "$_na_boot_path" ] && [ "$9" = 1 ] || exit 76
+        else
+            [ -d "$_na_boot_path" ] || exit 76
+        fi
+    ) || exit 76
+    [ "$_na_boot_path" != / ] || break
+    _na_boot_path=\${_na_boot_path%/*}
+    [ -n "$_na_boot_path" ] || _na_boot_path=/
+done
+. /opt/lib/xkeen/native-admission-entry.sh
+native_admission_enter ${role} "$_na_entry_action" "$_na_entry_mode" || exit $?
+[ "$_na_body" = 1 ] || exit 0
+XKEEN_FOREGROUND=1; export XKEEN_FOREGROUND
+# END NATIVE ADMISSION ENTRY
+`
+}
+function addEntry(text, role) { return '#!/bin/sh\n' + entryPrelude(role) + text.slice('#!/bin/sh\n'.length) }
 
 export function buildCandidates({ init, dispatcher }) {
   // Validate both sources before producing anything; accept no alternate revision.
@@ -75,6 +121,21 @@ export function buildCandidates({ init, dispatcher }) {
             _cmd_rc=$?
         fi
 ` + text.slice(startEnd)
+  text = replaceOnce(text, `            [ "$start_auto" != "on" ] && exit 0
+            _acquire_coldstart_guard || exit 75
+            log_info_router "Подготовка к запуску прокси-клиента"
+            _native_cold_start
+            _cmd_rc=$?
+`, `            if [ "$start_auto" = "on" ]; then
+                if _acquire_coldstart_guard; then
+                    log_info_router "Подготовка к запуску прокси-клиента"
+                    _native_cold_start
+                    _cmd_rc=$?
+                else
+                    _cmd_rc=75
+                fi
+            fi
+`)
 
   // Same shell/PID preserves native proxy-mutex reentrancy in emergency_clear.
   const crashComment = text.indexOf('                        # Даём ядру прокси')
@@ -101,12 +162,20 @@ export function buildCandidates({ init, dispatcher }) {
   const announcement = '                    echo -e "  Прокси-клиент ${green}запущен${reset} в режиме ${light_blue}${mode_proxy}${reset}"\n'
   text = replaceOnce(text, announcement, '')
   text = replaceOnce(text, '                    if [ -n "$api_policy_json" ]; then\n', announcement + '                    if [ -n "$api_policy_json" ]; then\n')
-  const candidates = { init: Buffer.from(disabled(text)), dispatcher: Buffer.from(disabled(dispatcher.toString('utf8'))) }
+  text = replaceOnce(text, '\nexit "$_cmd_rc"\n', '\nnative_admission_finish "$_cmd_rc"\nexit $?\n')
+  let dispatcherText = replaceOnce(dispatcher.toString('utf8'), '\nexit "$xkeen_rc"\n', '\nnative_admission_finish "$xkeen_rc"\nexit $?\n')
+  // Lifecycle is not installation. These exact classified actions must neither
+  // rename an installation nor invoke the package manager under the gate.
+  dispatcherText = replaceOnce(dispatcherText, '\ninstall_xkeen_rename\n', '\ncase "$1" in -start|-stop|-restart) ;; *) install_xkeen_rename;; esac\n')
+  dispatcherText = replaceOnce(dispatcherText,
+    '    ""|-sbt|-h|-help|-v|-version|-about|-ad|-donate|-af|-feedback) ;;',
+    '    -start|-stop|-restart|""|-sbt|-h|-help|-v|-version|-about|-ad|-donate|-af|-feedback) ;;')
+  const candidates = { init: Buffer.from(disabled(addEntry(text, 'init'))), dispatcher: Buffer.from(disabled(addEntry(dispatcherText, 'dispatcher'))) }
   return { ...candidates, manifest: {
     schema: 1, enabled: false, installed: false,
     source: { initSHA256, dispatcherSHA256 },
     candidate: { initSHA256: digest(candidates.init), dispatcherSHA256: digest(candidates.dispatcher) },
-    missing: ['dispatcher/init shared admission', 'foreground hook ownership and settlement',
+    missing: ['native postcondition verifier', 'foreground hook ownership and settlement',
       'background token stripping and monitor fresh admission', 'bounded NDM event convergence',
       'standalone recovery/readback', 'native update persistence', 'BusyBox and hardware qualification'],
   } }

@@ -19,6 +19,7 @@ function run(body, args = []) {
 }
 const manager = source.slice(source.indexOf('\n_cmd_rc=0\n'))
 const setup = `
+native_admission_finish() { return "$1"; }
 ipset() { :; }; log_info_router() { :; }; sleep() { :; }
 _acquire_coldstart_guard() { return 0; }
 _set_coldstart_pid() { :; }
@@ -37,6 +38,24 @@ test('native Restart preserves successful Stop then Start', () => {
   const r = run(setup + manager, ['restart', 'on'])
   assert.equal(r.status, 0)
   assert.equal(r.stdout.trim(), 'STOP\nSTART')
+})
+test('classified lifecycle dispatcher prefix never runs installer rename or package self-heal', () => {
+  const dispatched = result.dispatcher.toString()
+  const begin = dispatched.indexOf('# Определение директории')
+  const end = dispatched.indexOf('# -toff действует', begin)
+  assert.ok(begin > 0 && end > begin)
+  const prefix = dispatched.slice(begin, end).replace('. "$script_dir/.xkeen/import.sh"', ': # synthetic import')
+  for (const action of ['-start', '-stop', '-restart']) {
+    const r = run(`
+XKEEN_FOREGROUND=1
+rm() { echo RENAME; }; mv() { echo RENAME; }
+_load_packages_info() { echo PACKAGES; }; _ensure_installed_packages() { echo PACKAGES; }
+${prefix}
+echo DONE
+`, [action])
+    assert.equal(r.status, 0, r.stderr)
+    assert.equal(r.stdout.trim(), 'DONE')
+  }
 })
 function runNativeStop({ action = 'restart', survives = 1, mutex = 0, running = 1 } = {}) {
   const begin = source.indexOf('\nproxy_stop() {\n')
@@ -57,6 +76,7 @@ log_info_router() { :; }; log_error_terminal() { :; }; log_warning_terminal() { 
 rm() { :; }; sleep() { :; }; usleep() { :; }
 trap 'printf "RESULT %s %s %s %s\\n" "$starts" "$cleaned" "$released" "$kills"' EXIT
 ${source.slice(begin, end)}
+native_admission_finish() { return "$1"; }
 ${manager}
 `, [action, 'on'])
 }
@@ -112,6 +132,16 @@ test('automatic start joins cold startup and reports startup failure', () => {
   const r = run(setup + '\nSTART_RC=9\n' + manager, ['start'])
   assert.equal(r.status, 9)
   assert.equal(r.stdout.trim(), 'START')
+})
+test('automatic-disabled native command manager reaches typed finish without Start', () => {
+  const r = run(setup + '\nstart_auto=off\nnative_admission_finish() { echo FINISH:$1; return "$1"; }\n' + manager, ['start'])
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.stdout.trim(), 'FINISH:0')
+})
+test('contended native cold-start guard reaches failed finish', () => {
+  const r = run(setup + '\n_acquire_coldstart_guard() { return 1; }\nnative_admission_finish() { echo FINISH:$1; return "$1"; }\n' + manager, ['start'])
+  assert.equal(r.status, 75, r.stderr)
+  assert.equal(r.stdout.trim(), 'FINISH:75')
 })
 test('cold startup refuses Start when readiness fails', () => {
   const r = run(setup + '\nREADY_RC=8\n' + manager, ['cold_start'])

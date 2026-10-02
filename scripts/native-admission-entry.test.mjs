@@ -28,7 +28,9 @@ function fixture({ body = 'echo BODY >> "$evidence"', verifier = 'exit 0', setup
   for (const role of ['init', 'dispatcher']) put(paths[role], `#!/bin/sh
 . '${paths.entry}'
 evidence='${evidence}'
-native_admission_enter ${role} "\${1#-}" '${mode}' || exit $?
+_fixture_mode=forced
+if [ '${role}' = init ] && [ "$#" = 1 ] && [ "$1" != stop ]; then _fixture_mode=automatic; fi
+native_admission_enter ${role} "\${1#-}" "$_fixture_mode" || exit $?
 [ "$_na_body" = 1 ] || exit 0
 ${nested && role === 'dispatcher' ? `/bin/sh '${paths.init}' "\${1#-}" on || exit $?` : body}
 native_admission_finish 0
@@ -36,7 +38,7 @@ exit $?
 `)
   try {
     const expand = text => text.replaceAll('@ROOT@', root).replaceAll('@GATE@', paths.gate)
-    const r = spawnSync('/bin/sh', ['-c', `${expand(setup)}\n/bin/sh '${paths[entryRole]}' '${action}'\nrc=$?\n${expand(tail)}\nexit "$rc"`], { encoding: 'utf8', timeout: 3000 })
+    const r = spawnSync('/bin/sh', ['-c', `${expand(setup)}\n/bin/sh '${paths[entryRole]}' '${action}' ${entryRole === 'init' && mode === 'forced' ? 'on' : ''}\nrc=$?\n${expand(tail)}\nexit "$rc"`], { encoding: 'utf8', timeout: 3000 })
     assert.ifError(r.error)
     return { ...r, held: existsSync(join(root, 'operation.lock.d')), evidence: existsSync(evidence) ? readFileSync(evidence, 'utf8') : '' }
   } finally { rmSync(root, { recursive: true, force: true }); rmSync(code, { recursive: true, force: true }) }
@@ -78,10 +80,10 @@ test('unsupported action rejects before acquiring or executing body', () => {
   assert.equal(r.evidence, '')
   assert.equal(r.held, false)
 })
-test('automatic boot mode is explicitly unsupported before body or admission', () => {
-  const r = fixture({ mode: 'automatic' })
-  assert.equal(r.status, 76, r.stderr)
-  assert.equal(r.evidence, '')
+test('automatic boot mode stays bare in child and is bound into verifier input', () => {
+  const r = fixture({ mode: 'automatic', body: '[ "$#" = 1 ] || exit 9; echo AUTOMATIC >> "$evidence"', verifier: '[ "$1:$2:$3" = init:start:automatic ]' })
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.evidence, 'AUTOMATIC\n')
   assert.equal(r.held, false)
 })
 test('borrowed foreground invocation leaves release to existing owner', () => {

@@ -59,8 +59,8 @@ _na_read_record() {
     IFS= read -r _na_record < "$_na_call_dir/context" || return 77
     [ "$_ng_meta_size" -eq "$(( ${#_na_record} + 1 ))" ] || return 77
     set -- $_na_record
-    [ "$#" = 7 ] && [ "$1" = v1 ] && [ "$5" = "$_na_role" ] &&
-        [ "$6" = "$_na_action" ] && [ "$7" = "$XKEEN_GATE_TOKEN" ] || return 77
+    [ "$#" = 8 ] && [ "$1" = v1 ] && [ "$5" = "$_na_role" ] &&
+        [ "$6" = "$_na_action" ] && [ "$7" = "$_na_mode" ] && [ "$8" = "$XKEEN_GATE_TOKEN" ] || return 77
     _native_gate_decimal "$2" && _native_gate_decimal "$3" || return 77
     [ "${#4}" = 32 ] || return 77
     case "$4" in *[!0-9a-f]*) return 77;; esac
@@ -81,16 +81,17 @@ native_admission_enter() {
     # A private marker is only a routing hint. Gate tuple + live immediate
     # wrapper ancestry + nonce in protected RAM authorize the body.
     _na_body=0
-    # Only explicit forced lifecycle commands are supported. Boot/automatic
-    # mode must reject before invoking this helper until separately integrated.
-    [ "$#" = 3 ] && [ "$3" = forced ] || return 76
-    case "$1:$2" in dispatcher:start|dispatcher:stop|dispatcher:restart|init:start|init:stop|init:restart) ;; *) return 76;; esac
+    [ "$#" = 3 ] || return 76
+    case "$1:$2:$3" in
+        dispatcher:start:forced|dispatcher:stop:forced|dispatcher:restart:forced|init:start:forced|init:stop:forced|init:restart:forced|init:start:automatic|init:restart:automatic) ;;
+        *) return 76;;
+    esac
     PATH=/opt/bin:/opt/sbin:/usr/bin:/bin; export PATH
     [ "$(id -u)" = 0 ] || return 76
     _na_file_ok /opt/lib/xkeen/native-operation-gate.sh || return 76
     . /opt/lib/xkeen/native-operation-gate.sh
     _na_gate_identity=
-    _na_role=$1; _na_action=$2
+    _na_role=$1; _na_action=$2; _na_mode=$3
     _na_call_dir=/tmp/.xkeen-admission/operation.lock.d/call.$_na_role
     case "${XKEEN_ADMISSION_ROLE-}" in
         '')
@@ -104,7 +105,7 @@ native_admission_enter() {
             ;;
         dispatcher)
             # Only the fixed dispatcher -> init nesting is supported here.
-            [ "$_na_role" = init ] && [ "${XKEEN_ADMISSION_ACTION-}" = "$_na_action" ] || return 77
+            [ "$_na_role" = init ] && [ "$_na_mode" = forced ] && [ "${XKEEN_ADMISSION_ACTION-}" = "$_na_action" ] || return 77
             _na_gate_ok || return $?
             ;;
         *) return 77;;
@@ -131,7 +132,7 @@ native_admission_enter() {
         }} END { if (count == 16 && !bad) printf "%s", token }')
     [ "${#_na_nonce}" = 32 ] || { _na_poison; return 77; }
     case "$_na_nonce" in *[!0-9a-f]*) _na_poison; return 77;; esac
-    _na_record="v1 $_ng_self_pid $_ng_self_start $_na_nonce $_na_role $_na_action $XKEEN_GATE_TOKEN"
+    _na_record="v1 $_ng_self_pid $_ng_self_start $_na_nonce $_na_role $_na_action $_na_mode $XKEEN_GATE_TOKEN"
     (umask 077; set -C; printf '%s\n' "$_na_record" > "$_na_call_dir/context") || { _na_poison; return 77; }
     XKEEN_ADMISSION_ROLE=$_na_role; XKEEN_ADMISSION_ACTION=$_na_action; XKEEN_ADMISSION_CALL=$_na_nonce
     export XKEEN_ADMISSION_ROLE XKEEN_ADMISSION_ACTION XKEEN_ADMISSION_CALL
@@ -144,7 +145,11 @@ native_admission_enter() {
             ;;
         init)
             _na_file_ok /opt/etc/init.d/S05xkeen || { _na_poison; return 76; }
-            /opt/bin/sh /opt/etc/init.d/S05xkeen "$_na_action" on
+            if [ "$_na_mode" = automatic ]; then
+                /opt/bin/sh /opt/etc/init.d/S05xkeen "$_na_action"
+            else
+                /opt/bin/sh /opt/etc/init.d/S05xkeen "$_na_action" on
+            fi
             _na_rc=$?
             ;;
     esac
@@ -157,7 +162,7 @@ native_admission_enter() {
     # Must be native-owned verification; no panel process/API/CLI dependency.
     # Missing implementation is intentionally an unresolved outcome.
     _na_file_ok /opt/lib/xkeen/native-admission-verify.sh || { _na_poison; return 76; }
-    /opt/bin/sh /opt/lib/xkeen/native-admission-verify.sh "$_na_role" "$_na_action" || { _na_poison; return 77; }
+    /opt/bin/sh /opt/lib/xkeen/native-admission-verify.sh "$_na_role" "$_na_action" "$_na_mode" || { _na_poison; return 77; }
     _na_gate_ok || return 77
     rm "$_na_call_dir/complete" "$_na_call_dir/context" && rmdir "$_na_call_dir" || { _na_poison; return 77; }
     unset XKEEN_ADMISSION_ROLE XKEEN_ADMISSION_ACTION XKEEN_ADMISSION_CALL
@@ -177,5 +182,5 @@ native_admission_finish() {
 }
 native_admission_strip() {
     unset XKEEN_GATE_ROOT XKEEN_GATE_TOKEN XKEEN_ADMISSION_ROLE XKEEN_ADMISSION_ACTION XKEEN_ADMISSION_CALL
-    unset _na_body _na_role _na_action _na_nonce _na_record _na_call_dir _na_owns _na_gate_identity _ng_owned_record _ng_owned_root
+    unset _na_body _na_role _na_action _na_mode _na_nonce _na_record _na_call_dir _na_owns _na_gate_identity _ng_owned_record _ng_owned_root
 }
