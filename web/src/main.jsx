@@ -2,6 +2,8 @@ import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'r
 import { createRoot } from 'react-dom/client'
 import { createDashboardReader } from './dashboard-reader.js'
 import './theme.css'
+import { Badge } from '@/components/ui/badge'
+import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
@@ -437,6 +439,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const { status, nodes, performance } = dashboard
   const [section, setSection] = useState('overview')
   const [navigationOpen, setNavigationOpen] = useState(false)
+  const navigationTrigger = useRef(null)
   const closeNavigation = useCallback(() => setNavigationOpen(false), [])
   const [nodeView, setNodeView] = useState(createNodeViewState)
   const [restoreState, setRestoreState] = useState({ preview: null })
@@ -518,11 +521,11 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   ]
   const pageTitle = { components: 'Components', system: 'System' }[section] || sections.find(([key]) => key === section)?.[1]
   return <Shell>
-    <a className="skip-link" href="#workspace">Skip to workspace</a>
-    <header className="mobile-bar"><button type="button" className="ghost" aria-label="Toggle navigation" aria-expanded={navigationOpen} aria-controls="mobile-dashboard-navigation" aria-haspopup="dialog" onClick={() => setNavigationOpen(!navigationOpen)}><IconMenu2 size={18} /></button><strong>XKeen Control</strong></header>
-    <aside className="sidebar"><NavigationContent sections={sections} section={section} total={nodes.total || 0} version={status.controlPlane?.version || 'dev'} onSelect={closeNavigation} onLogout={onLogout} /></aside>
-    <MobileNavigationDrawer open={navigationOpen} onClose={closeNavigation}><div className="mobile-navigation-panel"><NavigationContent mobile sections={sections} section={section} total={nodes.total || 0} version={status.controlPlane?.version || 'dev'} onSelect={closeNavigation} onLogout={onLogout} /></div></MobileNavigationDrawer>
-    <div id="workspace" className="workspace" tabIndex="-1">
+    <a className="sr-only focus:not-sr-only focus:p-4" href="#workspace">Skip to workspace</a>
+    <header className="flex items-center gap-3 border-b p-3 min-[761px]:hidden"><Button ref={navigationTrigger} type="button" variant="ghost" size="icon-lg" className="min-h-11 min-w-11" aria-label="Toggle navigation" aria-expanded={navigationOpen} aria-controls="mobile-dashboard-navigation" aria-haspopup="dialog" onClick={() => setNavigationOpen(!navigationOpen)}><IconMenu2 /></Button><strong>XKeen Control</strong></header>
+    <aside className="fixed inset-y-0 left-0 hidden w-60 flex-col gap-4 border-r bg-sidebar p-4 min-[761px]:flex"><NavigationContent sections={sections} section={section} total={nodes.total || 0} version={status.controlPlane?.version || 'dev'} onSelect={closeNavigation} onLogout={onLogout} /></aside>
+    <MobileNavigationDrawer returnFocus={navigationTrigger} open={navigationOpen} onClose={closeNavigation}><div className="flex min-h-full flex-col gap-4"><NavigationContent mobile sections={sections} section={section} total={nodes.total || 0} version={status.controlPlane?.version || 'dev'} onSelect={closeNavigation} onLogout={onLogout} /></div></MobileNavigationDrawer>
+    <div id="workspace" className="min-w-0 min-[761px]:ml-60" tabIndex="-1"><div className="legacy-workspace"><div className="workspace">
     {section !== 'nodes' && <header className="page-heading"><h1>{pageTitle}</h1>{section === 'overview' && <button className="ghost" type="button" onClick={onRefresh}><Icon name="refresh" />Refresh</button>}</header>}
     {!status.native && <ComponentLifecycleNotices controller={componentController} lifecycle={status.lifecycle} onOpenComponents={openComponents} />}
     <RoutingLifecycleNotice controller={routingController} active={section === 'routing'} onOpenRouting={openRouting} />
@@ -536,17 +539,18 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     {section === 'components' && (status.native ? <NativeXkeenSection facts={status.native} onRefresh={onRefresh} onOpenSystem={() => setSection('system')} /> : <ComponentsUpdatesSection controller={componentController} lifecycle={status.lifecycle} onOpenSystem={() => setSection('system')} />)}
     {section === 'backup' && <BackupRestoreSection csrf={session.csrfToken} restoreState={restoreState} setRestoreState={setRestoreState} onRefresh={onRefresh} onUnauthorized={onUnauthorized} lifecycleBlocked={lifecycleBlocked} />}
     {section === 'system' && <SystemPanelSection controller={systemPanelController} status={status} onOpenComponents={openComponents} onOpenBackup={openBackup} />}
-    </div>
+    </div></div></div>
   </Shell>
 }
 
 function NavigationContent({ mobile = false, sections, section, total, version, onSelect, onLogout }) {
   return <>
-    <div className="navigation-heading"><strong className="product-name">XKeen <span>Control</span></strong>{mobile && <button type="button" className="icon-button ghost" aria-label="Close navigation" onClick={onSelect}><IconX size={20} aria-hidden="true" /></button>}</div>
-    <nav id={mobile ? 'mobile-dashboard-navigation' : 'dashboard-navigation'} className="section-nav" aria-label="Dashboard sections">
-      {sections.map(([key, label, NavigationIcon, open]) => <button key={key} type="button" className={section === key ? 'active' : ''} aria-label={key === 'nodes' ? `Nodes ${total}` : label} aria-current={section === key ? 'page' : undefined} onClick={() => { open(); onSelect() }}><NavigationIcon size={18} aria-hidden="true" /><span>{label === 'Components / Updates' ? <>Components<span className="nav-suffix"> / Updates</span></> : label === 'System / Panel' ? <>System<span className="nav-suffix"> / Panel</span></> : label}</span>{key === 'nodes' && <span className="nav-count"> {total}</span>}</button>)}
+    <div className="flex items-center justify-between gap-2"><strong>XKeen Control</strong>{mobile && <Button type="button" variant="ghost" size="icon-lg" className="min-h-11 min-w-11" aria-label="Close navigation" onClick={onSelect}><IconX /></Button>}</div>
+    <Separator />
+    <nav id={mobile ? 'mobile-dashboard-navigation' : 'dashboard-navigation'} className="flex flex-col gap-1" aria-label="Dashboard sections">
+      {sections.map(([key, label, NavigationIcon, open]) => <Button key={key} type="button" variant={section === key ? 'secondary' : 'ghost'} size="lg" className="min-h-11 w-full justify-start" aria-label={key === 'nodes' ? `Nodes ${total}` : label} aria-current={section === key ? 'page' : undefined} onClick={() => { open(); onSelect() }}><NavigationIcon data-icon="inline-start" /><span className="truncate">{label}</span>{key === 'nodes' && <Badge variant="secondary" className="ml-auto">{total}</Badge>}</Button>)}
     </nav>
-    <div className="sidebar-footer"><small>{version}</small><button className="ghost" type="button" onClick={onLogout}><IconLogout size={18} aria-hidden="true" />Sign out</button></div>
+    <div className="mt-auto flex flex-col gap-3"><Separator /><small className="text-muted-foreground">{version}</small><Button variant="ghost" size="lg" className="min-h-11 justify-start" type="button" onClick={onLogout}><IconLogout data-icon="inline-start" />Sign out</Button></div>
   </>
 }
 
@@ -1299,7 +1303,7 @@ function Icon({ name }) {
   return Component ? <Component size={16} aria-hidden="true" focusable="false" /> : null
 }
 
-function Shell({ children }) { return <main className="app-shell legacy-workspace">{children}</main> }
+function Shell({ children }) { return <main className="min-h-svh min-w-80 bg-background text-foreground">{children}</main> }
 function Notice({ message, tone = 'error' }) { return <div className={`notice ${tone}`} role="status">{message}</div> }
 function HealthCard({ label, ok, detail }) { return <div className="health-card"><div className={`health-icon ${ok ? 'ok' : 'bad'}`}>{ok ? '✓' : '!'}</div><div><span className="panel-label">{label}</span><strong>{ok ? 'Healthy' : 'Degraded'}</strong><small>{detail}</small></div></div> }
 function SelectionCard({ label, node, tone, emptyText = 'No current target' }) { return <div className={`panel selection-card ${tone}`}><span className="panel-label">{label}</span>{node ? <NodeName node={node} /> : <strong>{emptyText}</strong>}<small>{node?.address || (node ? 'No address' : '')}</small></div> }

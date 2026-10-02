@@ -122,9 +122,24 @@ includes preserving a fully verified candidate when final receipt persistence
 fails: a receipt rename may have succeeded before directory synchronization
 reported an error, so automatically reverting could contradict that receipt. This
 CLI flag declares operator-exclusive maintenance; it does not provide native
-CLI/cron exclusion. Focused Linux fixtures pass; live attachment remains pending.
+CLI/cron exclusion. Exact `b330e559e69199f4f3afa5c5e4f90b7e21aba939` passed
+the complete Linux gate including 198 browser tests. Its ARM64 development
+artifact was independently hash-verified before one live stopped attachment.
+Separate readback confirmed the committed receipt, eleven expected file hashes,
+preserved native DNS/inbounds/policy/init/cron, and full installed-Xray validation.
+The native installer was not replayed.
 
-Scoped config onboarding, native start/restart/readback, subscription import,
+A subsequent single native foreground start completed; independent discovery
+confirmed running Xray and native interception, and the loopback API/balancer
+responded. The panel development binary and init were installed separately using
+the fresh development installer, with new private authentication and exact LAN
+binding. Binary/init hashes, process executable, health and authenticated native
+status were independently checked. The build reports `dev` / `development`;
+source provenance is the qualified artifact digest, not a signed release identity.
+No profiles have been imported yet. The development installer does not install
+the panel updater helper; rebind/update acceptance remains pending.
+
+Subscription import, native restart with managed profiles,
 LAN TCP/UDP/DNS policy, panel-stop autonomy, native update/cron collision and
 failure recovery remain pending. A common admission seam is required for claims
 of concurrent CLI/cron/panel safety. Exclusive operator maintenance during this

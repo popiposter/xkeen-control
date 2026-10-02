@@ -1,3 +1,4 @@
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { CSPProvider } from '@base-ui/react/csp-provider'
 import { useEffect, useRef } from 'react'
@@ -14,35 +15,21 @@ export function Modal({ label, busy, onCancel, returnFocus, children }) {
         </DialogContent>
   </Dialog></CSPProvider>
 }
-export function MobileNavigationDrawer({ open, onClose, children }) {
-  const dialogRef = useRef(null)
+export function MobileNavigationDrawer({ open, onClose, returnFocus, children }) {
   useEffect(() => {
     if (!open) return undefined
-    const dialog = dialogRef.current
     const mobile = window.matchMedia('(max-width: 760px)')
     if (!mobile.matches) { onClose(); return undefined }
-    const previousOverflow = document.body.style.overflow
-    dialog.showModal()
-    document.body.style.overflow = 'hidden'
     const onViewportChange = () => { if (!mobile.matches) onClose() }
     mobile.addEventListener('change', onViewportChange)
-    return () => {
-      mobile.removeEventListener('change', onViewportChange)
-      dialog.close()
-      document.body.style.overflow = previousOverflow
-    }
+    return () => mobile.removeEventListener('change', onViewportChange)
   }, [open, onClose])
-  return <dialog ref={dialogRef} className="legacy-workspace mobile-navigation-drawer" aria-label="Navigation menu" onClose={onClose} onKeyDown={(event) => {
-    if (event.key !== 'Tab') return
-    const buttons = [...event.currentTarget.querySelectorAll('button:not(:disabled)')].filter((button) => button.getClientRects().length)
-    const first = buttons[0], last = buttons[buttons.length - 1]
-    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
-    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
-  }} onClick={(event) => {
-    if (event.target !== event.currentTarget) return
-    const bounds = event.currentTarget.getBoundingClientRect()
-    if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose()
-  }}>{open ? children : null}</dialog>
+  return <CSPProvider disableStyleElements><Sheet open={open} onOpenChange={(next) => { if (!next) onClose() }}>
+    <SheetContent side="left" showCloseButton={false} className="overflow-y-auto p-4" finalFocus={returnFocus}>
+      <SheetTitle className="sr-only">Navigation menu</SheetTitle>
+      {open ? children : null}
+    </SheetContent>
+  </Sheet></CSPProvider>
 }
 
 export function RowAction({ action, label, className = '', ...props }) {
