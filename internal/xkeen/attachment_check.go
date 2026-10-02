@@ -29,21 +29,23 @@ type AttachmentCheck struct {
 // CheckAttachment validates a temporary complete config with the installed Xray.
 // No native command, restart, registry or active configuration write occurs.
 func (d Discovery) CheckAttachment(ctx context.Context) (AttachmentCheck, error) {
-	return d.checkAttachment(ctx, func(ctx context.Context, candidate string) error {
-		command := exec.CommandContext(ctx, d.path("opt/sbin/xray"), "run", "-test", "-confdir", candidate)
-		command.Dir = candidate
-		for _, entry := range os.Environ() {
-			if !strings.HasPrefix(entry, "XRAY_LOCATION_ASSET=") {
-				command.Env = append(command.Env, entry)
-			}
+	return d.checkAttachment(ctx, d.validateAttachment)
+}
+
+func (d Discovery) validateAttachment(ctx context.Context, candidate string) error {
+	command := exec.CommandContext(ctx, d.path("opt/sbin/xray"), "run", "-test", "-confdir", candidate)
+	command.Dir = candidate
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "XRAY_LOCATION_ASSET=") {
+			command.Env = append(command.Env, entry)
 		}
-		command.Env = append(command.Env, "XRAY_LOCATION_ASSET="+d.path("opt/etc/xray/dat"))
-		command.Stdout, command.Stderr = io.Discard, io.Discard
-		if command.Run() != nil {
-			return errors.New("native attachment candidate failed Xray validation")
-		}
-		return nil
-	})
+	}
+	command.Env = append(command.Env, "XRAY_LOCATION_ASSET="+d.path("opt/etc/xray/dat"))
+	command.Stdout, command.Stderr = io.Discard, io.Discard
+	if command.Run() != nil {
+		return errors.New("native attachment candidate failed Xray validation")
+	}
+	return nil
 }
 
 func (d Discovery) checkAttachment(ctx context.Context, validate func(context.Context, string) error) (AttachmentCheck, error) {

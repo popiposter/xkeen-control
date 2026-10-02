@@ -109,6 +109,18 @@ and must not trigger an automatic second native start.
 
 ## Remaining hardware contracts
 
+The operator-only `native attach-stopped --source-sha256 <checked-digest>
+--exclusive-maintenance` command implements the initial connection while Xray
+is positively observed stopped. Unreadable/missing process observation rejects
+the operation. It validates the complete candidate, snapshots the source with
+file and directory synchronization before mutation, changes only the four
+integration files, verifies the entire resulting config set and records a
+`committed-stopped` receipt. It never starts a service. An existing receipt blocks
+replay; interrupted operations retain their snapshot for inspection. Rollback
+only restores still-owned bytes while the service is verifiably stopped. This
+CLI flag declares operator-exclusive maintenance; it does not provide native
+CLI/cron exclusion. Focused Linux fixtures pass; live attachment remains pending.
+
 Scoped config onboarding, native start/restart/readback, subscription import,
 LAN TCP/UDP/DNS policy, panel-stop autonomy, native update/cron collision and
 failure recovery remain pending. A common admission seam is required for claims

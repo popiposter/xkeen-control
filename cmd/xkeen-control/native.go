@@ -10,6 +10,13 @@ import (
 )
 
 func runNativeCommand(args []string, output io.Writer, discovery xkeen.Discovery) error {
+	if len(args) == 4 && args[0] == "attach-stopped" && args[1] == "--source-sha256" && args[3] == "--exclusive-maintenance" {
+		result, err := discovery.AttachStopped(context.Background(), args[2])
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(output).Encode(result)
+	}
 	if len(args) != 2 || (args[0] != "inspect" && args[0] != "attachment-check") || args[1] != "--json" {
 		return errors.New("usage: xkeen-control native {inspect|attachment-check} --json")
 	}

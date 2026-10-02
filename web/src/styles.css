@@ -14,7 +14,7 @@
 }
 
 * { box-sizing: border-box; }
-:scope { margin: 0; min-width: 320px; background: #11161d; }
+:scope.app-shell { min-width: 320px; }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .48; }
@@ -663,7 +663,7 @@ a { color: #91c5f6; }
 .disclosure > summary::-webkit-details-marker { display: none; }
 .disclosure > summary svg { flex-shrink: 0; }
 .disclosure[open] > summary svg { transform: rotate(90deg); }
-.disclosure-:scope { padding: 0 0 12px 24px; min-width: 0; }
+.disclosure-body { padding: 0 0 12px 24px; min-width: 0; }
 .disclosure-body > .panel { border: 0; padding: 8px 0; }
 .workflow-steps { display: flex; flex-wrap: wrap; gap: 24px; margin: 0; padding: 0 0 10px; list-style: none; border-bottom: 1px solid var(--line); color: var(--muted); }
 .workflow-steps li { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; }
@@ -826,7 +826,7 @@ th { color: #a6b2c1; font-size: 12px; background: #151d27; }
   .nodes-table .empty { grid-column: 1 / -1; }
   .composer, .composer.compact, .selection-editor, .performance-policy-grid, .dns-editor-grid, .secret-export, .restore-form { grid-template-columns: 1fr; }
   .composer.compact > div, .secret-export > div, .secret-export > button { grid-column: auto; }
-  .disclosure-:scope { padding-left: 0; }
+  .disclosure-body { padding-left: 0; }
   .disclosure > summary { min-height: 44px; }
   .performance-policy-grid label { grid-template-columns: 1fr 110px; }
   .local-navigation a { padding: 10px 0; }
