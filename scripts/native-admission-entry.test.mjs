@@ -37,7 +37,7 @@ native_admission_finish 0
 exit $?
 `)
   try {
-    const expand = text => text.replaceAll('@ROOT@', root).replaceAll('@GATE@', paths.gate)
+    const expand = text => text.replaceAll('@ROOT@', root).replaceAll('@GATE@', paths.gate).replaceAll('@VERIFY@', paths.verifier)
     const r = spawnSync('/bin/sh', ['-c', `${expand(setup)}\n/bin/sh '${paths[entryRole]}' '${action}' ${entryRole === 'init' && mode === 'forced' ? 'on' : ''}\nrc=$?\n${expand(tail)}\nexit "$rc"`], { encoding: 'utf8', timeout: 3000 })
     assert.ifError(r.error)
     return { ...r, held: existsSync(join(root, 'operation.lock.d')), evidence: existsSync(evidence) ? readFileSync(evidence, 'utf8') : '' }
@@ -70,7 +70,7 @@ test('failed typed finish remains unresolved even if native EXIT trap hides stat
   assert.equal(r.held, true)
 })
 test('failed native postcondition retains admission', () => {
-  const r = fixture({ verifier: 'exit 1' })
+  const r = fixture({ verifier: '[ "$1" != post ]' })
   assert.equal(r.status, 77, r.stderr)
   assert.equal(r.held, true)
 })
@@ -81,7 +81,7 @@ test('unsupported action rejects before acquiring or executing body', () => {
   assert.equal(r.held, false)
 })
 test('automatic boot mode stays bare in child and is bound into verifier input', () => {
-  const r = fixture({ mode: 'automatic', body: '[ "$#" = 1 ] || exit 9; echo AUTOMATIC >> "$evidence"', verifier: '[ "$1:$2:$3" = init:start:automatic ]' })
+  const r = fixture({ mode: 'automatic', body: '[ "$#" = 1 ] || exit 9; echo AUTOMATIC >> "$evidence"', verifier: '[ "$2:$3:$4" = init:start:automatic ]' })
   assert.equal(r.status, 0, r.stderr)
   assert.equal(r.evidence, 'AUTOMATIC\n')
   assert.equal(r.held, false)
@@ -139,4 +139,13 @@ test('dispatcher and init nesting share one owner until both finishes', () => {
   assert.equal(r.status, 0, r.stderr)
   assert.equal(r.evidence, 'BODY\n')
   assert.equal(r.held, false)
+})
+
+test('missing verifier and refused preflight execute zero native body', () => {
+  for (const options of [{ setup: 'rm @VERIFY@' }, { verifier: '[ "$1" != pre ]' }]) {
+    const r = fixture(options)
+    assert.notEqual(r.status, 0)
+    assert.equal(r.evidence, '')
+    assert.equal(r.held, true)
+  }
 })

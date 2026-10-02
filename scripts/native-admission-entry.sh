@@ -136,6 +136,10 @@ native_admission_enter() {
     (umask 077; set -C; printf '%s\n' "$_na_record" > "$_na_call_dir/context") || { _na_poison; return 77; }
     XKEEN_ADMISSION_ROLE=$_na_role; XKEEN_ADMISSION_ACTION=$_na_action; XKEEN_ADMISSION_CALL=$_na_nonce
     export XKEEN_ADMISSION_ROLE XKEEN_ADMISSION_ACTION XKEEN_ADMISSION_CALL
+    # Configuration validation, retained intent refusal and native verification
+    # capability checks precede ALL native body effects.
+    _na_file_ok /opt/lib/xkeen/native-admission-verify.sh || { _na_poison; return 76; }
+    /opt/bin/sh /opt/lib/xkeen/native-admission-verify.sh pre "$_na_role" "$_na_action" "$_na_mode" || { _na_poison; return 77; }
     # No caller-supplied callback, executable or arbitrary command arguments.
     case "$_na_role" in
         dispatcher)
@@ -162,7 +166,7 @@ native_admission_enter() {
     # Must be native-owned verification; no panel process/API/CLI dependency.
     # Missing implementation is intentionally an unresolved outcome.
     _na_file_ok /opt/lib/xkeen/native-admission-verify.sh || { _na_poison; return 76; }
-    /opt/bin/sh /opt/lib/xkeen/native-admission-verify.sh "$_na_role" "$_na_action" "$_na_mode" || { _na_poison; return 77; }
+    /opt/bin/sh /opt/lib/xkeen/native-admission-verify.sh post "$_na_role" "$_na_action" "$_na_mode" || { _na_poison; return 77; }
     _na_gate_ok || return 77
     rm "$_na_call_dir/complete" "$_na_call_dir/context" && rmdir "$_na_call_dir" || { _na_poison; return 77; }
     unset XKEEN_ADMISSION_ROLE XKEEN_ADMISSION_ACTION XKEEN_ADMISSION_CALL

@@ -36,7 +36,7 @@ run_shell_fixtures() {
 	bash scripts/test-build-embedded.sh
 	bash scripts/test-web-dependencies.sh
 	node --test scripts/dev-check-go.test.mjs
-	node --test scripts/native-admission-entry.test.mjs
+	node --test scripts/native-admission-entry.test.mjs scripts/native-admission-verify.test.mjs
 	bash scripts/test-keenetic-env.sh
 	bash scripts/test-benchmark-policy.sh
 	bash scripts/test-xkeen-foreground.sh
