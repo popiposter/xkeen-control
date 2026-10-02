@@ -103,7 +103,19 @@ native_gate_acquire() {
     _native_gate_self || return 76
     IFS= read -r _ng_current_boot < /proc/sys/kernel/random/boot_id || return 76
     _native_gate_uuid "$_ng_current_boot" || return 76
-    _ng_new_token=$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+    # Appliance BusyBox od lacks -A/-N/-t. Byte output avoids the zero padding
+    # that word output adds to an odd short read. Publish only 16 valid bytes.
+    _ng_new_token=$(dd if=/dev/urandom bs=16 count=1 2>/dev/null |
+        od -v -b 2>/dev/null |
+        awk 'NF > 1 {
+            for (i = 2; i <= NF; i++) {
+                count++
+                if ($i !~ /^[0-3][0-7][0-7]$/) { bad = 1; continue }
+                byte = substr($i, 1, 1) * 64 + substr($i, 2, 1) * 8 + substr($i, 3, 1)
+                token = token sprintf("%02x", byte)
+            }
+        }
+        END { if (count == 16 && !bad) printf "%s", token }')
     [ "${#_ng_new_token}" = 32 ] || return 76
     case "$_ng_new_token" in *[!0-9a-f]*) return 76;; esac
     _ng_new_record="v1 $_ng_current_boot $_ng_self_pid $_ng_self_start $_ng_new_token $2"

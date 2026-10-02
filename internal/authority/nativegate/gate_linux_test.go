@@ -264,6 +264,63 @@ native_gate_release || exit 11`, []string{"ROOT=" + root, "PATH=" + bin + ":" + 
 	}
 }
 
+func TestShellSupportsLimitedBusyBoxODAndGoBorrow(t *testing.T) {
+	root := testRoot(t)
+	// Recorded appliance od supports -v/-b, but not GNU -A/-N/-t.
+	// Keep real random bytes and od formatting; constrain only the flags.
+	cmd := shell(t, `od() {
+    for flag in "$@"; do
+        case "$flag" in -v|-b) ;; *) return 2;; esac
+    done
+    command od "$@"
+}
+native_gate_acquire "$ROOT" restart || exit 10
+"$TEST_BINARY" -test.run '^TestGateChild$' || exit 11
+native_gate_release || exit 12`, []string{"ROOT=" + root, "TEST_BINARY=" + os.Args[0], "NATIVE_GATE_CHILD=borrow"})
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("limited od profile: %v %s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(root, "operation.lock.d")); !os.IsNotExist(err) {
+		t.Fatal("limited od owner did not release")
+	}
+}
+
+func TestShellRejectsTruncatedOrMalformedEntropyBeforeGateCreation(t *testing.T) {
+	for name, shim := range map[string]string{
+		"truncated":            `dd() { printf '12345678'; }`,
+		"odd-truncated":        `dd() { printf '123456789012345'; }`,
+		"oversized":            `dd() { printf '12345678901234567'; }`,
+		"empty":                `dd() { return 1; }`,
+		"malformed":            `od() { printf '%s\n' '0000000 zzzz zzzz zzzz zzzz zzzz zzzz zzzz zzzz' '0000020'; }`,
+		"invalid-octal":        `od() { printf '%s\n' '0000000 008 001 002 003 004 005 006 007 010 011 012 013 014 015 016 017' '0000020'; }`,
+		"oversized-octal-byte": `od() { printf '%s\n' '0000000 400 001 002 003 004 005 006 007 010 011 012 013 014 015 016 017' '0000020'; }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := testRoot(t)
+			cmd := shell(t, shim+`;
+native_gate_acquire "$ROOT" start
+test $? -eq 76`, []string{"ROOT=" + root})
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("invalid entropy admitted: %v %s", err, out)
+			}
+			if _, err := os.Lstat(filepath.Join(root, "operation.lock.d")); !os.IsNotExist(err) {
+				t.Fatal("invalid entropy created gate")
+			}
+		})
+	}
+}
+
+func TestShellTokenPreservesAllSixteenBytes(t *testing.T) {
+	root := testRoot(t)
+	cmd := shell(t, `dd() { printf '\000\001\002\003\017\020\077\100\177\200\201\237\240\376\377\125'; }
+native_gate_acquire "$ROOT" start || exit 10
+test "$XKEEN_GATE_TOKEN" = 000102030f103f407f80819fa0feff55 || exit 11
+native_gate_release || exit 12`, []string{"ROOT=" + root})
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("byte-exact token conversion: %v %s", err, out)
+	}
+}
+
 func TestShellSubshellCannotReleaseParentGate(t *testing.T) {
 	root := testRoot(t)
 	cmd := shell(t, `native_gate_acquire "$ROOT" start || exit 10
