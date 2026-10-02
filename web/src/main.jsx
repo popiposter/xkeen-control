@@ -1,7 +1,12 @@
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createDashboardReader } from './dashboard-reader.js'
-import './styles.css'
+import './theme.css'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Disclosure, MobileNavigationDrawer, Modal } from './ui.jsx'
 import { IconHome, IconServer, IconSitemap, IconWorld, IconChartBar, IconCube, IconHistory, IconSettings, IconLogout, IconMenu2 } from '@tabler/icons-react'
 import { IconPlus, IconLink, IconRefresh, IconPencil, IconPower, IconTrash, IconX, IconChevronLeft, IconChevronRight, IconSearch, IconGauge, IconFocus2, IconArrowUp, IconArrowDown, IconArrowsSort, IconSquareCheck, IconPlayerPlay, IconPlayerPause } from '@tabler/icons-react'
@@ -383,7 +388,7 @@ function App() {
   }
 
   const logout = async () => {
-    sessionEpoch.current++
+    const epoch = ++sessionEpoch.current
     reader.current.invalidate()
     try {
       await api('/api/v1/session/logout', {
@@ -391,8 +396,10 @@ function App() {
         headers: { 'X-CSRF-Token': session?.csrfToken || '' },
       })
     } catch (cause) {
+      if (epoch !== sessionEpoch.current) return
       setError(cause.message)
     }
+    if (epoch !== sessionEpoch.current) return
     reader.current.invalidate()
     setDashboard(null)
     setSession(null)
@@ -413,16 +420,16 @@ function App() {
 }
 
 function Login({ error, password, setPassword, onSubmit }) {
-  return <main className="login-page">
-    <section className="login-card">
-      <h1>XKeen Control</h1>
-      <form onSubmit={onSubmit}>
-        <label htmlFor="password">Panel password</label>
-        <input id="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} autoFocus />
-        <button type="submit">Sign in</button>
-      </form>
-      {error && <Notice message={error} />}
-    </section>
+  return <main className="flex min-h-svh items-center justify-center p-6">
+    <Card className="w-full max-w-sm">
+      <CardHeader><CardTitle><h1>XKeen Control</h1></CardTitle><CardDescription>Sign in to manage your VPN.</CardDescription></CardHeader>
+      <CardContent><form onSubmit={onSubmit}><FieldGroup>
+        <Field><FieldLabel htmlFor="password">Panel password</FieldLabel>
+          <Input id="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} autoFocus /></Field>
+        <Button type="submit">Sign in</Button>
+        {error && <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>}
+      </FieldGroup></form></CardContent>
+    </Card>
   </main>
 }
 
@@ -791,7 +798,9 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
     setBusy(true)
     setNotice(null)
     try {
-      await api('/api/v1/node-changes/apply', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: JSON.stringify({ previewToken: preview.previewToken, acceptMissing: preview.operation === 'subscription-refresh' ? false : Boolean(preview.requiresAcceptance) }) })
+      const result = await api('/api/v1/node-changes/apply', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: JSON.stringify({ previewToken: preview.previewToken, acceptMissing: preview.operation === 'subscription-refresh' ? false : Boolean(preview.requiresAcceptance) }) })
+      const arrayOrNull = (value) => value === null || Array.isArray(value)
+      if (result.operation !== preview.operation || !Object.hasOwn(result, 'changes') || !arrayOrNull(result.changes) || !Object.hasOwn(result, 'nodes') || !arrayOrNull(result.nodes)) throw new Error('Invalid Apply response')
       setPreview(null)
       setReplacement('')
       setEditingID('')
@@ -1025,17 +1034,17 @@ function PreviewDialog({ preview, nodes, manualOverride, busy, onCancel, onApply
   const manualSubscriptionRemovals = ['remove', 'batch-remove'].includes(preview.operation)
     && changes.some((change) => change.after === 'removed' && change.sourceType === 'subscription')
   return <Modal label="Preview node change" busy={busy} onCancel={onCancel} returnFocus={returnFocus}>
-      <div className="dialog-heading"><div><span className="panel-label">Preview · {preview.operation}</span><h3>{preview.noop ? 'No persistent change' : `${preview.changes?.length || 0} node changes`}</h3></div><IconButton icon="close" label="Close preview" onClick={onCancel} disabled={busy} /></div>
-      <div className="diff-list">
-        {changes.map((change) => <div className="diff-row" key={`${change.action}-${change.id}`}><strong>{change.name}</strong><span>{change.before} → {change.after}</span></div>)}
-        {preview.noop && <p className="muted">The fetched or requested state matches the current registry.</p>}
-      </div>
-      {subscriptionRemovalCount > 0 && <p className="warning" role="alert">Provider snapshot removes {subscriptionRemovalCount} {subscriptionRemovalCount === 1 ? 'node that is' : 'nodes that are'} no longer present upstream.</p>}
-      {effectiveChanged && <p className="warning" role="alert">The currently effective node changes in this preview. Active proxy traffic will be reselected after Apply.</p>}
-      {manualChanged && <p className="warning" role="alert">The current manual-override node changes in this preview. The supervisor owns subsequent reconciliation; this batch mutation does not write override state.</p>}
-      {manualSubscriptionRemovals && <p className="warning" role="alert">A removed subscription-owned node may return on a later subscription refresh while it remains upstream.</p>}
-      {preview.effectiveImpact && !effectiveChanged && <p className="warning" role="alert">This operation will {preview.effectiveImpact} the currently effective node. Active proxy traffic will be reselected after Apply.</p>}
-      <div className="preview-actions"><button className="ghost" type="button" onClick={onCancel} disabled={busy}>Cancel</button><button type="button" onClick={onApply} disabled={busy}>{busy ? 'Applying…' : (preview.noop ? 'Confirm no-op' : 'Apply and validate')}</button></div>
+      <div className="flex items-start justify-between gap-4"><div><span className="text-sm text-muted-foreground">Preview · {preview.operation}</span><h3>{preview.noop ? 'No persistent change' : `${preview.changes?.length || 0} node changes`}</h3></div><Button variant="ghost" size="icon" aria-label="Close preview" onClick={onCancel} disabled={busy}><IconX /></Button></div>
+      <ul aria-label="Node changes" className="flex max-h-72 flex-col overflow-y-auto">
+        {changes.map((change) => <li className="flex flex-wrap justify-between gap-2 border-b py-2" key={`${change.action}-${change.id}`}><strong>{change.name}</strong><span>{change.before} → {change.after}</span></li>)}
+      </ul>
+      {preview.noop && <p className="text-sm text-muted-foreground">The fetched or requested state matches the current registry.</p>}
+      {subscriptionRemovalCount > 0 && <Alert><AlertDescription>Provider snapshot removes {subscriptionRemovalCount} {subscriptionRemovalCount === 1 ? 'node that is' : 'nodes that are'} no longer present upstream.</AlertDescription></Alert>}
+      {effectiveChanged && <Alert><AlertDescription>The currently effective node changes in this preview. Active proxy traffic will be reselected after Apply.</AlertDescription></Alert>}
+      {manualChanged && <Alert><AlertDescription>The current manual-override node changes in this preview. The supervisor owns subsequent reconciliation; this batch mutation does not write override state.</AlertDescription></Alert>}
+      {manualSubscriptionRemovals && <Alert><AlertDescription>A removed subscription-owned node may return on a later subscription refresh while it remains upstream.</AlertDescription></Alert>}
+      {preview.effectiveImpact && !effectiveChanged && <Alert><AlertDescription>This operation will {preview.effectiveImpact} the currently effective node. Active proxy traffic will be reselected after Apply.</AlertDescription></Alert>}
+      <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" type="button" onClick={onCancel} disabled={busy}>Cancel</Button><Button type="button" onClick={onApply} disabled={busy}>{busy ? 'Applying…' : (preview.noop ? 'Confirm no-op' : 'Apply and validate')}</Button></div>
   </Modal>
 }
 
@@ -1290,7 +1299,7 @@ function Icon({ name }) {
   return Component ? <Component size={16} aria-hidden="true" focusable="false" /> : null
 }
 
-function Shell({ children }) { return <main className="app-shell">{children}</main> }
+function Shell({ children }) { return <main className="app-shell legacy-workspace">{children}</main> }
 function Notice({ message, tone = 'error' }) { return <div className={`notice ${tone}`} role="status">{message}</div> }
 function HealthCard({ label, ok, detail }) { return <div className="health-card"><div className={`health-icon ${ok ? 'ok' : 'bad'}`}>{ok ? '✓' : '!'}</div><div><span className="panel-label">{label}</span><strong>{ok ? 'Healthy' : 'Degraded'}</strong><small>{detail}</small></div></div> }
 function SelectionCard({ label, node, tone, emptyText = 'No current target' }) { return <div className={`panel selection-card ${tone}`}><span className="panel-label">{label}</span>{node ? <NodeName node={node} /> : <strong>{emptyText}</strong>}<small>{node?.address || (node ? 'No address' : '')}</small></div> }

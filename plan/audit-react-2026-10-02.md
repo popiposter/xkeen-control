@@ -68,6 +68,20 @@ Add out-of-order replies, logout/login with an outstanding request, malformed
 200 responses, hidden-page polling and node-dialog focus/busy tests. A component
 library does not prove transaction correctness or replace these checks.
 
-The initial correctness repairs are implemented with focused tests. shadcn
-wrappers/Tailwind conversion, code splitting and broader controller extraction
-remain pending. No complete frontend rewrite or live-router acceptance is claimed.
+The operator subsequently authorized standard shadcn styling and discarding the
+old design. The official Base UI Nova/Neutral preset is initialized with Tailwind
+v4, local Geist fonts, and generated Button/Dialog/Card/Input/Field/Alert
+components. Login and node confirmation use this standard styling. Existing
+screen CSS is temporarily scoped to `.legacy-workspace`; remove it alongside
+the remaining screen conversions rather than creating permanent parallel themes.
+
+The complete 192-test browser suite passed for `3d4b2bd` (3.9 minutes, durable
+job `f714b9974c3d4ecd91d8ac7e49d22b05`). That evidence precedes the shadcn styling
+and subsequent review corrections. New focused browser regressions cover a late
+logout after a new login, malformed JSON/object Apply replies, modal focus/CSP/
+busy dismissal and 375/1440px standard login. Two tests coupled to old `.diff-row`
+styling were changed to assert semantic list contents and passed afterward.
+
+Remaining: convert other screens, retire legacy CSS, split infrequent routes,
+finish broader controller extraction and review the exact final candidate.
+No complete frontend rewrite or live-router acceptance is claimed.

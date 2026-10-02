@@ -76,6 +76,53 @@ test('node confirmation contains keyboard focus and restores it on Escape', asyn
   expect(await page.evaluate(() => window.modalCSPViolations)).toEqual([])
 })
 
+for (const body of ['not json', '{}', '{"unrelated":true}']) {
+  test(`malformed Apply reply consumes preview: ${body}`, async ({ page }) => {
+    await prepare(page)
+    await openNodes(page)
+    let calls = 0
+    await page.route('**/api/v1/node-changes/apply', async (route) => {
+      calls++
+      await route.fulfill({ status: 200, contentType: 'application/json', body })
+    })
+    await page.getByRole('button', { name: 'Refresh Provider', exact: true }).click()
+    await page.getByRole('button', { name: 'Apply and validate', exact: true }).click()
+    await expect(page.getByText('The change outcome could not be confirmed.', { exact: false })).toBeVisible()
+    await expect(page.getByRole('dialog', { name: 'Preview node change' })).toHaveCount(0)
+    await expect(page.getByText('Change applied;', { exact: false })).toHaveCount(0)
+    expect(calls).toBe(1)
+  })
+}
+
+test('late logout response cannot clear a newly established session', async ({ page }) => {
+  await page.clock.install()
+  const prepared = await prepare(page)
+  await openNodes(page)
+  let release, finished
+  const pending = new Promise((resolve) => { release = resolve })
+  const done = new Promise((resolve) => { finished = resolve })
+  await page.route('**/api/v1/session/logout', async (route) => {
+    await pending
+    await json(route, { loggedOut: true })
+    finished()
+  })
+  let expired = true
+  await page.route('**/api/v1/status', (route) => json(route, expired ? { error: 'unauthorized' } : prepared.state.status, expired ? 401 : 200))
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await page.clock.fastForward(5000)
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible()
+  expired = false
+  await page.route('**/api/v1/session/login', (route) => json(route, { csrfToken: 'synthetic-new-session' }))
+  await page.getByLabel('Panel password', { exact: true }).fill('synthetic-test-password')
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+  release()
+  await done
+  await page.clock.fastForward(5000)
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0)
+})
+
 test('Base UI confirmation stays open during an outstanding Apply', async ({ page }) => {
   const prepared = await prepare(page)
   page.__nodesIssues = prepared.issues
@@ -176,7 +223,7 @@ async function prepare(page) {
             after: remove ? 'removed' : (body.enabled ? 'enabled' : 'disabled'),
           }))
         const previewToken = `synthetic-batch-${++state.previewNumber}`
-        state.pending.set(previewToken, { remove, ids: [...body.nodeIds], enabled: body.enabled })
+        state.pending.set(previewToken, { operation, remove, ids: [...body.nodeIds], enabled: body.enabled })
         return json(route, { previewToken, operation, expiresAt: new Date(Date.now() + 300_000).toISOString(), changes, requiresAcceptance: false, noop: changes.length === 0 })
       }
       case '/api/v1/subscriptions/refresh/preview': {
@@ -212,7 +259,7 @@ async function prepare(page) {
           else state.nodes = state.nodes.map((node) => pending.ids.includes(node.id) ? { ...node, enabled: pending.enabled } : node)
           state.pending.delete(body.previewToken)
         }
-        return json(route, { operation: pending?.refresh ? 'subscription-refresh' : pending?.subscriptionState ? 'subscription-enable-disable' : pending?.remove ? 'batch-remove' : 'batch-state', nodes: state.nodes, changes: [] })
+        return json(route, { operation: pending?.refresh ? 'subscription-refresh' : pending?.subscriptionState ? 'subscription-enable-disable' : pending?.operation, nodes: state.nodes, changes: [] })
       }
       case '/api/v1/node-changes/cancel': return json(route, { canceled: true })
       default: return json(route, { error: `unexpected synthetic route: ${path}` }, 404)
@@ -420,7 +467,7 @@ test('sends one batch remove preview, renders warnings, and reconciles after App
   await expect(page.getByRole('dialog')).toContainText('The currently effective node changes in this preview.')
   await expect(page.getByRole('dialog')).toContainText('The current manual-override node changes in this preview.')
   await expect(page.getByRole('dialog')).toContainText('may return on a later subscription refresh')
-  await expect(page.locator('.diff-row')).toHaveCount(3)
+  await expect(page.getByRole('list', { name: 'Node changes' }).getByRole('listitem')).toHaveCount(3)
 
   await page.getByRole('button', { name: 'Apply and validate' }).click()
   await expect(page.getByTestId('selected-count')).toHaveText('0 selected')
@@ -440,7 +487,7 @@ test('renders exact provider removals without stale or manual-reappearance warni
   await expect(dialog).toContainText('Provider snapshot removes 1 node that is no longer present upstream.')
   await expect(dialog).not.toContainText('keeps them stale/missing')
   await expect(dialog).not.toContainText('may return on a later subscription refresh')
-  await expect(page.locator('.diff-row')).toHaveCount(1)
+  await expect(page.getByRole('list', { name: 'Node changes' }).getByRole('listitem')).toHaveCount(1)
   expect(prepared.state.requests.filter((request) => request.path === '/api/v1/subscriptions/refresh/preview')).toEqual([
     { path: '/api/v1/subscriptions/refresh/preview', method: 'POST', body: { subscriptionId: 'sub-12345678' } },
   ])

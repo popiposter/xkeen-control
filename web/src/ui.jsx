@@ -1,23 +1,18 @@
-import { Dialog } from '@base-ui/react/dialog'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { CSPProvider } from '@base-ui/react/csp-provider'
 import { useEffect, useRef } from 'react'
 import { IconChevronRight, IconArrowUp, IconArrowDown, IconTrash } from '@tabler/icons-react'
 
 export function Modal({ label, busy, onCancel, returnFocus, children }) {
-  return <CSPProvider disableStyleElements><Dialog.Root open onOpenChange={(open, details) => {
+  return <CSPProvider disableStyleElements><Dialog open onOpenChange={(open, details) => {
     if (busy) { details.cancel(); return }
     if (!open) onCancel()
   }}>
-    <Dialog.Portal>
-      <Dialog.Backdrop className="dialog-backdrop" />
-      <Dialog.Viewport className="dialog-viewport">
-        <Dialog.Popup className="preview-dialog" finalFocus={returnFocus}>
-          <Dialog.Title className="visually-hidden">{label}</Dialog.Title>
+        <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-2xl" showCloseButton={false} finalFocus={returnFocus}>
+          <DialogTitle className="sr-only">{label}</DialogTitle>
           {children}
-        </Dialog.Popup>
-      </Dialog.Viewport>
-    </Dialog.Portal>
-  </Dialog.Root></CSPProvider>
+        </DialogContent>
+  </Dialog></CSPProvider>
 }
 export function MobileNavigationDrawer({ open, onClose, children }) {
   const dialogRef = useRef(null)
@@ -37,7 +32,7 @@ export function MobileNavigationDrawer({ open, onClose, children }) {
       document.body.style.overflow = previousOverflow
     }
   }, [open, onClose])
-  return <dialog ref={dialogRef} className="mobile-navigation-drawer" aria-label="Navigation menu" onClose={onClose} onKeyDown={(event) => {
+  return <dialog ref={dialogRef} className="legacy-workspace mobile-navigation-drawer" aria-label="Navigation menu" onClose={onClose} onKeyDown={(event) => {
     if (event.key !== 'Tab') return
     const buttons = [...event.currentTarget.querySelectorAll('button:not(:disabled)')].filter((button) => button.getClientRects().length)
     const first = buttons[0], last = buttons[buttons.length - 1]
