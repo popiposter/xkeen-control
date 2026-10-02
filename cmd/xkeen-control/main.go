@@ -16,19 +16,16 @@ import (
 	"github.com/popiposter/xkeen-control/internal/appliance"
 	"github.com/popiposter/xkeen-control/internal/auth"
 	"github.com/popiposter/xkeen-control/internal/authority"
-	"github.com/popiposter/xkeen-control/internal/backup"
 	"github.com/popiposter/xkeen-control/internal/buildinfo"
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/components"
 	"github.com/popiposter/xkeen-control/internal/configview"
-	"github.com/popiposter/xkeen-control/internal/dnsobservatory"
 	"github.com/popiposter/xkeen-control/internal/httpapi"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	"github.com/popiposter/xkeen-control/internal/notifications"
 	"github.com/popiposter/xkeen-control/internal/panellistener"
 	"github.com/popiposter/xkeen-control/internal/performancepolicy"
 	"github.com/popiposter/xkeen-control/internal/restore"
-	"github.com/popiposter/xkeen-control/internal/routingpolicy"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
 	panelupdate "github.com/popiposter/xkeen-control/internal/update"
 	"github.com/popiposter/xkeen-control/internal/webassets"
@@ -185,122 +182,18 @@ func main() {
 		os.Exit(1)
 	}
 	authorityLease := authority.NewLease()
-	componentGate := components.NewComponentMutationGate()
-	componentMaintenance := components.NewComponentMaintenance(coordinator, authorityLease)
 	nodeManager = newNodeManager(coordinator, authorityLease)
 	subscriptionRefresher := nodes.NewSubscriptionRefresher(nodeManager)
 	nodeManager.SetAutoRefreshStatusProvider(subscriptionRefresher.AutoRefreshStatuses)
-	applianceService := newApplianceService(authorityLease)
-	restoreService := newRestoreService(coordinator, authorityLease)
-	routingPolicyService := routingpolicy.NewService(routingpolicy.Config{
-		Appliance: applianceService,
-		Settings:  restoreService,
-	})
-	dnsObservatoryService := dnsobservatory.NewService(dnsobservatory.Config{
-		Appliance: applianceService,
-		Settings:  restoreService,
-	})
-	componentXrayService := newXrayService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
-	componentGeodataService := newGeodataService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
-	componentXKeenService := newXKeenService(coordinator, authorityLease, applianceService, nodeManager, xrayReader, componentGate, componentMaintenance)
-	setupService := newSetupService(coordinator, authorityLease, xrayReader, componentGate, componentMaintenance)
-	componentPolicy := components.NewPolicyManager()
-	componentMutations := components.NewMutationService(components.MutationConfig{
-		// Preview resolution is intentionally separate from the transaction
-		// services. Apply/Rollback then dispatch only the stored typed intent to
-		// those services, which independently re-read their authority/source.
-		XrayResolver:    components.NewXrayResolver(nil, nil),
-		Xray:            componentXrayService,
-		GeodataResolver: components.NewGeodataResolver(nil, nil),
-		Geodata:         componentGeodataService,
-		XKeenResolver:   components.NewXKeenMovingDevResolver(nil, nil),
-		XKeen:           componentXKeenService,
-		MutationGate:    componentGate,
-		Policy:          componentPolicy,
-		WriterConflict:  setupService.WriterConflict,
-	})
-	stateDir := getenv("XKEEN_APPLIANCE_IMPORT_STATE_DIR", "/opt/etc/xkeen-control/state")
-	restoreJournalPath := filepath.Join(stateDir, "appliance-import-transaction.json")
-	restorePending, restoreJournalErr := transactionJournalPresent(restoreJournalPath)
-	componentJournalPath := getenv("XKEEN_COMPONENT_TRANSACTION_PATH", components.DefaultComponentTransactionJournal)
-	componentRecoveryConfig := components.ComponentRecoveryConfig{
-		JournalPath:                componentJournalPath,
-		RestoreJournalPath:         restoreJournalPath,
-		XrayPreviousStagingPath:    getenv("XKEEN_XRAY_PREVIOUS_DIR", components.DefaultXrayPreviousDir) + ".staging",
-		XrayStagingDir:             getenv("XKEEN_COMPONENT_STAGING_DIR", components.DefaultXrayComponentStagingDir),
-		GeodataPreviousStagingPath: getenv("XKEEN_GEODATA_PREVIOUS_DIR", components.DefaultGeodataPreviousDir) + ".staging",
-		GeodataStagingDir:          getenv("XKEEN_GEODATA_COMPONENT_STAGING_DIR", components.DefaultGeodataComponentStagingDir),
-		XKeenPreviousStagingPath:   getenv("XKEEN_XKEEN_PREVIOUS_DIR", components.DefaultXKeenPreviousDir) + ".staging",
-		XKeenStagingDir:            getenv("XKEEN_XKEEN_COMPONENT_STAGING_DIR", components.DefaultXKeenComponentStagingDir),
-		XKeenActivationPath:        getenv("XKEEN_XKEEN_ACTIVATION_PATH", components.DefaultXKeenActivationPath),
-		XKeenMarkerStagingPath:     getenv("XKEEN_XKEEN_GENERATION_MARKER", components.DefaultXKeenMarkerPath) + ".staging",
-		SetupStagingDir:            getenv("XKEEN_SETUP_STAGING_DIR", components.DefaultSetupStagingDir),
-		SetupPreviousDir:           setupPreviousDirFromEnvironment(),
-	}
-	recoveryState, componentJournalErr := components.InspectComponentRecovery(componentRecoveryConfig)
-	if restoreJournalErr != nil || componentJournalErr != nil {
-		log.Print("startup transaction journal state is unavailable")
-		os.Exit(1)
-	}
-	if restorePending {
-		if err := restoreService.RecoverStartup(context.Background()); err != nil {
-			log.Print("restore startup recovery failed")
-			os.Exit(1)
-		}
-	}
-	if recoveryState.Pending() {
-		var recoveryErr error
-		switch recoveryState.Kind {
-		case components.KindXray:
-			recoveryErr = componentXrayService.RecoverStartup(context.Background())
-		case components.KindGeodata:
-			recoveryErr = componentGeodataService.RecoverStartup(context.Background())
-		case components.KindXKeen:
-			recoveryErr = componentXKeenService.RecoverStartup(context.Background())
-		case components.KindSetup:
-			recoveryErr = setupService.RecoverStartup(context.Background())
-		default:
-			recoveryErr = errors.New("component recovery owner is unavailable")
-		}
-		if recoveryErr != nil {
-			log.Print("component startup recovery failed")
-			os.Exit(1)
-		}
-		remaining, remainingErr := components.InspectComponentRecovery(componentRecoveryConfig)
-		if remainingErr != nil || remaining.Pending() {
-			log.Print("component startup recovery is not settled")
-			os.Exit(1)
-		}
-	}
-	if err := restoreService.Ready(); err != nil {
-		log.Print("restore startup recovery is not proven")
-		os.Exit(1)
-	}
-	if err := componentXrayService.Ready(); err != nil {
-		log.Print("component startup recovery is not proven")
-		os.Exit(1)
-	}
-	if err := componentGeodataService.Ready(); err != nil {
-		log.Print("component startup recovery is not proven")
-		os.Exit(1)
-	}
-	if err := componentXKeenService.Ready(); err != nil {
-		log.Print("component startup recovery is not proven")
-		os.Exit(1)
-	}
-	if err := setupService.Ready(); err != nil {
-		log.Print("setup startup recovery is not proven")
-		os.Exit(1)
-	}
 	collector := controlruntime.NewCollector(buildinfo.Current().Version, startedAt, controlruntime.Dependencies{
 		Xray:             xrayReader,
 		Xkeen:            xkeenReader,
 		Config:           configReader,
 		OutboundTagsPath: getenv("XKEEN_NODES_PATH", defaultNodesPath),
 		C1:               coordinator,
+		Native:           xkeen.Discovery{},
 		Setup: func() controlruntime.SetupStatus {
-			projection := setupService.Status()
-			return controlruntime.SetupStatus{Panel: "ready", Credential: authManager.CredentialState(), State: projection.State, Eligible: projection.Eligible, ReasonCode: string(projection.ReasonCode)}
+			return controlruntime.SetupStatus{Panel: "ready", Credential: authManager.CredentialState(), State: "native", Eligible: false}
 		},
 	})
 	collector.SetBuildInfo(buildinfo.Current())
@@ -317,80 +210,20 @@ func main() {
 			return state.Lifecycle.Maintenance, state.Lifecycle.Applying, true
 		},
 	})
-	componentService := components.NewService(components.Config{
-		Panel:                  buildinfo.Current(),
-		XrayBinary:             getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary),
-		XkeenBinary:            components.DefaultXkeenBinary,
-		XkeenModuleDir:         components.DefaultXkeenModuleDir,
-		XkeenModuleImport:      components.DefaultXkeenModuleImport,
-		XkeenRuntimeInit:       components.DefaultXkeenRuntimeInit,
-		XkeenLegacyRuntimeInit: components.DefaultXkeenLegacyRuntimeInit,
-		XkeenSiblingModule:     filepath.Join(filepath.Dir(components.DefaultXkeenModuleDir), "_xkeen"),
-		XkeenInstallHelper:     "/opt/root/install.sh",
-		XkeenConfig:            components.DefaultXkeenConfig,
-		XkeenPackageMetadata:   components.DefaultXkeenPackageMetadata,
-		GeodataDir:             components.DefaultGeodataDir,
-		AppliancePath:          components.DefaultAppliancePath,
-		RoutingPath:            components.DefaultRoutingPath,
-		DNSPath:                components.DefaultDNSPath,
-		KeeneticOSVersionPath:  components.DefaultKeeneticOSVersionPath,
-		EntwareReleasePath:     components.DefaultEntwareReleasePath,
-		EntwareBinary:          components.DefaultEntwareBinary,
-		InventoryTimeout:       components.DefaultInventoryTimeout,
-		XrayProbeTimeout:       components.DefaultXrayProbeTimeout,
-		XkeenGenerationMarker:  getenv("XKEEN_XKEEN_GENERATION_MARKER", components.DefaultXKeenMarkerPath),
-	})
-	componentChecker := components.NewChecker(components.CheckerConfig{
-		InstalledSnapshot: componentService.Latest,
-		MutationAvailable: componentMutations.Supports,
-	})
-	componentPolicyChecker := components.NewPolicyCheckService(componentChecker, componentPolicy)
-	componentScheduler := components.NewCheckScheduler(components.CheckSchedulerConfig{
-		Policy: componentPolicy,
-		Checks: componentPolicyChecker,
-		Notification: components.NotificationHookFunc(func(ctx context.Context, event components.NotificationEvent) error {
-			return notificationService.Send(ctx, notifications.ComponentAlert(string(event.Component), event.Channel, event.CandidateIdentity, event.InstalledState, event.CheckedAt))
-		}),
-		Lifecycle: func() (components.LifecycleProjection, bool) {
-			coordinatorState := coordinator.Snapshot()
-			if coordinatorState.Lifecycle == nil {
-				return components.LifecycleProjection{}, false
-			}
-			return components.LifecycleProjection{
-				Maintenance: coordinatorState.Lifecycle.Maintenance,
-				Applying:    coordinatorState.Lifecycle.Applying,
-			}, true
-		},
-	})
-	componentPolicy.SetScheduler(componentScheduler)
 	handler := httpapi.New(httpapi.Config{
-		Native:             xkeen.Discovery{},
-		Collector:          collector,
-		Auth:               authManager,
-		Nodes:              nodeManager,
-		Benchmark:          coordinator,
-		Selection:          coordinator,
-		Assets:             webassets.Handler(),
-		StartedAt:          startedAt,
-		Components:         componentService,
-		Manual:             coordinator,
-		ComponentChecks:    componentPolicyChecker,
-		ComponentMutations: componentMutations,
-		ComponentPolicy:    componentPolicy,
-		Setup:              setupService,
-		Updates:            updateManager,
-		Notifications:      notificationService,
-		Restore:            restoreService,
-		Policy:             routingPolicyService,
-		DNSObservatory:     dnsObservatoryService,
-		PerformancePolicy:  performancePolicyService,
-		Listener:           listenerService,
-		Backup: backup.NewService(backup.Config{
-			Appliance:      applianceService,
-			Nodes:          nodeManager,
-			AuthorityLease: authorityLease,
-			Build:          buildinfo.Current(),
-		}),
+		Native:            xkeen.Discovery{},
+		Collector:         collector,
+		Auth:              authManager,
+		Nodes:             nodeManager,
+		Benchmark:         coordinator,
+		Selection:         coordinator,
+		Assets:            webassets.Handler(),
+		StartedAt:         startedAt,
+		Manual:            coordinator,
+		Updates:           updateManager,
+		Notifications:     notificationService,
+		PerformancePolicy: performancePolicyService,
+		Listener:          listenerService,
 	})
 
 	server := &http.Server{
@@ -398,14 +231,9 @@ func main() {
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		// Component Apply/Rollback may wait for shared admission, run the largest
-		// synchronous transaction, and then perform ordinary recovery on an
-		// independent bounded context after a late activation failure. Keep the
-		// response window longer than all of those budgets so the operator can
-		// observe the committed or recovered result.
-		WriteTimeout:   max(httpWriteTimeout, setupHTTPWriteWindow()),
-		IdleTimeout:    30 * time.Second,
-		MaxHeaderBytes: 16 << 10,
+		WriteTimeout:      nodes.DefaultTransactionTimeout + 30*time.Second,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    16 << 10,
 	}
 
 	runtimeContext, cancelRuntime := context.WithCancel(context.Background())
@@ -415,19 +243,14 @@ func main() {
 		<-shutdown
 		cancelRuntime()
 		subscriptionRefresher.Stop()
-		componentScheduler.Stop()
 		panelNotifyScheduler.Stop()
 		coordinator.Stop()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = server.Shutdown(ctx)
 	}()
-	coordinator.Start(runtimeContext)
-	// Startup recovery above must settle before any scheduler is started. The
-	// subscription refresher then owns only its bounded RAM schedule and uses
-	// the coordinator's non-preemptive background admission for commits.
-	subscriptionRefresher.Start(runtimeContext)
-	componentScheduler.Start(runtimeContext)
+	// Native Xray owns automatic selection until the panel mode is explicitly qualified.
+	// Automatic subscription writes are enabled after shared native admission is installed.
 	panelNotifyScheduler.Start(runtimeContext)
 
 	log.Printf("xkeen-control %s listening on %s", buildinfo.Current().Version, listenAddress)

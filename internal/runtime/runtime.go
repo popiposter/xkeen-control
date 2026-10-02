@@ -23,6 +23,9 @@ type ConfigReader interface {
 type OutboundTagReader func(string) ([]string, error)
 
 type Dependencies struct {
+	Native interface {
+		Inspect(context.Context) xkeen.Capabilities
+	}
 	Xray  xrayapi.Reader
 	Xkeen interface {
 		Snapshot(context.Context) xkeen.Snapshot
@@ -55,6 +58,7 @@ type View struct {
 }
 
 type Status struct {
+	Native       *xkeen.Capabilities `json:"native,omitempty"`
 	ControlPlane ControlPlaneStatus  `json:"controlPlane"`
 	Xray         XrayStatus          `json:"xray"`
 	Xkeen        XkeenStatus         `json:"xkeen"`
@@ -442,6 +446,10 @@ func (c *Collector) collect(ctx context.Context) View {
 		Lifecycle: c1State.Lifecycle,
 	}
 	status.Setup = c.setupStatus(status, xkeenState, xrayState, configState)
+	if c.deps.Native != nil {
+		facts := c.deps.Native.Inspect(ctx)
+		status.Native = &facts
+	}
 
 	performanceNodes := make([]Throughput, 0, len(nodes))
 	for _, node := range nodes {
