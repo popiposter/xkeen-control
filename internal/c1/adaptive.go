@@ -656,3 +656,24 @@ func sortAdaptiveCandidates(candidates []AdaptiveCandidateInput) {
 		return candidates[i].Tag < candidates[j].Tag
 	})
 }
+
+// adaptiveRTTEvidence reads the existing deduplicated RAM window. Failed or
+// future observations cannot count toward the initial three usable RTTs.
+func adaptiveRTTEvidence(values []sample, cutoff, now time.Time) (int64, int, time.Time) {
+	delays := make([]int64, 0, len(values))
+	var latest time.Time
+	for _, value := range values {
+		if !value.alive || value.delay <= 0 || value.at.Before(cutoff) || value.at.After(now) {
+			continue
+		}
+		delays = append(delays, value.delay)
+		if value.at.After(latest) {
+			latest = value.at
+		}
+	}
+	if len(delays) == 0 {
+		return 0, 0, time.Time{}
+	}
+	sort.Slice(delays, func(i, j int) bool { return delays[i] < delays[j] })
+	return delays[len(delays)/2], len(delays), latest
+}
