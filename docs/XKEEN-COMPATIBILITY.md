@@ -48,9 +48,22 @@ XKEEN_STOP_FIX_SOURCE=/path/to/pinned-public-template node --test scripts/native
 Six focused fixtures passed; the unmodified upstream fails the three cases
 requiring cleanup when the core is already absent. The fixtures execute the actual
 extracted stop function with stubbed commands; they prove delegation and lock
-behavior, not real firewall-rule preservation. No live installation is claimed.
-Late-crash monitoring, policy-wide killswitch behavior, native update persistence
-and shared CLI/cron admission remain separate work.
+behavior, not real firewall-rule preservation.
+
+The exact installed init matched the pinned public template. A bounded hardware
+qualification replaced only that init with candidate SHA256
+`312bcb89ad188d14818d5feea547e97d729da506bfc46304f090d63725497b19`,
+retaining its previous bytes privately. Planned Stop and a second already-stopped
+Stop both completed; independent IPv4/IPv6 dumps contained no XKeen rules. Router
+DNS and direct HTTPS worked while stopped. Native Start, Xray API, panel health and
+cron were verified afterward, with unchanged registry/configuration hashes and
+59 profiles (52 enabled). The second Stop proves idempotence; stale rules after a
+real crash were not injected or qualified.
+
+The upstream module remains unmodified: native regeneration/update can overwrite
+this local init correction. Late-crash monitoring, policy-wide killswitch behavior,
+update persistence and shared CLI/cron admission remain separate work. This is not
+a general client-connectivity or selective no-leak guarantee.
 
 ## Native defaults that the panel must understand
 

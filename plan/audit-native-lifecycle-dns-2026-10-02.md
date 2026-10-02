@@ -65,7 +65,7 @@ development PC's Karing remained enabled throughout.
 | --- | --- | --- |
 | Planned Stop with running core | Live rules removed; router DNS/HTTPS work | Client inside/outside policy |
 | Late core crash | Source emergency check is one shot, not continuous | Native cleanup/fallback |
-| Stop with already absent core | Source skips clean_firewall | Native idempotent cleanup correction |
+| Stop with already absent core | Pinned native init corrected; offline stale-rule delegation and live repeated Stop pass | Real stale-crash state and update persistence |
 | All VPN nodes unavailable | VPN balancer fallback is block | Direct routes/DNS remain available |
 | Panel stopped | Source retains native ownership | Independent client traffic |
 
@@ -109,3 +109,10 @@ Next: qualify native failure cleanup and implement consistent domain routing/DNS
 Final LAN TCP/UDP/DNS claims require clients inside and outside the policy and
 remain pending. See PR122 comment 5954037252 and Issue121 comment 5954037993 for
 sanitized deployment and recovery evidence.
+
+Follow-up hardware qualification on development panel `38d9fcb`: one planned Stop
+and one already-stopped Stop both left no native IPv4/IPv6 rules. Router-origin DNS
+and HTTPS passed while stopped, followed by verified native Start, API, panel and
+cron restoration. Registry/config hashes and 59/52 node counts were preserved.
+Only the native init was patched; native regeneration may overwrite this correction.
+Late crashes and unproxied LAN clients remain unqualified.
