@@ -95,6 +95,8 @@ func TestNativeAttachmentRejectsAmbiguousOrConflictingIntegration(t *testing.T) 
 		{"listener", "09_external.json", `{"inbounds":[{"tag":"other","port":10808}]}`},
 		{"reserved-tag", "09_external.json", `{"inbounds":[{"tag":"probe","port":1234}]}`},
 		{"fixed-conflict", "04_outbounds.json", `{"outbounds":[{"tag":"block","protocol":"freedom"}]}`},
+		{"managed-namespace", "04_outbounds.json", `{"outbounds":[{"tag":"proxy-node-external","protocol":"freedom"}]}`},
+		{"other-outbound-file", "09_external.json", `{"outbounds":[{"tag":"external","protocol":"freedom"}]}`},
 		{"catchall-shadow", "05_routing.json", `{"routing":{"rules":[{"outboundTag":"direct"}]}}`},
 		{"ambiguous-placeholder", "05_routing.json", `{"routing":{"rules":[{"inboundTag":["custom"],"outboundTag":"vless-reality"}]}}`},
 	} {

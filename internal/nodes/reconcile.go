@@ -20,6 +20,13 @@ func (m *Manager) ReconcileRuntime(ctx context.Context) error {
 	if m == nil || m.tx.Activator == nil || m.tx.ActiveOutboundsPath == "" || m.tx.ConfigDir == "" {
 		return errors.New("node runtime reconciliation unavailable")
 	}
+	previousDir := m.tx.PreviousDir
+	if previousDir == "" {
+		previousDir = filepath.Join(filepath.Dir(m.tx.Store.Path), "previous")
+	}
+	if _, err := os.Lstat(filepath.Join(previousDir, ".pending")); !errors.Is(err, os.ErrNotExist) {
+		return ErrNodeRecoveryRequired
+	}
 	registry, err := m.store.Load()
 	if err != nil {
 		return errors.New("node registry unavailable")

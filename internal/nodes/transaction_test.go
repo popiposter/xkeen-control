@@ -113,7 +113,7 @@ func TestTransactionPreservesPolicyAndRollsBackActivationFailure(t *testing.T) {
 		t.Fatal("active routing policy was modified")
 	}
 
-	rollbackActivator := &fakeActivator{restartErr: errors.New("synthetic restart failure")}
+	rollbackActivator := &fakeActivator{restartErrs: []error{errors.New("synthetic restart failure"), nil}}
 	tx.Activator = rollbackActivator
 	if err := tx.Apply(context.Background(), old); err == nil {
 		t.Fatal("restart failure unexpectedly succeeded")

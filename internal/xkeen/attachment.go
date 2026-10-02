@@ -3,6 +3,7 @@ package xkeen
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/popiposter/xkeen-control/internal/configjson"
 )
@@ -74,6 +75,9 @@ func BuildAttachment(files map[string][]byte) (map[string][]byte, error) {
 				if tag == "api" || tag == "probe" {
 					return nil, ErrAttachmentConflict
 				}
+				if section == "outbounds" && strings.HasPrefix(tag, "proxy-node-") {
+					return nil, ErrAttachmentConflict
+				}
 				if section == "inbounds" {
 					var port int
 					_ = json.Unmarshal(entry["port"], &port)
@@ -85,6 +89,9 @@ func BuildAttachment(files map[string][]byte) (map[string][]byte, error) {
 		}
 	}
 	if routingFile == "" {
+		return nil, ErrAttachmentConflict
+	}
+	if outboundsFile != "" && outboundsFile != "04_outbounds.json" {
 		return nil, ErrAttachmentConflict
 	}
 	if outboundsFile == "" {

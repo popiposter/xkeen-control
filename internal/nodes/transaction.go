@@ -36,6 +36,7 @@ const (
 )
 
 var ErrRollbackFailed = errors.New("node activation failed; rollback failed")
+var ErrNodeRecoveryRequired = errors.New("node operation needs independent runtime recovery before another change")
 
 type TransactionBudget struct {
 	CandidateValidation time.Duration
@@ -80,6 +81,13 @@ type Transaction struct {
 }
 
 func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
+	if t.PreviousDir == "" {
+		t.PreviousDir = filepath.Join(filepath.Dir(t.Store.Path), "previous")
+	}
+	pendingPath := filepath.Join(t.PreviousDir, ".pending")
+	if _, checkErr := os.Lstat(pendingPath); !errors.Is(checkErr, os.ErrNotExist) {
+		return ErrNodeRecoveryRequired
+	}
 	budget := t.Budget.normalized()
 	transactionDeadline := time.Now().Add(budget.Total)
 	if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(transactionDeadline) {
@@ -134,6 +142,35 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 		}
 	}
 
+	if err := ensurePrivateDir(t.PreviousDir); err != nil {
+		return err
+	}
+	pending, pendingErr := os.OpenFile(pendingPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if pendingErr != nil {
+		return ErrNodeRecoveryRequired
+	}
+	_, pendingErr = pending.WriteString("node-operation-pending\n")
+	if pendingErr == nil {
+		pendingErr = pending.Sync()
+	}
+	closeErr := pending.Close()
+	if pendingErr != nil || closeErr != nil {
+		return ErrNodeRecoveryRequired
+	}
+	if syncNodeDirectory(t.PreviousDir) != nil {
+		return ErrNodeRecoveryRequired
+	}
+	settled := true
+	defer func() {
+		if settled {
+			if removeErr := os.Remove(pendingPath); removeErr != nil {
+				err = ErrNodeRecoveryRequired
+			}
+			if syncNodeDirectory(t.PreviousDir) != nil {
+				err = ErrNodeRecoveryRequired
+			}
+		}
+	}()
 	currentRegistry, currentRegistryExists, err := loadOptionalRegistry(t.Store)
 	if err != nil {
 		return err
@@ -147,11 +184,23 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 		return errors.New("native node configuration changed during validation")
 	}
 	if err := t.savePrevious(previousRegistry, previousRegistryExists, previousOutbounds, previousOutboundsExists); err != nil {
+		settled = true
 		return err
+	}
+	if syncNodeDirectory(t.PreviousDir) != nil {
+		return ErrNodeRecoveryRequired
 	}
 	mutated := false
 	defer func() {
 		if err == nil || !mutated {
+			settled = true
+			return
+		}
+		if errors.Is(err, xkeen.ErrLifecycleUnknown) {
+			// Keep both the current candidate and previous snapshot untouched.
+			// Native hooks may not have settled; automatic rollback would be a
+			// second lifecycle mutation, not independent outcome verification.
+			err = errors.Join(ErrNodeRecoveryRequired, xkeen.ErrLifecycleUnknown)
 			return
 		}
 		rollbackDeadline := time.Now().Add(budget.Rollback)
@@ -165,13 +214,15 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 			err = &RollbackError{Cause: err, Recovery: rollbackErr}
 			return
 		}
+		settled = true
 		err = errors.New(err.Error() + "; previous generation restored")
 	}()
 
+	settled = false
+	mutated = true
 	if err := t.Store.Save(registry); err != nil {
 		return err
 	}
-	mutated = true
 	if err := atomicWrite(t.ActiveOutboundsPath, rendered, 0o600); err != nil {
 		return err
 	}
@@ -188,6 +239,9 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 
 func (t Transaction) activate(ctx context.Context, registry Registry) error {
 	if err := t.Activator.Restart(ctx); err != nil {
+		if errors.Is(err, xkeen.ErrLifecycleUnknown) {
+			return err
+		}
 		return errors.New("Xray restart failed")
 	}
 	if err := t.Activator.WaitReady(ctx); err != nil {
