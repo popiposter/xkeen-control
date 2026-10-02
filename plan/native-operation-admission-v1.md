@@ -537,6 +537,36 @@ verifier, so they establish source protocol behavior rather than router lifecycl
 postconditions. The complete candidate remains unconditionally fenced pending
 generated-hook convergence and the remaining native integration qualification.
 
+### Generated-hook propagation and convergence boundary
+
+The pinned `_xkeen_apply_table` already returns failure after three failed
+restore attempts. Its aggregator masked every result with `|| true`; both
+cached and full rebuild paths could then publish cache/state and finish
+successfully. The source builder now preserves each enabled IPv4/IPv6 nat/mangle
+failure and exits before that success tail. Native rule rendering is unchanged.
+The unchanged-WAN/intact-rules fast path now calls the native deny-MAC sync
+function too: schedule.d is event-driven, so skipping it cannot be repaired by
+assuming a future periodic tick. Nine extracted-source fixtures cover these
+paths, including the real bounded restore retry. Six behavioral assertions were
+RED before the patch; the final focused hook/monitor/launch set has 27 passes.
+
+This is error propagation, not complete native proof. Existing deny-MAC helper
+errors can still be swallowed, and `_xkeen_rules_intact` checks presence rather
+than the exact owned projection. A read-only proof path must avoid the generated
+hook's early runtime-directory, lock, ipset and route writes, while checking the
+native Hybrid projection for both supported families. Missing proof remains a
+refusal; neither successful shell status nor weak chain presence is sufficient.
+
+The planned event admission path uses a bounded transient elected invocation
+and coalesced RAM notification, not a permanent daemon or persistent journal.
+It must load the current fixed generated hook after admission, drain current
+state including schedule deny-MAC, and close the final-event/leader-retirement
+race. A deadline or dead/incomplete leader leaves an explicit unresolved event;
+there is no claimed future tick or stale-owner reaping. A lifecycle's direct
+foreground hook borrows its existing admission and never waits for the event
+leader while holding the gate. This convergence protocol is still design-only;
+the unconditional whole-candidate fence remains mandatory.
+
 ## Actual Entware shell protocol probe (2026-10-02)
 
 The first isolated RAM probe of the old shell library stopped before creating a

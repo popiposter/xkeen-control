@@ -75,6 +75,21 @@ export function buildCandidates({ init, dispatcher }) {
   if (!Buffer.isBuffer(init) || digest(init) !== initSHA256 ||
       !Buffer.isBuffer(dispatcher) || digest(dispatcher) !== dispatcherSHA256) throw new Error('unsupported native source identity')
   let text = patchSource(init).toString('utf8')
+  // Native per-table retries already return failure. Preserve that result at
+  // both aggregation and terminal paths, without changing rendered rules.
+  for (const family of ['iptables', 'ip6tables']) {
+    for (const table of ['nat', 'mangle']) {
+      const rules = `_xkeen_v${family === 'iptables' ? '4' : '6'}_${table}_rules`
+      text = replaceOnce(text,
+        `        [ "$${family}_supported" = "true" ] && _xkeen_apply_table ${family} ${table} ${rules} || true\n`,
+        `        if [ "$${family}_supported" = "true" ]; then\n            _xkeen_apply_table ${family} ${table} ${rules} || return 1\n        fi\n`)
+    }
+  }
+  text = replaceOnce(text, '        _xkeen_apply\n', '        _xkeen_apply || exit 1\n')
+  text = replaceOnce(text, '    _xkeen_apply\n', '    _xkeen_apply || exit 1\n')
+  text = replaceOnce(text,
+    '        _xkeen_release_nf_lock\n        exit 0\n',
+    '        _xkeen_release_nf_lock\n        _xkeen_sync_deny_mac_ipset\n        exit 0\n')
   // Exhausted native attempts otherwise fall through successful mutex cleanup.
   // Keep native firewall/killswitch behavior and release only a mutex we acquired.
   text = replaceOnce(text,
