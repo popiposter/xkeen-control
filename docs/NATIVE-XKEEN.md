@@ -39,6 +39,31 @@ replace its service, hooks or cron during attachment, and stopping/removing the
 panel must leave the native data plane functional. A basic native installation
 without imported VPN profiles is not claimed to provide working VPN traffic.
 
+## Lifecycle and configuration recovery boundary
+
+The shared RAM admission gate must serialize native and panel writers. Ordinary
+Start/Stop/Restart remains native service control, with foreground completion
+and independent native postconditions; it must not implicitly rename an
+installation or repair/install packages. Use native init for panel lifecycle
+calls and classify CLI lifecycle before installer/package side effects.
+
+Keep durable `.pending` and coherent rollback with the existing authoritative
+configuration transaction. Its lifecycle children borrow that operation and
+cannot settle it. Do not turn standalone service control into a generalized
+snapshot journal, add another persistent operation owner, or require the panel
+binary/service for native verification. Native generated hooks/runtime files
+need interruption-safe regeneration and cleanup, not configuration snapshots
+merely because some generated files persist on disk.
+
+An unknown same-boot operation retains RAM admission for explicit readback; do
+not replay it. A later native boot is a new operation, subject to native config
+validation and any retained configuration `.pending`; boot must not clear or
+ignore an interrupted configuration transaction. No reboot is required for
+qualification here. Earlier plan language requiring a durable standalone
+lifecycle journal before every persistent native write is superseded by this
+boundary. Hook convergence, safe native regeneration and boot checks still need
+implementation and evidence before shared admission is enabled.
+
 ## Qualification and delivery
 
 Implementation uses one normal checkout and a Draft PR. Review exact code and
