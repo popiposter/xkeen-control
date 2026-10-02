@@ -57,7 +57,7 @@ func policyRawPost(t *testing.T, client *http.Client, target, body, contentType,
 
 func TestComponentPolicyRoutesAreAuthenticatedStrictAndSanitized(t *testing.T) {
 	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	policy := &componentPolicyHTTPStub{status: components.ComponentPolicyStatus{
@@ -190,7 +190,7 @@ func TestComponentPolicyRoutesAreAuthenticatedStrictAndSanitized(t *testing.T) {
 
 func TestComponentPolicyDisabledCheckErrorIsProjected(t *testing.T) {
 	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	checker := &componentCheckHTTPStub{err: components.ErrComponentPolicyDisabled}

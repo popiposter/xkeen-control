@@ -21,7 +21,7 @@ func (d *nativeDiscoveryStub) Inspect(context.Context) xkeen.Capabilities {
 
 func TestNativeDiscoveryRequiresAuthenticatedReadAndRejectsArguments(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(path, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(path, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	stub := &nativeDiscoveryStub{}

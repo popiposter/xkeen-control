@@ -57,7 +57,7 @@ func (stub *f1ComponentMutationHTTPStub) InvalidateAll()     { stub.invalidatesA
 
 func TestComponentMutationRoutesAreStrictAuthenticatedAndInvalidateSessions(t *testing.T) {
 	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	mutations := &f1ComponentMutationHTTPStub{}
@@ -156,7 +156,7 @@ func TestComponentMutationRoutesAreStrictAuthenticatedAndInvalidateSessions(t *t
 
 func TestComponentMutationRouteSanitizesBackendFailure(t *testing.T) {
 	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	mutations := &f1ComponentMutationHTTPStub{applyErr: components.ErrMutationTransactionFailed}
@@ -182,7 +182,7 @@ func TestComponentMutationRouteSanitizesBackendFailure(t *testing.T) {
 
 func TestComponentMutationRouteProjectsOnlySanitizedCandidateReason(t *testing.T) {
 	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	mutations := &f1ComponentMutationHTTPStub{applyErr: &components.MutationCandidateRejectedError{ReasonCode: "artifact-integrity"}}
@@ -219,7 +219,7 @@ func TestComponentMutationRouteProjectsOnlySanitizedCandidateReason(t *testing.T
 
 func TestComponentMutationRouteDoesNotClaimRestoreForUnprovenFailure(t *testing.T) {
 	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	mutations := &f1ComponentMutationHTTPStub{applyErr: components.ErrMutationTransactionUnproven}

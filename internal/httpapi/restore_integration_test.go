@@ -55,7 +55,7 @@ func newHTTPRealRestoreServer(t *testing.T, root string) (*httptest.Server, *htt
 
 	const password = "synthetic-control-password"
 	hashPath := filepath.Join(root, "auth", "password.bcrypt")
-	if err := auth.SetPassword(hashPath, []byte(password)); err != nil {
+	if err := setHTTPTestPassword(hashPath, []byte(password)); err != nil {
 		t.Fatal(err)
 	}
 	manager := auth.NewManager(auth.Config{HashPath: hashPath})

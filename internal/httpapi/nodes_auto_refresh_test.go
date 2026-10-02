@@ -17,7 +17,7 @@ import (
 func TestNodesEndpointProjectsBoundedAutomaticRefreshStatusAndDisabledImmediately(t *testing.T) {
 	dir := t.TempDir()
 	passwordPath := filepath.Join(dir, "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-panel-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-panel-password")); err != nil {
 		t.Fatal(err)
 	}
 	registry := syntheticSubscriptionHTTPRegistry(t)

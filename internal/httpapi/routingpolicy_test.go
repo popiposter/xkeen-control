@@ -61,7 +61,7 @@ func (stub *httpRoutingPolicyStub) InvalidateAll()            { stub.invalidateA
 func TestRoutingPolicyHTTPIsTypedAuthenticatedCSRFBoundAndSessionInvalidated(t *testing.T) {
 	hashPath := filepath.Join(t.TempDir(), "auth", "password.bcrypt")
 	const password = "synthetic-control-password"
-	if err := auth.SetPassword(hashPath, []byte(password)); err != nil {
+	if err := setHTTPTestPassword(hashPath, []byte(password)); err != nil {
 		t.Fatal(err)
 	}
 	stub := &httpRoutingPolicyStub{

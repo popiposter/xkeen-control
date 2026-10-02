@@ -108,7 +108,7 @@ func newHTTPRestoreServer(t *testing.T, stub *httpRestoreServiceStub) (*httptest
 	t.Helper()
 	hashPath := filepath.Join(t.TempDir(), "auth", "password.bcrypt")
 	const password = "synthetic-control-password"
-	if err := auth.SetPassword(hashPath, []byte(password)); err != nil {
+	if err := setHTTPTestPassword(hashPath, []byte(password)); err != nil {
 		t.Fatal(err)
 	}
 	manager := auth.NewManager(auth.Config{HashPath: hashPath})

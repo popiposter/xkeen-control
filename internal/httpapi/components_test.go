@@ -40,7 +40,7 @@ func (stub *componentCheckHTTPStub) Check(_ context.Context, request components.
 
 func TestComponentsRouteUsesReadOnlyAuthOriginAndSafeProjection(t *testing.T) {
 	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	stub := &componentsHTTPStub{value: components.Inventory{
@@ -152,7 +152,7 @@ func TestComponentsRouteUsesReadOnlyAuthOriginAndSafeProjection(t *testing.T) {
 
 func TestComponentsRouteFailsClosedWhenServiceUnavailable(t *testing.T) {
 	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(New(Config{Auth: auth.NewManager(auth.Config{HashPath: passwordPath})}))
@@ -175,7 +175,7 @@ func TestComponentsRouteFailsClosedWhenServiceUnavailable(t *testing.T) {
 
 func TestComponentsCheckRouteIsClosedCSRFBoundAndSafe(t *testing.T) {
 	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	checker := &componentCheckHTTPStub{result: components.CheckResult{

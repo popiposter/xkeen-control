@@ -19,7 +19,7 @@ func TestNotificationsExactRoutesAndSecretlessRoundtrip(t *testing.T) {
 	os.Mkdir(secretDir, 0o700)
 	path := filepath.Join(secretDir, "notifications.json")
 	password := filepath.Join(dir, "password.bcrypt")
-	if err := auth.SetPassword(password, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(password, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	service := notifications.NewServiceForTest(path)

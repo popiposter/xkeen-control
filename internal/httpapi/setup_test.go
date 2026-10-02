@@ -38,7 +38,7 @@ func (s *setupHTTPStub) Status() components.SetupProjection {
 
 func TestSetupRoutesAreClosedAuthenticatedAndSessionBound(t *testing.T) {
 	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	setup := &setupHTTPStub{}

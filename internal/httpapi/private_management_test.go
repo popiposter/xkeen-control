@@ -122,7 +122,7 @@ func TestRealSocketHealthProbeCompatibility(t *testing.T) {
 
 func TestPasswordRoutesRejectNonExactObjects(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "auth", "password.bcrypt")
-	if err := auth.SetPassword(path, []byte("synthetic-panel-password")); err != nil {
+	if err := setHTTPTestPassword(path, []byte("synthetic-panel-password")); err != nil {
 		t.Fatal(err)
 	}
 	m := auth.NewManager(auth.Config{HashPath: path})
@@ -182,7 +182,7 @@ func TestPasswordRoutesRejectNonExactObjects(t *testing.T) {
 
 func TestLoginLockoutUsesTCPRemoteAndIgnoresProxyHeaders(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "auth", "password.bcrypt")
-	if err := auth.SetPassword(path, []byte("synthetic-panel-password")); err != nil {
+	if err := setHTTPTestPassword(path, []byte("synthetic-panel-password")); err != nil {
 		t.Fatal(err)
 	}
 	s := New(Config{Auth: auth.NewManager(auth.Config{HashPath: path, LockoutAfter: 1})})
