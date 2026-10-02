@@ -10,7 +10,31 @@ The [audit](../plan/audit-xkeen-foundation-2026-10-02.md) binds findings to sour
 
 Beta.5 publication/public verification and prior panel-only installation are historical PASS. The subsequent authorized reset/native-file reconstruction did not reach integrated subscription/LAN/quality acceptance. The old router state is no longer a reusable baseline after the operator's planned opkg reset. Preserve unknown/failed operation receipts; do not replay them. Earlier sequencing below is historical except where explicitly retained by the new plan.
 
-## Current production baseline
+## Native development installation — 2026-10-02
+
+Issue #121 now has a working native installation with the development panel from
+`c805a551846b30f2e8ae7fc423723d39ecbc6db3`. Its full local Linux gate passed,
+including 149 browser cases. Independent live readback verified the installed
+and running ARM64 executable hash, authenticated health, 59 profiles (52 enabled),
+two subscriptions and no enabled WL profiles. The panel-only replacement kept
+Xray process identity, native configuration, registry and authentication intact;
+no configuration transaction is pending. See the [live evidence](https://github.com/popiposter/xkeen-control/issues/121#issuecomment-5957677528).
+
+This is a hash-bound development build, not a signed release. Native Xray remains
+the selection owner; panel adaptive scheduling and automatic subscription writes
+are disabled while shared native admission is unfinished. The source-only native
+admission candidates remain fenced and must not be installed. LAN-client traffic,
+late-crash behavior, native update/cron concurrency and the remaining plan stages
+are not yet qualified. The earlier installation/import/recovery operations must
+not be replayed.
+
+HTTP fixture optimization in `f97fac50f5ee59e804af241d7878bde5f4b1e5b4` preserves
+production authentication code and real authorization tests. An uncached HTTP
+package race run fell from 296.465s to 22.025s by reducing bcrypt cost only in
+ordinary test fixtures; one production-cost HTTP smoke and password-rotation
+tests remain. This proportional result is not a new full-gate claim.
+
+## Historical production baseline
 
 Slices A/B/C/C.1 and D remain production-qualified. The validated fresh-source migration baseline merged as #7, the canonical Go module/import identity cleanup merged as #9 / Issue #8, and Slice D completed through Issue #2 with historical signed stable release `v0.1.1` from source `8f15246099538426ef08163b832c3aa6f73e8265` plus bounded live Keenetic adoption → rollback → re-adoption qualification. D.1 / Issue #3 is also production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. Issue #78 Slice F is present on source main as source-qualified-only work and is not a production-qualification or release claim.
 
