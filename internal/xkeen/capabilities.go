@@ -40,6 +40,7 @@ type Capabilities struct {
 	XrayRunning          bool            `json:"xrayRunning"`
 	APIConfigured        bool            `json:"apiConfigured"`
 	PoolConfigured       bool            `json:"poolConfigured"`
+	PanelIntegration     CapabilityState `json:"panelIntegration"`
 	NeedsOnboarding      bool            `json:"needsOnboarding"`
 	SpeedBalancer        CapabilityState `json:"speedBalancer"`
 	SpeedBalancerEnabled bool            `json:"speedBalancerEnabled"`
@@ -59,7 +60,7 @@ func (d Discovery) path(name string) string {
 func (d Discovery) Inspect(ctx context.Context) Capabilities {
 	r := Capabilities{Installation: CapabilityUnknown, Lifecycle: CapabilityUnknown,
 		Configuration: CapabilityUnknown, GeodataCron: CapabilityUnknown,
-		NativeHook: CapabilityUnknown, KernelModules: CapabilityUnknown, SpeedBalancer: CapabilityUnknown}
+		NativeHook: CapabilityUnknown, KernelModules: CapabilityUnknown, SpeedBalancer: CapabilityUnknown, PanelIntegration: CapabilityUnknown}
 	if ctx.Err() != nil {
 		return r
 	}
@@ -93,7 +94,7 @@ func (d Discovery) Inspect(ctx context.Context) Capabilities {
 		r.KernelModules = state
 	}
 	r.XrayRunning = processExistsInProc(d.path("proc"), "xray")
-	r.Configuration, r.ConfigFiles, r.APIConfigured, r.PoolConfigured = d.configCapabilities(ctx)
+	r.Configuration, r.ConfigFiles, r.APIConfigured, r.PoolConfigured, r.PanelIntegration = d.configCapabilities(ctx)
 	if data, state := d.read("opt/etc/xkeen/xkeen.json", maxNativeConfig); state == CapabilityAvailable {
 		object, err := decodeNativeObject(data)
 		if err == nil {
@@ -137,23 +138,25 @@ func (d Discovery) Inspect(ctx context.Context) Capabilities {
 		}
 	}
 	r.NeedsOnboarding = r.Installation == CapabilityAvailable && r.Core == "xray" &&
-		r.Configuration == CapabilityAvailable && (!r.APIConfigured || !r.PoolConfigured)
+		r.Configuration == CapabilityAvailable && r.PanelIntegration == CapabilityMissing
 	return r
 }
 
-func (d Discovery) configCapabilities(ctx context.Context) (CapabilityState, int, bool, bool) {
+func (d Discovery) configCapabilities(ctx context.Context) (CapabilityState, int, bool, bool, CapabilityState) {
 	entries, err := d.entries("opt/etc/xray/configs", maxNativeConfigFiles)
 	if errors.Is(err, os.ErrNotExist) {
-		return CapabilityMissing, 0, false, false
+		return CapabilityMissing, 0, false, false, CapabilityMissing
 	}
 	if err != nil {
-		return CapabilityUnknown, 0, false, false
+		return CapabilityUnknown, 0, false, false, CapabilityUnknown
 	}
 	count, apiService, apiInbound, apiRoute, pool := 0, false, false, false, false
+	apiSections, routingSections, apiInbounds := 0, 0, 0
+	managementUnknown := false
 	total := 0
 	for _, entry := range entries {
 		if ctx.Err() != nil {
-			return CapabilityUnknown, count, false, false
+			return CapabilityUnknown, count, false, false, CapabilityUnknown
 		}
 		if !strings.HasSuffix(entry.Name(), ".json") {
 			continue
@@ -161,45 +164,71 @@ func (d Discovery) configCapabilities(ctx context.Context) (CapabilityState, int
 		data, state := d.read("opt/etc/xray/configs/"+entry.Name(), maxNativeConfig)
 		total += len(data)
 		if state != CapabilityAvailable || total > 8<<20 {
-			return CapabilityUnknown, count, false, false
+			return CapabilityUnknown, count, false, false, CapabilityUnknown
 		}
 		object, err := decodeNativeObject(data)
 		if err != nil {
-			return CapabilityUnsupported, count, false, false
+			return CapabilityUnsupported, count, false, false, CapabilityUnknown
 		}
 		count++
 		var api struct {
 			Tag      string   `json:"tag"`
 			Services []string `json:"services"`
 		}
-		if json.Unmarshal(object["api"], &api) == nil && api.Tag == "api" {
-			for _, service := range api.Services {
-				apiService = apiService || service == "RoutingService"
+		if raw, exists := object["api"]; exists {
+			apiSections++
+			if json.Unmarshal(raw, &api) == nil && api.Tag == "api" {
+				for _, service := range api.Services {
+					apiService = apiService || service == "RoutingService"
+				}
 			}
+			managementUnknown = managementUnknown || !apiService
 		}
 		var inbounds []struct {
-			Tag    string `json:"tag"`
-			Listen string `json:"listen"`
-			Port   int    `json:"port"`
+			Tag      string `json:"tag"`
+			Listen   string `json:"listen"`
+			Port     int    `json:"port"`
+			Protocol string `json:"protocol"`
+			Settings struct {
+				Address string `json:"address"`
+				Network string `json:"network"`
+			} `json:"settings"`
 		}
 		if json.Unmarshal(object["inbounds"], &inbounds) == nil {
 			for _, inbound := range inbounds {
-				apiInbound = apiInbound || inbound.Tag == "api" && inbound.Listen == "127.0.0.1" && inbound.Port == 10085
+				if inbound.Tag == "api" {
+					apiInbounds++
+					supported := inbound.Listen == "127.0.0.1" && inbound.Port == 10085 &&
+						(inbound.Protocol == "tunnel" || inbound.Protocol == "dokodemo-door") &&
+						inbound.Settings.Address == "127.0.0.1" && (inbound.Settings.Network == "" || inbound.Settings.Network == "tcp")
+					apiInbound = apiInbound || supported
+					managementUnknown = managementUnknown || !supported
+				} else if inbound.Port == 10085 {
+					managementUnknown = true
+				}
 			}
 		}
 		var routing struct {
-			Rules []struct {
-				InboundTag  []string `json:"inboundTag"`
-				OutboundTag string   `json:"outboundTag"`
-			} `json:"rules"`
+			Rules     []map[string]json.RawMessage `json:"rules"`
 			Balancers []struct {
 				Tag string `json:"tag"`
 			} `json:"balancers"`
 		}
-		if json.Unmarshal(object["routing"], &routing) == nil {
-			for _, rule := range routing.Rules {
-				for _, tag := range rule.InboundTag {
-					apiRoute = apiRoute || tag == "api" && rule.OutboundTag == "api"
+		if raw, exists := object["routing"]; exists {
+			routingSections++
+			if json.Unmarshal(raw, &routing) != nil {
+				managementUnknown = true
+				continue
+			}
+			for index, rule := range routing.Rules {
+				var inboundTags []string
+				_ = json.Unmarshal(rule["inboundTag"], &inboundTags)
+				for _, tag := range inboundTags {
+					if tag == "api" {
+						supported := index == 0 && unconditionalAPIRoute(rule)
+						apiRoute = apiRoute || supported
+						managementUnknown = managementUnknown || !supported
+					}
 				}
 			}
 			for _, balancer := range routing.Balancers {
@@ -208,9 +237,36 @@ func (d Discovery) configCapabilities(ctx context.Context) (CapabilityState, int
 		}
 	}
 	if count == 0 {
-		return CapabilityMissing, 0, false, false
+		return CapabilityMissing, 0, false, false, CapabilityMissing
 	}
-	return CapabilityAvailable, count, apiService && apiInbound && apiRoute, pool
+	// Xray merges some fragments and replaces others. Until an effective-config
+	// reader exists, never OR overlapping managed declarations into false proof.
+	if managementUnknown || apiSections > 1 || routingSections > 1 || apiInbounds > 1 {
+		return CapabilityAvailable, count, false, false, CapabilityUnknown
+	}
+	integration := CapabilityMissing
+	if apiService && apiInbound && apiRoute && pool {
+		integration = CapabilityAvailable
+	}
+	return CapabilityAvailable, count, apiService && apiInbound && apiRoute, pool, integration
+}
+
+func unconditionalAPIRoute(rule map[string]json.RawMessage) bool {
+	for key := range rule {
+		if key != "inboundTag" && key != "outboundTag" && key != "type" && key != "ruleTag" {
+			return false
+		}
+	}
+	var tags []string
+	var outbound, kind string
+	if json.Unmarshal(rule["inboundTag"], &tags) != nil || len(tags) != 1 || tags[0] != "api" ||
+		json.Unmarshal(rule["outboundTag"], &outbound) != nil || outbound != "api" {
+		return false
+	}
+	if raw, ok := rule["type"]; ok && (json.Unmarshal(raw, &kind) != nil || kind != "field") {
+		return false
+	}
+	return true
 }
 
 func literalAssignment(data []byte, name, allowed string) string {

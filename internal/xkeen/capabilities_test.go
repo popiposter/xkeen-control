@@ -65,7 +65,7 @@ func TestNativeDiscoveryDoesNotExecuteOrRewriteInstalledFiles(t *testing.T) {
 
 func TestNativeDiscoveryRequiresAPIServiceLoopbackInboundAndRoute(t *testing.T) {
 	d := nativeFixture(t)
-	writeNativeFixture(t, d, "opt/etc/xray/configs/08_api.json", `{"api":{"tag":"api","services":["RoutingService"]},"inbounds":[{"tag":"api","listen":"127.0.0.1","port":10085}]}`)
+	writeNativeFixture(t, d, "opt/etc/xray/configs/08_api.json", `{"api":{"tag":"api","services":["RoutingService"]},"inbounds":[{"tag":"api","protocol":"tunnel","settings":{"address":"127.0.0.1"},"listen":"127.0.0.1","port":10085}]}`)
 	if d.Inspect(context.Background()).APIConfigured {
 		t.Fatal("missing API routing was accepted")
 	}
@@ -162,5 +162,36 @@ func TestNativeFreshDefaultsAndDatDirectoryMatchRealInstaller(t *testing.T) {
 	r := d.Inspect(context.Background())
 	if r.GeodataFiles != 6 || r.SpeedBalancer != CapabilityAvailable || r.SpeedBalancerEnabled {
 		t.Fatalf("fresh native defaults = %+v", r)
+	}
+}
+
+func TestNativeDiscoveryRejectsAmbiguousManagementDeclarations(t *testing.T) {
+	const inbound = `{"tag":"api","protocol":"tunnel","settings":{"address":"127.0.0.1"},"listen":"127.0.0.1","port":10085}`
+	const route = `{"inboundTag":["api"],"outboundTag":"api"}`
+	for _, name := range []string{"overlapping-routing", "overlapping-api", "wrong-protocol", "conditional-route", "shadowed-route", "duplicate-inbound"} {
+		t.Run(name, func(t *testing.T) {
+			d := nativeFixture(t)
+			inbounds, rules := inbound, route
+			switch name {
+			case "overlapping-routing":
+				writeNativeFixture(t, d, "opt/etc/xray/configs/09_override.json", `{"routing":{"rules":[]}}`)
+			case "overlapping-api":
+				writeNativeFixture(t, d, "opt/etc/xray/configs/09_override.json", `{"api":{"tag":"other","services":[]}}`)
+			case "wrong-protocol":
+				inbounds = strings.Replace(inbound, `"tunnel"`, `"socks"`, 1)
+			case "conditional-route":
+				rules = `{"inboundTag":["api"],"outboundTag":"api","domain":["example.invalid"]}`
+			case "shadowed-route":
+				rules = `{"network":"tcp","outboundTag":"direct"},` + route
+			case "duplicate-inbound":
+				inbounds += "," + inbound
+			}
+			writeNativeFixture(t, d, "opt/etc/xray/configs/08_api.json", `{"api":{"tag":"api","services":["RoutingService"]},"inbounds":[`+inbounds+`]}`)
+			writeNativeFixture(t, d, "opt/etc/xray/configs/05_routing.json", `{"routing":{"rules":[`+rules+`],"balancers":[{"tag":"bal-proxy","selector":["proxy-"]}]}}`)
+			r := d.Inspect(context.Background())
+			if r.Configuration != CapabilityAvailable || r.PanelIntegration != CapabilityUnknown || r.APIConfigured || r.PoolConfigured || r.NeedsOnboarding {
+				t.Fatalf("ambiguous management accepted: %+v", r)
+			}
+		})
 	}
 }
