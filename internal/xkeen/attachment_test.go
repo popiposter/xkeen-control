@@ -23,7 +23,11 @@ func nativeTemplates(t *testing.T) map[string][]byte {
 		if err != nil {
 			t.Fatal(err)
 		}
-		files[filepath.Base(path)] = data
+		name := filepath.Base(path)
+		if name == "native-outbounds.json" {
+			name = "04_outbounds.json"
+		}
+		files[name] = data
 	}
 	return files
 }
