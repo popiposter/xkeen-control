@@ -33,6 +33,9 @@ run_shell_fixtures() {
 		bash -n "$script"
 	done
 	bash scripts/test-dev-check-dispatch.sh
+	bash scripts/test-build-embedded.sh
+	bash scripts/test-web-dependencies.sh
+	node --test scripts/dev-check-go.test.mjs
 	bash scripts/test-keenetic-env.sh
 	bash scripts/test-benchmark-policy.sh
 	bash scripts/test-xkeen-foreground.sh
@@ -47,14 +50,24 @@ run_shell_fixtures() {
 
 run_web_checks() {
 	echo "== Web checks =="
-	npm --prefix web ci --ignore-scripts --prefer-offline
+	if [ "$mode" = --full ]; then
+		bash scripts/web-dependencies.sh --clean
+	else
+		bash scripts/web-dependencies.sh --reuse
+	fi
 	npm --prefix web run build
+	npm --prefix web run test:unit
 	if [ "$mode" = "--full" ]; then
 		if [ "${XKEEN_PLAYWRIGHT_INSTALL:-0}" = "1" ]; then
 			(cd web && npx playwright install --with-deps chromium)
 		fi
 		npm --prefix web run test:ui
 		bash scripts/npm-audit.sh
+	elif [ "${XKEEN_CHECK_UI-*}" = '*' ]; then
+		npm --prefix web run test:ui
+	elif [ -n "${XKEEN_CHECK_UI:-}" ]; then
+		read -r -a specs <<< "$XKEEN_CHECK_UI"
+		npm --prefix web run test:ui -- "${specs[@]}"
 	fi
 	bash scripts/verify-webassets.sh
 }
@@ -68,8 +81,14 @@ echo "selected lanes: go=${XKEEN_CHECK_GO:-0} helpers=${XKEEN_CHECK_HELPERS:-0} 
 
 if lane_enabled XKEEN_CHECK_GO; then
 	echo "== Go tests =="
-	go test -count=1 ./...
-	go vet ./...
+	packages=(./...)
+	if [ "$mode" = --fast ]; then
+		mapfile -t packages < <(node scripts/dev-check-go.mjs)
+		[ "${#packages[@]}" -gt 0 ] || { echo 'empty Go plan' >&2; exit 1; }
+	fi
+	printf 'Selected Go packages: %s\n' "${packages[*]}"
+	go test -count=1 "${packages[@]}"
+	go vet "${packages[@]}"
 	if [ "$mode" = "--full" ]; then
 		go test -race ./...
 	fi

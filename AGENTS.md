@@ -63,7 +63,7 @@ The implementation prompt should normally be only repository + issue number + an
 
 For code, frontend, build, packaging or operational-script changes, use the supported local Docker/Linux qualification described in `docs/DEVELOPMENT.md`. Ordinary PR/main GitHub Actions CI is intentionally absent; exact local evidence is the development gate.
 
-Fast proportional Windows-host command for iteration:
+Fast proportional Windows-host command for iteration (working edits, or last commit when clean; use `-Plan` to inspect and `-Scope branch` for the cumulative diff):
 
 ```powershell
 pwsh -NoProfile -File scripts/dev-check.ps1

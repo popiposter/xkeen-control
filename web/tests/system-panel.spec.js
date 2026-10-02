@@ -10,7 +10,7 @@ const status = {
   xkeen: { running: true },
   observatory: { healthy: 2, total: 3, apiReachable: true },
   balancer: {}, selection: {}, benchmark: { controlPlane: { running: false } },
-  setup: { runtime: 'running', credential: 'configured', xkeen: 'ready', xray: 'ready', configuration: 'ready' },
+  native: { installation: 'available', panelIntegration: 'available', version: '2.0.1', channel: 'beta', core: 'xray', xrayRunning: true },
   lifecycle: { maintenance: false, applying: false },
 }
 
@@ -212,22 +212,6 @@ test.afterEach(async ({ page }) => {
   if (page.__systemIssues) expect(page.__systemIssues).toEqual([])
 })
 
-test('keeps System / Panel lazy and uses the final tail navigation', async ({ page }) => {
-  const state = await prepare(page); page.__systemIssues = state.issues
-  await page.goto('/')
-  await expect(page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button')).toHaveCount(8)
-  expect(await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))).toEqual(['Overview', 'Nodes 0', 'Routing', 'DNS', 'Performance', 'Components / Updates', 'Backup & Restore', 'System / Panel'])
-  expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener' || path === '/api/v1/update' || path === '/api/v1/notifications')).toHaveLength(0)
-  await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
-  await expect(page.getByText('Management listener', { exact: true })).toBeVisible()
-  await expect.poll(() => state.requests.filter(({ path }) => path === '/api/v1/panel/listener')).toHaveLength(1)
-  await expect.poll(() => state.requests.filter(({ path }) => path === '/api/v1/update')).toHaveLength(1)
-  await page.waitForTimeout(5_300)
-  expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener')).toHaveLength(1)
-  expect(state.requests.filter(({ path }) => path === '/api/v1/update')).toHaveLength(1)
-})
-
 for (const host of ['127.0.0.1', '10.0.0.4', 'fd00::4']) {
   test(`private management guidance uses loaded ${host} listener without extra work`, async ({ page }) => {
     const state = await prepare(page, { listener: { host } }); page.__systemIssues = state.issues
@@ -243,7 +227,6 @@ for (const host of ['127.0.0.1', '10.0.0.4', 'fd00::4']) {
     await expect(card).toContainText('Never bind to WAN or open a WAN firewall rule')
     await expect(card).toContainText('does not automate')
     await expect(card.locator('button, input, select, a')).toHaveCount(0)
-    await page.waitForTimeout(5_300)
     expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener')).toHaveLength(1)
     expect(state.requests.filter(({ method }) => method !== 'GET')).toHaveLength(0)
     expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 })

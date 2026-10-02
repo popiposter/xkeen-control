@@ -40,7 +40,7 @@ const statusFixture = (nodes) => ({
   observatory: { healthy: 50, total: 51, apiReachable: true },
   benchmark: { controlPlane: { running: false, state: 'idle' } },
   selection: { state: 'stable', manualOverride: nodes[1].outboundTag },
-  setup: { runtime: 'running', credential: 'ready', xkeen: 'ready', xray: 'ready', configuration: 'ready' },
+  native: { installation: 'available', panelIntegration: 'available', version: '2.0.1', channel: 'beta', core: 'xray', xrayRunning: true },
   lifecycle: { maintenance: false, applying: false },
 })
 
@@ -196,11 +196,6 @@ async function prepare(page) {
       }
       case '/api/v1/config-summary': return json(route, { routing: {}, dns: {}, observatory: {} })
       case '/api/v1/update': return json(route, { channel: 'stable', installed: { version: '0.2.0' } })
-      case '/api/v1/selection/override': {
-        state.status.selection.manualOverride = body.target
-        for (const node of state.nodes) node.isOverride = Boolean(body.target) && node.outboundTag === body.target
-        return json(route, { manualOverride: body.target })
-      }
       case '/api/v1/performance/manual-node': {
         state.manualPolls = 0
         state.manual = { mode: 'manual-node', state: 'running', phase: 'latency', targetNodeId: body.nodeId, targetTag: `proxy-${body.nodeId}`, startedAt: new Date().toISOString(), elapsedMs: 0, plannedStages: 11, completedStages: 0, bytesPlanned: 48 * 1024 * 1024, bytesTransferred: 0 }
@@ -545,22 +540,17 @@ test('keeps effective and manual impact warnings for exact provider removals', a
   await page.getByRole('button', { name: 'Cancel', exact: true }).click()
 })
 
-test('keeps manual override and replacement as single-selection toolbar actions without exposing profile secrets', async ({ page }) => {
+test('blocks native selection mutations while retaining profile replacement without exposing secrets', async ({ page }) => {
   const prepared = await prepare(page)
   page.__nodesIssues = prepared.issues
   await openNodes(page)
 
   await page.getByLabel('Select Node 002').check()
-  await page.getByRole('button', { name: 'Clear manual override', exact: true }).click()
-  const overrideRequests = prepared.state.requests.filter((request) => request.path === '/api/v1/selection/override')
-  expect(overrideRequests).toHaveLength(1)
-  expect(overrideRequests[0].body).toEqual({ target: '' })
-
+  await expect(page.getByRole('button', { name: 'Clear manual override', exact: true })).toBeDisabled()
   await page.getByRole('button', { name: 'Clear selection', exact: true }).click()
   await page.getByLabel('Select Node 001').check()
-  await page.getByRole('button', { name: 'Set manual override', exact: true }).click()
-  await expect.poll(() => prepared.state.requests.filter((request) => request.path === '/api/v1/selection/override').length).toBe(2)
-  expect(prepared.state.requests.filter((request) => request.path === '/api/v1/selection/override')[1].body).toEqual({ target: `proxy-${nodeID(1)}` })
+  await expect(page.getByRole('button', { name: 'Set manual override', exact: true })).toBeDisabled()
+  expect(prepared.state.requests.filter((request) => request.path === '/api/v1/selection/override')).toHaveLength(0)
 
   await page.getByRole('button', { name: 'Edit / replace profile', exact: true }).click()
   const profile = ['vless:', '//', '11111111-1111-4111-8111-111111111111@secret.example.com:443?security=reality&sni=front.example.com&fp=chrome&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=abcd&type=tcp#Synthetic'].join('')

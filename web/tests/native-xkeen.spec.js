@@ -37,13 +37,13 @@ for (const width of [375, 1440]) {
   })
 }
 
-for (const [installation, panelIntegration] of [['unknown', 'missing'], ['unsupported', 'missing'], ['available', 'unknown'], ['available', 'unsupported']]) {
+for (const [installation, panelIntegration] of [[undefined, undefined], ['unknown', 'missing'], ['unsupported', 'missing'], ['available', 'unknown'], ['available', 'unsupported']]) {
   test(`uncertain native state is inspection only: ${installation}/${panelIntegration}`, async ({ page }) => {
     await page.route('**/api/v1/**', async (route) => {
       const path = new URL(route.request().url()).pathname
       const data = {
         '/api/v1/session': { csrfToken: 'synthetic-csrf' },
-        '/api/v1/status': { controlPlane: {}, xray: {}, xkeen: {}, balancer: {}, observatory: {}, benchmark: { controlPlane: {} }, selection: {}, lifecycle: {}, native: { installation, panelIntegration } },
+        '/api/v1/status': { controlPlane: {}, xray: {}, xkeen: {}, balancer: {}, observatory: {}, benchmark: { controlPlane: {} }, selection: {}, lifecycle: {}, native: installation === undefined ? undefined : { installation, panelIntegration } },
         '/api/v1/nodes': { nodes: [], subscriptions: [] },
         '/api/v1/performance': { nodes: [] },
         '/api/v1/config-summary': {},
@@ -54,5 +54,8 @@ for (const [installation, panelIntegration] of [['unknown', 'missing'], ['unsupp
     await expect(page.getByRole('heading', { name: 'Check XKeen status' })).toBeVisible()
     await expect(page.getByText('Use the official XKeen installer, then refresh this page.')).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Manage VPN profiles', exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'Check XKeen status' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Preview update', exact: true })).toHaveCount(0)
   })
 }

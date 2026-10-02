@@ -12,7 +12,7 @@ const baseStatus = {
   observatory: {},
   benchmark: { controlPlane: {} },
   selection: {},
-  setup: { state: 'ready', eligible: false, reasonCode: 'already-configured' },
+  native: { installation: 'available', panelIntegration: 'available', version: '2.0.1', channel: 'beta', core: 'xray', xrayRunning: true },
   lifecycle: { maintenance: false, applying: false },
 }
 

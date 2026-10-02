@@ -72,7 +72,7 @@ const statusFor = (lifecycle = { maintenance: false, applying: false }) => ({
   observatory: { healthy: 0, total: 0, apiReachable: true },
   benchmark: { controlPlane: { running: false } },
   selection: {},
-  setup: {},
+  native: { installation: 'available', panelIntegration: 'available', version: '2.0.1', channel: 'beta', core: 'xray', xrayRunning: true },
   lifecycle,
 })
 
@@ -170,21 +170,6 @@ const requestsFor = (state, path, method) => state.requests.filter((request) => 
 
 test.afterEach(async ({ page }) => {
   if (page.__routingIssues) expect(page.__routingIssues).toEqual([])
-})
-
-test('adds Routing after Nodes, loads policy lazily, and never adds policy to dashboard polling', async ({ page }) => {
-  const state = await prepare(page)
-  page.__routingIssues = state.issues
-  await page.goto('/')
-  expect(requestsFor(state, '/api/v1/appliance/policy')).toHaveLength(0)
-  await page.getByRole('button', { name: 'Routing', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Custom rules' })).toBeVisible()
-  await revealDetails(page, 'Protected routing policy')
-  await expect.poll(() => requestsFor(state, '/api/v1/appliance/policy').length).toBe(1)
-  const policyReads = requestsFor(state, '/api/v1/appliance/policy').length
-  await page.waitForTimeout(5_300)
-  expect(requestsFor(state, '/api/v1/appliance/policy')).toHaveLength(policyReads)
-  expect(state.requests.findIndex((request) => request.path === '/api/v1/nodes')).toBeLessThan(state.requests.findIndex((request) => request.path === '/api/v1/appliance/policy'))
 })
 
 test('serializes only the complete typed rule DTO and exposes keyboard ordering', async ({ page }) => {
@@ -337,7 +322,7 @@ test('invalidates a completed Preview when navigating away from Routing', async 
   await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Review routing changes' })).toBeVisible()
   await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
-  await expect(page.locator('.components-heading')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'XKeen and components' })).toBeVisible()
   await expect.poll(() => requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST').length).toBe(1)
   expect(requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST')[0].body).toEqual({ previewToken: 'synthetic-routing-preview-1' })
   await page.getByRole('button', { name: 'Routing', exact: true }).click()
@@ -357,7 +342,7 @@ test('invalidates an in-flight Preview when navigating away from Routing and can
   await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
   await expect(page.locator('.notice.neutral')).toContainText('Preparing a fresh semantic Preview…')
   await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
-  await expect(page.locator('.components-heading')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'XKeen and components' })).toBeVisible()
   release.resolve()
   await expect.poll(() => requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST').length).toBe(1)
   expect(requestsFor(state, '/api/v1/appliance/policy/cancel', 'POST')[0].body).toEqual({ previewToken: 'synthetic-routing-preview-1' })

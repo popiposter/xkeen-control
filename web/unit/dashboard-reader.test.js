@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test'
+import test from 'node:test'
+import assert from 'node:assert/strict'
 import { createDashboardReader } from '../src/dashboard-reader.js'
 
 const deferred = () => {
@@ -18,12 +19,12 @@ test('post-mutation refresh runs after outstanding read; performance has one own
   const first = reader.refresh()
   const second = reader.refresh()
   const diagnostic = reader.refresh(false)
-  expect(calls).toHaveLength(3)
+  assert.equal((calls).length, 3)
   pending.resolve()
   await Promise.all([first, second, diagnostic])
-  expect(calls).toHaveLength(6)
-  expect(values).toHaveLength(2)
-  expect(calls.filter((path) => path.endsWith('/performance'))).toHaveLength(2)
+  assert.equal((calls).length, 6)
+  assert.equal((values).length, 2)
+  assert.equal((calls.filter((path) => path.endsWith('/performance'))).length, 2)
 })
 
 test('old session success and late 401 cannot replace the new session', async () => {
@@ -42,8 +43,8 @@ test('old session success and late 401 cannot replace the new session', async ()
     if (failure) pending.reject(Object.assign(new Error('old unauthorized'), { status: 401 }))
     else pending.resolve()
     await first
-    expect(values).toHaveLength(1)
-    expect(errors).toEqual([])
+    assert.equal((values).length, 1)
+    assert.deepEqual(errors, [])
   }
 })
 
@@ -52,6 +53,6 @@ test('malformed successful projections never reach rendering', async () => {
   const reader = createDashboardReader({ api: async () => ({}), onData: (value) => values.push(value), onError: (error) => errors.push(error.message), onDone: () => {} })
   await reader.refresh()
   await reader.refresh(false)
-  expect(values).toEqual([])
-  expect(errors).toHaveLength(2)
+  assert.deepEqual(values, [])
+  assert.equal((errors).length, 2)
 })

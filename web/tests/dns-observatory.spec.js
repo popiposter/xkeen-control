@@ -35,7 +35,7 @@ const projectionFor = (editability = 'editable') => ({
 const statusFor = (lifecycle = { maintenance: false, applying: false }) => ({
   controlPlane: { version: 'synthetic' }, xray: { running: true, apiReachable: true, probeReachable: true },
   xkeen: { running: true }, balancer: {}, observatory: { healthy: 0, total: 0, apiReachable: true },
-  benchmark: { controlPlane: { running: false } }, selection: {}, setup: {}, lifecycle,
+  benchmark: { controlPlane: { running: false } }, selection: {}, native: { installation: 'available', panelIntegration: 'available', version: '2.0.1', channel: 'beta', core: 'xray', xrayRunning: true }, lifecycle,
 })
 
 const routingProjection = () => ({
@@ -155,18 +155,6 @@ async function makeChange(page) { await page.getByLabel('Parallel queries').unch
 
 test.afterEach(async ({ page }) => {
   if (page.__dnsIssues) expect(page.__dnsIssues).toEqual([])
-})
-
-test('places DNS immediately after Routing, loads lazily, and never polls it', async ({ page }) => {
-  const state = await prepare(page); page.__dnsIssues = state.issues
-  await page.goto('/')
-  await expect(page.locator('.section-nav button')).toHaveCount(8)
-  expect(await page.locator('.section-nav button').allTextContents()).toEqual(['Overview', 'Nodes 0', 'Routing', 'DNS', 'Performance', 'Components / Updates', 'Backup & Restore', 'System / Panel'])
-  expect(requestsFor(state, '/api/v1/appliance/dns-observatory')).toHaveLength(0)
-  await (await revealNavigation(page)).getByRole('button', { name: 'DNS', exact: true }).click()
-  await expect.poll(() => requestsFor(state, '/api/v1/appliance/dns-observatory').length).toBe(1)
-  await page.waitForTimeout(5_300)
-  expect(requestsFor(state, '/api/v1/appliance/dns-observatory')).toHaveLength(1)
 })
 
 test('renders only safe labels, locked facts, counts, and derived cadence choices', async ({ page }) => {

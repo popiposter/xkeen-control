@@ -39,7 +39,7 @@ const statusFixture = (overrides = {}) => ({
     lastSwitchReason: 'startup',
     latencyEvidence: 3,
   },
-  setup: { runtime: 'running', credential: 'ready', xkeen: 'ready', xray: 'ready', configuration: 'ready' },
+  native: { installation: 'available', panelIntegration: 'available', version: '2.0.1', channel: 'beta', core: 'xray', xrayRunning: true },
   lifecycle: { maintenance: false, applying: false },
   ...overrides,
 })

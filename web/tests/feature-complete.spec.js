@@ -6,8 +6,7 @@ const lazySettingsPaths = [
   '/api/v1/appliance/policy',
   '/api/v1/appliance/dns-observatory',
   '/api/v1/performance/policy',
-  '/api/v1/components',
-  '/api/v1/components/policy',
+  '/api/v1/notifications',
   '/api/v1/panel/listener',
   '/api/v1/update',
 ]
@@ -15,7 +14,6 @@ const lazySettingsPaths = [
 const openSection = async (page, name) => {
   await (await revealNavigation(page)).getByRole('button').filter({ hasText: name }).click()
   if (name === 'System / Panel') await revealSystemSettings(page)
-  if (name === 'Components / Updates') await revealDetails(page, 'Background discovery')
   if (name === 'Routing') await revealDetails(page, 'Protected routing policy')
   if (name === 'DNS') await revealDetails(page, 'Protected DNS and Observatory')
   if (name === 'Performance') await revealDetails(page, 'Fixed traffic and time limits')
@@ -35,37 +33,44 @@ test.afterEach(async ({ page }) => {
 
 test('composes the final navigation lazily and leaves settings out of the dashboard collector', async ({ page }) => {
   test.setTimeout(45_000)
+  await page.clock.install()
   const model = await mountFeatureCompleteDashboard(page)
   page.__featureCompleteModel = model
   await page.goto('/')
 
-  await expect(page.locator('.section-nav button')).toHaveCount(8)
-  expect(await page.locator('.section-nav button').allTextContents()).toEqual([
+  await expect(page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button')).toHaveCount(8)
+  expect(await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))).toEqual([
     'Overview', 'Nodes 1', 'Routing', 'DNS', 'Performance', 'Components / Updates', 'Backup & Restore', 'System / Panel',
   ])
-  await page.waitForTimeout(5_300)
-  expect(featureCompleteRequests(model, '/api/v1/status', 'GET').length).toBeGreaterThan(1)
+  await page.clock.runFor(5_300)
+  await expect.poll(() => featureCompleteRequests(model, '/api/v1/status', 'GET').length).toBeGreaterThan(1)
   for (const path of lazySettingsPaths) expect(featureCompleteRequests(model, path, 'GET')).toHaveLength(0)
 
+  const openedPaths = new Set()
   for (const [section, path] of [
     ['Routing', '/api/v1/appliance/policy'],
     ['DNS', '/api/v1/appliance/dns-observatory'],
     ['Performance', '/api/v1/performance/policy'],
-    ['Components / Updates', '/api/v1/components'],
+    ['Components / Updates', null],
     ['System / Panel', '/api/v1/panel/listener'],
     ['Backup & Restore', null],
   ]) {
     await openSection(page, section)
-    if (path) await expect.poll(() => featureCompleteRequests(model, path, 'GET').length).toBe(1)
+    if (path) openedPaths.add(path)
+    if (section === 'System / Panel') { openedPaths.add('/api/v1/update'); openedPaths.add('/api/v1/notifications') }
+    for (const lazyPath of lazySettingsPaths) {
+      await expect.poll(() => featureCompleteRequests(model, lazyPath, 'GET').length).toBe(openedPaths.has(lazyPath) ? 1 : 0)
+    }
   }
-  await expect.poll(() => featureCompleteRequests(model, '/api/v1/components/policy', 'GET').length).toBe(1)
+  await expect.poll(() => featureCompleteRequests(model, '/api/v1/notifications', 'GET').length).toBe(1)
   await expect.poll(() => featureCompleteRequests(model, '/api/v1/update', 'GET').length).toBe(1)
 
   const settingsReads = Object.fromEntries(lazySettingsPaths.map((path) => [path, featureCompleteRequests(model, path, 'GET').length]))
   const statusReads = featureCompleteRequests(model, '/api/v1/status', 'GET').length
-  await page.waitForTimeout(5_300)
-  expect(featureCompleteRequests(model, '/api/v1/status', 'GET').length).toBeGreaterThan(statusReads)
+  await page.clock.runFor(5_300)
+  await expect.poll(() => featureCompleteRequests(model, '/api/v1/status', 'GET').length).toBeGreaterThan(statusReads)
   expect(Object.fromEntries(lazySettingsPaths.map((path) => [path, featureCompleteRequests(model, path, 'GET').length]))).toEqual(settingsReads)
+  expect(model.requests.filter(({ path }) => /^\/api\/v1\/(components|setup)(\/|$)/.test(path))).toEqual([])
 })
 
 test('keeps Routing, DNS and Performance semantic Preview and one-shot Apply paths separate', async ({ page }) => {
@@ -158,6 +163,7 @@ for (const owner of ['routing', 'dns']) {
 
 test('preserves dirty drafts through unrelated reads, navigation and dashboard telemetry refresh', async ({ page }) => {
   test.setTimeout(35_000)
+  await page.clock.install()
   const model = await mountFeatureCompleteDashboard(page)
   page.__featureCompleteModel = model
   await page.goto('/')
@@ -170,15 +176,15 @@ test('preserves dirty drafts through unrelated reads, navigation and dashboard t
   await openSection(page, 'Performance')
   await page.getByLabel('Active probe interval').fill('120')
   await openSection(page, 'Components / Updates')
-  await expect(page.getByText('Xray', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'XKeen and components', exact: true })).toBeVisible()
   await openSection(page, 'System / Panel')
   await expect(page.getByRole('heading', { name: '0.2.0', exact: true })).toBeVisible()
   await openSection(page, 'Backup & Restore')
 
   const readsBefore = Object.fromEntries(lazySettingsPaths.slice(0, 3).map((path) => [path, featureCompleteRequests(model, path, 'GET').length]))
   const telemetryBefore = featureCompleteRequests(model, '/api/v1/performance', 'GET').length
-  await page.waitForTimeout(5_300)
-  expect(featureCompleteRequests(model, '/api/v1/performance', 'GET').length).toBeGreaterThan(telemetryBefore)
+  await page.clock.runFor(5_300)
+  await expect.poll(() => featureCompleteRequests(model, '/api/v1/performance', 'GET').length).toBeGreaterThan(telemetryBefore)
   expect(Object.fromEntries(lazySettingsPaths.slice(0, 3).map((path) => [path, featureCompleteRequests(model, path, 'GET').length]))).toEqual(readsBefore)
 
   await openSection(page, 'Routing')
@@ -214,10 +220,7 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
   await openSection(page, 'Performance')
   await expect(page.getByRole('button', { name: 'Preview performance changes' })).toBeEnabled()
   await openSection(page, 'Components / Updates')
-  await page.getByLabel('Component policy mode').selectOption('notify')
-  await expect(page.getByRole('button', { name: 'Save policy' })).toBeEnabled()
-  await expect(page.locator('[data-component="xray"]').getByRole('button', { name: 'Check stable' })).toBeEnabled()
-  await expect(page.locator('[data-component="xray"]').getByRole('button', { name: 'Preview update' })).toBeEnabled()
+  await expect(page.getByRole('heading', { name: 'XKeen and components' })).toBeVisible()
   await openSection(page, 'Backup & Restore')
   await setBackupBundle(page)
   await expect(page.getByRole('button', { name: 'Preview restore' })).toBeEnabled()
@@ -248,11 +251,7 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
     await expect(page.getByRole('button', { name: 'Preview performance changes' })).toBeDisabled()
     await expect(page.getByLabel('Source-owned performance ceilings')).toBeVisible()
     await openSection(page, 'Components / Updates')
-    await expect(page.getByLabel('Component policy mode')).toBeDisabled()
-    await expect(page.getByRole('button', { name: 'Save policy' })).toBeDisabled()
-    await expect(page.locator('[data-component="xray"]').getByRole('button', { name: 'Check stable' })).toBeEnabled()
-    await expect(page.locator('[data-component="xray"]').getByRole('button', { name: 'Preview update' })).toBeDisabled()
-    await expect(page.locator('[data-component="xray"]')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'XKeen and components' })).toBeVisible()
     await openSection(page, 'Backup & Restore')
     await expect(page.getByRole('button', { name: 'Preview restore' })).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Download safe backup' })).toBeEnabled()
@@ -441,7 +440,7 @@ test('keeps safe projections secretless, browser storage empty, and the Dashboar
     ['Routing', page.getByLabel('Routing source-owned facts')],
     ['DNS', page.getByText('Proxy resolver 1', { exact: true })],
     ['Performance', page.getByLabel('Source-owned performance ceilings')],
-    ['Components / Updates', page.getByText('Xray', { exact: true })],
+    ['Components / Updates', page.getByRole('heading', { name: 'XKeen and components', exact: true })],
     ['Backup & Restore', page.getByLabel('Backup bundle')],
     ['System / Panel', page.getByRole('heading', { name: '0.2.0', exact: true })],
   ]) {

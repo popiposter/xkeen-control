@@ -133,33 +133,6 @@ const dnsDiff = (before, after) => ({
   restartRequired: JSON.stringify(dnsBody(before)) !== JSON.stringify(dnsBody(after)),
 })
 
-const makeComponent = (kind, overrides = {}) => ({
-  kind,
-  state: 'present',
-  present: true,
-  version: `${kind}-1.0.0`,
-  versionUnknown: false,
-  capability: ['xray', 'geodata', 'xkeen'].includes(kind) ? 'supported' : 'informational',
-  ...overrides,
-})
-
-const componentInventory = () => ({
-  schemaVersion: 1,
-  panel: makeComponent('panel', { version: '0.2.0', channel: 'stable' }),
-  xkeen: makeComponent('xkeen', { version: '', versionUnknown: true }),
-  xray: makeComponent('xray', { version: '25.9.1', architecture: 'arm64' }),
-  geodata: makeComponent('geodata', { version: '', versionUnknown: true, items: [] }),
-  keeneticos: makeComponent('keeneticos', { state: 'unknown', present: false, version: '', reasonCode: 'signal-unavailable' }),
-  entware: makeComponent('entware', { state: 'missing', present: false, version: '', reasonCode: 'binary-missing', capability: 'unsupported' }),
-})
-
-const componentPolicy = () => ({
-  schemaVersion: 1,
-  mode: 'manual',
-  checkCadenceMinutes: 1440,
-  scheduler: { enabled: false, state: 'disabled', notificationState: 'idle' },
-})
-
 const componentState = (overrides = {}) => ({
   controlPlane: { version: 'synthetic', uptimeSeconds: 3600 },
   xray: { running: true, apiReachable: true, probeReachable: true },
@@ -168,7 +141,7 @@ const componentState = (overrides = {}) => ({
   observatory: { healthy: 1, total: 1, apiReachable: true },
   benchmark: { controlPlane: { running: false, state: 'idle' } },
   selection: { state: 'stable' },
-  setup: { state: 'ready', eligible: false, runtime: 'running', credential: 'ready', xkeen: 'ready', xray: 'ready', configuration: 'ready' },
+  native: { installation: 'available', panelIntegration: 'available', version: '2.0.1', channel: 'beta', core: 'xray', xrayRunning: true, geodataFiles: 6, geodataCron: 'available' },
   lifecycle: { maintenance: false, applying: false },
   ...overrides,
 })
@@ -196,15 +169,6 @@ const nodeState = () => ({
 })
 
 const nodeProjection = (node) => allowlist(node, ['id', 'name', 'displayName', 'address', 'countryCode', 'outboundTag', 'enabled', 'sourceType', 'subscriptionName', 'alive', 'latencyMs', 'lastError', 'lastThroughputKBps', 'lastBenchmarkAt', 'isNativeSelected', 'isOverride', 'isEffective', 'stale', 'missing'])
-const inventoryProjection = (inventory) => ({
-  schemaVersion: inventory.schemaVersion,
-  ...Object.fromEntries(['panel', 'xkeen', 'xray', 'geodata', 'keeneticos', 'entware'].map((kind) => [kind, allowlist(inventory[kind], ['kind', 'state', 'present', 'version', 'versionUnknown', 'capability', 'channel', 'architecture', 'items', 'reasonCode'])])),
-})
-const componentPolicyProjection = (policy) => ({
-  ...allowlist(policy, ['schemaVersion', 'mode', 'checkCadenceMinutes']),
-  scheduler: allowlist(policy.scheduler, ['enabled', 'state', 'notificationState']),
-})
-
 const privateUUID = 'feature-private-uuid-sentinel'
 const privateRealityKey = 'feature-private-reality-key-sentinel'
 const privateShortID = 'feature-private-short-id-sentinel'
@@ -250,8 +214,6 @@ export class FeatureCompleteModel {
     }
     this.observatory = { probeIntervalMinutes: 5 }
     this.performancePolicy = defaultPerformancePolicy()
-    this.inventory = componentInventory()
-    this.componentsPolicy = componentPolicy()
     this.listener = { host: '127.0.0.1', port: 8787, source: 'default', editability: 'editable', allowedHosts: ['127.0.0.1', '10.0.0.4'] }
     this.update = {
       channel: 'stable',
@@ -293,7 +255,7 @@ export class FeatureCompleteModel {
       observatory: allowlist(this.runtime.observatory, ['healthy', 'total', 'apiReachable']),
       benchmark: { controlPlane: allowlist(this.runtime.benchmark.controlPlane, ['running', 'state']) },
       selection: allowlist(this.runtime.selection, ['state']),
-      setup: allowlist(this.runtime.setup, ['state', 'eligible', 'runtime', 'credential', 'xkeen', 'xray', 'configuration']),
+      native: allowlist(this.runtime.native, ['installation', 'panelIntegration', 'version', 'channel', 'core', 'xrayRunning', 'geodataFiles', 'geodataCron']),
     }
     if (this.lifecycle != null) value.lifecycle = allowlist(this.lifecycle, ['maintenance', 'applying'])
     return value
@@ -490,16 +452,6 @@ export class FeatureCompleteModel {
         if (pending?.owner !== 'performance') return pending
         this.performancePolicy = { ...pending.candidate }
         return json(route, { policy: this.performancePolicy, source: 'persisted', changes: [], noop: false, restartRequired: false, nextRunTimeChanged: true })
-      }
-      case '/api/v1/components':
-        return this.recordProjection(route, inventoryProjection(this.inventory))
-      case '/api/v1/components/policy':
-        return this.recordProjection(route, componentPolicyProjection(this.componentsPolicy))
-      case '/api/v1/components/cancel': {
-        const token = body?.previewToken
-        this.previewTokens.delete(token)
-        this.cancelledTokens.push({ owner: 'components', token, csrf: entry.csrf })
-        return json(route, { canceled: true })
       }
       case '/api/v1/panel/listener/cancel': {
         const token = body?.previewToken

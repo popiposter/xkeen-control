@@ -12,11 +12,9 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Disclosure, MobileNavigationDrawer, Modal } from './ui.jsx'
 import { IconHome, IconServer, IconSitemap, IconWorld, IconChartBar, IconCube, IconHistory, IconSettings, IconLogout, IconMenu2 } from '@tabler/icons-react'
 import { IconPlus, IconLink, IconRefresh, IconPencil, IconPower, IconTrash, IconX, IconChevronLeft, IconChevronRight, IconSearch, IconGauge, IconFocus2, IconArrowUp, IconArrowDown, IconArrowsSort, IconSquareCheck, IconPlayerPlay, IconPlayerPause } from '@tabler/icons-react'
-import { ComponentLifecycleNotices, ComponentsUpdatesSection, useComponentsController } from './components-updates.jsx'
 import { DNSLifecycleNotice, DNSObservatorySection, useDNSObservatoryController } from './dns-observatory.jsx'
 import { PerformancePolicySection, usePerformancePolicyController } from './performance-policy.jsx'
 import { RoutingLifecycleNotice, RoutingPolicySection, useRoutingController } from './routing-policy.jsx'
-import { SetupFlow } from './setup-flow.jsx'
 import { NativeXkeenStatus, NativeXkeenSection } from './native-xkeen.jsx'
 import { SystemPanelSection, useSystemPanelController } from './system-panel.jsx'
 
@@ -445,7 +443,6 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const [restoreState, setRestoreState] = useState({ preview: null })
   const registryNodes = nodes.nodes || []
   const nodesByTag = useMemo(() => new Map(registryNodes.map((node) => [node.outboundTag || node.tag, node])), [registryNodes])
-  const componentController = useComponentsController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized })
   const routingControllerRef = useRef(null)
   const dnsControllerRef = useRef(null)
   const [unprovenPolicyReads, setUnprovenPolicyReads] = useState({ routing: false, dns: false })
@@ -471,14 +468,11 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const systemPanelController = useSystemPanelController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'system' })
   routingControllerRef.current = routingController
   dnsControllerRef.current = dnsController
-  const openComponents = useCallback(() => {
-    setSection('components')
-    if (!status.native) void componentController.loadInventory()
-  }, [componentController.loadInventory, status.native])
+  const openComponents = useCallback(() => setSection('components'), [])
   const openRouting = useCallback(() => setSection('routing'), [])
   const openDNS = useCallback(() => setSection('dns'), [])
   const openBackup = useCallback(() => setSection('backup'), [])
-  const lifecycleBlocked = componentController.lifecycleMutationBlocked
+  const lifecycleBlocked = typeof status.lifecycle?.maintenance !== 'boolean' || typeof status.lifecycle?.applying !== 'boolean' || status.lifecycle.maintenance || status.lifecycle.applying
   const manualLifecycleBlocked = lifecycleBlocked
   const manualRunning = performance?.manual?.state === 'running'
   const adaptiveRunning = performance?.adaptive?.state === 'running'
@@ -527,16 +521,15 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     <MobileNavigationDrawer returnFocus={navigationTrigger} open={navigationOpen} onClose={closeNavigation}><div className="flex min-h-full flex-col gap-4"><NavigationContent mobile sections={sections} section={section} total={nodes.total || 0} version={status.controlPlane?.version || 'dev'} onSelect={closeNavigation} onLogout={onLogout} /></div></MobileNavigationDrawer>
     <div id="workspace" className="min-w-0 min-[761px]:ml-60" tabIndex="-1"><div className="legacy-workspace"><div className="workspace">
     {section !== 'nodes' && <header className="page-heading"><h1>{pageTitle}</h1>{section === 'overview' && <button className="ghost" type="button" onClick={onRefresh}><Icon name="refresh" />Refresh</button>}</header>}
-    {!status.native && <ComponentLifecycleNotices controller={componentController} lifecycle={status.lifecycle} onOpenComponents={openComponents} />}
     <RoutingLifecycleNotice controller={routingController} active={section === 'routing'} onOpenRouting={openRouting} />
     <DNSLifecycleNotice controller={dnsController} active={section === 'dns'} onOpenDNS={openDNS} />
     {error && <Notice message={error} />}
     {section === 'overview' && <Overview status={status} performance={performance} nodeTotal={nodes.total || 0} nodesByTag={nodesByTag} csrfToken={session.csrfToken} onRefresh={onRefresh} onUnauthorized={onUnauthorized} onOpenNodes={() => setSection('nodes')} />}
-    {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} performance={performance} manualOverride={status.selection?.manualOverride || ''} benchmarkRunning={Boolean(status.benchmark?.controlPlane?.running)} csrf={session.csrfToken} onRefresh={onRefresh} onPerformanceRefresh={onPerformanceRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} manualLifecycleBlocked={manualLifecycleBlocked} selectionAvailable={!status.native} />}
+    {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} performance={performance} manualOverride={status.selection?.manualOverride || ''} benchmarkRunning={Boolean(status.benchmark?.controlPlane?.running)} csrf={session.csrfToken} onRefresh={onRefresh} onPerformanceRefresh={onPerformanceRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} manualLifecycleBlocked={manualLifecycleBlocked} selectionAvailable={false} />}
     {section === 'routing' && <RoutingPolicySection controller={routingController} lifecycle={status.lifecycle} />}
     {section === 'dns' && <DNSObservatorySection controller={dnsController} />}
     {section === 'performance' && <PerformancePolicySection controller={performancePolicyController} />}
-    {section === 'components' && (status.native ? <NativeXkeenSection facts={status.native} onRefresh={onRefresh} onOpenSystem={() => setSection('system')} /> : <ComponentsUpdatesSection controller={componentController} lifecycle={status.lifecycle} onOpenSystem={() => setSection('system')} />)}
+    {section === 'components' && <NativeXkeenSection facts={status.native} onRefresh={onRefresh} onOpenSystem={() => setSection('system')} />}
     {section === 'backup' && <BackupRestoreSection csrf={session.csrfToken} restoreState={restoreState} setRestoreState={setRestoreState} onRefresh={onRefresh} onUnauthorized={onUnauthorized} lifecycleBlocked={lifecycleBlocked} />}
     {section === 'system' && <SystemPanelSection controller={systemPanelController} status={status} onOpenComponents={openComponents} onOpenBackup={openBackup} />}
     </div></div></div>
@@ -560,12 +553,9 @@ function Overview({ status, performance, nodeTotal, nodesByTag, csrfToken, onRef
   const healthText = total ? `${healthy}/${total} healthy` : 'No node data'
   const effective = nodesByTag.get(status.balancer?.effective)
   const ready = status.xray?.running && status.xray?.apiReachable && status.xkeen?.running
-  const setupCompatibilityOnly = ready && status.setup?.runtime === 'running' && status.setup?.configuration === 'ready' && status.setup?.xkeen === 'ready' && status.setup?.xray === 'ready' && status.setup?.state === 'blocked' && status.setup?.eligible === false && status.setup?.reasonCode === 'layout-mixed' && !status.lifecycle?.maintenance && !status.lifecycle?.applying
   return <div className="section-stack">
     <section className="active-node-strip" aria-label="Active node"><span className={ready ? 'good-text' : 'warning'}><span className={`status-dot ${ready ? 'up' : 'down'}`}></span>{ready ? 'Runtime ready' : 'Runtime unavailable'}</span>{effective ? <NodeName node={effective} /> : <strong>No current target</strong>}<span>{status.selection?.manualOverride ? 'Manual override' : 'Automatic selection'}</span><span>{formatAdaptiveLatency(effective?.latencyMs)}</span><span>{Array.from(nodesByTag.values()).filter((node) => node.enabled).length} enabled</span><button type="button" onClick={onOpenNodes}>Manage nodes</button></section>
-    {status.native ? <NativeXkeenStatus facts={status.native} onOpenNodes={onOpenNodes} /> : setupCompatibilityOnly
-      ? <Disclosure title="Setup compatibility"><SetupFlow setup={status.setup} csrfToken={csrfToken} onRefresh={onRefresh} onUnauthorized={onUnauthorized} /></Disclosure>
-      : <SetupFlow setup={status.setup} csrfToken={csrfToken} onRefresh={onRefresh} onUnauthorized={onUnauthorized} />}
+    <NativeXkeenStatus facts={status.native} onOpenNodes={onOpenNodes} />
     <section className="hero-grid">
       <HealthCard label="Xray" ok={status.xray?.running && status.xray?.apiReachable} detail={status.xray?.apiReachable ? 'API reachable' : 'Degraded'} />
       <HealthCard label="Probe" ok={status.xray?.probeReachable} detail={status.xray?.probeReachable ? '127.0.0.1:10808' : 'Unavailable'} />

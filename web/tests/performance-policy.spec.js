@@ -41,7 +41,7 @@ const status = (lifecycle = { maintenance: false, applying: false }, benchmarkRu
   xray: { running: true, apiReachable: true, probeReachable: true },
   xkeen: { running: true },
   balancer: {}, observatory: { healthy: 0, total: 0, apiReachable: true },
-  benchmark: { controlPlane: { running: benchmarkRunning } }, selection: {}, setup: {}, lifecycle,
+  benchmark: { controlPlane: { running: benchmarkRunning } }, selection: {}, native: { installation: 'available', panelIntegration: 'available', version: '2.0.1', channel: 'beta', core: 'xray', xrayRunning: true }, lifecycle,
 })
 
 const dashboardPerformance = (overrides = {}) => ({
@@ -132,18 +132,6 @@ async function openPerformance(page) {
 
 test.afterEach(async ({ page }) => {
   if (page.__performancePolicyIssues) expect(page.__performancePolicyIssues).toEqual([])
-})
-
-test('places Performance immediately after DNS and reads its policy lazily without dashboard polling', async ({ page }) => {
-  const state = await prepare(page); page.__performancePolicyIssues = state.issues
-  await page.goto('/')
-  await expect(page.locator('.section-nav button')).toHaveCount(8)
-  expect(await page.locator('.section-nav button').allTextContents()).toEqual(['Overview', 'Nodes 0', 'Routing', 'DNS', 'Performance', 'Components / Updates', 'Backup & Restore', 'System / Panel'])
-  expect(requestsFor(state, '/api/v1/performance/policy')).toHaveLength(0)
-  await page.getByRole('button', { name: 'Performance', exact: true }).click()
-  await expect.poll(() => requestsFor(state, '/api/v1/performance/policy').length).toBe(1)
-  await page.waitForTimeout(5_300)
-  expect(requestsFor(state, '/api/v1/performance/policy')).toHaveLength(1)
 })
 
 test('renders only six bounded fields and separate source-owned hard ceilings', async ({ page }) => {

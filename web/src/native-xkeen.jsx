@@ -1,5 +1,5 @@
 export function NativeXkeenStatus({ facts, onOpenNodes }) {
-  if (!facts) return null
+  facts = facts || {}
   const installed = facts.installation === 'available'
   const attached = facts.panelIntegration === 'available'
   const missing = facts.installation === 'missing'
