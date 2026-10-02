@@ -551,11 +551,10 @@ paths, including the real bounded restore retry. Six behavioral assertions were
 RED before the patch; the final focused hook/monitor/launch set has 27 passes.
 
 This is error propagation, not complete native proof. Existing deny-MAC helper
-errors can still be swallowed, and `_xkeen_rules_intact` checks presence rather
-than the exact owned projection. A read-only proof path must avoid the generated
-hook's early runtime-directory, lock, ipset and route writes, while checking the
-native Hybrid projection for both supported families. Missing proof remains a
-refusal; neither successful shell status nor weak chain presence is sufficient.
+errors can still be swallowed, and `_xkeen_rules_intact` checks weak presence.
+The separate bounded proof below never invokes that generated hook or its
+runtime-directory, lock, ipset and route writers. Neither successful shell
+status nor weak chain presence is sufficient.
 
 The planned event admission path uses a bounded transient elected invocation
 and coalesced RAM notification, not a permanent daemon or persistent journal.
@@ -566,6 +565,51 @@ there is no claimed future tick or stale-owner reaping. A lifecycle's direct
 foreground hook borrows its existing admission and never waits for the event
 leader while holding the gate. This convergence protocol is still design-only;
 the unconditional whole-candidate fence remains mandatory.
+
+### Bounded native Hybrid kernel proof (source-only)
+
+`native-admission-hook-verify.sh pre|post ROLE ACTION MODE EXPECTATION` is a
+fixed read-only helper called by the native core verifier. It authenticates the
+live gate and canonical foreground call record through `_na_descendant_ok`;
+the completion writer retains the stricter direct-child check. Its only writes
+are one bounded query file and one context-bound baseline in that existing RAM
+call directory. A failed/unknown postcondition retains the baseline; successful
+post removes it. There is no persistent journal or native writer command.
+
+The supported profile is native Xray Hybrid with both IP families, the active
+TCP/UDP DSCP force branch, native chain/tag/mark/table identities, router
+proxying off, aghfix off and no full-policy mark. Protected init/generated-hook
+scalar literals are parsed as data, never sourced. Four unambiguous transparent
+inbounds are selected from strict JSON using the native mode/tag rules; generated
+ports must match them after Start. Conditional profiles outside this scope
+refuse explicitly. Preflight permits empty/missing generated hooks and stopped
+kernel state, validates readback capability and prospective inbound shape, and
+does not require running-state postconditions before Start.
+
+Running proof checks exact required ports, protocols, proxy IPs and mark values;
+normal/force capture chains and jumps; deny-MAC RETURN before capture jumps;
+CONNMARK full masks, restore state, negated-zero save condition, and essential
+restore/socket-mark/save/TPROXY order. Selected anchor predicates must have the
+native polarity: inverted DSCP, deny-set or restore-state matches refuse, while
+the native negated-zero mark-save condition is required. The policy rule must
+be the unconditional native `from all fwmark ... lookup ...` form; conflicting
+partial masks or other rules targeting the owned table refuse. Native Hybrid
+policy-all jumps without an explicit protocol remain valid. It checks required ipset types/families
+and native policy-routing invariants, including local default and copied source
+routes. Stop requires no owned capture chains/tagged rules, policy rule/routes,
+cleanup-owned ipsets or schedule hook, and an empty/absent netfilter hook.
+Automatic no-op compares only the bounded owned structural snapshot, excluding
+packet counters, unrelated rules/sets and dynamic ipset statistics.
+
+Queries use a finite command switch. Producer output goes first to the protected
+RAM query file under a file-size limit, with actual producer exit status retained;
+only bounded successful output enters shell memory. `ipset list -terse` supplies
+metadata without enumerating geo memberships. Its syntax and the kernel rule
+normalizations were checked against a sanitized read-only target projection.
+This is structural lifecycle proof, not complete firewall semantic equality,
+deny-MAC membership freshness, or TCP/UDP/LAN/DNS functional acceptance. Native
+sync errors still require propagation, and generated-hook admission/convergence
+and update persistence remain fenced prerequisites before installation.
 
 ## Actual Entware shell protocol probe (2026-10-02)
 
