@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-function fixture({ action = 'update-xkeen', setup = '', child = 'native_update_stage_context "$stage"', body = '', borrowed = false } = {}) {
+function fixture({ action = 'update-xkeen', setup = '', child = 'native_update_stage_context "$stage"', body = '', borrowed = false, beforeBind = '' } = {}) {
   const root = mkdtempSync('/tmp/native-update-context-')
   chmodSync(root, 0o700)
   const put = (name, text) => writeFileSync(join(root, name), text.replaceAll('/tmp/.xkeen-admission', root).replaceAll('@ROOT@', root), { mode: 0o600 })
@@ -13,10 +13,10 @@ function fixture({ action = 'update-xkeen', setup = '', child = 'native_update_s
 ${setup}
 ${child}
 `)
-  put('body', `. '@ROOT@/native-operation-gate'
-_native_gate_self || exit 90
+  put('body', `. '@ROOT@/native-operation-gate'; . '@ROOT@/native-admission-entry'; . '@ROOT@/native-update-context'
+${beforeBind}
+native_update_bind_body || exit $?
 stage="/opt/sbin/.xkeen.stage.$_ng_self_pid"; export stage
-(umask 077; set -C; printf 'v1 %s %s %s\\n' "$_ng_self_pid" "$_ng_self_start" "$XKEEN_ADMISSION_CALL" > '@ROOT@/operation.lock.d/call.update/body') || exit 91
 ${body}
 /bin/sh '@ROOT@/child'
 `)
@@ -39,7 +39,7 @@ native_gate_acquire '@ROOT@' '${action}' || exit 90
   try {
     const result = spawnSync('/bin/sh', [join(root, borrowed ? 'owner' : 'wrapper')], { encoding: 'utf8', timeout: 3000 })
     assert.ifError(result.error)
-    return result
+    return { ...result, bodyPresent: existsSync(join(root, 'operation.lock.d/call.update/body')) }
   } finally { rmSync(root, { recursive: true, force: true }) }
 }
 
@@ -48,6 +48,32 @@ test('only the fixed stage child of the bound native update body authenticates',
 })
 test('foreground update wrapper may borrow the same ancestor owner without a second gate', () => {
   const r = fixture({ borrowed: true }); assert.equal(r.status, 0, r.stderr)
+})
+test('body binding is one-use and a deeper inherited child cannot publish it', () => {
+  const repeated = fixture({ body: 'native_update_bind_body; exit $?' })
+  assert.equal(repeated.status, 77, repeated.stderr)
+  const deeper = fixture({ body: `rm '@ROOT@/operation.lock.d/call.update/body'
+/bin/sh -c '. "@ROOT@/native-operation-gate"; . "@ROOT@/native-admission-entry"; . "@ROOT@/native-update-context"; native_update_bind_body'
+exit $?` })
+  assert.equal(deeper.status, 77, deeper.stderr)
+})
+test('body binding never opens or replaces an existing foreign path', () => {
+  for (const beforeBind of [
+    "mkdir '@ROOT@/operation.lock.d/call.update/body'",
+    "mkfifo '@ROOT@/operation.lock.d/call.update/body'",
+    "ln -s '@ROOT@/absent' '@ROOT@/operation.lock.d/call.update/body'",
+  ]) {
+    const r = fixture({ beforeBind }); assert.equal(r.status, 77, r.stderr)
+  }
+})
+test('context drift after body publication retains the body record and refuses completion', () => {
+  const r = fixture({ beforeBind: `eval "$(sed 's/^_nu_recheck_call()/original_recheck_call()/' '@ROOT@/native-update-context')"
+_nu_recheck_call() {
+  printf 'changed\\n' > '@ROOT@/operation.lock.d/call.update/context'
+  original_recheck_call
+}` })
+  assert.equal(r.status, 77, r.stderr)
+  assert.equal(r.bodyPresent, true)
 })
 test('lifecycle gate and forged update nonce cannot grant stage authority', () => {
   for (const options of [{ action: 'restart' }, { setup: 'XKEEN_ADMISSION_CALL=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }]) {

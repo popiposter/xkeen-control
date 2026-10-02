@@ -634,8 +634,12 @@ it never creates a second operation gate.
 Only the body's immediate child with the exact PID-derived native staging path
 authenticates. Deeper descendants, lifecycle tokens, changed/noncanonical/unsafe
 records and arbitrary stage paths refuse. The helper rereads owner/context/body
-and never writes, releases admission or publishes native completion. Native
-update entry/body-record publication, phase-bound exec handoff and the actual
+and never releases admission or publishes native completion. The body publisher
+exclusively creates one bounded root-only RAM record from its actual `/proc`
+identity after strict wrapper-child proof; repeated publication, deeper inherited
+children and existing foreign paths refuse without repair. It cannot publish
+from a stage worker or settle its parent. Native update entry integration,
+phase-bound exec handoff and the actual
 staging writer/verifier are still prerequisites; the protocol helper alone cannot
 run an update or qualify file preservation. No new durable journal is introduced.
 
