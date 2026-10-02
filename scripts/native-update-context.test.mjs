@@ -8,22 +8,21 @@ import { test } from 'node:test'
 const hash = value => createHash('sha256').update(value).digest('hex')
 const argvHash = hash(Buffer.from('/opt/bin/sh\0/opt/sbin/xkeen\0-uk_post_update\0'))
 assert.ok(readFileSync('scripts/native-update-context.sh', 'utf8').includes(argvHash))
-function fixture({ action = 'update-xkeen', setup = '', child = 'native_update_stage_context "$stage"', body = '', borrowed = false, beforeBind = '', execFlow = false, execProbe = 'native_update_exec_context', stagedChange = '', execArgument = '-uk_post_update', withoutExec = false } = {}) {
+function fixture({ action = 'update-xkeen', setup = '', child = 'native_update_stage_context "$stage"', body = '', borrowed = false, beforeBind = '', execFlow = false, stageFlow = false, execProbe = 'native_update_exec_context', stagedChange = '', execArgument = '-uk_post_update', withoutExec = false } = {}) {
   const root = mkdtempSync('/tmp/native-update-context-')
   const code = mkdtempSync('/root/native-update-exec-')
   chmodSync(code, 0o700)
   const executable = join(code, 'xkeen')
   chmodSync(root, 0o700)
   const rewrite = text => text.replaceAll('/tmp/.xkeen-admission', root).replaceAll('@ROOT@', root)
+    .replaceAll('/opt/sbin/.xkeen.stage.', `${code}/.xkeen.stage.`)
     .replaceAll('/opt/sbin/xkeen', executable).replaceAll('@EXEC@', executable)
     .replaceAll(argvHash, hash(Buffer.from(`/bin/sh\0${executable}\0-uk_post_update\0`)))
   const put = (name, text) => writeFileSync(join(root, name), rewrite(text), { mode: 0o600 })
   for (const name of ['native-operation-gate', 'native-admission-entry', 'native-update-context']) put(name, readFileSync(`scripts/${name}.sh`, 'utf8'))
   put('child', `. '@ROOT@/native-operation-gate'; . '@ROOT@/native-admission-entry'; . '@ROOT@/native-update-context'
 ${setup}
-${execFlow ? `native_update_stage_context "$stage" || exit $?
-_fixture_hash=$(sha256sum '@EXEC@'); _fixture_hash=\${_fixture_hash%% *}
-(umask 077; printf 'v1 %s %s %s %s\\n' "$_nu_body_pid" "$_nu_body_start" "$XKEEN_ADMISSION_CALL" "$_fixture_hash" > '@ROOT@/operation.lock.d/call.update/staged') || exit 91
+${execFlow ? `native_update_bind_staged "$stage" || exit $?
 ${stagedChange}` : child}
 `)
   writeFileSync(executable, rewrite(`#!/bin/sh
@@ -34,6 +33,7 @@ ${execProbe}
 ${beforeBind}
 native_update_bind_body || exit $?
 stage="/opt/sbin/.xkeen.stage.$_ng_self_pid"; export stage
+${execFlow || stageFlow ? `mkdir -m 700 "$stage"; cp '@EXEC@' "$stage/xkeen"; chmod 600 "$stage/xkeen"` : ''}
 ${body}
 /bin/sh '@ROOT@/child'
 ${execFlow ? `[ "$?" = 0 ] || exit 95
@@ -59,6 +59,7 @@ native_gate_acquire '@ROOT@' '${action}' || exit 90
     const result = spawnSync('/bin/sh', [join(root, borrowed ? 'owner' : 'wrapper')], { encoding: 'utf8', timeout: 3000 })
     assert.ifError(result.error)
     return { ...result, bodyPresent: existsSync(join(root, 'operation.lock.d/call.update/body')),
+      stagedPresent: existsSync(join(root, 'operation.lock.d/call.update/staged')),
       execUsed: existsSync(join(root, 'operation.lock.d/call.update/exec.used')),
       execArgv: existsSync(join(root, 'operation.lock.d/call.update/exec.argv')) }
   } finally { rmSync(root, { recursive: true, force: true }); rmSync(code, { recursive: true, force: true }) }
@@ -143,6 +144,64 @@ _nu_read_record() {
 })
 test('real same-process exec authenticates only the fixed post-update generation', () => {
   const r = fixture({ execFlow: true }); assert.equal(r.status, 0, r.stderr)
+})
+test('fixed stage child publishes once and never replaces an existing receipt path', () => {
+  const success = fixture({ stageFlow: true, child: 'native_update_bind_staged "$stage"' })
+  assert.equal(success.status, 0, success.stderr)
+  assert.equal(success.stagedPresent, true)
+  const repeated = fixture({ stageFlow: true, child: 'native_update_bind_staged "$stage" || exit $?; native_update_bind_staged "$stage"' })
+  assert.equal(repeated.status, 77, repeated.stderr)
+  for (const setup of [
+    "mkdir '@ROOT@/operation.lock.d/call.update/staged'",
+    "mkfifo '@ROOT@/operation.lock.d/call.update/staged'",
+    "ln -s '@ROOT@/absent' '@ROOT@/operation.lock.d/call.update/staged'",
+  ]) {
+    const r = fixture({ stageFlow: true, setup, child: 'native_update_bind_staged "$stage"' })
+    assert.equal(r.status, 77, r.stderr)
+  }
+})
+test('staged receipt refuses missing, unsafe and oversized dispatcher without publishing', () => {
+  for (const setup of [
+    'rm "$stage/xkeen"',
+    'chmod 666 "$stage/xkeen"',
+    'chmod 777 "$stage"',
+    'rm "$stage/xkeen"; ln -s "@EXEC@" "$stage/xkeen"',
+    'truncate -s 524289 "$stage/xkeen"',
+    ': > "$stage/xkeen"',
+  ]) {
+    const r = fixture({ stageFlow: true, setup, child: 'native_update_bind_staged "$stage"' })
+    assert.equal(r.status, 76, r.stderr)
+    assert.equal(r.stagedPresent, false)
+  }
+})
+test('inherited grandchild cannot publish staged evidence even with the correct path', () => {
+  const r = fixture({ stageFlow: true, child: `/bin/sh -c '. "@ROOT@/native-operation-gate"; . "@ROOT@/native-admission-entry"; . "@ROOT@/native-update-context"; native_update_bind_staged "$stage"'` })
+  assert.equal(r.status, 77, r.stderr)
+  assert.equal(r.stagedPresent, false)
+})
+test('post-publication context, body or dispatcher drift retains receipt and admission', () => {
+  for (const change of [
+    "printf 'changed\\n' > '@ROOT@/operation.lock.d/call.update/context'",
+    "printf 'changed\\n' > '@ROOT@/operation.lock.d/call.update/body'",
+    "printf '# changed\\n' >> \"$stage/xkeen\"",
+  ]) {
+    const r = fixture({ stageFlow: true, setup: `eval "$(sed 's/^_nu_recheck_call()/original_recheck_call()/' '@ROOT@/native-update-context')"
+_nu_recheck_call() { [ ! -f '@ROOT@/operation.lock.d/call.update/staged' ] || { ${change}; }; original_recheck_call; }`, child: 'native_update_bind_staged "$stage"' })
+    assert.equal(r.status, 77, r.stderr)
+    assert.equal(r.stagedPresent && r.bodyPresent, true)
+  }
+})
+test('internally valid ancestor owner replacement after publication cannot change generation', () => {
+  const r = fixture({ stageFlow: true, setup: `eval "$(sed 's/^_nu_load_call()/original_load_call()/' '@ROOT@/native-update-context')"
+_nu_load_call() {
+  if [ -f '@ROOT@/operation.lock.d/call.update/staged' ]; then
+    _native_gate_proc "$_nu_body_pid" || return 77
+    printf 'v1 %s %s %s %s update-xkeen\\n' "$_ng_current_boot" "$_nu_body_pid" "$_ng_proc_start" "$XKEEN_GATE_TOKEN" > '@ROOT@/operation.lock.d/owner'
+  fi
+  original_load_call
+}`, child: 'native_update_bind_staged "$stage"' })
+  assert.equal(r.status, 77, r.stderr)
+  assert.equal(r.stagedPresent && r.bodyPresent, true)
 })
 test('same body without exec and incorrect exec arguments cannot enter post-update', () => {
   for (const options of [{ withoutExec: true }, { execArgument: '-uk' }]) {

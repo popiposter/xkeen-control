@@ -639,7 +639,7 @@ exclusively creates one bounded root-only RAM record from its actual `/proc`
 identity after strict wrapper-child proof; repeated publication, deeper inherited
 children and existing foreign paths refuse without repair. It cannot publish
 from a stage worker or settle its parent. Native update entry integration,
-phase-bound exec handoff and the actual
+connection of the exec proof and the actual
 staging writer/verifier are still prerequisites; the protocol helper alone cannot
 run an update or qualify file preservation. No new durable journal is introduced.
 
@@ -657,8 +657,19 @@ phase marker stay in the existing call scope, not a new journal. Actual dispatch
 builder now pins the native handoff to that exact interpreter/path/argument vector
 in its still-disabled dispatcher. An isolated actual-handoff fixture demonstrates
 the original PATH/argv0 dependency and the fixed handoff with a shadow interpreter.
-Stage receipt production, update entry integration, module
-preservation and native update postconditions remain pending and fenced.
+The stage child's receipt publisher now hashes the actual protected, nonempty,
+bounded (512 KiB) dispatcher at the fixed PID-derived stage path. It creates
+`staged` exclusively inside the existing call scope, then rechecks ancestry,
+context, body, receipt and dispatcher hash. A repeated publisher, deeper inherited
+child, unsafe/oversized file or existing foreign receipt path refuses. Drift after
+publication retains receipt and admission. Real post-exec fixtures now use this
+publisher instead of constructing the receipt themselves. This proves generation
+handoff only: the future fixed stage worker must validate/decorate the complete
+supported module profile before publishing. The publisher neither replaces live
+files nor proves module preservation or grants completion. The shared installed
+dispatcher hash check uses the same bounded protected-file reader.
+Update entry integration, the complete staged-profile writer, module preservation
+and native update postconditions remain pending and fenced.
 
 The disabled `native-admission-update-patch.mjs` experiment pins the actual
 native installer module by SHA-256 and inserts a fixed protected staging callback

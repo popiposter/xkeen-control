@@ -75,12 +75,41 @@ native_update_stage_context() {
     _nu_read_record "$_nu_call/body" || return 77
     [ "$_nu_record" = "$_nu_body" ] || return 77
 }
-_nu_dispatcher_hash() {
-    _na_file_ok /opt/sbin/xkeen || return 76
-    _nu_hash_line=$(sha256sum /opt/sbin/xkeen 2>/dev/null) || return 76
+_nu_file_hash() {
+    _na_file_ok "$1" || return 76
+    _native_gate_metadata "$1" || return 76
+    [ "$_ng_meta_size" -gt 0 ] && [ "$_ng_meta_size" -le 524288 ] || return 76
+    _nu_hash_line=$(sha256sum "$1" 2>/dev/null) || return 76
     _nu_hash=${_nu_hash_line%% *}
     [ "${#_nu_hash}" = 64 ] || return 76
     case "$_nu_hash" in *[!0-9a-f]*) return 76;; esac
+}
+_nu_dispatcher_hash() { _nu_file_hash /opt/sbin/xkeen; }
+native_update_bind_staged() {
+    # Publish only the actual fixed stage child's bounded prepared dispatcher.
+    # The caller must first validate/decorate the complete supported profile;
+    # this receipt alone does not prove module preservation or grant live moves.
+    [ "$#" = 1 ] || return 76
+    _nu_publish_stage=$1
+    native_update_stage_context "$_nu_publish_stage" || return $?
+    _nu_publish_gate=$_nu_gate_record
+    _nu_publish_context=$_nu_context
+    _nu_publish_body=$_nu_body
+    _nu_file_hash "$_nu_publish_stage/xkeen" || return $?
+    _nu_stage_hash=$_nu_hash
+    _nu_stage_receipt="v1 $_nu_body_pid $_nu_body_start $_nu_nonce $_nu_stage_hash"
+    [ ! -e "$_nu_call/staged" ] && [ ! -L "$_nu_call/staged" ] || return 77
+    (umask 077; set -C; printf '%s\n' "$_nu_stage_receipt" > "$_nu_call/staged") 2>/dev/null || return 77
+    # Keep the receipt and admission on publication/readback failure. Never
+    # replace a prior receipt or repair a failed generation in place.
+    native_update_stage_context "$_nu_publish_stage" || return 77
+    [ "$_nu_gate_record" = "$_nu_publish_gate" ] &&
+        [ "$_nu_context" = "$_nu_publish_context" ] &&
+        [ "$_nu_body" = "$_nu_publish_body" ] || return 77
+    _nu_read_record "$_nu_call/staged" || return 77
+    [ "$_nu_record" = "$_nu_stage_receipt" ] || return 77
+    _nu_file_hash "$_nu_publish_stage/xkeen" || return 77
+    [ "$_nu_hash" = "$_nu_stage_hash" ] || return 77
 }
 native_update_exec_context() {
     # Only the same native body may enter the installed post-update generation.
