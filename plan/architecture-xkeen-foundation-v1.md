@@ -47,7 +47,7 @@ tags: [architecture, refactor, xkeen, routing, reliability]
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
 | TASK-001 | Обновить master #1, ledger #4 и roadmap: архитектурная пауза, scope новой программы, отсутствие итогового live PASS. Привязать audit к `8adff1e…`, не переносить его выводы как проверку будущего HEAD. | | |
-| TASK-002 | В `docs/ARCHITECTURE.md`, `docs/CONTROL-PLANE.md`, `SECURITY.md`, `AGENTS.md` описать target authority split и planned migration; нынешние инварианты кода оставить явно historical/current до миграции. Обновить требования «production only by issue» перед новой квалификацией. | | |
+| TASK-002 | В `docs/ARCHITECTURE.md`, `docs/CONTROL-PLANE.md`, `SECURITY.md`, `AGENTS.md` описать native clean-install ownership transition; нынешние инварианты старого кода оставить явно historical до замены, без миграции старого state. Обновить требования «production only by issue» перед новой квалификацией. | | |
 | TASK-003 | Независимый рецензент проверяет точный documentation HEAD, воспроизведения AUD-02/AUD-05 и границы native ownership; проверка не ограничивается чтением agent report. После review — только отдельное разрешение merge. | | |
 
 ### Implementation Phase 2
@@ -128,7 +128,7 @@ tags: [architecture, refactor, xkeen, routing, reliability]
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-027 | В `internal/backup` добавить format v2 с native xkeen config/list policies, managed registry, editor/selection preferences, geodata source/category references. Сохранить current-format reader и Argon2id/XChaCha20 envelope; native `-kb/-xb` остаются локальным backup механизмом. Не паковать executable/dat bytes/PID/logs/auth/listener/kernel state. | | |
+| TASK-027 | В `internal/backup` добавить format v2 с native xkeen config/list policies, managed registry, editor/selection preferences, geodata source/category references. Реализовать reader/writer нового portable формата; старый v1 reader не требуется и Argon2id/XChaCha20 envelope; native `-kb/-xb` остаются локальным backup механизмом. Не паковать executable/dat bytes/PID/logs/auth/listener/kernel state. | | |
 | TASK-028 | В `internal/restore` реализовать target mapping для LAN interface/native policy/core versions; показывать неподдержанное до Apply. Telegram credentials переносить только отдельной encrypted opt-in секцией; не включать по умолчанию. На неудаче восстановить предыдущий coherent config, native restart и readback. | | |
 
 ### Implementation Phase 9
@@ -165,7 +165,7 @@ tags: [architecture, refactor, xkeen, routing, reliability]
 ## 4. Dependencies
 
 - **DEP-001**: Точное upstream API/profile version и пригодный machine interface для interactive действий; отсутствие interface блокирует конкретную операцию, не оправдывает новый installer.
-- **DEP-002**: Чистый Entware/Keenetic ARM64 для будущей qualification и отдельный LAN-клиент. Пользователь готовит его; текущий аудит не подтверждает готовность среды.
+- **DEP-002**: Чистый Entware/Keenetic ARM64 для будущей qualification и отдельный LAN-клиент. Чистый ARM64 Entware и SSH подтверждены read-only preflight; аппаратная приёмка впереди. Второй роутер и независимый LAN-клиент пока не подтверждены.
 - **DEP-003**: Native/core совместимость с gRPC RoutingService/Observatory; версия выбирается из contract matrix, не произвольный latest.
 - **DEP-004**: Согласованный межпроцессный native lock для CLI/cron/panel; независимый override expiry/supervision контракт для autonomous adaptive.
 - **DEP-005**: Single-router Telegram bot credentials, и отдельный постоянно доступный controller только если нужен единый bot на несколько устройств. На стадии плана credentials не запрашиваются.
