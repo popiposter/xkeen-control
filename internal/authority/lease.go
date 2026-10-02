@@ -17,9 +17,14 @@ var (
 
 // Lease is a one-slot, context-aware authority lock.
 type Lease struct {
-	gate  chan struct{}
-	mu    sync.RWMutex
-	block bool
+	gate   chan struct{}
+	mu     sync.RWMutex
+	block  bool
+	native bool
+	root   string
+	held   nativeClaim
+	fault  bool
+	active *operation
 }
 
 // NewLease creates an available authority lease.
@@ -31,32 +36,14 @@ func NewLease() *Lease {
 // A positive timeout bounds waiting for the slot but does not bound the work
 // performed while the caller owns it.
 func (l *Lease) Acquire(ctx context.Context, timeout time.Duration) (func(), error) {
-	if l == nil {
-		return func() {}, nil
+	if l != nil && l.native {
+		return nil, ErrContextRequired
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	_, release, err := l.AcquireContext(ctx, timeout)
+	if err != nil {
+		return nil, err
 	}
-	if l.isBlocked() {
-		return nil, ErrBlocked
-	}
-	waitContext := ctx
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		waitContext, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-	select {
-	case l.gate <- struct{}{}:
-		if l.isBlocked() {
-			<-l.gate
-			return nil, ErrBlocked
-		}
-		var once sync.Once
-		return func() { once.Do(func() { <-l.gate }) }, nil
-	case <-waitContext.Done():
-		return nil, waitContext.Err()
-	}
+	return func() { _ = release() }, nil
 }
 
 // TryAcquire reserves the normal authority lease only when it is immediately
@@ -66,23 +53,14 @@ func (l *Lease) Acquire(ctx context.Context, timeout time.Duration) (func(), err
 // an operation that already owns the lease remains valid when Block is called,
 // matching the ordinary Acquire semantics.
 func (l *Lease) TryAcquire() (func(), error) {
-	if l == nil {
-		return func() {}, nil
+	if l != nil && l.native {
+		return nil, ErrContextRequired
 	}
-	if l.isBlocked() {
-		return nil, ErrBlocked
+	_, release, err := l.TryAcquireContext(context.Background())
+	if err != nil {
+		return nil, err
 	}
-	select {
-	case l.gate <- struct{}{}:
-		if l.isBlocked() {
-			<-l.gate
-			return nil, ErrBlocked
-		}
-		var once sync.Once
-		return func() { once.Do(func() { <-l.gate }) }, nil
-	default:
-		return nil, ErrBusy
-	}
+	return func() { _ = release() }, nil
 }
 
 // AcquireForRecovery reserves the lease for the bounded startup recovery path.
@@ -90,36 +68,29 @@ func (l *Lease) TryAcquire() (func(), error) {
 // caller must clear the block only after the journal removal has been made
 // durable and the restored runtime has been verified.
 func (l *Lease) AcquireForRecovery(ctx context.Context, timeout time.Duration) (func(), error) {
-	if l == nil {
-		return func() {}, nil
+	if l != nil && l.native {
+		return nil, ErrContextRequired
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	_, release, err := l.AcquireForRecoveryContext(ctx, timeout)
+	if err != nil {
+		return nil, err
 	}
-	waitContext := ctx
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		waitContext, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-	select {
-	case l.gate <- struct{}{}:
-		var once sync.Once
-		return func() { once.Do(func() { <-l.gate }) }, nil
-	case <-waitContext.Done():
-		return nil, waitContext.Err()
-	}
+	return func() { _ = release() }, nil
 }
 
 // Block prevents all normal authority operations from entering the shared
 // lease until a fresh recovery path has proved the retained import journal is
-// resolved. It does not interrupt an operation that already owns the lease.
+// resolved. It does not interrupt a running foreground callback, but revokes
+// that operation context's permission to start another foreground command.
 func (l *Lease) Block() {
 	if l == nil {
 		return
 	}
 	l.mu.Lock()
 	l.block = true
+	if l.active != nil {
+		l.active.poisoned = true
+	}
 	l.mu.Unlock()
 }
 
@@ -129,7 +100,9 @@ func (l *Lease) Unblock() {
 		return
 	}
 	l.mu.Lock()
-	l.block = false
+	if !l.fault && (!l.native || (l.active == nil || !l.active.poisoned) && (l.held == nil || l.active != nil && l.active.recovery)) {
+		l.block = false
+	}
 	l.mu.Unlock()
 }
 

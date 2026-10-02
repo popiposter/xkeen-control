@@ -179,18 +179,19 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 			settled = true
 			return
 		}
-		if errors.Is(err, xkeen.ErrLifecycleUnknown) {
+		if errors.Is(err, xkeen.ErrLifecycleUnknown) || errors.Is(err, xkeen.ErrLifecycleAdmission) {
 			// Keep both the current candidate and previous snapshot untouched.
-			// Native hooks may not have settled; automatic rollback would be a
-			// second lifecycle mutation, not independent outcome verification.
-			err = errors.Join(ErrNodeRecoveryRequired, xkeen.ErrLifecycleUnknown)
+			// Native hooks may not have settled, or admission was lost after
+			// committing the candidate. Neither permits unowned rollback writes
+			// or a second lifecycle mutation in place of independent readback.
+			err = errors.Join(ErrNodeRecoveryRequired, err)
 			return
 		}
 		rollbackDeadline := time.Now().Add(budget.Rollback)
 		if transactionDeadline.Before(rollbackDeadline) {
 			rollbackDeadline = transactionDeadline
 		}
-		rollbackContext, cancelRollback := context.WithDeadline(context.Background(), rollbackDeadline)
+		rollbackContext, cancelRollback := context.WithDeadline(context.WithoutCancel(ctx), rollbackDeadline)
 		rollbackErr := t.rollback(rollbackContext, previousRegistry, previousRegistryExists, previousOutbounds, previousOutboundsExists)
 		cancelRollback()
 		if rollbackErr != nil {
@@ -222,7 +223,7 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 
 func (t Transaction) activate(ctx context.Context, registry Registry) error {
 	if err := t.Activator.Restart(ctx); err != nil {
-		if errors.Is(err, xkeen.ErrLifecycleUnknown) {
+		if errors.Is(err, xkeen.ErrLifecycleUnknown) || errors.Is(err, xkeen.ErrLifecycleAdmission) {
 			return err
 		}
 		return errors.New("Xray restart failed")
@@ -477,7 +478,7 @@ func (a CommandActivator) Restart(ctx context.Context) error {
 	if restartErr == nil {
 		return nil
 	}
-	if errors.Is(restartErr, xkeen.ErrLifecycleUnknown) {
+	if errors.Is(restartErr, xkeen.ErrLifecycleUnknown) || errors.Is(restartErr, xkeen.ErrLifecycleAdmission) {
 		return restartErr
 	}
 	// XKeen can stop Xray and then return a failed -restart. Match the
@@ -485,7 +486,7 @@ func (a CommandActivator) Restart(ctx context.Context) error {
 	// activation and rollback can still prove readiness on the selected files.
 	if restartContext.Err() == nil {
 		startErr := a.runXkeenLifecycle(restartContext, "-start")
-		if startErr == nil || errors.Is(startErr, xkeen.ErrLifecycleUnknown) {
+		if startErr == nil || errors.Is(startErr, xkeen.ErrLifecycleUnknown) || errors.Is(startErr, xkeen.ErrLifecycleAdmission) {
 			return startErr
 		}
 	}

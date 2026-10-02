@@ -448,7 +448,7 @@ func normalizeAutoRefreshTime(value time.Time) time.Time {
 	return value
 }
 
-func (m *Manager) refreshSavedSubscription(ctx context.Context, subscriptionID string) (automaticRefreshResult, error) {
+func (m *Manager) refreshSavedSubscription(ctx context.Context, subscriptionID string) (result automaticRefreshResult, resultErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -509,11 +509,15 @@ func (m *Manager) refreshSavedSubscription(ctx context.Context, subscriptionID s
 	if m.authority == nil {
 		return automaticRefreshResult{}, automaticError(autoRefreshAuthority, true, false)
 	}
-	releaseAuthority, err := m.authority.TryAcquire()
+	ctx, releaseAuthority, err := m.authority.TryAcquireContext(ctx)
 	if err != nil {
 		return automaticRefreshResult{}, automaticError(autoRefreshAuthority, true, false)
 	}
-	defer releaseAuthority()
+	defer func() {
+		if releaseAuthority() != nil {
+			result, resultErr = automaticRefreshResult{}, automaticError(autoRefreshActivation, false, false)
+		}
+	}()
 
 	current, currentTarget, err = m.savedEnabledSubscription(subscriptionID)
 	if err != nil {
@@ -525,6 +529,9 @@ func (m *Manager) refreshSavedSubscription(ctx context.Context, subscriptionID s
 	applyContext, cancelApply := context.WithTimeout(ctx, m.tx.totalTimeout())
 	defer cancelApply()
 	if err := m.tx.Apply(applyContext, candidate); err != nil {
+		if errors.Is(err, ErrNodeRecoveryRequired) || errors.Is(err, ErrRollbackFailed) {
+			m.authority.Block()
+		}
 		if ctx.Err() != nil {
 			return automaticRefreshResult{}, ctx.Err()
 		}

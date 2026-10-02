@@ -18,10 +18,29 @@ import (
 // outbound artifact describe the same generation, validates the complete Xray
 // configuration, then reloads and verifies that exact generation in runtime.
 // It does not rewrite node state or unrelated policy files.
-func (m *Manager) ReconcileRuntime(ctx context.Context) error {
+func (m *Manager) ReconcileRuntime(ctx context.Context) (resultErr error) {
 	if m == nil || m.tx.Activator == nil || m.tx.ActiveOutboundsPath == "" || m.tx.ConfigDir == "" {
 		return errors.New("node runtime reconciliation unavailable")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	gateTimeout := m.gateTimeout
+	if gateTimeout <= 0 {
+		gateTimeout = DefaultApplyGateWaitTimeout
+	}
+	ctx, release, err := m.authority.AcquireContext(ctx, gateTimeout)
+	if err != nil {
+		return ErrNodeRecoveryRequired
+	}
+	defer func() {
+		if errors.Is(resultErr, ErrNodeRecoveryRequired) {
+			m.authority.Block()
+		}
+		if release() != nil {
+			resultErr = errors.Join(resultErr, ErrNodeRecoveryRequired)
+		}
+	}()
 	previousDir := m.tx.PreviousDir
 	if previousDir == "" {
 		previousDir = filepath.Join(filepath.Dir(m.tx.Store.Path), "previous")
@@ -115,8 +134,8 @@ func (t Transaction) reconcileRuntime(ctx context.Context, registry Registry, re
 	activationErr := t.activate(activationContext, registry)
 	cancelActivation()
 	if activationErr != nil {
-		if errors.Is(activationErr, xkeen.ErrLifecycleUnknown) {
-			return errors.Join(ErrNodeRecoveryRequired, xkeen.ErrLifecycleUnknown)
+		if errors.Is(activationErr, xkeen.ErrLifecycleUnknown) || errors.Is(activationErr, xkeen.ErrLifecycleAdmission) {
+			return errors.Join(ErrNodeRecoveryRequired, activationErr)
 		}
 		return ErrNodeRecoveryRequired
 	}

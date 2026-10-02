@@ -246,7 +246,7 @@ func (m *Manager) tryBeginAutomaticCommit() (func(), error) {
 // benchmark or supervisor work. Unlike ordinary empty-registry node flows,
 // backup export requires the authoritative file to exist and fails closed when
 // it is missing.
-func (m *Manager) Snapshot(ctx context.Context) (Registry, error) {
+func (m *Manager) Snapshot(ctx context.Context) (result Registry, resultErr error) {
 	if m == nil {
 		return Registry{}, ErrSnapshotUnavailable
 	}
@@ -257,14 +257,18 @@ func (m *Manager) Snapshot(ctx context.Context) (Registry, error) {
 	if gateTimeout <= 0 {
 		gateTimeout = DefaultApplyGateWaitTimeout
 	}
-	release, err := m.authority.Acquire(ctx, gateTimeout)
+	_, release, err := m.authority.AcquireContext(ctx, gateTimeout)
 	if err != nil {
 		if ctx.Err() != nil {
 			return Registry{}, ctx.Err()
 		}
 		return Registry{}, ErrSnapshotUnavailable
 	}
-	defer release()
+	defer func() {
+		if release() != nil {
+			result, resultErr = Registry{}, ErrSnapshotUnavailable
+		}
+	}()
 
 	registry, err := m.store.Load()
 	if err != nil {
@@ -687,7 +691,7 @@ func buildSubscriptionCandidate(before Registry, target Subscription, parsed []P
 	return candidate, nil
 }
 
-func (m *Manager) Apply(ctx context.Context, binding, token string, acceptMissing bool) (ApplyResult, error) {
+func (m *Manager) Apply(ctx context.Context, binding, token string, acceptMissing bool) (result ApplyResult, resultErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -704,14 +708,19 @@ func (m *Manager) Apply(ctx context.Context, binding, token string, acceptMissin
 	if gateTimeout <= 0 {
 		gateTimeout = DefaultApplyGateWaitTimeout
 	}
-	releaseAuthority, err := m.authority.Acquire(ctx, gateTimeout)
+	admittedContext, releaseAuthority, err := m.authority.AcquireContext(ctx, gateTimeout)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ApplyResult{}, ctx.Err()
 		}
 		return ApplyResult{}, errors.New("node activation gate busy")
 	}
-	defer releaseAuthority()
+	ctx = admittedContext
+	defer func() {
+		if releaseAuthority() != nil {
+			result, resultErr = ApplyResult{}, errors.Join(resultErr, ErrNodeRecoveryRequired)
+		}
+	}()
 	// The transaction budget starts only after the serialized apply slot is
 	// acquired, preserving the full recovery reserve for persistent mutations.
 	applyContext, cancelApply := context.WithTimeout(ctx, m.tx.totalTimeout())
@@ -753,6 +762,9 @@ func (m *Manager) Apply(ctx context.Context, binding, token string, acceptMissin
 		return ApplyResult{Operation: entry.Operation, Nodes: entry.Registry.PublicNodes(), Changes: entry.Changes}, nil
 	}
 	if err := m.tx.Apply(applyContext, entry.Registry); err != nil {
+		if errors.Is(err, ErrNodeRecoveryRequired) || errors.Is(err, ErrRollbackFailed) {
+			m.authority.Block()
+		}
 		return ApplyResult{}, err
 	}
 	return ApplyResult{Operation: entry.Operation, Nodes: entry.Registry.PublicNodes(), Changes: entry.Changes}, nil

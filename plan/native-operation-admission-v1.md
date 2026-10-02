@@ -93,3 +93,183 @@ other than `-t` while retaining real metadata reads. This matches the recorded
 appliance stat interface but is **not an execution on BusyBox or Keenetic**.
 BusyBox is unavailable in the qualification image. Hardware, native integration,
 reboot recovery, automatic detach and native-update persistence remain unqualified.
+
+## Phase 2 investigation: complete native writer boundary
+
+Read-only source investigation on 2026-10-02 found that a dispatcher/init-entry
+patch alone is insufficient. **No native integration patch was produced or
+enabled by this investigation.** The Go protocol remains opt-in; do not enable a
+panel default until the native counterpart covers the writers below.
+
+Pinned public upstream: `jameszeroX/XKeen@5aaece27a70d5bd002c615248614914ebbc4569d`.
+The source identities inspected locally were:
+
+| Source | SHA-256 |
+| --- | --- |
+| `scripts/xkeen` dispatcher | `feda355231551c2776da78453b950bfe10b59225b9a5c32c18c333649cc2e542` |
+| `_xkeen/02_install/07_install_register/04_register_init.sh` | `fbdba1f1cca6e1923e0c43113b4b6fafc51f92248cad70818f7ac92c937e32e3` |
+| Already-qualified planned-Stop correction derived from that template | `312bcb89ad188d14818d5feea547e97d729da506bfc46304f090d63725497b19` |
+
+Line anchors below refer to the original pinned dispatcher/template, not an
+installed script modified by configuration registration. The original template
+is standalone code copied into `S05xkeen`; it is not sourced as a module.
+
+### Entrypoints and hidden writers
+
+| Pinned anchor | Actual path / consequence | Required native seam |
+| --- | --- | --- |
+| Dispatcher `install_xkeen_rename` call, line 21 | Renames/removes installation paths before command classification | Validate fixed operation and acquire/join before this call, imports or package self-heal; no side effects before admission |
+| Dispatcher self-detach, lines 50-72 | Re-executes a lifecycle command in the background and returns success to its caller | Borrowed foreground operations must never detach; standalone CLI must run synchronously in this slice |
+| Dispatcher package self-heal, lines 90-99 | Most commands, including lifecycle, can install/repair packages before dispatch | Keep under outer admission; partial package failure is not a clean no-op |
+| Template `_xkeen_secure_rundir`, lines 138-170 | Can remove/recreate `/tmp/.xkeen`, including fallback behavior for Stop | The shared gate root must be separate from this mutable runtime directory; validate it before executing this helper |
+| Template `proxy_start`, line 3695; `proxy_stop`, line 4002 | Existing proxy mutex covers only native lifecycle internals | Outer operation gate first, then proxy mutex, then native netfilter lock; nested functions do not independently release outer admission |
+| Template core spawn branches, lines 3843-3865 | Xray/Mihomo inherit exported context by default | Strip the admission token in the spawn subshell, preserving required native config/asset environment |
+| Template initial crash probe, lines 3906-3923 | Unconditional background subshell sleeps three seconds then calls `emergency_clear` | Make this bounded initial verification foreground inside the current operation; retain native cleanup/killswitch policy |
+| Template `monitor_fd`, lines 3394-3420; spawn at 3938 | A later background tick calls `proxy_stop` and `proxy_start` directly | Strip inherited admission state at launch; on a trigger obtain a fresh operation gate, recheck the condition, then run a foreground restart under it |
+| Template `emergency_clear`, line 3677 | Cleanup and killswitch mutation under only the proxy mutex | Call under the existing foreground operation for initial failure; any later independent entry must obtain fresh outer admission before the proxy mutex |
+| Template `configure_firewall`, line 2139; first hook heredoc at 2151 | Generates executable `/opt/etc/ndm/netfilter.d/proxy.sh` with its own early runtime repair | Generate admission before any generated-hook mutation, not just before its iptables commands |
+| Generated hook lock code, lines 2282-2347 | Native hook traps and release paths manage a separate netfilter lock | Keep subordinate lock semantics; they must not overwrite or release the outer operation gate |
+| Generated hook fast paths, approximately 3055-3070 | Can refill ipsets, update routes/cache, then sync deny-MAC after releasing the netfilter lock | Hold outer admission over the entire hook, including fast paths and final sync |
+| Generated hook absent-core branch, approximately 3210-3258 | Independently starts Xray/Mihomo and invokes `restart_script` | Same gate across core spawn, bounded readback and hook continuation; strip token from core; no detached unowned restart |
+| Schedule hook heredoc, lines 3288-3293 | `schedule.d/00-xkeen-hotspot-sync.sh` calls the generated netfilter hook | Delegate to the gated native hook; avoid a second scheduler or firewall writer |
+| Template `start` without argument, lines 4072-4080 | Spawns `cold_start`, transfers only a native PID guard, then exits zero | Replace detach with a synchronous bounded cold-start worker sharing the gate, or reject this path before ipset/runtime mutation |
+| Template `restart`, line 4107 | `proxy_start` runs even when `proxy_stop` fails | Start only after proven successful Stop; unknown/nonzero Stop retains admission and cannot trigger Start |
+| Template `cold_start`, lines 4108-4121 | Rewrites cold-start PID, waits for environment, then invokes startup | Support only as a joined foreground worker in this slice, or keep capability disabled; never inherit a dead parent's token |
+
+Native shell traps currently clear/reset `INT`, `TERM`, `HUP` and hook `EXIT`
+handlers. Therefore the outer gate cannot be released through an unreviewed
+blanket exit trap: explicit success settlement must follow all nested work and
+readback. On error/signal/unknown, keep admission/intent. A borrower cannot settle
+or release its parent's operation.
+
+### Minimal coherent source slice
+
+Implement the native changes as one fingerprinted public-source patch set, not a
+second interception framework. Continue using native `proxy_start`, `proxy_stop`,
+`emergency_clear`, firewall generation, native mutexes and native cron. A local
+builder may emit exclusive candidate files plus source/candidate hashes; it must
+not execute, install, fetch unknown versions or overwrite an existing candidate.
+Anchor count/source drift must reject the whole patch set.
+
+1. Add early typed admission to the dispatcher and standalone init. Explicit
+   lifecycle operations support `start`, `stop`, `restart`; mixed/multiple commands
+   and unsupported writers reject before import/self-heal. Read-only status must
+   not be assumed side-effect-free merely because it prints status.
+2. Make startup/cold-start and the initial three-second crash check foreground.
+   Native core processes alone remain detached, with tokens stripped. A direct
+   boot/NDM start is not qualified until its synchronous timing budget has been
+   tested; if rejected instead, advertise boot/autostart as unsupported and do not
+   deploy this candidate as a functional replacement.
+3. Give later monitor/hook invocations a fresh gate; re-read state after acquiring.
+   A successful foreground nested hook borrows its caller's context. Preserve
+   native failure cleanup; no panel-synthesized rule or killswitch implementation.
+4. Gate the generated netfilter hook through every exit and self-restart path.
+   The schedule hook remains a thin native caller. Busy NDM events cannot silently
+   count as successful application: the current owner must reconcile current
+   native state before settlement, or leave an explicit native pending event for
+   the next qualified reconciliation. No additional background retry service is
+   introduced. Until lost-event convergence is tested, NDM concurrency is disabled.
+5. Fix restart sequencing and verify final native state before standalone-owner
+   release. Panel borrowers leave final settlement to the existing Go owner.
+   Persistent intent/reboot recovery must be supplied by the existing operation
+   owner; this patch set must not create another rollback journal. A lifecycle
+   command exit code alone does not authorize releasing unknown state.
+
+The admission root is fixed operator configuration, never request input. Its
+creation and first enablement belong to a separately qualified installation
+step. Shared helper loading must validate the helper's identity/protected path;
+an environment-selected executable or generic command-runner interface is not
+part of this design.
+
+### Update and cron boundaries
+
+`_xkeen/02_install/07_install_register/02_register_xkeen.sh::register_xkeen_initd`
+copies the template to a temporary init, applies preserved native values, then
+publishes it. Patching only the installed init is therefore insufficient.
+Dispatcher `-uk` (line 588) calls `install_xkeen`, replaces its own source, then
+`exec sh "$0" -uk_post_update` (line 624). That continuation reimports modules and
+calls `register_xkeen_initd` (line 635). The existing narrow Stop correction does
+not survive this native update by itself.
+
+Until the native update candidate itself contains and validates the complete
+seam before activation, reject `-uk`, its post-update entry and other native
+installer/update operations before any side effect. Do not add a panel component
+updater to repair the seam afterward. A later native-supported update integration
+must preserve the same operation through replacement/exec and regenerated hooks,
+with an explicit unknown outcome if that proof fails.
+
+`_xkeen/02_install/06_install_cron.sh::install_cron` writes `xkeen -ug`;
+`_xkeen/04_tools/08_tools_balancer/02_balancer_control.sh::sb_install_cron` writes
+`xkeen -sbt`. Both enter the dispatcher but have distinct update/selection effects.
+These commands remain disabled in the first lifecycle-only seam. Preserve their
+existing entries; do not report them as qualified merely because a busy/rejection
+is safe. Their eventual admission must keep cron native and selection ownership
+exclusive.
+
+### Integration acceptance before enablement
+
+Use extracted actual pinned functions/generated hook bodies in isolated Linux
+fixtures with synthetic paths and intercepted external commands. Never execute
+upstream top-level router mutations in the development container.
+
+- Prove contention blocks **before** rename, self-heal, runtime repair, ipset and
+  config reads/writes for every enabled entrypoint; include panel owner ->
+  dispatcher -> init -> generated hook nesting and separate direct-init owner.
+- Kill owner/borrower at admission, after a write and during verification. The
+  next writer cannot auto-reap/replay; foreground success does not hide a live
+  mutating child. Background core/monitor environments contain no inherited token.
+- Exercise startup success, immediate crash, Stop failure during Restart, repeated
+  Stop, and direct boot/cold-start. A failed Stop must produce zero Start calls.
+- Run a monitor trigger concurrently with node Apply and a netfilter/schedule
+  event. Prove one writer and eventual current-state reconciliation; merely
+  returning busy or dropping a one-shot NDM event is insufficient.
+- Exercise hook fast-path ipset refill, deny-MAC sync after native lock release,
+  absent-core spawn and `restart_script`. Every mutation remains under the outer
+  owner and all spawned cores lack the token.
+- Reject unsupported/mixed dispatcher actions before side effects, plus changed
+  input fingerprints and partially prepared native updates. Prove the init
+  generated from the patched template contains the same seam.
+- Qualify real BusyBox shell/stat behavior, boot/NDM timing and bounded resource
+  use before hardware enablement. Linux dash fixtures are not that qualification.
+
+These source findings define the smallest coherent implementation boundary.
+Standalone recovery settlement, one-shot NDM event convergence, and native update
+persistence are explicit enablement gates, not completed capabilities.
+
+## Contextual panel integration (source only, next checkpoint)
+
+The existing authority lease now has an explicit opt-in native backend and
+context-bearing acquire/try/recovery methods. Ordinary `NewLease` remains the
+configured backend. The native backend rejects legacy acquisition methods so a
+caller cannot silently discard ownership. Node Apply, automatic refresh,
+snapshot and explicit reconciliation now use contextual acquisition before
+baseline reads, hold it through settlement, and propagate release failures.
+Rollback preserves operation values with `context.WithoutCancel` while keeping
+its existing bounded deadline. This does not enable the native backend in main.
+
+The fixed lifecycle adapter strips inherited gate variables and projects only a
+verified active context while joining foreground completion. Unknown lifecycle
+results, failed rollback, or admission loss after committing a node candidate
+retain recovery state. Admission loss must not fall through to Start fallback
+or restore previous files without ownership. A poisoned recovery context cannot
+launch another mutation; explicit subsequent recovery needs a fresh context and
+proof of the same retained owner. There is no foreign-lock adoption or reaping.
+
+Focused regressions reproduced lost rollback context, shared admission reopening
+after unknown outcome, and unowned rollback after tampering with an owner tuple.
+The last case changed back to the old registry and attempted two lifecycle calls
+before the repair; afterward it preserves the committed candidate and `.pending`
+without executing a native command. These are synthetic Linux fixtures.
+
+This is still an incomplete integration checkpoint. Other historical component,
+restore and CLI mutation paths are not enabled with the native backend; legacy
+acquisition fails closed if it is supplied. No production default, command
+capability or concurrency claim is enabled until all retained callers and the
+complete native hook seam above participate. Real BusyBox and hardware evidence,
+update persistence, cross-process recovery after panel exit and reboot recovery
+remain outstanding. No new journal or installation authority is introduced.
+
+The lifecycle adapter also treats the shell protocol's reserved refusal statuses
+75/76/77 as admission failures, retaining the current claim and prohibiting the
+ordinary failed-restart fallback. Other native exit failures keep their existing
+behavior. A peer's refusal must not be reduced to a generic process error.

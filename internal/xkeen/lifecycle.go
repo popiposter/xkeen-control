@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/popiposter/xkeen-control/internal/authority"
 )
 
 type LifecycleAction string
@@ -20,6 +22,9 @@ const (
 var (
 	ErrLifecycleFailed  = errors.New("native XKeen lifecycle failed")
 	ErrLifecycleUnknown = errors.New("native XKeen lifecycle outcome unknown; inspect before retry")
+	// ErrLifecycleAdmission forbids lifecycle fallback and transaction rollback
+	// writes: the foreground command could not prove mutation ownership.
+	ErrLifecycleAdmission = errors.New("native XKeen lifecycle admission lost; recovery required")
 )
 
 // Lifecycle is the fixed-command subprocess boundary. The caller owns admission,
@@ -32,6 +37,20 @@ type Lifecycle struct {
 }
 
 func (l Lifecycle) Run(ctx context.Context, action LifecycleAction) error {
+	err := authority.WithForeground(ctx, os.Environ(), func(env []string) error {
+		err := l.runForeground(ctx, action, env)
+		if errors.Is(err, ErrLifecycleUnknown) || errors.Is(err, ErrLifecycleAdmission) {
+			authority.BlockContext(ctx)
+		}
+		return err
+	})
+	if errors.Is(err, authority.ErrOwnershipLost) || errors.Is(err, authority.ErrBlocked) {
+		return errors.Join(ErrLifecycleAdmission, err)
+	}
+	return err
+}
+
+func (l Lifecycle) runForeground(ctx context.Context, action LifecycleAction, env []string) error {
 	if action != Start && action != Stop && action != Restart {
 		return ErrLifecycleFailed
 	}
@@ -52,7 +71,7 @@ func (l Lifecycle) Run(ctx context.Context, action LifecycleAction) error {
 		binary = "/opt/sbin/xkeen"
 	}
 	command := exec.Command(binary, "-"+string(action))
-	for _, entry := range os.Environ() {
+	for _, entry := range env {
 		if !strings.HasPrefix(entry, "XKEEN_FOREGROUND=") {
 			command.Env = append(command.Env, entry)
 		}
@@ -74,6 +93,16 @@ func (l Lifecycle) Run(ctx context.Context, action LifecycleAction) error {
 			return ErrLifecycleUnknown
 		}
 		if err != nil {
+			// Reserved native-operation-gate.sh protocol refusals, not generic
+			// command failures: callers must retain intent and cannot fall back
+			// to Start or issue rollback writes without admission.
+			var exit *exec.ExitError
+			if errors.As(err, &exit) {
+				switch exit.ExitCode() {
+				case 75, 76, 77:
+					return ErrLifecycleAdmission
+				}
+			}
 			return ErrLifecycleFailed
 		}
 		return nil
