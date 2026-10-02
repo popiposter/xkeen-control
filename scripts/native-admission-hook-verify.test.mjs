@@ -83,6 +83,15 @@ test('duplicate terminal capture refuses', () => assert.notEqual(fixture(v => {
 test('deny MAC bypass after capture jumps refuses', () => assert.notEqual(fixture(v => {
   v['4-nat'] = v['4-nat'].replace(/(-A PREROUTING -m set[^\n]+)\n/, '') + '-A PREROUTING -m set --match-set xkeen_deny_mac src -m comment --comment xkeen_rule -j RETURN\n'
 }).status, 0))
+test('deny MAC direction is bound to set argument, not another src token', () => assert.notEqual(fixture(v => {
+  v['4-nat'] = v['4-nat'].replace('--match-set xkeen_deny_mac src', '--match-set xkeen_deny_mac dst -i src')
+}).status, 0))
+for (const anchor of ['REDIRECT', 'TPROXY', 'CONNMARK --restore-mark', 'CONNMARK --save-mark', 'MARK --set-xmark', 'xkeen_force']) test(`extra source restriction on ${anchor} anchor refuses`, () => assert.notEqual(fixture(v => {
+  for (const k of ['4-nat', '4-mangle']) v[k] = v[k].replaceAll(`-j ${anchor}`, `-s 192.0.2.1/32 -j ${anchor}`)
+}).status, 0))
+for (const [table, protocol] of [['nat', 'udp'], ['mangle', 'tcp']]) test(`deny MAC ${table} anchor cannot exclude captured protocol`, () => assert.notEqual(fixture(v => {
+  v[`4-${table}`] = v[`4-${table}`].replace('-A PREROUTING -m set', `-A PREROUTING -p ${protocol} -m set`)
+}).status, 0))
 test('wrong IPv6 ipset family refuses', () => assert.notEqual(fixture(v => { v.ipsets = v.ipsets.replace('geo_override6 hash:net family inet6', 'geo_override6 hash:net family inet') }).status, 0))
 test('missing deny MAC set refuses', () => assert.notEqual(fixture(v => { v.ipsets = v.ipsets.replace(/^create xkeen_deny_mac[^\n]+\n/, '') }).status, 0))
 test('wrong policy route lookup refuses', () => assert.notEqual(fixture(v => { v['6-rules'] = v['6-rules'].replace('lookup 111', 'lookup 112') }).status, 0))
@@ -118,7 +127,7 @@ test('TPROXY before mark restoration refuses', () => assert.notEqual(fixture(v =
   v['4-mangle'] = lines.join('\n')
 }).status, 0))
 
-function admitted({ expectation = 'running', change = '', alterHook = h => h, badCapability = false, startsStopped = false } = {}) {
+function admitted({ expectation = 'running', change = '', alterHook = h => h, badCapability = false, startsStopped = false, nativeDNS = 'off', nativeKillswitch = 'off' } = {}) {
   const code = mkdtempSync('/opt/native-hook-proof-'), root = mkdtempSync(join(tmpdir(), 'hook-proof-gate-'))
   chmodSync(code, 0o700); chmodSync(root, 0o700)
   try {
@@ -126,14 +135,15 @@ function admitted({ expectation = 'running', change = '', alterHook = h => h, ba
     mkdirSync(paths.configs, { mode: 0o700 })
     const action = expectation === 'stopped' ? 'stop' : expectation === 'unchanged' ? 'start' : 'restart'
     const mode = expectation === 'unchanged' ? 'automatic' : 'forced'
-    const settings = { name_chain: 'xkeen', comment_tag: 'xkeen_rule', table_mark: '0x111', table_id: '111', name_ipset_deny_mac: 'xkeen_deny_mac', name_client: 'xray', proxy_router: 'off', aghfix: 'off', start_auto: expectation === 'unchanged' ? 'off' : 'on', dscp_force_proxy_tag: 'force-proxy' }
+    const settings = { name_chain: 'xkeen', comment_tag: 'xkeen_rule', table_mark: '0x111', table_id: '111', name_ipset_deny_mac: 'xkeen_deny_mac', name_client: 'xray', proxy_router: 'off', proxy_dns: nativeDNS, aghfix: 'off', start_auto: expectation === 'unchanged' ? 'off' : 'on', dscp_force_proxy_tag: 'force-proxy' }
     writeFileSync(paths.init, Object.entries(settings).map(([k, v]) => `${k}="${v}"`).join('\n') + '\n', { mode: 0o600 })
-    const hook = { ...settings, mode_proxy: 'Hybrid', table_redirect: 'nat', table_tproxy: 'mangle', iptables_supported: 'true', ip6tables_supported: 'true', policy_mark_full: '', port_redirect: '12345', port_tproxy: '12346', port_dscp_force_proxy_redirect: '12347', port_dscp_force_proxy_tproxy: '12348', dscp_force_proxy: '61', policy_mark: '', ipv4_proxy: '127.0.0.1', ipv6_proxy: '::1', network_dscp_force_proxy_redirect: 'tcp', network_dscp_force_proxy_tproxy: 'udp' }
+    const hook = { ...settings, file_dns: 'false', killswitch: nativeKillswitch, mode_proxy: 'Hybrid', table_redirect: 'nat', table_tproxy: 'mangle', iptables_supported: 'true', ip6tables_supported: 'true', policy_mark_full: '', port_redirect: '12345', port_tproxy: '12346', port_dscp_force_proxy_redirect: '12347', port_dscp_force_proxy_tproxy: '12348', dscp_force_proxy: '61', policy_mark: '', ipv4_proxy: '127.0.0.1', ipv6_proxy: '::1', network_dscp_force_proxy_redirect: 'tcp', network_dscp_force_proxy_tproxy: 'udp' }
+    writeFileSync(join(code, 'native.json'), JSON.stringify({ xkeen: { killswitch: nativeKillswitch } }), { mode: 0o600 })
     writeFileSync(paths.hook, alterHook(Object.entries(hook).map(([k, v]) => `${k}='${v}'`).join('\n') + '\n'), { mode: 0o600 })
     writeFileSync(join(code, 'hook-next'), readFileSync(paths.hook), { mode: 0o600 })
     const inbounds = [12345, 12346, 12347, 12348].map((port, i) => ({ protocol: 'dokodemo-door', port, tag: ['main-redir', 'main-tproxy', 'force-proxy-redirect', 'force-proxy-tproxy'][i], settings: { followRedirect: true, network: i % 2 ? 'udp' : 'tcp' }, streamSettings: { sockopt: { tproxy: i % 2 ? 'tproxy' : 'redirect' } } }))
     writeFileSync(join(paths.configs, 'inbounds.json'), JSON.stringify({ inbounds }), { mode: 0o600 })
-    const rewrite = s => s.replaceAll('/tmp/.xkeen-admission', root).replaceAll('/opt/lib/xkeen/native-operation-gate.sh', paths.gate).replaceAll('/opt/lib/xkeen/native-admission-entry.sh', paths.entry).replaceAll('/opt/etc/init.d/S05xkeen', paths.init).replaceAll('/opt/etc/ndm/netfilter.d/proxy.sh', paths.hook).replaceAll('/opt/etc/ndm/schedule.d/00-xkeen-hotspot-sync.sh', paths.schedule).replaceAll('/opt/etc/xray/configs', paths.configs)
+    const rewrite = s => s.replaceAll('/tmp/.xkeen-admission', root).replaceAll('/opt/lib/xkeen/native-operation-gate.sh', paths.gate).replaceAll('/opt/lib/xkeen/native-admission-entry.sh', paths.entry).replaceAll('/opt/etc/init.d/S05xkeen', paths.init).replaceAll('/opt/etc/ndm/netfilter.d/proxy.sh', paths.hook).replaceAll('/opt/etc/ndm/schedule.d/00-xkeen-hotspot-sync.sh', paths.schedule).replaceAll('/opt/etc/xray/configs', paths.configs).replaceAll('/opt/etc/xkeen/xkeen.json', join(code, 'native.json'))
     for (const [key, file] of [['gate', 'native-operation-gate.sh'], ['entry', 'native-admission-entry.sh']]) writeFileSync(paths[key], rewrite(readFileSync(`scripts/${file}`, 'utf8')), { mode: 0o600 })
     const views = makeViews()
     for (const [key, value] of Object.entries(views)) {
@@ -205,6 +215,14 @@ test('duplicate generated identity refuses', () => {
 })
 test('unsupported conditional profile refuses before body', () => {
   const r = admitted({ alterHook: h => h.replace("aghfix='off'", "aghfix='on'") }); assert.notEqual(r.status, 0); assert.equal(r.stdout, '')
+})
+for (const [key, value] of [['file_dns', 'true'], ['proxy_dns', 'on'], ['killswitch', 'on']]) test(`unsupported generated ${key} refuses before body`, () => {
+  const r = admitted({ alterHook: h => h.replace(new RegExp(`^${key}='[^']*'`, 'm'), `${key}='${value}'`) }); assert.notEqual(r.status, 0); assert.equal(r.stdout, '')
+})
+test('empty hook cannot bypass native DNS or killswitch capability refusal', () => {
+  for (const settings of [{ nativeDNS: 'on' }, { nativeKillswitch: 'on' }]) {
+    const r = admitted({ startsStopped: true, ...settings }); assert.notEqual(r.status, 0); assert.equal(r.stdout, '')
+  }
 })
 test('automatic unchanged ignores counters and unrelated set/rule metadata', () => {
   const r = admitted({ expectation: 'unchanged', change: "sed -i 's/\\[0:0\\]/[100:200]/g' @CODE@/4-nat; printf 'create unrelated hash:ip family inet\\n' >> @CODE@/ipsets; printf '200: from all fwmark 0x999 lookup 999\\n' >> @CODE@/4-rules" }); assert.equal(r.status, 0, r.stderr)

@@ -41,7 +41,12 @@ _hv_base() {
     [ "$_hv_chain:$_hv_tag:$_hv_mark:$_hv_table:$_hv_deny" = xkeen:xkeen_rule:0x111:111:xkeen_deny_mac ] || return 76
     [ "$(_hv_literal "$_hv_init" name_client '"')" = xray ] &&
         [ "$(_hv_literal "$_hv_init" proxy_router '"')" = off ] &&
+        [ "$(_hv_literal "$_hv_init" proxy_dns '"')" = off ] &&
         [ "$(_hv_literal "$_hv_init" aghfix '"')" = off ] || return 76
+    if [ -e /opt/etc/xkeen/xkeen.json ] || [ -L /opt/etc/xkeen/xkeen.json ]; then
+        _hv_file /opt/etc/xkeen/xkeen.json || return 76
+        jq -e '(.xkeen.killswitch // "off") == "off"' /opt/etc/xkeen/xkeen.json >/dev/null 2>&1 || return 76
+    fi
     _hv_v4=true; _hv_v6=true; _hv_policy=
 }
 _hv_profile() {
@@ -57,6 +62,9 @@ _hv_profile() {
         [ "$(_hv_literal "$_hv_hook" iptables_supported "'")" = true ] &&
         [ "$(_hv_literal "$_hv_hook" ip6tables_supported "'")" = true ] &&
         [ "$(_hv_literal "$_hv_hook" proxy_router "'")" = off ] &&
+        [ "$(_hv_literal "$_hv_hook" proxy_dns "'")" = off ] &&
+        [ "$(_hv_literal "$_hv_hook" file_dns "'")" = false ] &&
+        [ "$(_hv_literal "$_hv_hook" killswitch "'")" = off ] &&
         [ "$(_hv_literal "$_hv_hook" aghfix "'")" = off ] || return 76
     _hv_full=$(_hv_literal "$_hv_hook" policy_mark_full "'") || return 76
     [ -z "$_hv_full" ] || return 76
@@ -196,6 +204,32 @@ _hv_running() {
                 function negated(key, i) {for(i=2;i<=NF;i++) if($i==key && $(i-1)=="!") return 1; return 0}
                 function marked(v) {return v==mark || v==mark "/0xffffffff"}
                 function order(c) {return restoreline[c]<socketline[c] && socketline[c]<saveline[c] && saveline[c]<captureline[c]}
+                function grammar(type, i,k,module,n,seen,modules) {
+                    # Only the selected fixed native anchors, not policy rules.
+                    for(i=1;i<=NF;i++) {
+                        k=$i
+                        if(k=="!") {if(!((type=="save" && $(i+1)=="--mark") || (type=="force" && $(i+1)=="--ctstate")))return 0;continue}
+                        if(k=="-m") {
+                            module=$(++i)
+                            if(modules[module]++)return 0
+                            if(module=="comment")continue
+                            if((type=="deny" && module=="set") || ((type=="force" || type=="restore") && module=="conntrack") ||
+                               (type=="force" && module=="dscp") || (type=="socket" && module=="socket") || (type=="save" && module=="mark"))continue
+                            return 0
+                        }
+                        if(seen[k]++)return 0
+                        if(k=="-p" && type=="deny")return 0
+                        if(k=="-A" || k=="-p" || k=="--comment" || k=="-j") {if(++i>NF)return 0;continue}
+                        if(k=="--match-set" && type=="deny") {if(i+2>NF || $(i+2)!="src")return 0;i+=2;continue}
+                        if((type=="capture" && (k=="--to-ports" || k=="--on-port" || k=="--on-ip" || k=="--tproxy-mark")) ||
+                           (type=="force" && (k=="--ctstate" || k=="--dscp")) || (type=="restore" && k=="--ctstate") ||
+                           (type=="socket" && k=="--set-xmark") || (type=="save" && k=="--mark") ||
+                           ((type=="restore" || type=="save") && (k=="--nfmask" || k=="--ctmask"))) {if(++i>NF)return 0;continue}
+                        if((type=="socket" && k=="--transparent") || (type=="restore" && k=="--restore-mark") || (type=="save" && k=="--save-mark"))continue
+                        return 0
+                    }
+                    return 1
+                }
                 function decimal(v, i,n,d) {
                     if(v !~ /^0x/) return v+0
                     n=0; for(i=3;i<=length(v);i++){d=index("0123456789abcdef",substr(v,i,1))-1;if(d<0)return -1;n=n*16+d} return n
@@ -207,31 +241,31 @@ _hv_running() {
                     c=$2;j=val("-j");p=val("-p")
                     if(negated("--comment") || negated("-p"))bad=1
                     if(c=="PREROUTING") {
-                        if(j=="RETURN" && val("--match-set")==deny && has("src")) {denycount++; denyline=NR;if(negated("--match-set"))bad=1}
+                        if(j=="RETURN" && val("--match-set")==deny) {denycount++; denyline=NR;if(negated("--match-set") || !grammar("deny"))bad=1}
                         if(j==chain || j==chain "_force") {
                             if(!firstjump) firstjump=NR
                             if(j==chain) {jumps++;if(p!="" && p!=proto)bad=1}
-                            else {fjumps++; if(p!=proto || negated("--dscp") || val("--dscp")=="" || decimal(val("--dscp"))!=dscp+0) bad=1}
+                            else {fjumps++; if(p!=proto || negated("--dscp") || val("--dscp")=="" || decimal(val("--dscp"))!=dscp+0 || !grammar("force") || val("--ctstate")!="INVALID" || !negated("--ctstate")) bad=1}
                         }
                     }
                     if(c!=chain && c!=chain "_force") next
                     if(j==target) {
                         captures[c]++;captureline[c]=NR; want=(c==chain?(kind=="nat"?redirect:tproxy):forced)
-                        if(p!=proto || want=="") bad=1
+                        if(p!=proto || want=="" || !grammar("capture")) bad=1
                         if(kind=="nat") {if(val("--to-ports")!=want) bad=1}
                         else if(val("--on-port")!=want || val("--on-ip")!=ip || !marked(val("--tproxy-mark"))) bad=1
                     }
                     if(kind=="mangle") {
-                        if(j=="MARK" && has("--transparent")) {sockets[c]++;socketline[c]=NR; if(p!="udp" || negated("--transparent") || !marked(val("--set-xmark"))) bad=1}
+                        if(j=="MARK" && has("--transparent")) {sockets[c]++;socketline[c]=NR; if(p!="udp" || negated("--transparent") || !marked(val("--set-xmark")) || !grammar("socket")) bad=1}
                         if(j=="CONNMARK" && has("--restore-mark")) {
                             restores[c]++;restoreline[c]=NR;state=val("--ctstate")
-                            if(negated("--ctstate") || (state!="RELATED,ESTABLISHED" && state!="ESTABLISHED,RELATED") || val("--nfmask")!="0xffffffff" || val("--ctmask")!="0xffffffff")bad=1
+                            if(!grammar("restore") || negated("--ctstate") || (state!="RELATED,ESTABLISHED" && state!="ESTABLISHED,RELATED") || val("--nfmask")!="0xffffffff" || val("--ctmask")!="0xffffffff")bad=1
                             if(c==chain && p!="udp")bad=1
                             if(c==chain "_force" && p!="" && p!="udp")bad=1
                         }
                         if(j=="CONNMARK" && has("--save-mark")) {
                             saves[c]++;saveline[c]=NR
-                            if(p!="udp" || !negated("--mark") || (val("--mark")!="0x0" && val("--mark")!="0x0/0xffffffff") || val("--nfmask")!="0xffffffff" || val("--ctmask")!="0xffffffff")bad=1
+                            if(!grammar("save") || p!="udp" || !negated("--mark") || (val("--mark")!="0x0" && val("--mark")!="0x0/0xffffffff") || val("--nfmask")!="0xffffffff" || val("--ctmask")!="0xffffffff")bad=1
                         }
                     }
                 }

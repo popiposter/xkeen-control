@@ -578,7 +578,9 @@ post removes it. There is no persistent journal or native writer command.
 
 The supported profile is native Xray Hybrid with both IP families, the active
 TCP/UDP DSCP force branch, native chain/tag/mark/table identities, router
-proxying off, aghfix off and no full-policy mark. Protected init/generated-hook
+proxying off, proxy DNS off, file DNS false, killswitch off, aghfix off and no
+full-policy mark. Native init/config checks enforce DNS and killswitch capability
+even before a generated hook exists. Protected init/generated-hook
 scalar literals are parsed as data, never sourced. Four unambiguous transparent
 inbounds are selected from strict JSON using the native mode/tag rules; generated
 ports must match them after Start. Conditional profiles outside this scope
@@ -594,7 +596,11 @@ native polarity: inverted DSCP, deny-set or restore-state matches refuse, while
 the native negated-zero mark-save condition is required. The policy rule must
 be the unconditional native `from all fwmark ... lookup ...` form; conflicting
 partial masks or other rules targeting the owned table refuse. Native Hybrid
-policy-all jumps without an explicit protocol remain valid. It checks required ipset types/families
+policy-all jumps without an explicit protocol remain valid. Only the fixed
+capture/restore/socket/save/deny/forced-DSCP anchors use a constrained native
+option grammar, rejecting extra source/interface restrictions and binding the
+deny set direction to its own argument. Variable normal policy jumps are not
+re-rendered. It checks required ipset types/families
 and native policy-routing invariants, including local default and copied source
 routes. Stop requires no owned capture chains/tagged rules, policy rule/routes,
 cleanup-owned ipsets or schedule hook, and an empty/absent netfilter hook.
