@@ -29,7 +29,9 @@ function Get-XKeenBrowserSpecs {
             continue
         }
         if ($path -match '^web/unit/') { continue }
-        if ($path -match '^(web/|internal/(httpapi|auth|runtime|webassets)/|Dockerfile\.dev$|docker-compose\.dev\.yml$|scripts/dev-check|\.github/workflows/)') { return @('*') }
+        # Selector/git/package-graph helpers are qualified by dispatch fixtures.
+        # Only the actual host/Linux orchestration scripts require browser fallback.
+        if ($path -match '^(web/|internal/(httpapi|auth|runtime|webassets)/|Dockerfile\.dev$|docker-compose\.dev\.yml$|scripts/dev-check\.(ps1|sh)$|\.github/workflows/)') { return @('*') }
         if ($path -notmatch '^(cmd|internal|config|scripts|packaging|docs|plan|\.github)/|^go\.(mod|sum)$|^[^/]+\.md$|^\.git(ignore|attributes)$') { return @('*') }
     }
     return @($specs | Sort-Object)

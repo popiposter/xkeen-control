@@ -58,6 +58,11 @@ reports `webBuild: 0`. The browser tests use the Vite development server.
 A deleted spec broadens browser selection instead of producing an empty pass.
 Race tests and dependency audit remain final/release checks.
 
+Native admission fixtures are listed in `scripts/test-native-admission.sh`.
+Adding a fixture there runs the helper lane without selecting Chromium. Selector,
+Git-scope and Go-graph helper changes use their dispatch fixtures; changes to the
+actual `dev-check.ps1`/`dev-check.sh` orchestration retain the browser fallback.
+
 Documentation-only iteration runs host diff hygiene without Docker; inspect links
 and content as part of review. Code lanes run public hygiene before toolchains.
 Fast npm reuse requires matching package/lockfile, Node/npm/platform identity and
