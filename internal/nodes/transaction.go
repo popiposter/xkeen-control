@@ -400,6 +400,7 @@ type CommandActivator struct {
 	XrayAssetDir        string
 	ConfigDir           string
 	XkeenBinary         string
+	NativeLifecycleInit string
 	FixedLifecycleInit  string
 	LegacyLifecycleInit string
 	// SetupLifecycleIdentity is required for Setup-only start/stop selection.
@@ -453,10 +454,13 @@ func (a CommandActivator) Restart(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if a.NativeLifecycleInit != "" && (a.XkeenBinary != "" || a.FixedLifecycleInit != "") {
+		return xkeen.ErrLifecycleFailed
+	}
 	if a.FixedLifecycleInit != "" {
 		return a.restartViaFixedInit(ctx)
 	}
-	if a.XkeenBinary == "" {
+	if a.XkeenBinary == "" && a.NativeLifecycleInit == "" {
 		a.XkeenBinary = "xkeen"
 	}
 	timeout := a.RestartTimeout
@@ -478,7 +482,9 @@ func (a CommandActivator) Restart(ctx context.Context) error {
 	if restartErr == nil {
 		return nil
 	}
-	if errors.Is(restartErr, xkeen.ErrLifecycleUnknown) || errors.Is(restartErr, xkeen.ErrLifecycleAdmission) {
+	if a.NativeLifecycleInit != "" || errors.Is(restartErr, xkeen.ErrLifecycleUnknown) || errors.Is(restartErr, xkeen.ErrLifecycleAdmission) {
+		// Native init owns Stop/Start ordering. Never turn its failed Stop into
+		// a separate forced Start; configuration rollback remains its caller's job.
 		return restartErr
 	}
 	// XKeen can stop Xray and then return a failed -restart. Match the
@@ -789,7 +795,7 @@ func (a CommandActivator) apiReachable(ctx context.Context) bool {
 }
 
 func (a CommandActivator) runXkeenLifecycle(ctx context.Context, action string) error {
-	return (xkeen.Lifecycle{Binary: a.XkeenBinary, Timeout: a.RestartTimeout}).Run(ctx, xkeen.LifecycleAction(strings.TrimPrefix(action, "-")))
+	return (xkeen.Lifecycle{Binary: a.XkeenBinary, InitPath: a.NativeLifecycleInit, Timeout: a.RestartTimeout}).Run(ctx, xkeen.LifecycleAction(strings.TrimPrefix(action, "-")))
 }
 func (a CommandActivator) newXrayRuntimeStarted(ctx context.Context, previous map[string]struct{}) bool {
 	current := xrayPIDSet(ctx)

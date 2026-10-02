@@ -211,11 +211,11 @@ func main() {
 		},
 	})
 	handler := httpapi.New(httpapi.Config{
-		Native:            xkeen.Discovery{},
-		Collector:         collector,
-		Auth:              authManager,
-		Nodes:             nodeManager,
-		Benchmark:         coordinator,
+		Native:    xkeen.Discovery{},
+		Collector: collector,
+		Auth:      authManager,
+		Nodes:     nodeManager,
+		Benchmark: coordinator,
 		// Selection writes stay unavailable until native ownership and independent
 		// override expiry are qualified. Not starting the loop alone is insufficient.
 		Assets:            webassets.Handler(),
@@ -553,7 +553,7 @@ func newNodeManager(coordinator interface {
 			Activator: nodes.CommandActivator{
 				XrayBinary:          getenv("XKEEN_XRAY_BINARY", "xray"),
 				XrayAssetDir:        getenv("XKEEN_XRAY_ASSET_DIR", "/opt/etc/xray/dat"),
-				XkeenBinary:         getenv("XKEEN_XKEEN_BINARY", "xkeen"),
+				NativeLifecycleInit: "/opt/etc/init.d/S05xkeen",
 				APIAddress:          getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress),
 				ActiveOutboundsPath: activeOutboundsPath,
 				RoutingPath:         filepath.Join(configDir, "05_routing.json"),

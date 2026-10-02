@@ -43,3 +43,30 @@ func TestNativeLifecycleWaitsForForegroundCompletionAndDoesNotReplay(t *testing.
 		t.Fatal("accepted arbitrary argv")
 	}
 }
+
+func TestNativeInitLifecycleUsesServiceArgumentsOnly(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("native process fixture requires Linux")
+	}
+	dir := t.TempDir()
+	init, marker := filepath.Join(dir, "S05xkeen"), filepath.Join(dir, "calls")
+	script := "#!/bin/sh\n[ $# = 2 ] && [ \"$2\" = on ] || exit 8\ncase \"$1\" in start|stop|restart) ;; *) exit 9;; esac\nprintf '%s\\n' \"$1\" >> \"$NATIVE_INIT_MARKER\"\n"
+	if err := os.WriteFile(init, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NATIVE_INIT_MARKER", marker)
+	for _, action := range []LifecycleAction{Start, Stop, Restart} {
+		if err := (Lifecycle{InitPath: init, Timeout: time.Second}).Run(context.Background(), action); err != nil {
+			t.Fatalf("native init %s: %v", action, err)
+		}
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "start\nstop\nrestart\n" {
+		t.Fatalf("native calls: %q %v", data, err)
+	}
+	if err := (Lifecycle{InitPath: init, Binary: init}).Run(context.Background(), Start); !errors.Is(err, ErrLifecycleFailed) {
+		t.Fatalf("ambiguous executable accepted: %v", err)
+	}
+	if data, _ := os.ReadFile(marker); string(data) != "start\nstop\nrestart\n" {
+		t.Fatal("rejected configuration executed")
+	}
+}

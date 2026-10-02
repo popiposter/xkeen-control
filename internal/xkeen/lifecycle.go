@@ -32,8 +32,11 @@ var (
 // only that the native foreground command completed; it is not tunnel proof.
 type Lifecycle struct {
 	// Binary and Timeout are operator/test configuration, never request input.
-	Binary  string
-	Timeout time.Duration
+	Binary string
+	// InitPath selects native service control without dispatcher package repair.
+	// It is operator configuration, mutually exclusive with Binary.
+	InitPath string
+	Timeout  time.Duration
 }
 
 func (l Lifecycle) Run(ctx context.Context, action LifecycleAction) error {
@@ -54,6 +57,9 @@ func (l Lifecycle) runForeground(ctx context.Context, action LifecycleAction, en
 	if action != Start && action != Stop && action != Restart {
 		return ErrLifecycleFailed
 	}
+	if l.InitPath != "" && l.Binary != "" {
+		return ErrLifecycleFailed
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -67,10 +73,14 @@ func (l Lifecycle) runForeground(ctx context.Context, action LifecycleAction, en
 		return ErrLifecycleFailed
 	}
 	binary := l.Binary
-	if binary == "" {
+	args := []string{"-" + string(action)}
+	if l.InitPath != "" {
+		binary = l.InitPath
+		args = []string{string(action), "on"}
+	} else if binary == "" {
 		binary = "/opt/sbin/xkeen"
 	}
-	command := exec.Command(binary, "-"+string(action))
+	command := exec.Command(binary, args...)
 	for _, entry := range env {
 		if !strings.HasPrefix(entry, "XKEEN_FOREGROUND=") {
 			command.Env = append(command.Env, entry)
