@@ -2,6 +2,14 @@
 
 This is the sequencing/status authority. The active GitHub issue is the detailed architecture/acceptance contract for the slice being implemented.
 
+## Current direction — native XKeen foundation audit
+
+On 2026-10-02 the operator explicitly stopped the release/install/recovery sequence and requested a deep audit and redesign plan. No further router action is authorized by this roadmap entry; the operator is rebuilding opkg independently.
+
+The [audit](../plan/audit-xkeen-foundation-2026-10-02.md) binds findings to source `8adff1e00e89515b37aac1d7d6e7e1df924a9143`. [Issue #121](https://github.com/popiposter/xkeen-control/issues/121) and the [implementation plan](../plan/architecture-xkeen-foundation-v1.md) return install/update/cron/lifecycle/interception ownership to native XKeen, retain the panel updater and node management, and schedule config/geodata UX, reliability, portable backup and Telegram work in separate slices. This is planned architecture, not delivered behavior. Independent review and implementation are pending.
+
+Beta.5 publication/public verification and prior panel-only installation are historical PASS. The subsequent authorized reset/native-file reconstruction did not reach integrated subscription/LAN/quality acceptance. The old router state is no longer a reusable baseline after the operator's planned opkg reset. Preserve unknown/failed operation receipts; do not replay them. Earlier sequencing below is historical except where explicitly retained by the new plan.
+
 ## Current production baseline
 
 Slices A/B/C/C.1 and D remain production-qualified. The validated fresh-source migration baseline merged as #7, the canonical Go module/import identity cleanup merged as #9 / Issue #8, and Slice D completed through Issue #2 with historical signed stable release `v0.1.1` from source `8f15246099538426ef08163b832c3aa6f73e8265` plus bounded live Keenetic adoption → rollback → re-adoption qualification. D.1 / Issue #3 is also production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. Issue #78 Slice F is present on source main as source-qualified-only work and is not a production-qualification or release claim.
@@ -34,7 +42,7 @@ Router-specific settings and secrets never enter this repository or release asse
 
 The active Go module/import identity is canonical: `github.com/popiposter/xkeen-control`. Historical `popiposter/xkeen-keenetic` references that remain in documentation describe quarantine/history only.
 
-## Product direction after D.1
+## Historical product direction after D.1 — superseded by the audit plan
 
 Per-router settings are not synchronized from Git.
 
@@ -43,7 +51,7 @@ public source + signed GitHub Releases (#2, done)
         ↓
 local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
-managed XKeen / Xray / geodata lifecycle (#4 active; beta.4 panel installed/verified; source corrections delivered; managed convergence and quality pending)
+managed XKeen / Xray / geodata lifecycle (#4 trial stopped; architecture under audit)
         ↓
 visual typed configuration + transactional render/apply (#5 source delivery complete through #91 F; trial panel installed, integrated acceptance pending)
         ↓
@@ -63,7 +71,7 @@ feature freeze + exact-main integrated qualification (#106 complete; reviewed su
 | Pre-D — canonical Go module/import identity | Done | Issue #8 / PR #9 | Canonical `github.com/popiposter/xkeen-control` provenance; no runtime behavior change |
 | D — releases/bootstrap/panel self-update | Done | Issue #2 / `v0.1.1` | Public signed Releases, protected release pipeline, one-command bootstrap, setup mode, transactional panel update/rollback |
 | D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
-| D.2 — component lifecycle | **Active — beta.4 panel installed/verified; managed convergence and quality pending** | Issue #4 / reviewed source + live `v0.3.0-beta.4` trial | #64/F3/#46 A-F/G source work is delivered. #112/#114/#115/#117 corrections are merged; the separately authorized beta.5 successor requires its own exact-main, protected publication and independent public verification gates before installation and fresh typed convergence. Stable promotion is not implied |
+| D.2 — component lifecycle | **Trial stopped by operator; native-XKeen architecture plan pending** | Issue #4 + 2026-10-02 audit | Source work through #117 and beta.5 publication/panel installation remain historical. Integrated convergence/quality was not completed. Do not resume the previous successor-release/Setup sequence |
 | D.3 — foundation A-F (#46) | **Source delivered through Issue #78; integrated acceptance pending** | Issue #46 / #68 / #70 / #72 / #74 / #76 / #78 | Selection-first Nodes/batch mutations, subscription reconciliation/refresh and one manual/adaptive quality owner are in the trial panel; source delivery alone does not prove integrated live acceptance |
 | D.3/#5 — visual configuration | **Source delivered; integrated live acceptance pending** | Issue #5 / #91 + ledger #4 | Routing, DNS/Observatory, bounded Performance, System/Panel, and final Dashboard integration are in the trial panel. Production-qualified stable remains `v0.2.0` |
 | E — notifications/security hardening | **Source delivered; stable qualification unchanged** | Issue #99 / PRs #100/#101 | Fixed-host notifications, stable-notify discovery and private-management/auth protections are in the trial panel; integrated live acceptance remains separate |
@@ -98,7 +106,7 @@ Safe export excludes secrets by default; secret-bearing export is explicit and e
 
 Pre-adoption compatibility is explicit: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit and unknown/manual drift fails closed.
 
-## D.2 / Issue #4 — active trial continuation; stable qualification unchanged
+## D.2 / Issue #4 — historical trial; continuation stopped
 
 Phase A merged via PR #23 to `main` `bda9dd0cc7bb142a4cb1468811fff9b5146b1e8e`; source main gained the bounded read-only component inventory and authenticated `GET /api/v1/components` for panel, XKeen, Xray, geodata, KeeneticOS and Entware.
 
@@ -179,17 +187,13 @@ passed in [ledger #4](https://github.com/popiposter/xkeen-control/issues/4#issue
 Issue #117 / PR #118 is completed: Keenetic absent-writer resource admission,
 exact default-route spelling and hook compatibility, cold System state, and
 the requested standalone-WL new-node disabled default are reviewed and locally
-qualified. Beta.4's working historical lifecycle remains restored after the
-known Setup resource rejection; operator-added subscriptions are preserved.
-The separately authorized next step is a new immutable beta.5 candidate:
-exact reviewed main qualification, one protected Release, independent seven
-public assets verification, bounded signed panel install, then a fresh typed
-managed takeover and bounded manual/adaptive quality proof. A prior unknown
-Apply is never replayed. Detailed tuples, receipts and final PASS/BLOCKED
-evidence belong in #108/#117/#4; no beta.5 publication, install or managed
-convergence PASS is claimed here.
-Issue #80 remains a separate reliability follow-up and is not silently
-re-sequenced into this gate.
+qualified. Beta.5 from `8adff1e00e89515b37aac1d7d6e7e1df924a9143` later passed
+protected publication, independent public verification and panel installation.
+The subsequent reset/convergence work did not complete integrated acceptance.
+The operator stopped further installation on 2026-10-02 and requested the
+native-XKeen audit/plan above. No new release or Setup retry is the current next
+step. Issues #4/#81 remain historical/reconciliation references; #80 reliability
+requirements must be reconciled with the new native lifecycle before implementation.
 
 ## Maintenance rule
 

@@ -1,0 +1,22 @@
+[
+  {
+    "label": "stable2.0",
+    "bytes": 73082,
+    "sha256": "dfcc0ccbd30e343ee17a0308596793d4e12ae50c5129953071621208a273f937",
+    "files": 71,
+    "speedFlag": false,
+    "balancerFiles": []
+  },
+  {
+    "label": "main-beta",
+    "bytes": 125747,
+    "sha256": "1d246871d8fc9df2e68e80cef18562e6222661e40eaea1b6853cf8e0e6348b5f",
+    "files": 72,
+    "speedFlag": true,
+    "balancerFiles": [
+      "_xkeen/04_tools/08_tools_balancer/01_balancer_core.sh",
+      "_xkeen/04_tools/08_tools_balancer/02_balancer_control.sh",
+      "_xkeen/04_tools/08_tools_balancer/00_balancer_import.sh"
+    ]
+  }
+]
