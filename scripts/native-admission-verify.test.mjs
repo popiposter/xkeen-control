@@ -10,10 +10,12 @@ const gate = readFileSync('scripts/native-operation-gate.sh', 'utf8')
 
 // Real RAM gate/ancestry and protected native code. Core /proc records and
 // timeout/Xray/hook readback are synthetic; no upstream router code executes.
-function fixture({ action = 'start', mode = 'forced', auto = 'on', setup = '', body = '', config = '{}', hook = 'exit 0', validator = 'exit 0', pending = false, binding = '' } = {}) {
+function fixture({ action = 'start', mode = 'forced', auto = 'on', setup = '', body = '', config = '{}', hook = 'exit 0', validator = 'exit 0', pending = false, binding = '', event = false, direct = false } = {}) {
   const code = mkdtempSync('/opt/native-verify-fixture-')
   const root = mkdtempSync('/tmp/native-verify-gate-')
   chmodSync(code, 0o700); chmodSync(root, 0o700)
+  mkdirSync(join(root, 'native-ready'), { mode: 0o700 })
+  if (event && action === 'start') writeFileSync(join(root, 'native-ready/ready'), '', { mode: 0o600 })
   const path = name => join(code, name)
   const put = (name, data, mode = 0o600) => writeFileSync(path(name), data, { mode })
   mkdirSync(path('configs'), { mode: 0o700 }); mkdirSync(path('settings'), { mode: 0o700 })
@@ -24,17 +26,22 @@ function fixture({ action = 'start', mode = 'forced', auto = 'on', setup = '', b
   put('proc/123/environ', Buffer.from(`XRAY_LOCATION_CONFDIR=${path('configs')}\0XRAY_LOCATION_ASSET=${path('assets')}\0`))
   symlinkSync(path('core'), path('proc/123/exe'))
   put('pids', '')
+  if (event && action === 'start') put('pids', '123\n')
   put('pidof', `#!/bin/sh\n[ -s '${path('pids')}' ] || exit 1\ncat '${path('pids')}'\n`, 0o700)
-  put('hook-verify', `#!/bin/sh\necho "$*" >> '${path('hook-calls')}'\n${hook.replaceAll('@CODE@', code)}\n`, 0o700)
-  put('timeout', `#!/bin/sh\n[ "$1 $2 $3" = '-s KILL 15' ] || exit 91\nshift 3\nif [ "$1" = /bin/sh ]; then exec "$@"; fi\n[ "$#" = 5 ] && [ "$2 $3 $4" = 'run -test -confdir' ] || exit 92\n[ -z "\${XKEEN_GATE_TOKEN+x}" ] || exit 93\necho VALIDATE >> '${path('validation-calls')}'\n${validator}\n`, 0o700)
+  put('hook-verify', `#!/bin/sh\necho "$*" >> '${path('hook-calls')}'\n${hook.replaceAll('@CODE@', code).replaceAll('@ROOT@', root)}\n`, 0o700)
+  put('timeout', `#!/bin/sh\n[ "$1 $2" = '-s KILL' ] && [ "$3" -ge 1 ] && [ "$3" -le 15 ] || exit 91\nshift 3\nif [ "$1" = /bin/sh ]; then exec "$@"; fi\n[ "$#" = 5 ] && [ "$2 $3 $4" = 'run -test -confdir' ] || exit 92\n[ -z "\${XKEEN_GATE_TOKEN+x}" ] || exit 93\necho VALIDATE >> '${path('validation-calls')}'\n${validator}\n`, 0o700)
   if (pending) put('pending', 'node-operation-pending\n')
   const replace = text => text.replaceAll('/tmp/.xkeen-admission', root)
+    .replaceAll('/tmp/.xkeen', join(root, 'native-ready'))
     .replaceAll('/opt/lib/xkeen/native-operation-gate.sh', path('gate'))
     .replaceAll('/opt/lib/xkeen/native-admission-entry.sh', path('entry'))
     .replaceAll('/opt/lib/xkeen/native-admission-verify.sh', path('verify'))
     .replaceAll('/opt/lib/xkeen/native-admission-hook-verify.sh', path('hook-verify'))
     .replaceAll('/opt/etc/init.d/S05xkeen', path('init'))
     .replaceAll('/opt/etc/ndm/netfilter.d/proxy.sh', path('native-hook'))
+    .replaceAll('/opt/lib/xkeen/native-event-reconcile.sh', path('event'))
+    .replaceAll('/opt/lib/xkeen/native-event-notification.sh', path('notification'))
+    .replaceAll('/opt/lib/xkeen/native-event-convergence.sh', path('convergence'))
     .replaceAll('/opt/etc/xkeen-control/previous/.pending', path('pending'))
     .replaceAll('/opt/etc/xray/configs', path('configs'))
     .replaceAll('/opt/etc/xray/dat', path('assets'))
@@ -46,6 +53,9 @@ function fixture({ action = 'start', mode = 'forced', auto = 'on', setup = '', b
   put('gate', gate)
   put('entry', replace(entry))
   put('verify', replace(verifier).replaceAll('/proc/', path('proc/')))
+  put('event', replace(readFileSync('scripts/native-event-reconcile.sh', 'utf8')))
+  put('notification', replace(readFileSync('scripts/native-event-notification.sh', 'utf8')))
+  put('convergence', replace(readFileSync('scripts/native-event-convergence.sh', 'utf8')))
   const defaultBody = action === 'stop' || (action === 'restart' && mode === 'automatic' && auto === 'off')
     ? `: > '${path('pids')}'` : mode === 'automatic' && auto === 'off' ? ':' : `echo 123 > '${path('pids')}'`
   put('native-hook', `#!/bin/sh\n. '${path('entry')}'\nnative_admission_hook_enter || exit $?\n[ "$_na_body" = 1 ] || exit 0\necho HOOKBODY >> '${path('calls')}'\nnative_admission_finish 0\nexit $?\n`)
@@ -61,13 +71,57 @@ digest=$(sha256sum '${path('pending')}'); digest=\${digest%% *}
 ${binding === 'stale' ? `mv '${path('pending')}' '${path('old-pending')}'; printf 'node-operation-pending\\n' > '${path('pending')}'; chmod 600 '${path('pending')}'` : ''}
 ${binding === 'forged' ? `printf 'forged\\n' > '${root}/operation.lock.d/node-intent'` : ''}
 ` : ''
-    const r = spawnSync('/bin/sh', ['-c', `${bind}\n${setup.replaceAll('@CODE@', code).replaceAll('@ROOT@', root)}\n/bin/sh '${path('init')}' '${action}' ${mode === 'forced' ? 'on' : ''}`], { timeout: 4000, encoding: 'utf8' })
+    const eventGate = event && !direct ? `. '${path('gate')}'; native_gate_acquire '${root}' reconcile || exit $?;` : ''
+    const invoke = direct ? `/bin/sh '${path('native-hook')}'` : event ? `/bin/sh '${path('event')}'; rc=$?; [ "$rc" != 0 ] || native_gate_release; exit "$rc"` : `/bin/sh '${path('init')}' '${action}' ${mode === 'forced' ? 'on' : ''}`
+    const r = spawnSync('/bin/sh', ['-c', `${bind}\n${eventGate}\n${setup.replaceAll('@CODE@', code).replaceAll('@ROOT@', root)}\n${invoke}`], { timeout: 4000, encoding: 'utf8' })
     assert.ifError(r.error)
     const read = name => existsSync(path(name)) ? readFileSync(path(name), 'utf8') : ''
-    return { ...r, calls: read('calls'), hooks: read('hook-calls'), validation: read('validation-calls'), held: existsSync(join(root, 'operation.lock.d')) }
+    return { ...r, calls: read('calls'), hooks: read('hook-calls'), validation: read('validation-calls'), held: existsSync(join(root, 'operation.lock.d')), ready: existsSync(join(root, 'native-ready/ready')), leader: existsSync(join(root, 'events/leader')), dirty: existsSync(join(root, 'events/dirty')) }
   } finally { rmSync(code, { recursive: true, force: true }); rmSync(root, { recursive: true, force: true }) }
 }
 
+test('event worker reads current running state and joins native hook without lifecycle command', () => {
+  const r = fixture({ event: true })
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.calls, 'HOOKBODY\n')
+  assert.equal(r.held, false)
+  assert.ok(r.hooks.includes('post event start forced running\n'))
+  assert.ok(r.hooks.includes('post hook start forced running\n'))
+})
+test('direct NDM hook elects caller, verifies current native state and settles one operation', () => {
+  for (const action of ['start', 'stop']) {
+    const r = fixture({ event: true, direct: true, action, auto: 'off' })
+    assert.equal(r.status, 0, r.stderr)
+    assert.equal(r.calls, action === 'start' ? 'HOOKBODY\n' : '')
+    assert.equal(r.held || r.leader || r.dirty, false)
+    assert.ok(r.hooks.includes(`post event ${action} forced ${action === 'start' ? 'running' : 'stopped'}\n`))
+  }
+})
+test('direct NDM failed hook proof preserves event and admission after one hook invocation', () => {
+  const r = fixture({ event: true, direct: true, hook: '[ "$1:$2" != post:hook ]' })
+  assert.equal(r.status, 77); assert.equal(r.calls, 'HOOKBODY\n')
+  assert.equal(r.held && r.leader && r.dirty, true)
+})
+test('stopped event proves absence without invoking init or hook or requiring valid start config', () => {
+  const r = fixture({ event: true, action: 'stop', config: 'invalid', validator: 'exit 1' })
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.calls, '')
+  assert.equal(r.validation, ''); assert.equal(r.held, false)
+  assert.equal(r.hooks, 'pre event stop forced stopped\npost event stop forced stopped\n')
+})
+test('event refuses unsafe ready state and retained config pending before native effects', () => {
+  for (const options of [{ setup: 'chmod 777 @ROOT@/native-ready/ready' }, { pending: true }]) {
+    const r = fixture({ event: true, ...options })
+    assert.notEqual(r.status, 0); assert.equal(r.calls, ''); assert.equal(r.held, true)
+  }
+})
+test('ready changing during native proof remains unresolved without lifecycle replay', () => {
+  const r = fixture({ event: true, hook: '[ "$1:$2" != post:hook ] || rm "@ROOT@/native-ready/ready"' })
+  assert.notEqual(r.status, 0); assert.equal(r.held, true); assert.equal(r.ready, false)
+})
+test('ready appearing during a stopped event proof cannot become a stale Start', () => {
+  const r = fixture({ event: true, action: 'stop', hook: '[ "$1:$2" != post:event ] || touch "@ROOT@/native-ready/ready"' })
+  assert.notEqual(r.status, 0); assert.equal(r.held, true); assert.equal(r.ready, true); assert.equal(r.calls, '')
+})
 test('fixed native preflight and process proof settle only after hook proof', () => {
   const r = fixture()
   assert.equal(r.status, 0, JSON.stringify(r))

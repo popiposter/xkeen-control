@@ -160,7 +160,7 @@ test('foreground init hook borrows forced or automatic operation until native re
   }
 })
 
-test('direct event hook is refused before a gate or native effects', () => {
+test('missing elected-event capability refuses direct hook before native effects', () => {
   const r = fixture({ role: 'hook' })
   assert.notEqual(r.status, 0)
   assert.equal(r.evidence, '')

@@ -597,13 +597,23 @@ re-publishes dirty and retains the election and uncertain operation. Successful
 readback must leave no borrower records before release and retirement. A queued
 follower returns 75, which does not mean convergence has completed.
 
-The fixed reconcile worker is still absent in this slice: missing capability
-refuses before native effects and preserves the event. Focused fixtures use a
-synthetic fixed worker joining the real shell gate, including Stop winning while
-waiting, repeat notifications, pass/deadline limits and failed-pass retention.
-They qualify caller orchestration only, not native current-state/kernel readback.
-The generated hook/schedule entry points are not connected to this caller yet;
-whole-candidate fences remain mandatory and nothing from this slice is installed.
+The fixed source worker `native-event-reconcile.sh` now borrows that `reconcile`
+owner. It reads current protected native `ready` after joining, and uses a fixed
+event role whose start/stop labels mean running/stopped expectations, not commands.
+Running invokes only the current generated hook; stopped invokes neither init nor
+hook. Both have native pre/post configuration/core/kernel proof. `start_auto=off`
+does not suppress reconciliation of an already-ready service. Ready is frozen
+through proof; a changed/unsafe marker or retained config pending stays unresolved.
+Foreground init's hook still borrows directly without event waiting. A direct
+generated hook (including the existing native schedule caller) elects this bounded
+caller before any native effects. Its internal event hook borrows the same owner.
+
+Caller fixtures use a synthetic worker to isolate deadline/race orchestration.
+Separate integration fixtures execute actual entry/caller/worker/core-verifier
+code with synthetic /proc/Xray/kernel readback, including direct NDM running and
+stopped events and ready drift. They are not real generated-hook, BusyBox or target
+kernel acceptance. Native candidate fences remain mandatory; native update/boot
+preservation and hardware timing/readback still need qualification before install.
 
 ### Bounded native Hybrid kernel proof (source-only)
 
@@ -616,8 +626,8 @@ The wrapper supplies native pre/post verification and success completion only
 after the reviewed WAN/intact/cache/full terminals finish their writers. Early
 ready/lock exits, failed synchronization or failed readback retain the operation.
 Admission precedes even native runtime-directory repair. Direct NDM/schedule
-hooks remain refused by this incomplete foreground-only candidate; elected
-event convergence must be implemented before installation. No new gate owner,
+hooks now enter the separate bounded elected caller described above; complete
+target event convergence still needs qualification before installation. No new gate owner,
 persistent journal, renderer or panel dependency is introduced.
 
 `native-admission-hook-verify.sh pre|post ROLE ACTION MODE EXPECTATION` is a

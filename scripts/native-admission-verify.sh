@@ -135,6 +135,7 @@ _nv_main() {
     _nv_phase=$1; _na_role=$2; _na_action=$3; _na_mode=$4
     case "$_nv_phase:$_na_role:$_na_action:$_na_mode" in
         pre:dispatcher:start:forced|pre:dispatcher:stop:forced|pre:dispatcher:restart:forced|pre:init:start:forced|pre:init:stop:forced|pre:init:restart:forced|pre:init:start:automatic|pre:init:restart:automatic|post:dispatcher:start:forced|post:dispatcher:stop:forced|post:dispatcher:restart:forced|post:init:start:forced|post:init:stop:forced|post:init:restart:forced|post:init:start:automatic|post:init:restart:automatic|pre:hook:start:forced|pre:hook:restart:forced|pre:hook:start:automatic|pre:hook:restart:automatic|post:hook:start:forced|post:hook:restart:forced|post:hook:start:automatic|post:hook:restart:automatic) ;;
+        pre:event:start:forced|pre:event:stop:forced|post:event:start:forced|post:event:stop:forced) ;;
         *) return 76;;
     esac
     _nv_file_ok /opt/lib/xkeen/native-operation-gate.sh && _nv_file_ok /opt/lib/xkeen/native-admission-entry.sh || return 76
@@ -142,6 +143,10 @@ _nv_main() {
     . /opt/lib/xkeen/native-admission-entry.sh
     _na_call_dir=/tmp/.xkeen-admission/operation.lock.d/call.$_na_role
     _na_child_ok || return 77
+    if [ "$_ng_action" = reconcile ]; then
+        _nv_ready=$(_na_event_state) || return 77
+        case "$_na_action:$_nv_ready" in start:running|stop:stopped) ;; *) return 77;; esac
+    fi
     _nv_context=$(_nv_hash "$_na_call_dir/context") || return 77
     _nv_pending || return $?
     _nv_file_ok /opt/etc/init.d/S05xkeen && _nv_file_ok /opt/sbin/xray || return 76
@@ -184,6 +189,9 @@ _nv_main() {
     /opt/libexec/timeout-coreutils -s KILL 15 /opt/bin/sh /opt/lib/xkeen/native-admission-hook-verify.sh "$_nv_phase" "$_na_role" "$_na_action" "$_na_mode" "$_nv_expect" >/dev/null 2>&1 || return 77
     _na_child_ok || return 77
     _nv_pending || return $?
+    if [ "$_ng_action" = reconcile ]; then
+        [ "$(_na_event_state)" = "$_nv_ready" ] || return 77
+    fi
     # Validation/readback can take time. Freeze only unchanged inputs and require
     # the independently observed process identity to survive the hook readback.
     [ "$(_nv_hash /opt/etc/init.d/S05xkeen)" = "$_nv_init_hash" ] &&

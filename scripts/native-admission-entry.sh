@@ -39,8 +39,12 @@ _na_gate_ok() {
     else
         _na_gate_identity=$_ng_record
     fi
+    [ "$_na_role" != event ] || [ "$_ng_action" = reconcile ] || return 77
     case "$_ng_action:$_na_action" in
         config-change:start|config-change:stop|config-change:restart|start:start|stop:stop|restart:restart) ;;
+        reconcile:start|reconcile:stop)
+            case "$_na_role" in event|hook) ;; *) return 77;; esac
+            ;;
         *) return 77;;
     esac
     [ ! -e /tmp/.xkeen-admission/operation.lock.d/unresolved ] &&
@@ -70,7 +74,7 @@ _na_read_record() {
 # authenticates their invocation context, never body/finish authority.
 _na_descendant_ok() {
     case "$_na_role:$_na_action:$_na_mode" in
-        dispatcher:start:forced|dispatcher:stop:forced|dispatcher:restart:forced|init:start:forced|init:stop:forced|init:restart:forced|init:start:automatic|init:restart:automatic|hook:start:forced|hook:restart:forced|hook:start:automatic|hook:restart:automatic) ;;
+        dispatcher:start:forced|dispatcher:stop:forced|dispatcher:restart:forced|init:start:forced|init:stop:forced|init:restart:forced|init:start:automatic|init:restart:automatic|hook:start:forced|hook:restart:forced|hook:start:automatic|hook:restart:automatic|event:start:forced|event:stop:forced) ;;
         *) return 77;;
     esac
     [ "${XKEEN_ADMISSION_ROLE-}:${XKEEN_ADMISSION_ACTION-}" = "$_na_role:$_na_action" ] || return 77
@@ -113,7 +117,7 @@ _na_child_ok() {
 # after native exec-self. Mode comes from the protected call record, never argv.
 _na_hook_context() {
     _na_role=${XKEEN_ADMISSION_ROLE-}; _na_action=${XKEEN_ADMISSION_ACTION-}
-    case "$_na_role:$_na_action" in init:start|init:restart|hook:start|hook:restart) ;; *) return 76;; esac
+    case "$_na_role:$_na_action" in init:start|init:restart|hook:start|hook:restart|event:start) ;; *) return 76;; esac
     _na_call_dir=/tmp/.xkeen-admission/operation.lock.d/call.$_na_role
     _native_gate_directory "$_na_call_dir" 0700 && _na_small_file "$_na_call_dir/context" || return 77
     IFS= read -r _na_hint < "$_na_call_dir/context" || return 77
@@ -131,10 +135,45 @@ native_admission_hook_enter() {
     PATH=/opt/bin:/opt/sbin:/usr/bin:/bin; export PATH
     _na_file_ok /opt/lib/xkeen/native-operation-gate.sh || return 76
     . /opt/lib/xkeen/native-operation-gate.sh
+    if [ -z "${XKEEN_GATE_ROOT-}${XKEEN_GATE_TOKEN-}${XKEEN_ADMISSION_ROLE-}${XKEEN_ADMISSION_ACTION-}${XKEEN_ADMISSION_CALL-}" ]; then
+        _na_file_ok /opt/lib/xkeen/native-event-notification.sh &&
+            _na_file_ok /opt/lib/xkeen/native-event-convergence.sh || return 76
+        . /opt/lib/xkeen/native-event-notification.sh
+        . /opt/lib/xkeen/native-event-convergence.sh
+        native_event_converge
+        _na_event_rc=$?
+        _na_body=0
+        return "$_na_event_rc"
+    fi
     _na_hook_parent=$(_na_hook_context) || return $?
     set -- $_na_hook_parent
     [ "$#" = 2 ] || return 77
     native_admission_enter hook "$1" "$2"
+}
+
+# Read current native ready state without executing native runtime-directory
+# repair. The RAM parent is protected; absence means stopped, never Start intent.
+_na_event_state() {
+    if [ ! -e /tmp/.xkeen ] && [ ! -L /tmp/.xkeen ]; then printf stopped; return 0; fi
+    _native_gate_root /tmp/.xkeen || return 76
+    if [ ! -e /tmp/.xkeen/ready ] && [ ! -L /tmp/.xkeen/ready ]; then printf stopped; return 0; fi
+    [ ! -L /tmp/.xkeen/ready ] && [ -f /tmp/.xkeen/ready ] || return 76
+    _native_gate_metadata /tmp/.xkeen/ready || return 76
+    case "$_ng_meta_mode" in 8180|81a4) ;; *) return 76;; esac
+    [ "$_ng_meta_uid:$_ng_meta_links:$_ng_meta_size" = 0:1:0 ] || return 76
+    printf running
+}
+native_admission_event_enter() {
+    [ "$#" = 0 ] && [ "$(id -u)" = 0 ] || return 76
+    PATH=/opt/bin:/opt/sbin:/usr/bin:/bin; export PATH
+    _na_file_ok /opt/lib/xkeen/native-operation-gate.sh || return 76
+    . /opt/lib/xkeen/native-operation-gate.sh
+    [ "${XKEEN_GATE_ROOT-}" = /tmp/.xkeen-admission ] || return 77
+    native_gate_join /tmp/.xkeen-admission "${XKEEN_GATE_TOKEN-}" || return 77
+    [ "$_ng_action" = reconcile ] || return 77
+    _na_current_state=$(_na_event_state) || return $?
+    case "$_na_current_state" in running) _na_event_action=start;; stopped) _na_event_action=stop;; *) return 77;; esac
+    native_admission_enter event "$_na_event_action" forced
 }
 
 native_admission_enter() {
@@ -143,7 +182,7 @@ native_admission_enter() {
     _na_body=0
     [ "$#" = 3 ] || return 76
     case "$1:$2:$3" in
-        dispatcher:start:forced|dispatcher:stop:forced|dispatcher:restart:forced|init:start:forced|init:stop:forced|init:restart:forced|init:start:automatic|init:restart:automatic|hook:start:forced|hook:restart:forced|hook:start:automatic|hook:restart:automatic) ;;
+        dispatcher:start:forced|dispatcher:stop:forced|dispatcher:restart:forced|init:start:forced|init:stop:forced|init:restart:forced|init:start:automatic|init:restart:automatic|hook:start:forced|hook:restart:forced|hook:start:automatic|hook:restart:automatic|event:start:forced|event:stop:forced) ;;
         *) return 76;;
     esac
     PATH=/opt/bin:/opt/sbin:/usr/bin:/bin; export PATH
@@ -173,10 +212,16 @@ native_admission_enter() {
             _na_hook_parent=$(_na_hook_context) || return $?
             [ "$_na_hook_parent" = "$_na_action $_na_mode" ] || return 77
             ;;
+        event)
+            [ "$_na_role:$_na_action:$_na_mode" = hook:start:forced ] || return 77
+            _na_hook_parent=$(_na_hook_context) || return $?
+            [ "$_na_hook_parent" = 'start forced' ] || return 77
+            ;;
         *) return 77;;
     esac
     # Direct/event hooks are not enabled by this foreground-only seam.
-    [ "$_na_role" != hook ] || [ "${XKEEN_ADMISSION_ROLE-}" = init ] || return 76
+    [ "$_na_role" != hook ] || [ "${XKEEN_ADMISSION_ROLE-}" = init ] || [ "${XKEEN_ADMISSION_ROLE-}" = event ] || return 76
+    [ "$_na_role" != event ] || [ -n "${XKEEN_GATE_TOKEN-}" ] || return 77
     _na_owns=0
     if [ -n "${XKEEN_GATE_ROOT-}${XKEEN_GATE_TOKEN-}" ]; then
         _na_gate_ok || return $?
@@ -186,7 +231,7 @@ native_admission_enter() {
         _na_gate_identity=$_ng_owned_record
         _na_owns=1
     fi
-    # Three bounded foreground records: dispatcher, init and its hook. No
+    # At most three foreground records: dispatcher/init/hook, or event/hook. No
     # unbounded per-event records, detached waiter or persistent operation journal.
     (umask 077; mkdir "$_na_call_dir") 2>/dev/null || { _na_poison; return 77; }
     _native_gate_self || { _na_poison; return 77; }
@@ -226,6 +271,11 @@ native_admission_enter() {
         hook)
             _na_file_ok /opt/etc/ndm/netfilter.d/proxy.sh || { _na_poison; return 76; }
             /opt/bin/sh /opt/etc/ndm/netfilter.d/proxy.sh
+            _na_rc=$?
+            ;;
+        event)
+            _na_file_ok /opt/lib/xkeen/native-event-reconcile.sh || { _na_poison; return 76; }
+            /opt/bin/sh /opt/lib/xkeen/native-event-reconcile.sh
             _na_rc=$?
             ;;
     esac
