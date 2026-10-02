@@ -519,10 +519,16 @@ func scoreAdaptiveResults(results []AdaptiveCandidateResult, current string) (wi
 		if !candidate.Valid || candidate.RTTMS <= 0 || !finitePositive(candidate.DownloadBPS) || !finitePositive(candidate.UploadBPS) {
 			continue
 		}
-		latencyComponent := clampFloat(float64(bestRTT)/float64(candidate.RTTMS), 0, 1)
-		downloadComponent := math.Log1p(candidate.DownloadBPS) / math.Log1p(bestDownload)
-		uploadComponent := math.Log1p(candidate.UploadBPS) / math.Log1p(bestUpload)
-		candidate.Score = 0.35*latencyComponent + 0.45*downloadComponent + 0.20*uploadComponent
+		// Dimensionless geometric quality preserves pairwise ratios when the
+		// measurement units or another candidate's normalization maxima change.
+		// The 0.40 exponent keeps opposing +/-10% noise on all three axes
+		// below 10% hysteresis while equal-RTT 2x throughput clears it.
+		// Subtract logs before exponentiating: dividing finite extreme rates
+		// first could underflow a valid positive component to zero.
+		latencyComponent := math.Log(float64(bestRTT)) - math.Log(float64(candidate.RTTMS))
+		downloadComponent := math.Log(candidate.DownloadBPS) - math.Log(bestDownload)
+		uploadComponent := math.Log(candidate.UploadBPS) - math.Log(bestUpload)
+		candidate.Score = math.Exp(0.40 * (0.35*latencyComponent + 0.45*downloadComponent + 0.20*uploadComponent))
 		if !finiteNonNegative(candidate.Score) {
 			candidate.Valid = false
 			candidate.Score = 0
