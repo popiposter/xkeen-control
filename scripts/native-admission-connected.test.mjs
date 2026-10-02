@@ -35,7 +35,7 @@ function fixture({ role = 'init', args = ['start'], automatic = 'on', startRC = 
   const put = (path, text) => writeFileSync(path, substitute(text), { mode: 0o700 })
   put(paths.entry, readFileSync('scripts/native-admission-entry.sh', 'utf8'))
   put(paths.gate, readFileSync('scripts/native-operation-gate.sh', 'utf8'))
-  put(paths.verifier, `#!/bin/sh\nprintf 'VERIFY:%s:%s:%s\\n' "$1" "$2" "$3" >> '${evidence}'\n`)
+  put(paths.verifier, `#!/bin/sh\nprintf 'VERIFY:%s:%s:%s:%s\\n' "$1" "$2" "$3" "$4" >> '${evidence}'\n`)
   const nativeManager = init.slice(init.indexOf('\n_cmd_rc=0\n'))
   put(paths.init, `#!/bin/sh
 ${rewriteChild ? 'if [ "${XKEEN_ADMISSION_ROLE-}" = init ]; then set -- start on; fi' : ''}
@@ -75,48 +75,48 @@ exit $?
 test('connected automatic-disabled native manager finishes without startup', () => {
   const r = fixture({ automatic: 'off' })
   assert.equal(r.status, 0, r.stderr)
-  assert.equal(r.evidence, 'VERIFY:init:start:automatic\n')
+  assert.equal(r.evidence, 'VERIFY:pre:init:start:automatic\nVERIFY:post:init:start:automatic\n')
   assert.equal(r.held, false)
 })
 test('connected bare Start joins native cold-start path without forced argument', () => {
   const r = fixture()
   assert.equal(r.status, 0, r.stderr)
-  assert.equal(r.evidence, 'READY\nSTART:\nVERIFY:init:start:automatic\n')
+  assert.equal(r.evidence, 'VERIFY:pre:init:start:automatic\nREADY\nSTART:\nVERIFY:post:init:start:automatic\n')
   assert.equal(r.held, false)
 })
 test('connected forced Start preserves on and bypasses automatic delay path', () => {
   const r = fixture({ args: ['start', 'on'] })
   assert.equal(r.status, 0, r.stderr)
-  assert.equal(r.evidence, 'START:on\nVERIFY:init:start:forced\n')
+  assert.equal(r.evidence, 'VERIFY:pre:init:start:forced\nSTART:on\nVERIFY:post:init:start:forced\n')
 })
 test('connected cold-start failure retains gate without postcondition success', () => {
   const r = fixture({ startRC: 9 })
   assert.equal(r.status, 77, r.stderr)
-  assert.equal(r.evidence, 'READY\nSTART:\n')
+  assert.equal(r.evidence, 'VERIFY:pre:init:start:automatic\nREADY\nSTART:\n')
   assert.equal(r.held, true)
 })
 test('premature native success exit bypassing manager finish retains gate', () => {
   const r = fixture({ premature: true })
   assert.equal(r.status, 77, r.stderr)
-  assert.equal(r.evidence, 'READY\nSTART:\n')
+  assert.equal(r.evidence, 'VERIFY:pre:init:start:automatic\nREADY\nSTART:\n')
   assert.equal(r.held, true)
 })
 test('bare init Restart preserves automatic argument through its native case', () => {
   const r = fixture({ args: ['restart'] })
   assert.equal(r.status, 0, r.stderr)
-  assert.equal(r.evidence, 'STOP\nSTART:\nVERIFY:init:restart:automatic\n')
+  assert.equal(r.evidence, 'VERIFY:pre:init:restart:automatic\nSTOP\nSTART:\nVERIFY:post:init:restart:automatic\n')
   assert.equal(r.held, false)
 })
 test('actual dispatcher lifecycle case nests init inside admitted foreground call', () => {
   const r = fixture({ role: 'dispatcher', args: ['-restart'] })
   assert.equal(r.status, 0, r.stderr)
-  assert.equal(r.evidence, 'STOP\nSTART:on\nVERIFY:init:restart:forced\nVERIFY:dispatcher:restart:forced\n')
+  assert.equal(r.evidence, 'VERIFY:pre:dispatcher:restart:forced\nVERIFY:pre:init:restart:forced\nSTOP\nSTART:on\nVERIFY:post:init:restart:forced\nVERIFY:post:dispatcher:restart:forced\n')
   assert.equal(r.held, false)
 })
 test('mode substitution cannot reuse a valid automatic child proof', () => {
   const r = fixture({ rewriteChild: true })
   assert.equal(r.status, 77, r.stderr)
-  assert.equal(r.evidence, '')
+  assert.equal(r.evidence, 'VERIFY:pre:init:start:automatic\n')
   assert.equal(r.held, true)
 })
 test('early typed admission refuses contention and unsupported inputs before native manager', () => {

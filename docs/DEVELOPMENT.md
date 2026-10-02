@@ -63,6 +63,22 @@ Adding a fixture there runs the helper lane without selecting Chromium. Selector
 Git-scope and Go-graph helper changes use their dispatch fixtures; changes to the
 actual `dev-check.ps1`/`dev-check.sh` orchestration retain the browser fallback.
 
+Native source-preservation fixtures have a separate explicit catalogue,
+`scripts/test-native-upstream.sh`. Supply the four hash-pinned **public** inputs;
+it downloads nothing and never executes a complete native installer/dispatcher:
+
+```powershell
+docker compose -f docker-compose.dev.yml run --rm -T dev env XKEEN_ADMISSION_INIT=/workspace/dist/native-public.sh XKEEN_ADMISSION_DISPATCHER=/workspace/dist/native-dispatcher-public.sh XKEEN_ADMISSION_REGISTER=/workspace/dist/native-update-contract/02_register_xkeen.sh XKEEN_ADMISSION_INSTALLER=/workspace/dist/native-update-contract/03_install_xkeen.sh bash scripts/test-native-upstream.sh
+```
+
+The builders/fixtures verify exact source hashes. Keep these inputs in ignored
+`dist` storage; never mount operator-local credentials or router artifacts.
+This opt-in result is separate from the self-contained helper lane and FULL gate;
+their scope does not depend on cache presence. To reproduce an upstream
+counterexample, invoke its individual fixture with `XKEEN_ADMISSION_UPSTREAM=1`;
+the aggregate catalogue rejects that mode. Passing these isolated source fixtures
+does not qualify a complete updater, native execution on the router or LAN traffic.
+
 Documentation-only iteration runs host diff hygiene without Docker; inspect links
 and content as part of review. Code lanes run public hygiene before toolchains.
 Fast npm reuse requires matching package/lockfile, Node/npm/platform identity and
