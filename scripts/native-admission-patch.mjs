@@ -176,12 +176,84 @@ export function buildCandidates({ init, dispatcher }) {
   if (stripFunctions.length !== 1) throw new Error('native strip helper identity is ambiguous')
   const hookHeader = '    cat > "$file_netfilter_hook" <<\'EOL\'\n#!/bin/sh\n'
   text = replaceOnce(text, hookHeader, hookHeader + stripFunctions[0][0])
-  // Context stripping is not fresh admission. Until the monitor restart is
-  // integrated, reject its trigger before PID-file/log/native lifecycle writes.
-  text = replaceOnce(text,
-    '                    if [ "$limit" -gt 0 ] && [ "$current" -gt $((limit * 90 / 100)) ]; then\n',
-    '                    if [ "$limit" -gt 0 ] && [ "$current" -gt $((limit * 90 / 100)) ]; then\n' +
-    '                        return 76 # fresh monitor admission is not implemented\n')
+  const monitorBegin = text.indexOf('\nmonitor_fd() {\n')
+  const monitorEnd = text.indexOf('\nload_ipset() {\n', monitorBegin)
+  if (monitorBegin < 0 || monitorEnd < monitorBegin) throw new Error('native monitor anchor missing')
+  text = replaceOnce(text, text.slice(monitorBegin, monitorEnd), `
+_native_monitor_sample() {
+    _nm_core_pid=$(pidof "$name_client" | awk '{print $1}')
+    [ -n "$_nm_core_pid" ] && [ -d "/proc/$_nm_core_pid/fd" ] || return 1
+    _native_gate_proc "$_nm_core_pid" || return 1
+    _nm_core_start=$_ng_proc_start
+    _nm_limit=$(awk '/Max open files/ {print $4}' "/proc/$_nm_core_pid/limits")
+    case "$_nm_limit" in ''|*[!0-9]*) return 1;; esac
+    set -- /proc/$_nm_core_pid/fd/*
+    [ -e "$1" ] || set --
+    [ "$_nm_limit" -gt 0 ] && [ "$#" -gt $((_nm_limit * 90 / 100)) ]
+}
+
+_native_monitor_owns_marker() {
+    [ ! -L "$file_pid_fd" ] && [ -f "$file_pid_fd" ] || return 1
+    _native_gate_metadata "$file_pid_fd" || return 1
+    [ "$_ng_meta_uid" = 0 ] && [ "$_ng_meta_links" = 1 ] &&
+        [ "$_ng_meta_size" -le 32 ] && [ "$((0x$_ng_meta_mode & 0022))" -eq 0 ] || return 1
+    set -- $_ng_meta
+    _nm_read_identity="$7:$8"
+    [ -z "$_nm_marker_identity" ] || [ "$_nm_marker_identity" = "$_nm_read_identity" ] || return 1
+    IFS= read -r _nm_marker_pid < "$file_pid_fd" || return 1
+    _native_gate_decimal "$_nm_marker_pid" || return 1
+    [ "$_nm_marker_pid" = "$_nm_monitor_pid" ] &&
+        [ "$_ng_meta_size" -eq "$(( \${#_nm_marker_pid} + 1 ))" ] || return 1
+    _native_gate_self || return 1
+    [ "$_ng_self_pid" = "$_nm_monitor_pid" ] && [ "$_ng_self_start" = "$_nm_monitor_start" ] || return 1
+    _nm_marker_identity=$_nm_read_identity
+}
+
+monitor_fd() {
+    # This long-lived worker inherited no operation context. Each threshold
+    # trigger starts a fresh native restart owner; busy uses the native cadence.
+    _native_gate_self || return 77
+    _nm_monitor_pid=$_ng_self_pid; _nm_monitor_start=$_ng_self_start
+    while true; do
+        if _native_monitor_sample; then
+            _nm_observed="$_nm_core_pid:$_nm_core_start"
+            native_gate_acquire /tmp/.xkeen-admission restart
+            _nm_admission=$?
+            case "$_nm_admission" in
+                0)
+                    if ! _native_monitor_sample || [ "$_nm_observed" != "$_nm_core_pid:$_nm_core_start" ]; then
+                        # No mutation occurred: known stale evidence is safe to dismiss.
+                        native_gate_release || return 77
+                    else
+                        _nm_marker_identity=
+                        if ! _native_monitor_owns_marker; then
+                            native_gate_release || return 77
+                            return 77
+                        fi
+                        native_gate_join /tmp/.xkeen-admission "$XKEEN_GATE_TOKEN" || return 77
+                        [ "$_ng_record" = "$_ng_owned_record" ] || return 77
+                        _na_file_ok /opt/etc/init.d/S05xkeen || return 76
+                        # Remove only our verified marker; native cleanup must
+                        # not kill this foreground gate owner. Never touch it
+                        # again: successful startup may publish a new monitor.
+                        if ! _native_monitor_owns_marker; then
+                            native_gate_release || return 77
+                            return 77
+                        fi
+                        rm -f "$file_pid_fd" || return 77
+                        fd_out=true /opt/bin/sh /opt/etc/init.d/S05xkeen restart on || return 77
+                        native_gate_release || return 77
+                        return 0
+                    fi
+                    ;;
+                75) ;;
+                *) return "$_nm_admission";;
+            esac
+        fi
+        sleep "$delay_fd"
+    done
+}
+`)
   text = replaceOnce(text, '\nexit "$_cmd_rc"\n', '\nnative_admission_finish "$_cmd_rc"\nexit $?\n')
   let dispatcherText = replaceOnce(dispatcher.toString('utf8'), '\nexit "$xkeen_rc"\n', '\nnative_admission_finish "$xkeen_rc"\nexit $?\n')
   // Lifecycle is not installation. These exact classified actions must neither
@@ -196,7 +268,7 @@ export function buildCandidates({ init, dispatcher }) {
     source: { initSHA256, dispatcherSHA256 },
     candidate: { initSHA256: digest(candidates.init), dispatcherSHA256: digest(candidates.dispatcher) },
     missing: ['native postcondition verifier', 'foreground hook ownership and settlement',
-      'monitor fresh admission', 'bounded NDM event convergence',
+      'bounded NDM event convergence',
       'standalone recovery/readback', 'native update persistence', 'BusyBox and hardware qualification'],
   } }
 }

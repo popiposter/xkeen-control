@@ -71,17 +71,19 @@ for (const name of ['xray', 'mihomo']) {
   }
   test(`generated hook ${name} has local strip and preserves native core launch`, () => runCore('hook', name, '', 'off'))
 }
-test('monitor launch strips private authority and refuses restart before fresh admission is wired', () => {
-  const begin = source.indexOf('\nmonitor_fd() {\n')
-  const end = source.indexOf('\n}\n', begin) + 3
+test('monitor launch strips private authority before requesting fresh admission', () => {
+  const begin = source.indexOf('\n_native_monitor_sample() {\n')
+  const end = source.indexOf('\nload_ipset() {\n', begin)
   const monitor = source.slice(begin, end).replace('monitor_fd()', 'actual_monitor_fd()')
   const launch = source.split('\n').find(line => line.trim().endsWith('monitor_fd) &') || line.trim() === 'monitor_fd &')
   assert.ok(launch)
   const r = spawnSync('/bin/sh', ['-c', `
 ${strip}
 ${polluted}
+${readFileSync('scripts/native-operation-gate.sh', 'utf8')}
 ${monitor}
 monitor_fd() { [ -z "${hints}" ] || exit 99; actual_monitor_fd; }
+native_gate_acquire() { [ -z "${hints}" ] || return 99; return 76; }
 pidof() { echo $$; }; awk() { case "$1" in '/Max open files/'*) echo 1;; *) cat;; esac; }
 log_warning_router() { echo MUTATION; }; rm() { echo MUTATION; }
 proxy_stop() { echo MUTATION; }; proxy_start() { echo MUTATION; }

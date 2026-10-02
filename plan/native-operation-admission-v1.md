@@ -490,11 +490,9 @@ also a source dependency of the candidate builder; the emitted candidate hash
 binds the resulting embedded definition. No command executor or hook ownership
 mechanism is added by this extraction.
 
-The existing monitor launch similarly strips in its own subshell. Until a fresh
-gate acquisition/recheck path is implemented, its threshold-trigger branch now
-returns 76 before logging restart, removing its PID file or calling native Stop
-and Start. Polling remains read-only. This explicit guard does not replace the
-whole-candidate fence, and monitor restart remains unavailable. The earlier
+The existing monitor launch similarly strips in its own subshell. Its initial
+source checkpoint refused threshold-triggered restart with status 76; the fresh
+admission slice below replaces that refusal. Polling remains read-only. The earlier
 cold-start detach and startup crash-check background worker have already been
 replaced by joined foreground paths; no further long-lived launch sites were
 found in the pinned lifecycle init/hook source.
@@ -504,10 +502,40 @@ before the patch, then passed for all eight core launch variants and the monitor
 Synthetic core executables prove child hints/private state absent, parent state
 unchanged, exact native argv/environment retained and core PID equal to `$!`.
 The monitor fixture uses the actual extracted native function and proves its
-restart trigger performs no mutation before fresh admission is wired. These
+restart trigger requests fresh admission without inherited authority. These
 public-input fixtures remain opt-in and execute no complete router script.
-No generated-hook gate, monitor lifecycle operation, native verifier, runtime
-installation or hardware claim is introduced by this slice.
+No generated-hook gate, runtime installation or hardware claim is introduced
+by this launch-isolation slice.
+
+### Fresh monitor restart admission (source-only, still fenced)
+
+The stripped existing monitor captures the core PID and proc start time when
+the native file-descriptor threshold is exceeded. It acquires the existing
+`restart` RAM gate, then rechecks process identity and threshold. Busy admission
+uses the existing polling cadence. A stale sample releases its unused gate and
+returns to polling; it does not restart a replacement process.
+
+Before mutation, the monitor checks its PID marker is a bounded root-owned
+regular nonsymlink file, with its own canonical PID and live proc start time.
+It rechecks the marker device/inode and content immediately before removing it
+under the gate. An unowned marker is preserved and the unused gate released.
+After removal, the monitor synchronously calls the fixed native init
+`restart on`, with command-scoped `fd_out=true` preserving the native nohup
+branch. The init wrapper borrows admission and performs its explicit pre/post
+verification. The monitor releases only after that verified success. It never
+removes the marker again, since the new native monitor may have published one.
+Child failure, failed postcondition or cancellation retains admission; there is
+no trap release, lifecycle retry, additional daemon or second journal.
+
+Nine dedicated extracted-source fixtures exercise fresh ownership, busy polling,
+changed core, reused PID, cleared threshold, replacement marker, child failure,
+post-verification failure and cancellation of the owner during its foreground
+child. The initial eight fixtures failed against the old refusal and passed
+after implementation; cancellation coverage was then added. These fixtures use
+the real gate and entry helper with synthetic core observations, native body and
+verifier, so they establish source protocol behavior rather than router lifecycle
+postconditions. The complete candidate remains unconditionally fenced pending
+generated-hook convergence and the remaining native integration qualification.
 
 ## Actual Entware shell protocol probe (2026-10-02)
 
