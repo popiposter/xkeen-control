@@ -472,6 +472,43 @@ and pending-state refusal are not implemented by this slice. Earlier statements
 in this plan requiring standalone persistent lifecycle intent are superseded by
 this native-contract boundary, not deferred into a second journal implementation.
 
+### Long-lived launch context isolation (still fenced)
+
+The pinned template has eight core spawn variants: six in `proxy_start` (Xray
+and Mihomo, each with `fd_out`/nohup, verbose, and quiet paths) plus two in the
+generated hook's absent-core branch. The builder now emits each as a launch
+subshell that calls `native_admission_strip`, then `exec`s the original native
+command with unchanged arguments, nohup choice and redirections. This keeps
+native `$!` PID semantics while removing all five admission environment hints
+and copied private finish/owner state from the child only. Xray config/asset
+paths, Mihomo home/memory policy and the CA path remain native environment.
+
+The generated hook is a standalone shell and cannot inherit init functions.
+Its quoted heredoc embeds the exact `native_admission_strip` function extracted
+from the repository entry helper at build time. Thus the local entry helper is
+also a source dependency of the candidate builder; the emitted candidate hash
+binds the resulting embedded definition. No command executor or hook ownership
+mechanism is added by this extraction.
+
+The existing monitor launch similarly strips in its own subshell. Until a fresh
+gate acquisition/recheck path is implemented, its threshold-trigger branch now
+returns 76 before logging restart, removing its PID file or calling native Stop
+and Start. Polling remains read-only. This explicit guard does not replace the
+whole-candidate fence, and monitor restart remains unavailable. The earlier
+cold-start detach and startup crash-check background worker have already been
+replaced by joined foreground paths; no further long-lived launch sites were
+found in the pinned lifecycle init/hook source.
+
+Nine extracted-source Linux fixtures reproduced inherited admission authority
+before the patch, then passed for all eight core launch variants and the monitor.
+Synthetic core executables prove child hints/private state absent, parent state
+unchanged, exact native argv/environment retained and core PID equal to `$!`.
+The monitor fixture uses the actual extracted native function and proves its
+restart trigger performs no mutation before fresh admission is wired. These
+public-input fixtures remain opt-in and execute no complete router script.
+No generated-hook gate, monitor lifecycle operation, native verifier, runtime
+installation or hardware claim is introduced by this slice.
+
 ## Actual Entware shell protocol probe (2026-10-02)
 
 The first isolated RAM probe of the old shell library stopped before creating a

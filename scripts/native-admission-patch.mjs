@@ -162,6 +162,26 @@ export function buildCandidates({ init, dispatcher }) {
   const announcement = '                    echo -e "  Прокси-клиент ${green}запущен${reset} в режиме ${light_blue}${mode_proxy}${reset}"\n'
   text = replaceOnce(text, announcement, '')
   text = replaceOnce(text, '                    if [ -n "$api_policy_json" ]; then\n', announcement + '                    if [ -n "$api_policy_json" ]; then\n')
+  // Eight pinned core launches: six init variants and two generated-hook paths.
+  // exec keeps the background PID tied to the core (including native nohup).
+  const coreLaunch = /^([ \t]+)((?:nohup )?"\$name_client"(?: run)?)( >\/dev\/null 2>&1)? &$/gm
+  if ([...text.matchAll(coreLaunch)].length !== 8) throw new Error('native core launch inventory changed')
+  text = text.replace(coreLaunch, (_, indent, command, redirect = '') =>
+    `${indent}(native_admission_strip; exec ${command}${redirect}) &`)
+  text = replaceOnce(text, '                        monitor_fd &\n', '                        (native_admission_strip; monitor_fd) &\n')
+  // A generated hook is a separate shell; it cannot inherit the sourced init
+  // function. Embed only this exact source-owned strip function, not an executor.
+  const entryHelper = readFileSync(new URL('./native-admission-entry.sh', import.meta.url), 'utf8').replaceAll('\r\n', '\n')
+  const stripFunctions = [...entryHelper.matchAll(/^native_admission_strip\(\) \{\n[\s\S]*?^\}\n/gm)]
+  if (stripFunctions.length !== 1) throw new Error('native strip helper identity is ambiguous')
+  const hookHeader = '    cat > "$file_netfilter_hook" <<\'EOL\'\n#!/bin/sh\n'
+  text = replaceOnce(text, hookHeader, hookHeader + stripFunctions[0][0])
+  // Context stripping is not fresh admission. Until the monitor restart is
+  // integrated, reject its trigger before PID-file/log/native lifecycle writes.
+  text = replaceOnce(text,
+    '                    if [ "$limit" -gt 0 ] && [ "$current" -gt $((limit * 90 / 100)) ]; then\n',
+    '                    if [ "$limit" -gt 0 ] && [ "$current" -gt $((limit * 90 / 100)) ]; then\n' +
+    '                        return 76 # fresh monitor admission is not implemented\n')
   text = replaceOnce(text, '\nexit "$_cmd_rc"\n', '\nnative_admission_finish "$_cmd_rc"\nexit $?\n')
   let dispatcherText = replaceOnce(dispatcher.toString('utf8'), '\nexit "$xkeen_rc"\n', '\nnative_admission_finish "$xkeen_rc"\nexit $?\n')
   // Lifecycle is not installation. These exact classified actions must neither
@@ -176,7 +196,7 @@ export function buildCandidates({ init, dispatcher }) {
     source: { initSHA256, dispatcherSHA256 },
     candidate: { initSHA256: digest(candidates.init), dispatcherSHA256: digest(candidates.dispatcher) },
     missing: ['native postcondition verifier', 'foreground hook ownership and settlement',
-      'background token stripping and monitor fresh admission', 'bounded NDM event convergence',
+      'monitor fresh admission', 'bounded NDM event convergence',
       'standalone recovery/readback', 'native update persistence', 'BusyBox and hardware qualification'],
   } }
 }
