@@ -429,6 +429,9 @@ monitor_fd() {
 `)
   text = replaceOnce(text, '\nexit "$_cmd_rc"\n', '\nnative_admission_finish "$_cmd_rc"\nexit $?\n')
   let dispatcherText = replaceOnce(dispatcher.toString('utf8'), '\nexit "$xkeen_rc"\n', '\nnative_admission_finish "$xkeen_rc"\nexit $?\n')
+  // The post-update proof pins the actual interpreter/path/argument vector;
+  // PATH lookup and a caller-selected $0 must not alter that handoff.
+  dispatcherText = replaceOnce(dispatcherText, 'exec sh "$0" -uk_post_update', 'exec /opt/bin/sh /opt/sbin/xkeen -uk_post_update')
   // Lifecycle is not installation. These exact classified actions must neither
   // rename an installation nor invoke the package manager under the gate.
   dispatcherText = replaceOnce(dispatcherText, '\ninstall_xkeen_rename\n', '\ncase "$1" in -start|-stop|-restart) ;; *) install_xkeen_rename;; esac\n')

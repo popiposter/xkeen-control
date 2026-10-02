@@ -75,3 +75,48 @@ native_update_stage_context() {
     _nu_read_record "$_nu_call/body" || return 77
     [ "$_nu_record" = "$_nu_body" ] || return 77
 }
+_nu_dispatcher_hash() {
+    _na_file_ok /opt/sbin/xkeen || return 76
+    _nu_hash_line=$(sha256sum /opt/sbin/xkeen 2>/dev/null) || return 76
+    _nu_hash=${_nu_hash_line%% *}
+    [ "${#_nu_hash}" = 64 ] || return 76
+    case "$_nu_hash" in *[!0-9a-f]*) return 76;; esac
+}
+native_update_exec_context() {
+    # Only the same native body may enter the installed post-update generation.
+    # The future authenticated stage writer publishes staged before live moves.
+    [ "$#" = 0 ] || return 76
+    _nu_load_call || return $?
+    _nu_read_record "$_nu_call/body" || return 77
+    _nu_body=$_nu_record
+    _native_gate_self || return 77
+    _nu_exec_pid=$_ng_self_pid; _nu_exec_start=$_ng_self_start
+    [ "$_nu_body" = "v1 $_nu_exec_pid $_nu_exec_start $_nu_nonce" ] || return 77
+    _native_gate_proc "$_nu_exec_pid" || return 77
+    [ "$_ng_parent" = "$_nu_wrapper_pid" ] || return 77
+    _native_gate_proc "$_nu_wrapper_pid" || return 77
+    [ "$_ng_proc_start" = "$_nu_wrapper_start" ] || return 77
+    _nu_read_record "$_nu_call/staged" || return 77
+    _nu_staged=$_nu_record
+    _nu_dispatcher_hash || return $?
+    _nu_expected_hash=$_nu_hash
+    [ "$_nu_staged" = "v1 $_nu_exec_pid $_nu_exec_start $_nu_nonce $_nu_expected_hash" ] || return 77
+    # PID preservation alone is not exec proof: the old shell could source this
+    # helper. Require the exact supported argv vector, bounded before hashing.
+    [ ! -e "$_nu_call/exec.argv" ] && [ ! -L "$_nu_call/exec.argv" ] || return 77
+    (umask 077; set -C; dd if="/proc/$_nu_exec_pid/cmdline" bs=128 count=1 > "$_nu_call/exec.argv" 2>/dev/null) || return 77
+    _na_small_file "$_nu_call/exec.argv" || return 77
+    _nu_argv_line=$(sha256sum "$_nu_call/exec.argv" 2>/dev/null) || return 77
+    # /opt/bin/sh NUL /opt/sbin/xkeen NUL -uk_post_update NUL
+    [ "${_nu_argv_line%% *}" = f7549ee949d9d02fa5ba2e6586f286394c31c2243d32d7ed1b520aa37d5439fe ] || return 77
+    # Consume this phase exclusively, retaining evidence on any later failure.
+    (umask 077; mkdir "$_nu_call/exec.used") 2>/dev/null || return 77
+    _native_gate_directory "$_nu_call/exec.used" 0700 || return 77
+    _nu_recheck_call || return 77
+    _nu_read_record "$_nu_call/body" || return 77
+    [ "$_nu_record" = "$_nu_body" ] || return 77
+    _nu_read_record "$_nu_call/staged" || return 77
+    [ "$_nu_record" = "$_nu_staged" ] || return 77
+    _nu_dispatcher_hash || return $?
+    [ "$_nu_hash" = "$_nu_expected_hash" ] || return 77
+}

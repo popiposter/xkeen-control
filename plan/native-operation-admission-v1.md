@@ -643,6 +643,23 @@ phase-bound exec handoff and the actual
 staging writer/verifier are still prerequisites; the protocol helper alone cannot
 run an update or qualify file preservation. No new durable journal is introduced.
 
+The source-only post-exec proof requires the actual same body PID/start and
+immediate wrapper parent, a canonical protected staged-generation receipt and
+the fixed protected installed dispatcher's expected hash. PID identity alone is
+insufficient: a checked bounded RAM snapshot of `/proc` command arguments must
+match exactly `/opt/bin/sh /opt/sbin/xkeen -uk_post_update`, including NUL argument
+boundaries. Only then is one exclusive RAM `exec.used` phase consumed. Owner,
+context, body, staged receipt and live hash are rechecked after consumption;
+failures retain all evidence and admission. Fixtures perform real same-PID exec
+and refuse an old-body helper call without exec, unexpected arguments, repeated
+phase entry, unsafe receipts and post-consumption drift. The argv snapshot and
+phase marker stay in the existing call scope, not a new journal. Actual dispatcher
+builder now pins the native handoff to that exact interpreter/path/argument vector
+in its still-disabled dispatcher. An isolated actual-handoff fixture demonstrates
+the original PATH/argv0 dependency and the fixed handoff with a shadow interpreter.
+Stage receipt production, update entry integration, module
+preservation and native update postconditions remain pending and fenced.
+
 The disabled `native-admission-update-patch.mjs` experiment pins the actual
 native installer module by SHA-256 and inserts a fixed protected staging callback
 after native extraction/shape checks and before its first live rename. Native

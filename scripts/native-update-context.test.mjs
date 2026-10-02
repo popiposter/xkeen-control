@@ -1,24 +1,43 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-function fixture({ action = 'update-xkeen', setup = '', child = 'native_update_stage_context "$stage"', body = '', borrowed = false, beforeBind = '' } = {}) {
+const hash = value => createHash('sha256').update(value).digest('hex')
+const argvHash = hash(Buffer.from('/opt/bin/sh\0/opt/sbin/xkeen\0-uk_post_update\0'))
+assert.ok(readFileSync('scripts/native-update-context.sh', 'utf8').includes(argvHash))
+function fixture({ action = 'update-xkeen', setup = '', child = 'native_update_stage_context "$stage"', body = '', borrowed = false, beforeBind = '', execFlow = false, execProbe = 'native_update_exec_context', stagedChange = '', execArgument = '-uk_post_update', withoutExec = false } = {}) {
   const root = mkdtempSync('/tmp/native-update-context-')
+  const code = mkdtempSync('/root/native-update-exec-')
+  chmodSync(code, 0o700)
+  const executable = join(code, 'xkeen')
   chmodSync(root, 0o700)
-  const put = (name, text) => writeFileSync(join(root, name), text.replaceAll('/tmp/.xkeen-admission', root).replaceAll('@ROOT@', root), { mode: 0o600 })
+  const rewrite = text => text.replaceAll('/tmp/.xkeen-admission', root).replaceAll('@ROOT@', root)
+    .replaceAll('/opt/sbin/xkeen', executable).replaceAll('@EXEC@', executable)
+    .replaceAll(argvHash, hash(Buffer.from(`/bin/sh\0${executable}\0-uk_post_update\0`)))
+  const put = (name, text) => writeFileSync(join(root, name), rewrite(text), { mode: 0o600 })
   for (const name of ['native-operation-gate', 'native-admission-entry', 'native-update-context']) put(name, readFileSync(`scripts/${name}.sh`, 'utf8'))
   put('child', `. '@ROOT@/native-operation-gate'; . '@ROOT@/native-admission-entry'; . '@ROOT@/native-update-context'
 ${setup}
-${child}
+${execFlow ? `native_update_stage_context "$stage" || exit $?
+_fixture_hash=$(sha256sum '@EXEC@'); _fixture_hash=\${_fixture_hash%% *}
+(umask 077; printf 'v1 %s %s %s %s\\n' "$_nu_body_pid" "$_nu_body_start" "$XKEEN_ADMISSION_CALL" "$_fixture_hash" > '@ROOT@/operation.lock.d/call.update/staged') || exit 91
+${stagedChange}` : child}
 `)
+  writeFileSync(executable, rewrite(`#!/bin/sh
+. '@ROOT@/native-operation-gate'; . '@ROOT@/native-admission-entry'; . '@ROOT@/native-update-context'
+${execProbe}
+`), { mode: 0o600 })
   put('body', `. '@ROOT@/native-operation-gate'; . '@ROOT@/native-admission-entry'; . '@ROOT@/native-update-context'
 ${beforeBind}
 native_update_bind_body || exit $?
 stage="/opt/sbin/.xkeen.stage.$_ng_self_pid"; export stage
 ${body}
 /bin/sh '@ROOT@/child'
+${execFlow ? `[ "$?" = 0 ] || exit 95
+${withoutExec ? execProbe : `exec /bin/sh '@EXEC@' '${execArgument}'`}` : ''}
 `)
   put('wrapper', `. '@ROOT@/native-operation-gate'
 ${borrowed ? "native_gate_join '@ROOT@' \"$XKEEN_GATE_TOKEN\"" : `native_gate_acquire '@ROOT@' '${action}'`} || exit 90
@@ -39,8 +58,10 @@ native_gate_acquire '@ROOT@' '${action}' || exit 90
   try {
     const result = spawnSync('/bin/sh', [join(root, borrowed ? 'owner' : 'wrapper')], { encoding: 'utf8', timeout: 3000 })
     assert.ifError(result.error)
-    return { ...result, bodyPresent: existsSync(join(root, 'operation.lock.d/call.update/body')) }
-  } finally { rmSync(root, { recursive: true, force: true }) }
+    return { ...result, bodyPresent: existsSync(join(root, 'operation.lock.d/call.update/body')),
+      execUsed: existsSync(join(root, 'operation.lock.d/call.update/exec.used')),
+      execArgv: existsSync(join(root, 'operation.lock.d/call.update/exec.argv')) }
+  } finally { rmSync(root, { recursive: true, force: true }); rmSync(code, { recursive: true, force: true }) }
 }
 
 test('only the fixed stage child of the bound native update body authenticates', () => {
@@ -118,5 +139,41 @@ _nu_read_record() {
   if [ "$_nu_reads" = 2 ]; then printf 'changed\\n' > '@ROOT@/operation.lock.d/call.update/${target}'; fi
 }` })
     assert.equal(r.status, 77, r.stderr)
+  }
+})
+test('real same-process exec authenticates only the fixed post-update generation', () => {
+  const r = fixture({ execFlow: true }); assert.equal(r.status, 0, r.stderr)
+})
+test('same body without exec and incorrect exec arguments cannot enter post-update', () => {
+  for (const options of [{ withoutExec: true }, { execArgument: '-uk' }]) {
+    const r = fixture({ execFlow: true, ...options }); assert.equal(r.status, 77, r.stderr)
+  }
+})
+test('post-update phase is consumed once and cannot be replayed in the same body', () => {
+  const r = fixture({ execFlow: true, execProbe: 'native_update_exec_context || exit $?; native_update_exec_context' })
+  assert.equal(r.status, 77, r.stderr)
+})
+test('missing or unsafe staged receipt and changed dispatcher refuse the exec phase', () => {
+  for (const stagedChange of [
+    "rm '@ROOT@/operation.lock.d/call.update/staged'",
+    "chmod 644 '@ROOT@/operation.lock.d/call.update/staged'",
+    "printf '# changed\\n' >> '@EXEC@'",
+    "mkdir '@ROOT@/operation.lock.d/call.update/exec.used'",
+  ]) {
+    const r = fixture({ execFlow: true, stagedChange }); assert.equal(r.status, 77, r.stderr)
+  }
+})
+test('post-consumption drift refuses while retaining phase and owner evidence', () => {
+  for (const change of [
+    "printf 'changed\\n' > '@ROOT@/operation.lock.d/call.update/context'",
+    "printf 'changed\\n' > '@ROOT@/operation.lock.d/call.update/body'",
+    "printf 'changed\\n' > '@ROOT@/operation.lock.d/call.update/staged'",
+    "printf '# changed\\n' >> '@EXEC@'",
+  ]) {
+    const r = fixture({ execFlow: true, execProbe: `eval "$(sed 's/^_nu_recheck_call()/original_recheck_call()/' '@ROOT@/native-update-context')"
+_nu_recheck_call() { [ ! -d '@ROOT@/operation.lock.d/call.update/exec.used' ] || { ${change}; }; original_recheck_call; }
+native_update_exec_context` })
+    assert.equal(r.status, 77, r.stderr)
+    assert.equal(r.bodyPresent && r.execUsed && r.execArgv, true)
   }
 })

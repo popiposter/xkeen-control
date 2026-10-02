@@ -1,6 +1,6 @@
 // Offline native-source fixtures. No complete upstream script is executed.
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -212,5 +212,20 @@ test('CLI publishes disabled set with manifest last and refuses existing destina
     const repeated = spawnSync(process.execPath, args, { encoding: 'utf8', timeout: 2000 })
     assert.equal(repeated.status, 1)
     assert.deepEqual(readFileSync(join(destination, 'manifest.json')), manifest)
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+test('post-update handoff ignores a shadowed sh and caller-selected argv0', () => {
+  const root = mkdtempSync(join(tmpdir(), 'native-handoff-'))
+  try {
+    const post = join(root, 'post')
+    writeFileSync(post, '#!/bin/sh\nprintf "%s:%s\\n" "$#" "$1"\n', { mode: 0o600 })
+    writeFileSync(join(root, 'sh'), '#!/bin/sh\necho SHADOW_INTERPRETER\n', { mode: 0o700 })
+    const sites = result.dispatcher.toString('utf8').split('\n').filter(line => line.includes('exec ') && line.includes('-uk_post_update'))
+    assert.equal(sites.length, 1)
+    // Execute only the actual native handoff site in the isolated namespace.
+    const site = sites[0].replace('/opt/bin/sh', '/bin/sh').replace('/opt/sbin/xkeen', post)
+    const r = run(`PATH='${root}'; export PATH\ngrep() { return 0; }\n${site}`)
+    assert.equal(r.status, 0, r.stderr)
+    assert.equal(r.stdout, '1:-uk_post_update\n')
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
