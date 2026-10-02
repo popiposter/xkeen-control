@@ -181,22 +181,26 @@ test -z "${XKEEN_GATE_TOKEN+x}" && test -z "${XKEEN_GATE_ROOT+x}"`, lease.ChildE
 	}
 }
 
-func TestReconcileAdmissionInteroperatesWithoutLifecyclePrivilege(t *testing.T) {
-	root := testRoot(t)
-	lease, err := Acquire(root, Reconcile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer lease.Release()
-	cmd := shell(t, `native_gate_join "$XKEEN_GATE_ROOT" "$XKEEN_GATE_TOKEN" || exit 10
-test "$_ng_action" = reconcile || exit 11
-native_gate_release; test $? -eq 77`, lease.ChildEnvironment(nil))
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("reconcile borrow: %v %s", err, out)
-	}
-	cmd = shell(t, `native_gate_acquire "$ROOT" stop; test $? -eq 75`, []string{"ROOT=" + root})
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("lifecycle contested reconcile: %v %s", err, out)
+func TestNonLifecycleAdmissionInteroperatesWithoutReleasePrivilege(t *testing.T) {
+	for _, action := range []Action{Reconcile, UpdateXKeen} {
+		t.Run(string(action), func(t *testing.T) {
+			root := testRoot(t)
+			lease, err := Acquire(root, action)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lease.Release()
+			cmd := shell(t, `native_gate_join "$XKEEN_GATE_ROOT" "$XKEEN_GATE_TOKEN" || exit 10
+test "$_ng_action" = "$EXPECTED_ACTION" || exit 11
+native_gate_release; test $? -eq 77`, lease.ChildEnvironment([]string{"EXPECTED_ACTION=" + string(action)}))
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%s borrow: %v %s", action, err, out)
+			}
+			cmd = shell(t, `native_gate_acquire "$ROOT" stop; test $? -eq 75`, []string{"ROOT=" + root})
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("lifecycle contested %s: %v %s", action, err, out)
+			}
+		})
 	}
 }
 

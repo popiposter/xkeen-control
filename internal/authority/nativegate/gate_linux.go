@@ -24,6 +24,7 @@ const (
 	Restart      Action = "restart"
 	ConfigChange Action = "config-change"
 	Reconcile    Action = "reconcile"
+	UpdateXKeen  Action = "update-xkeen"
 )
 
 var (
@@ -43,7 +44,7 @@ type Lease struct {
 }
 
 func validAction(a Action) bool {
-	return a == Start || a == Stop || a == Restart || a == ConfigChange || a == Reconcile
+	return a == Start || a == Stop || a == Restart || a == ConfigChange || a == Reconcile || a == UpdateXKeen
 }
 
 // Acquire attempts immediate admission under an explicit, pre-created root.

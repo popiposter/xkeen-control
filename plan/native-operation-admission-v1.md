@@ -625,6 +625,20 @@ preservation. Root creation and a new operation do not replay a former operation
 
 ### Native registration/update preservation boundary
 
+The shared gate has a distinct finite `update-xkeen` action; this adds no native
+executor and does not enable the backend. The source-only staged-child context
+proof uses the existing protected gate and `call.update` RAM scope, with the
+live wrapper under that owner and a separate nonce-bound body PID/start record.
+The wrapper may own admission or borrow an existing joined foreground owner;
+it never creates a second operation gate.
+Only the body's immediate child with the exact PID-derived native staging path
+authenticates. Deeper descendants, lifecycle tokens, changed/noncanonical/unsafe
+records and arbitrary stage paths refuse. The helper rereads owner/context/body
+and never writes, releases admission or publishes native completion. Native
+update entry/body-record publication, phase-bound exec handoff and the actual
+staging writer/verifier are still prerequisites; the protocol helper alone cannot
+run an update or qualify file preservation. No new durable journal is introduced.
+
 The disabled `native-admission-update-patch.mjs` experiment pins the actual
 native installer module by SHA-256 and inserts a fixed protected staging callback
 after native extraction/shape checks and before its first live rename. Native

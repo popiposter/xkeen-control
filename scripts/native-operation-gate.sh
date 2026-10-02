@@ -5,7 +5,7 @@
 # before starting background services. _ng_* variables are library-private.
 
 _native_gate_action() {
-    case "$1" in start|stop|restart|config-change|reconcile) return 0;; *) return 1;; esac
+    case "$1" in start|stop|restart|config-change|reconcile|update-xkeen) return 0;; *) return 1;; esac
 }
 _native_gate_decimal() {
     case "$1" in ''|0*|*[!0-9]*) return 1;; *) return 0;; esac
