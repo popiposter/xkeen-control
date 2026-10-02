@@ -348,6 +348,76 @@ The synthetic readiness-failure fixture proves propagation only: pinned native
 No full qualification, router action, production default change or installation
 was performed for this source preparation.
 
+## Disconnected native entry/finish helper
+
+`scripts/native-admission-entry.sh` adds source-only orchestration around the
+existing RAM gate. It is not connected to the disabled builder or installed.
+Its only roles are `dispatcher` and `init`; actions are `start`, `stop`, and
+`restart`. Paths are fixed native paths, never supplied commands or callbacks:
+`/opt/sbin/xkeen`, `/opt/etc/init.d/S05xkeen`, `/opt/bin/sh`, and the native-owned
+`/opt/lib/xkeen/native-admission-verify.sh`. The latter is deliberately not
+implemented here. Missing verification retains admission; there is no dependency
+on the panel process, binary, CLI or API. The precreated gate root is
+`/tmp/.xkeen-admission`. Library/native/verifier files must have protected,
+root-owned nonsymlink ancestry; deployment must validate the entry library too.
+
+`native_admission_enter ROLE ACTION forced` either runs a fixed foreground child as an
+owner/borrower wrapper, or sets private `_na_body=1` after validating a child.
+Callers must exit after a completed wrapper (`_na_body=0`), and execute native
+body only when `_na_body=1`. `native_admission_finish STATUS` belongs at the final
+reviewed body endpoint, after all mutating work; success does not authorize any
+subsequent mutation. The wrapper joins child termination and checks fixed native
+postconditions before settling. No EXIT/signal trap releases the shared gate.
+An inherited internal role flag alone grants no body authority: token, complete
+owner tuple, live owner ancestry, protected call nonce and live immediate wrapper
+PID/start-time must agree. Dispatcher-to-init is the only additional nesting.
+Standalone lifecycle actions cannot change inside a differently typed lifecycle
+owner; a panel `config-change` owner may invoke these lifecycle actions.
+
+This helper supports forced lifecycle only, explicitly marked by its third
+argument. Init children receive native `on`; dispatcher children receive the
+fixed native `-start`/`-stop`/`-restart` flag. Callers must not map bare init/boot
+start to `forced`. Automatic mode currently rejects before acquisition/body;
+later builder integration must add and prove a finite automatic mode preserving
+native autostart/cold-start semantics before enabling those entrypoints.
+
+At most two invocation directories (`call.dispatcher`, `call.init`) live inside
+the existing gate directory. Each holds a bounded 0600 context and exclusive
+completion record, binding wrapper PID/start-time, random nonce, role/action and
+gate token. Verified success removes its own invocation metadata. Failed finish,
+failed verification, abnormal child termination or missing completion retains
+the gate and attempts an `unresolved` directory marker only while the exact owner
+tuple still agrees. Native admission then rejects further joins. No stale owner
+is adopted/reaped; there is no second persistent intent or rollback journal.
+
+**Cross-peer source integration:** Go `readOwner` now uses `Lstat` to reject any
+`unresolved` entry; shell `_native_gate_read_owner` does the same with existence
+and symlink checks. Thus Go Verify/Join and shell Join refuse the poisoned tuple,
+including a dangling marker symlink. Both environment projections also strip the
+three admission hints. Active call directories still permit borrowing but block
+primitive Release until verified cleanup; a failed caller cannot release merely
+because its own child exited. Focused parent evidence covers three marker kinds,
+active-call borrow/release behavior and all four affected Go packages, alongside
+17 entry fixtures. This remains source-only. Recovery/settlement integration and
+native error propagation to the typed Go admission path must precede enablement.
+A killed borrower can leave call metadata without a poison marker; that too is
+unresolved, not an automatically recoverable receipt, and prevents Release.
+
+`native_admission_strip` removes exported context and copied private finish/owner
+state in a launch subshell. Background launch sites must explicitly call it;
+the helper cannot enforce stripping at unmodified native sites. Full native
+dispatcher normalization/endpoints, generated hooks, monitor, NDM convergence,
+native verifier, standalone durable intent/reboot recovery and update persistence
+remain disconnected blockers. No functional or hardware enablement is claimed.
+
+Focused Linux fixtures use only synthetic protected native files and substitute
+the fixed paths in a test copy. They exercise real shared-gate acquire/join,
+foreground nested completion, borrower non-release, forged flags, premature
+exit/EXIT traps, typed failure, failed verification, native child signals,
+live/dead/incomplete owner contention, native poisoning and explicit context
+stripping. These are Docker `/bin/sh` fixtures, not the router's NDM Shell Wrapper
+or Entware BusyBox qualification. No full upstream script runs in these tests.
+
 ## Actual Entware shell protocol probe (2026-10-02)
 
 The first isolated RAM probe of the old shell library stopped before creating a

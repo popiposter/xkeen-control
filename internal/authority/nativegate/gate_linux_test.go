@@ -68,6 +68,82 @@ func TestExclusiveAdmissionAndOwnTupleRelease(t *testing.T) {
 	}
 }
 
+func TestUnresolvedNativeChildBlocksBothPeers(t *testing.T) {
+	for _, kind := range []string{"directory", "file", "dangling-link"} {
+		t.Run(kind, func(t *testing.T) {
+			root := testRoot(t)
+			lease, err := Acquire(root, ConfigChange)
+			if err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(root, "operation.lock.d", "unresolved")
+			switch kind {
+			case "directory":
+				err = os.Mkdir(marker, 0700)
+			case "file":
+				err = os.WriteFile(marker, nil, 0600)
+			case "dangling-link":
+				err = os.Symlink("absent", marker)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Join(root, lease.Token()); !errors.Is(err, ErrNotOwner) {
+				t.Errorf("Go admitted unresolved native operation: %v", err)
+			}
+			cmd := shell(t, `native_gate_join "$XKEEN_GATE_ROOT" "$XKEEN_GATE_TOKEN"; test $? -eq 77`, lease.ChildEnvironment(nil))
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Errorf("shell admitted unresolved operation: %v %s", err, out)
+			}
+			if err := lease.Release(); !errors.Is(err, ErrNotOwner) {
+				t.Fatalf("release: %v", err)
+			}
+			if _, err := os.Lstat(marker); err != nil {
+				t.Fatal("unresolved evidence removed")
+			}
+		})
+	}
+}
+
+func TestForegroundEntryRecordsPermitBorrowButPreventEarlyRelease(t *testing.T) {
+	root := testRoot(t)
+	lease, err := Acquire(root, ConfigChange)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := filepath.Join(root, "operation.lock.d", "call.init")
+	if err := os.Mkdir(call, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Join(root, lease.Token()); err != nil {
+		t.Fatal(err)
+	}
+	cmd := shell(t, `native_gate_join "$XKEEN_GATE_ROOT" "$XKEEN_GATE_TOKEN"`, lease.ChildEnvironment(nil))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("borrow: %v %s", err, out)
+	}
+	if err := lease.Release(); !errors.Is(err, ErrNotOwner) {
+		t.Fatalf("early release: %v", err)
+	}
+	if err := os.Remove(call); err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStripNativeEntryHints(t *testing.T) {
+	env := []string{"KEEP=value", "XKEEN_GATE_ROOT=old", "XKEEN_GATE_TOKEN=old", "XKEEN_ADMISSION_ROLE=init", "XKEEN_ADMISSION_ACTION=start", "XKEEN_ADMISSION_CALL=old"}
+	if got := strings.Join(StripEnvironment(env), "|"); got != "KEEP=value" {
+		t.Errorf("Go strip: %s", got)
+	}
+	cmd := shell(t, `native_gate_strip; test -z "${XKEEN_GATE_ROOT-}${XKEEN_GATE_TOKEN-}${XKEEN_ADMISSION_ROLE-}${XKEEN_ADMISSION_ACTION-}${XKEEN_ADMISSION_CALL-}"`, env)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("shell strip: %v %s", err, out)
+	}
+}
+
 func TestIncompleteOwnerNeverReaped(t *testing.T) {
 	root := testRoot(t)
 	path := filepath.Join(root, "operation.lock.d")

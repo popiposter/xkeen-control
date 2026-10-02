@@ -81,6 +81,8 @@ _native_gate_self() {
 _native_gate_read_owner() {
     _ng_lock=$1/operation.lock.d
     _native_gate_directory "$_ng_lock" 0700 || return 77
+    # Unknown child outcome rejects Join as well as Release, for both peers.
+    [ ! -e "$_ng_lock/unresolved" ] && [ ! -L "$_ng_lock/unresolved" ] || return 77
     [ ! -L "$_ng_lock/owner" ] && [ -f "$_ng_lock/owner" ] || return 77
     _native_gate_metadata "$_ng_lock/owner" || return 77
     [ "$_ng_meta_uid" = 0 ] && [ "$_ng_meta_links" = 1 ] && [ "$((0x$_ng_meta_mode))" -eq "$((0100600))" ] || return 77
@@ -184,4 +186,6 @@ native_gate_release() {
     native_gate_strip
 }
 
-native_gate_strip() { unset XKEEN_GATE_ROOT XKEEN_GATE_TOKEN; }
+native_gate_strip() {
+    unset XKEEN_GATE_ROOT XKEEN_GATE_TOKEN XKEEN_ADMISSION_ROLE XKEEN_ADMISSION_ACTION XKEEN_ADMISSION_CALL
+}

@@ -182,7 +182,9 @@ func (l *Lease) ChildEnvironment(env []string) []string {
 func StripEnvironment(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, e := range env {
-		if !strings.HasPrefix(e, "XKEEN_GATE_ROOT=") && !strings.HasPrefix(e, "XKEEN_GATE_TOKEN=") {
+		if !strings.HasPrefix(e, "XKEEN_GATE_ROOT=") && !strings.HasPrefix(e, "XKEEN_GATE_TOKEN=") &&
+			!strings.HasPrefix(e, "XKEEN_ADMISSION_ROLE=") && !strings.HasPrefix(e, "XKEEN_ADMISSION_ACTION=") &&
+			!strings.HasPrefix(e, "XKEEN_ADMISSION_CALL=") {
 			out = append(out, e)
 		}
 	}
@@ -233,6 +235,11 @@ func protected(path string, mode os.FileMode, dir bool) error {
 
 func readOwner(root string) (string, error) {
 	path := filepath.Join(root, "operation.lock.d")
+	// A native child's unknown outcome poisons every peer, not only Release.
+	// Active foreground call records remain allowed while their child is joined.
+	if _, err := os.Lstat(filepath.Join(path, "unresolved")); !errors.Is(err, os.ErrNotExist) {
+		return "", ErrNotOwner
+	}
 	if protected(path, 0700, true) != nil || protected(filepath.Join(path, "owner"), 0600, false) != nil {
 		return "", ErrNotOwner
 	}
