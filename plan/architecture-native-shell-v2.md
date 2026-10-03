@@ -279,7 +279,11 @@ is not silently marked complete.
   postpones node commits while editor changes await Apply. Native encrypted
   export is connected without the appliance twin; positive registry absence,
   drift and managed-outbound coherence are checked. Import/UI and live delivery
-  remain incomplete; see [native transfer](../docs/NATIVE-TRANSFER.md).
+  remain incomplete; see [native transfer](../docs/NATIVE-TRANSFER.md). The next
+  backend cohort adds read-only import validation/interface mapping and one
+  session-bound Preview/Stage using the existing config pending owner, including
+  registry/outbounds and restoration of original file absence. HTTP/UI integration
+  and live delivery are still pending.
 - TASK-013 independent LAN DNS/DIRECT/proxy failure acceptance is NOT RUN: this
   workstation uses Karing. Router process/API/config observations do not replace
   an independent LAN client. Source work continues without claiming that result.

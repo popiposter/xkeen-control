@@ -3,6 +3,7 @@ package configjson
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
 )
 
 // ReplacePath edits a known object's data field while retaining all bytes outside
@@ -49,6 +50,9 @@ func ReplacePath(input []byte, path []string, value any) ([]byte, error) {
 func fieldRange(clean []byte, path []string) (int, int, bool, error) {
 	d := json.NewDecoder(bytes.NewReader(clean))
 	token, err := d.Token()
+	if err == nil && token == json.Delim('[') {
+		return arrayFieldRange(clean, d, path)
+	}
 	if err != nil || token != json.Delim('{') {
 		return 0, 0, false, errNativeConfig
 	}
@@ -92,4 +96,34 @@ func fieldRange(clean []byte, path []string) (int, int, bool, error) {
 		start--
 	} // Encodes whether the insertion needs a separator.
 	return start, position, false, nil
+}
+
+// Array indices are supplied by typed editors, never raw HTTP paths. Decode
+// offsets refer to the comment-stripped, same-length projection, so replacement
+// still splices only the selected value into the original JSONC bytes.
+func arrayFieldRange(clean []byte, d *json.Decoder, path []string) (int, int, bool, error) {
+	index, err := strconv.Atoi(path[0])
+	if err != nil || index < 0 {
+		return 0, 0, false, errNativeConfig
+	}
+	for current := 0; d.More(); current++ {
+		start := int(d.InputOffset())
+		for start < len(clean) && (clean[start] == ',' || clean[start] == ' ' || clean[start] == '\n' || clean[start] == '\r' || clean[start] == '\t') {
+			start++
+		}
+		var raw json.RawMessage
+		if d.Decode(&raw) != nil {
+			return 0, 0, false, errNativeConfig
+		}
+		end := int(d.InputOffset())
+		if current != index {
+			continue
+		}
+		if len(path) == 1 {
+			return start, end, true, nil
+		}
+		a, b, found, err := fieldRange(clean[start:end], path[1:])
+		return start + a, start + b, found, err
+	}
+	return 0, 0, false, errNativeConfig
 }

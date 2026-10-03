@@ -337,16 +337,46 @@ func OpenEncrypted(contents []byte, passphrase string) (Bundle, error) {
 }
 
 func openEncrypted(contents []byte, passphrase string, deriveKey KeyDeriver) (Bundle, error) {
-	plaintext, err := openPayload(contents, passphrase, deriveKey)
+	var bundle Bundle
+	err := openAndUse(contents, passphrase, deriveKey, func(plaintext []byte) error {
+		var err error
+		bundle, err = ParseBundle(plaintext)
+		if err != nil || !bundle.Manifest.ContainsSecrets || bundle.Nodes == nil {
+			return ErrDecryptionFailed
+		}
+		return nil
+	})
 	if err != nil {
 		return Bundle{}, err
 	}
-	defer clearBytes(plaintext)
-	bundle, err := ParseBundle(plaintext)
-	if err != nil || !bundle.Manifest.ContainsSecrets || bundle.Nodes == nil {
-		return Bundle{}, ErrDecryptionFailed
-	}
 	return bundle, nil
+}
+
+// OpenProduced holds the same private-memory/KDF budget through authenticated
+// decryption and typed decoding. Returned application data belongs to the caller;
+// temporary plaintext is cleared after the callback.
+func OpenProduced(contents []byte, passphrase string, consume func([]byte) error) error {
+	return openAndUse(contents, passphrase, argon2.IDKey, consume)
+}
+
+func openAndUse(contents []byte, passphrase string, deriveKey KeyDeriver, consume func([]byte) error) error {
+	if err := validatePassphrase(passphrase); err != nil {
+		return err
+	}
+	if consume == nil {
+		return ErrUnavailable
+	}
+	release, ok := trySecretOperation()
+	if !ok {
+		return ErrBusy
+	}
+	defer release()
+	plaintext, err := openPayloadReserved(contents, passphrase, deriveKey)
+	defer clearBytes(plaintext)
+	if err != nil {
+		return err
+	}
+	return consume(plaintext)
 }
 
 // SealPayload encrypts a bounded typed payload with the fixed portable envelope.
@@ -445,19 +475,21 @@ func openPayload(contents []byte, passphrase string, deriveKey KeyDeriver) ([]by
 	if err := validatePassphrase(passphrase); err != nil {
 		return nil, err
 	}
+	release, ok := trySecretOperation()
+	if !ok {
+		return nil, ErrBusy
+	}
+	defer release()
+	return openPayloadReserved(contents, passphrase, deriveKey)
+}
+
+func openPayloadReserved(contents []byte, passphrase string, deriveKey KeyDeriver) ([]byte, error) {
 	salt, nonce, ciphertext, aad, err := parseEnvelope(contents)
 	if err != nil {
 		return nil, err
 	}
-	release, ok := trySecretOperation()
-	if !ok {
-		clearBytes(salt)
-		clearBytes(nonce)
-		clearBytes(ciphertext)
-		clearBytes(aad)
-		return nil, ErrBusy
-	}
-	defer release()
+	defer clearBytes(salt)
+	defer clearBytes(nonce)
 	defer clearBytes(ciphertext)
 	defer clearBytes(aad)
 	password := []byte(passphrase)
@@ -468,8 +500,6 @@ func openPayload(contents []byte, passphrase string, deriveKey KeyDeriver) ([]by
 	key := deriveKey(password, salt, Argon2MemoryKiB, Argon2Iterations, Argon2Parallelism, Argon2KeyBytes)
 	clearBytes(password)
 	defer clearBytes(key)
-	defer clearBytes(salt)
-	defer clearBytes(nonce)
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
 		return nil, ErrDecryptionFailed

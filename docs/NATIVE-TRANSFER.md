@@ -9,8 +9,10 @@ authentication, panel listener settings and process identities are excluded.
 The source implementation exports one encrypted archive through the existing
 authenticated, CSRF-protected, current-password-confirmed secret download.
 The native service is connected in the main program. It is not yet installed
-on the router. Native import, destination mapping and the replacement transfer
-screen remain incomplete; the historical restore service remains unwired.
+on the router. The native import backend now has read-only destination validation,
+socket-interface mapping and session-bound Preview/Stage. Its HTTP integration
+and the replacement transfer screen remain incomplete; the historical restore
+service remains unwired.
 Opening a native archive is read-only and cannot apply it through the historical
 appliance importer.
 
@@ -35,7 +37,21 @@ The panel lease covers config and registry snapshots; final reads detect changed
 config bytes and registry appearance/content. This does not exclude external
 native CLI or cron writers.
 
-## Remaining import workflow
+The import backend retains one private preview in RAM for five minutes. Missing
+destination interfaces produce a mapping step without a Stage token. Mapping
+splices only the selected interface string; surrounding JSONC bytes survive.
+A ready preview has passed complete destination Xray validation without writes.
+Stage consumes its session-bound token, rechecks the destination baseline and
+validates again before saving. It performs no Restart.
+
+Registry, generated outbounds and native config changes use the existing editor
+pending generation, discard and optional previous-generation restoration. A
+fixed private registry sidecar participates in the baseline/history but is never
+passed to Xray or exposed as a raw editor document. Discard restores original
+file absence as well as original bytes. The native mode, client policy and
+schedules remain destination-native and require an explicit operator check.
+
+## Operator workflow (HTTP/UI integration pending)
 
 1. Install unmodified XKeen on the destination using its native installer.
 2. Open the encrypted archive privately and preview config IDs, node/subscription

@@ -19,8 +19,20 @@ func candidateSet(before ConfigSnapshot, changes map[string][]byte) (ConfigSnaps
 		after.files[name] = data
 	}
 	for name, data := range changes {
-		if !editableConfig(name) || len(data) > maxNativeConfig || before.files[name] == nil {
+		limit := maxNativeConfig
+		if name == registryConfigID {
+			limit = 4 << 20
+		}
+		if !generationConfig(name) || len(data) > limit {
 			return ConfigSnapshot{}, ErrConfig
+		}
+		if data == nil && name != registryConfigID {
+			delete(after.files, name)
+			continue
+		}
+		if name == registryConfigID && bytes.Equal(data, absentRegistry) {
+			after.files[name] = data
+			continue
 		}
 		if _, err := configjson.DecodeObject(data); err != nil {
 			return ConfigSnapshot{}, ErrConfig
@@ -45,6 +57,9 @@ func (e *ConfigEditor) validateSet(ctx context.Context, candidate ConfigSnapshot
 	}
 	defer os.RemoveAll(tmp)
 	for name, data := range candidate.files {
+		if name == registryConfigID {
+			continue
+		}
 		if os.WriteFile(filepath.Join(tmp, name), data, 0600) != nil {
 			return ErrConfig
 		}
@@ -106,11 +121,27 @@ func (e *ConfigEditor) promoteSet(ctx context.Context, before, after ConfigSnaps
 		}
 	}()
 	names := []string{}
-	for name, data := range after.files {
+	all := make(map[string]bool, len(before.files)+len(after.files))
+	for name := range before.files {
+		all[name] = true
+	}
+	for name := range after.files {
+		all[name] = true
+	}
+	for name := range all {
+		data := after.files[name]
 		if bytes.Equal(data, before.files[name]) {
 			continue
 		}
-		f, err := os.CreateTemp(e.Dir, ".panel-config-*")
+		path := e.configPath(name)
+		if name == registryConfigID && e.prepareRegistryDirectory() != nil {
+			return "", ErrConfig
+		}
+		if data == nil || name == registryConfigID && bytes.Equal(data, absentRegistry) {
+			names = append(names, name)
+			continue
+		}
+		f, err := os.CreateTemp(filepath.Dir(path), ".panel-config-*")
 		if err != nil {
 			return "", ErrConfig
 		}
@@ -134,13 +165,29 @@ func (e *ConfigEditor) promoteSet(ctx context.Context, before, after ConfigSnaps
 		if err != nil || current.Digest != expected {
 			return "", ErrConfig
 		}
-		if os.Rename(temps[name], filepath.Join(e.Dir, name)) != nil {
+		var promoteErr error
+		if after.files[name] == nil || name == registryConfigID && bytes.Equal(after.files[name], absentRegistry) {
+			promoteErr = os.Remove(e.configPath(name))
+			if os.IsNotExist(promoteErr) {
+				promoteErr = nil
+			}
+		} else {
+			promoteErr = os.Rename(temps[name], e.configPath(name))
+		}
+		if promoteErr != nil {
 			return "", ErrConfig
 		}
-		working[name] = after.files[name]
+		if after.files[name] == nil {
+			delete(working, name)
+		} else {
+			working[name] = after.files[name]
+		}
 		expected = configDigest(working)
 	}
 	if syncConfigDirectory(e.Dir) != nil {
+		return "", ErrConfig
+	}
+	if e.RegistryPath != "" && all[registryConfigID] && !bytes.Equal(before.files[registryConfigID], after.files[registryConfigID]) && syncConfigDirectory(filepath.Dir(e.RegistryPath)) != nil {
 		return "", ErrConfig
 	}
 	readCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

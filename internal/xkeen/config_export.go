@@ -15,6 +15,9 @@ func (e *ConfigEditor) ExportFilesUnderLease(ctx context.Context) (map[string][]
 	}
 	files := make(map[string][]byte, len(snapshot.files))
 	for name, data := range snapshot.files {
+		if name == registryConfigID {
+			continue
+		}
 		if !editableConfig(name) && name != "04_outbounds.json" {
 			return nil, "", ErrConfig
 		}

@@ -86,7 +86,7 @@ func (e *ConfigEditor) readGeneration(name string) (*pendingConfig, error) {
 	var pending pendingConfig
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
-	if d.Decode(&pending) != nil || d.Decode(&struct{}{}) != io.EOF || len(pending.Expected) != 64 || len(pending.Original) == 0 || len(pending.Original) > 7 {
+	if d.Decode(&pending) != nil || d.Decode(&struct{}{}) != io.EOF || len(pending.Expected) != 64 || len(pending.Original) == 0 || len(pending.Original) > 9 {
 		return nil, ErrConfig
 	}
 	if _, err := hex.DecodeString(pending.Expected); err != nil {
@@ -106,7 +106,11 @@ func (e *ConfigEditor) readGeneration(name string) (*pendingConfig, error) {
 	}
 	total := 0
 	for name, text := range pending.Original {
-		if !editableConfig(name) || len(text) > maxNativeConfig {
+		limit := maxNativeConfig
+		if name == registryConfigID {
+			limit = 4 << 20
+		}
+		if !generationConfig(name) || name == registryConfigID && e.RegistryPath == "" || len(text) > limit {
 			return nil, ErrConfig
 		}
 		total += len(text)
@@ -142,7 +146,11 @@ func (e *ConfigEditor) stagePendingSet(before ConfigSnapshot, changes map[string
 		files[name] = data
 	}
 	for file, candidate := range changes {
-		files[file] = candidate
+		if candidate == nil && file != registryConfigID {
+			delete(files, file)
+		} else {
+			files[file] = candidate
+		}
 	}
 	pending.Expected = configDigest(files)
 	return e.writeGeneration("pending.json", pending)

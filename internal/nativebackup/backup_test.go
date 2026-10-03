@@ -150,11 +150,11 @@ func TestNativeArchiveRejectsExecutablePathsAndRegistryMismatch(t *testing.T) {
 		}
 	}
 	bundle := fixture(t)
-	parsed, err := nodes.ParseProfile("vless://11111111-1111-4111-8111-111111111111@edge.example.com:443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=front.example.com&fp=chrome&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=abcd&type=tcp#Synthetic")
-	if err != nil {
-		t.Fatal(err)
-	}
-	node, err := nodes.NewNodeWithID(parsed.VLESS, parsed.Name, nodes.Source{Type: "manual"}, "node-11111111")
+	node, err := nodes.NewNodeWithID(nodes.VLESS{
+		UUID: "11111111-1111-4111-8111-111111111111", Host: "edge.example.com", Port: 443,
+		Encryption: "none", Flow: "xtls-rprx-vision", Security: "reality", ServerName: "front.example.com",
+		Fingerprint: "chrome", PublicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", ShortID: "abcd", Network: "tcp",
+	}, "Synthetic", nodes.Source{Type: "manual"}, "node-11111111")
 	if err != nil {
 		t.Fatal(err)
 	}

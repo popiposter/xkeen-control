@@ -185,6 +185,7 @@ func main() {
 	}
 	authorityLease := authority.NewLease()
 	nativeConfig := &xkeen.ConfigEditor{DraftDir: getenv("XKEEN_NATIVE_CONFIG_DRAFT_DIR", "/opt/etc/xkeen-control/secrets/config-drafts"), Dir: getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir), XrayBinary: getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary), Lease: authorityLease, PreviousDir: getenv("XKEEN_NATIVE_CONFIG_PREVIOUS_DIR", "/opt/etc/xkeen-control/previous/native-config"), AssetDir: getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)}
+	nativeConfig.RegistryPath = getenv("XKEEN_NODES_PATH", defaultNodesPath)
 	nodeManager = newNodeManager(coordinator, authorityLease, nativeConfig)
 	nativeJobs := newNativeJobs(authorityLease)
 	subscriptionRefresher := nodes.NewSubscriptionRefresher(nodeManager)

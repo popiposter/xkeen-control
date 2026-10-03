@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/popiposter/xkeen-control/internal/authority"
@@ -32,9 +33,13 @@ type RegistrySource interface {
 	NativeSnapshotUnderLease(context.Context) (nodes.Registry, string, error)
 }
 type Service struct {
-	Editor *xkeen.ConfigEditor
-	Nodes  RegistrySource
-	Lease  *authority.Lease
+	Editor      *xkeen.ConfigEditor
+	Nodes       RegistrySource
+	Lease       *authority.Lease
+	Interfaces  func() ([]string, error)
+	mu          sync.Mutex
+	preview     *privatePreview
+	previewBusy bool
 }
 
 // Every native config can contain private material. Plaintext export is not a
@@ -100,12 +105,16 @@ func (s *Service) exportPlaintext(ctx context.Context) ([]byte, error) {
 // Open authenticates and strictly validates a native-data archive. Opening an
 // archive performs no writes and does not authorize restoration or Restart.
 func Open(contents []byte, passphrase string) (Bundle, error) {
-	plaintext, err := backup.OpenPayload(contents, passphrase)
+	var bundle Bundle
+	err := backup.OpenProduced(contents, passphrase, func(plaintext []byte) error {
+		var err error
+		bundle, err = Parse(plaintext)
+		return err
+	})
 	if err != nil {
 		return Bundle{}, err
 	}
-	defer clear(plaintext)
-	return Parse(plaintext)
+	return bundle, nil
 }
 
 func Parse(plaintext []byte) (Bundle, error) {

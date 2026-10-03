@@ -2,8 +2,6 @@ package xkeen
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -20,13 +18,14 @@ var ErrConfig = errors.New("native configuration unavailable or changed")
 // ConfigEditor operates on fixed native data files. It has no raw file API and
 // does not generate appliance.json or change unrelated native policy.
 type ConfigEditor struct {
-	Dir         string
-	XrayBinary  string
-	Lease       *authority.Lease
-	PreviousDir string
-	AssetDir    string
-	DraftDir    string
-	ProcRoot    string
+	Dir          string
+	XrayBinary   string
+	Lease        *authority.Lease
+	PreviousDir  string
+	AssetDir     string
+	DraftDir     string
+	ProcRoot     string
+	RegistryPath string
 }
 
 type ConfigSnapshot struct {
@@ -56,7 +55,6 @@ func (e *ConfigEditor) Snapshot(ctx context.Context) (ConfigSnapshot, error) {
 		}
 	}
 	sort.Strings(names)
-	digest := sha256.New()
 	total := 0
 	for _, name := range names {
 		if ctx.Err() != nil {
@@ -75,15 +73,18 @@ func (e *ConfigEditor) Snapshot(ctx context.Context) (ConfigSnapshot, error) {
 			return result, ErrConfig
 		}
 		result.files[name] = data
-		digest.Write([]byte(name))
-		digest.Write([]byte{0})
-		digest.Write(data)
-		digest.Write([]byte{0})
 	}
 	if len(names) == 0 {
 		return result, ErrConfig
 	}
-	result.Digest = hex.EncodeToString(digest.Sum(nil))
+	if e.RegistryPath != "" {
+		data, err := e.registryBytes()
+		if err != nil || total+len(data) > 8<<20 {
+			return result, ErrConfig
+		}
+		result.files[registryConfigID] = data
+	}
+	result.Digest = configDigest(result.files)
 	return result, nil
 }
 
@@ -158,6 +159,9 @@ func (e *ConfigEditor) SaveTexts(ctx context.Context, baseline string, texts map
 	}
 	changes := map[string][]byte{}
 	for name, text := range texts {
+		if !editableConfig(name) || before.files[name] == nil {
+			return "", ErrConfig
+		}
 		changes[name] = []byte(text)
 	}
 	return e.saveCandidate(ctx, before, changes)

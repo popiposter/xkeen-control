@@ -49,7 +49,10 @@ func (e *ConfigEditor) Workspace(ctx context.Context) (EditorWorkspace, error) {
 		return EditorWorkspace{}, err
 	}
 	w := EditorWorkspace{Digest: snapshot.Digest, Documents: map[string]EditorDocument{}}
-	for _, data := range snapshot.files {
+	for name, data := range snapshot.files {
+		if name == registryConfigID {
+			continue
+		}
 		object, err := configjson.DecodeObject(data)
 		if err != nil {
 			return EditorWorkspace{}, ErrConfig
