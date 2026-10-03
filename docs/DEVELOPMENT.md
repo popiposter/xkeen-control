@@ -325,10 +325,9 @@ does not scale a wall-clock deadline or change production limits.
 | --- | --- | --- |
 | `go test -count=1 ./...` | Complete normal Go package suite | Once |
 | `go test -race ./...` | Cross-package race detection | Full only, once |
-| `test-c1.sh`, `test-backup.sh`, `test-restore.sh`, `test-setup.sh` | Convenient focused package subsets | Not repeated after the complete Go suite |
+| `test-c1.sh`, `test-backup.sh` | Convenient focused package subsets | Not repeated after the complete Go suite |
 | `test-components.sh` | Focused component packages/race plus prohibited-surface assertions | Aggregate uses `--fixtures-only` |
 | `test-release.sh` | Focused release packages plus bootstrap/updater/legacy integration | Aggregate uses `--fixtures-only` |
-| `test-appliance.sh` | Binary-level appliance/deploy candidate integration | Retained when helpers/build paths change |
 | `test-keenetic-env.ps1`, `test-keenetic-env.sh` | Synthetic operator-local environment parser and secret-output boundaries | Helper lane runs both host and container fixtures |
 | `test-benchmark-policy.sh`, `test-xkeen-foreground.sh` | Legacy-writer retirement and foreground runtime shell contracts | Retained when helpers/build paths change |
 | Playwright per-area scripts | Focused behavioral UI iteration | `test:ui` once in full mode |
@@ -371,3 +370,12 @@ mount them.
 Build/test first, then copy/use only the exact release/artifact/scripts required for the bounded smoke. Snapshot affected state, use repository/typed transactions, sanitize evidence and remove temporary uploads/tunnels afterward.
 
 Go/Node/build tooling is never installed on Keenetic.
+
+
+Native-shell cleanup retires obsolete component/Setup/appliance restore HTTP tests,
+`internal/restore`, the old appliance/migration CLI and their standalone helper
+scripts. Native encrypted transfer retains its private upload/session/budget
+regressions. The deleted component HTTP recovery path no longer triggers a
+five-repeat race stress loop. Aggregate FULL still runs the actual complete Go
+and race suites, auth/node/config/transfer tests, current browser suite, embedded
+assets, dependency audit and ARM64 assembly once per finished delivery cohort.

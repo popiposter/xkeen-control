@@ -21,13 +21,6 @@ if [ "$fixtures_only" = false ]; then
 
 fi
 
-# This repeated race regression is deliberate stress coverage, not a duplicate
-# package sweep. Focused runs retain it; aggregate fast mode may omit it while
-# aggregate full mode opts in explicitly.
-if [ "$fixtures_only" = false ] || [ "${XKEEN_STRESS_RACE:-0}" = "1" ]; then
-	go test -race -count=5 -run '^TestComponentWriteWindowPreservesLateRecoveryHTTPResponse$' ./cmd/xkeen-control
-fi
-
 # F3 exposes only the authenticated policy surface plus the existing manual
 # backend routes. Keep generic scheduler and automatic-mutation surfaces
 # rejected at source level.

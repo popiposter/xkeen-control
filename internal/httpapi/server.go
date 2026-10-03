@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -16,7 +15,6 @@ import (
 	"github.com/popiposter/xkeen-control/internal/auth"
 	"github.com/popiposter/xkeen-control/internal/backup"
 	"github.com/popiposter/xkeen-control/internal/c1"
-	"github.com/popiposter/xkeen-control/internal/components"
 	"github.com/popiposter/xkeen-control/internal/geodatareader"
 	"github.com/popiposter/xkeen-control/internal/nativebackup"
 	"github.com/popiposter/xkeen-control/internal/nodes"
@@ -24,7 +22,6 @@ import (
 	"github.com/popiposter/xkeen-control/internal/panellistener"
 	"github.com/popiposter/xkeen-control/internal/performancepolicy"
 	"github.com/popiposter/xkeen-control/internal/release"
-	"github.com/popiposter/xkeen-control/internal/restore"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
 	panelupdate "github.com/popiposter/xkeen-control/internal/update"
 	"github.com/popiposter/xkeen-control/internal/xkeen"
@@ -34,10 +31,6 @@ const (
 	maxLoginBody             = 16 << 10
 	maxMutationBody          = 384 << 10
 	maxManualNodeBody        = 1 << 10
-	maxComponentCheckBody    = 4 << 10
-	maxComponentMutationBody = 4 << 10
-	maxComponentPolicyBody   = 4 << 10
-	maxSetupBody             = 1 << 10
 	maxPerformancePolicyBody = 4 << 10
 	maxPanelListenerBody     = 1 << 10
 	maxJSONResponse          = 512 << 10
@@ -61,14 +54,6 @@ type NativeDiscovery interface {
 	Inspect(context.Context) xkeen.Capabilities
 }
 
-type RestoreService interface {
-	PreviewBundle(context.Context, string, []byte, string, restore.Mode) (restore.Preview, error)
-	Apply(context.Context, string, string) (restore.ApplyResult, error)
-	Cancel(string, string)
-	Invalidate(string)
-	InvalidateAll()
-}
-
 type PerformancePolicyService interface {
 	Read(context.Context) (performancepolicy.Projection, error)
 	Preview(context.Context, string, c1.PerformancePolicy) (performancepolicy.Preview, error)
@@ -87,20 +72,6 @@ type PanelListenerService interface {
 	InvalidateAll()
 }
 
-type ComponentMutationService interface {
-	Preview(context.Context, string, components.MutationRequest) (components.MutationPreview, error)
-	Apply(context.Context, string, string) (components.MutationResult, error)
-	Rollback(context.Context, string, string) (components.MutationResult, error)
-	Cancel(string, string)
-	Invalidate(string)
-	InvalidateAll()
-}
-
-type ComponentPolicyService interface {
-	Status() components.ComponentPolicyStatus
-	SetPolicy(components.ComponentPolicy) (components.ComponentPolicyStatus, error)
-}
-
 type Server struct {
 	collector *controlruntime.Collector
 	auth      *auth.Manager
@@ -116,23 +87,17 @@ type Server struct {
 	selection interface {
 		SetManualOverride(context.Context, string) error
 	}
-	components         components.ReadOnlyService
-	componentChecks    components.CheckService
-	componentMutations ComponentMutationService
-	componentPolicy    ComponentPolicyService
-	setup              components.SetupAPI
-	native             NativeDiscovery
-	nativeJobs         *xkeen.Jobs
-	nativeConfig       *xkeen.ConfigEditor
-	geodata            *geodatareader.Reader
-	updates            panelupdate.Service
-	notifications      *notifications.Service
-	backup             BackupService
-	nativeTransfer     NativeTransferService
-	restore            RestoreService
-	performancePolicy  PerformancePolicyService
-	listener           PanelListenerService
-	restorePreviewGate chan struct{}
+	native              NativeDiscovery
+	nativeJobs          *xkeen.Jobs
+	nativeConfig        *xkeen.ConfigEditor
+	geodata             *geodatareader.Reader
+	updates             panelupdate.Service
+	notifications       *notifications.Service
+	backup              BackupService
+	nativeTransfer      NativeTransferService
+	performancePolicy   PerformancePolicyService
+	listener            PanelListenerService
+	transferPreviewGate chan struct{}
 }
 
 type Config struct {
@@ -150,29 +115,23 @@ type Config struct {
 	Selection interface {
 		SetManualOverride(context.Context, string) error
 	}
-	Components         components.ReadOnlyService
-	ComponentChecks    components.CheckService
-	ComponentMutations ComponentMutationService
-	ComponentPolicy    ComponentPolicyService
-	Setup              components.SetupAPI
-	Native             NativeDiscovery
-	NativeJobs         *xkeen.Jobs
-	NativeConfig       *xkeen.ConfigEditor
-	Geodata            *geodatareader.Reader
-	Updates            panelupdate.Service
-	Notifications      *notifications.Service
-	Backup             BackupService
-	NativeTransfer     NativeTransferService
-	Restore            RestoreService
-	PerformancePolicy  PerformancePolicyService
-	Listener           PanelListenerService
+	Native            NativeDiscovery
+	NativeJobs        *xkeen.Jobs
+	NativeConfig      *xkeen.ConfigEditor
+	Geodata           *geodatareader.Reader
+	Updates           panelupdate.Service
+	Notifications     *notifications.Service
+	Backup            BackupService
+	NativeTransfer    NativeTransferService
+	PerformancePolicy PerformancePolicyService
+	Listener          PanelListenerService
 }
 
 func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, native: config.Native, nativeJobs: config.NativeJobs, nativeConfig: config.NativeConfig, geodata: config.Geodata, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, nativeTransfer: config.NativeTransfer, restore: config.Restore, performancePolicy: config.PerformancePolicy, listener: config.Listener, restorePreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, native: config.Native, nativeJobs: config.NativeJobs, nativeConfig: config.NativeConfig, geodata: config.Geodata, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, nativeTransfer: config.NativeTransfer, performancePolicy: config.PerformancePolicy, listener: config.Listener, transferPreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -195,9 +154,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/v1/session/login", "/api/v1/session/logout", "/api/v1/session",
 		"/api/v1/xkeen",
 		"/api/v1/xkeen/commands", "/api/v1/xkeen/jobs/start", "/api/v1/xkeen/jobs/read", "/api/v1/xkeen/jobs/input", "/api/v1/xkeen/jobs/resize", "/api/v1/xkeen/jobs/cancel", "/api/v1/xkeen/jobs/resolve", "/api/v1/xkeen/config", "/api/v1/xkeen/config/save", "/api/v1/xkeen/config/workspace", "/api/v1/xkeen/config/text", "/api/v1/xkeen/config/draft", "/api/v1/xkeen/config/document", "/api/v1/xkeen/config/example", "/api/v1/xkeen/config/save-set", "/api/v1/xkeen/config/apply", "/api/v1/xkeen/config/inspect", "/api/v1/xkeen/config/restore-saved", "/api/v1/xkeen/config/restore-previous",
-		"/api/v1/geodata", "/api/v1/geodata/query", "/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary", "/api/v1/components", "/api/v1/components/check", "/api/v1/components/policy",
-		"/api/v1/components/preview", "/api/v1/components/apply", "/api/v1/components/rollback", "/api/v1/components/cancel",
-		"/api/v1/setup/preview", "/api/v1/setup/apply", "/api/v1/setup/cancel",
+		"/api/v1/geodata", "/api/v1/geodata/query", "/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary",
+
 		"/api/v1/performance/policy", "/api/v1/performance/policy/preview", "/api/v1/performance/policy/apply", "/api/v1/performance/policy/cancel",
 		"/api/v1/panel/listener", "/api/v1/panel/listener/preview", "/api/v1/panel/listener/apply", "/api/v1/panel/listener/cancel",
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
@@ -206,7 +164,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/benchmark/run", "/api/v1/performance/manual-node",
 		"/api/v1/backup/export", "/api/v1/backup/export-secret",
 		"/api/v1/xkeen/transfer/preview", "/api/v1/xkeen/transfer/stage", "/api/v1/xkeen/transfer/cancel",
-		"/api/v1/backup/import/preview", "/api/v1/backup/import/apply", "/api/v1/backup/import/cancel",
+
 		"/api/v1/nodes/import/preview", "/api/v1/nodes/replace/preview",
 		"/api/v1/nodes/batch/state/preview", "/api/v1/nodes/batch/remove/preview",
 		"/api/v1/subscriptions/refresh/preview", "/api/v1/subscriptions/state/preview", "/api/v1/subscriptions/remove/preview",
@@ -364,69 +322,6 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.readOnly(w, r, func(view controlruntime.View) any { return view.ConfigSummary })
-	case "/api/v1/components":
-		if r.Method != http.MethodGet {
-			methodNotAllowed(w, http.MethodGet)
-			return
-		}
-		s.readComponents(w, r)
-	case "/api/v1/components/check":
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
-			return
-		}
-		s.checkComponents(w, r)
-	case "/api/v1/components/policy":
-		switch r.Method {
-		case http.MethodGet:
-			s.readComponentPolicy(w, r)
-		case http.MethodPost:
-			s.setComponentPolicy(w, r)
-		default:
-			methodNotAllowed(w, http.MethodGet+", "+http.MethodPost)
-		}
-	case "/api/v1/components/preview":
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
-			return
-		}
-		s.previewComponentMutation(w, r)
-	case "/api/v1/components/apply":
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
-			return
-		}
-		s.applyComponentMutation(w, r)
-	case "/api/v1/components/rollback":
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
-			return
-		}
-		s.rollbackComponentMutation(w, r)
-	case "/api/v1/components/cancel":
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
-			return
-		}
-		s.cancelComponentMutation(w, r)
-	case "/api/v1/setup/preview":
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
-			return
-		}
-		s.previewSetup(w, r)
-	case "/api/v1/setup/apply":
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
-			return
-		}
-		s.applySetup(w, r)
-	case "/api/v1/setup/cancel":
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
-			return
-		}
-		s.cancelSetup(w, r)
 	case "/api/v1/benchmark/run":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -451,24 +346,6 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.exportSecretBackup(w, r)
-	case "/api/v1/backup/import/preview":
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
-			return
-		}
-		s.previewRestore(w, r)
-	case "/api/v1/backup/import/apply":
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
-			return
-		}
-		s.applyRestore(w, r)
-	case "/api/v1/backup/import/cancel":
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
-			return
-		}
-		s.cancelRestore(w, r)
 	case "/api/v1/nodes/import/preview":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -781,17 +658,8 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if s.nativeTransfer != nil {
 		s.nativeTransfer.Invalidate(session.CSRFToken)
 	}
-	if s.restore != nil {
-		s.restore.Invalidate(session.CSRFToken)
-	}
 	if s.nodes != nil {
 		s.nodes.Invalidate(session.CSRFToken)
-	}
-	if s.componentMutations != nil {
-		s.componentMutations.Invalidate(session.CSRFToken)
-	}
-	if s.setup != nil {
-		s.setup.Invalidate(session.CSRFToken)
 	}
 	if s.performancePolicy != nil {
 		s.performancePolicy.Invalidate(session.CSRFToken)
@@ -830,17 +698,8 @@ func (s *Server) replacePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "password replacement failed")
 		return
 	}
-	if s.restore != nil {
-		s.restore.InvalidateAll()
-	}
 	if s.nativeTransfer != nil {
 		s.nativeTransfer.InvalidateAll()
-	}
-	if s.componentMutations != nil {
-		s.componentMutations.InvalidateAll()
-	}
-	if s.setup != nil {
-		s.setup.InvalidateAll()
 	}
 	if s.performancePolicy != nil {
 		s.performancePolicy.InvalidateAll()
@@ -1649,112 +1508,6 @@ func (s *Server) decodeManualNodeRequest(w http.ResponseWriter, r *http.Request,
 	return true
 }
 
-func (s *Server) decodeComponentCheckRequest(w http.ResponseWriter, r *http.Request, value any) bool {
-	if r.ContentLength > maxComponentCheckBody {
-		writeError(w, http.StatusRequestEntityTooLarge, "request too large")
-		return false
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxComponentCheckBody)
-	defer r.Body.Close()
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(value); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			writeError(w, http.StatusRequestEntityTooLarge, "request too large")
-		} else {
-			writeError(w, http.StatusBadRequest, "invalid request")
-		}
-		return false
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		writeError(w, http.StatusBadRequest, "invalid request")
-		return false
-	}
-	return true
-}
-
-func (s *Server) decodeComponentPolicyRequest(w http.ResponseWriter, r *http.Request, value any) bool {
-	contentTypes := r.Header.Values("Content-Type")
-	if len(contentTypes) != 1 || strings.TrimSpace(contentTypes[0]) != "application/json" {
-		writeCodedError(w, http.StatusUnsupportedMediaType, "invalid-request", "unsupported media type")
-		return false
-	}
-	if r.URL.RawQuery != "" {
-		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid component policy request")
-		return false
-	}
-	if r.ContentLength > maxComponentPolicyBody {
-		writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
-		return false
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxComponentPolicyBody)
-	defer r.Body.Close()
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(value); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
-		} else {
-			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid component policy request")
-		}
-		return false
-	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
-		} else {
-			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid component policy request")
-		}
-		return false
-	}
-	return true
-}
-
-func (s *Server) decodeComponentMutationRequest(w http.ResponseWriter, r *http.Request, value any) bool {
-	contentTypes := r.Header.Values("Content-Type")
-	if len(contentTypes) != 1 || strings.TrimSpace(contentTypes[0]) != "application/json" {
-		writeError(w, http.StatusUnsupportedMediaType, "unsupported media type")
-		return false
-	}
-	if r.URL.RawQuery != "" {
-		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid request")
-		return false
-	}
-	if r.ContentLength > maxComponentMutationBody {
-		writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
-		return false
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxComponentMutationBody)
-	defer r.Body.Close()
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(value); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
-		} else {
-			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid request")
-		}
-		return false
-	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
-			return false
-		}
-		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid request")
-		return false
-	}
-	return true
-}
-
 func (s *Server) writeNodeOperationResult(w http.ResponseWriter, preview nodes.Preview, err error) {
 	if err != nil {
 		s.writeNodeOperationError(w, err)
@@ -1944,294 +1697,6 @@ func (s *Server) performancePolicyTokenAction(w http.ResponseWriter, r *http.Req
 	}{Canceled: true})
 }
 
-func (s *Server) readComponents(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireSession(w, r); !ok {
-		return
-	}
-	if s.components == nil {
-		writeError(w, http.StatusServiceUnavailable, "component inventory unavailable")
-		return
-	}
-	writeJSON(w, http.StatusOK, s.components.Snapshot(r.Context()))
-}
-
-func (s *Server) checkComponents(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.requireSession(w, r)
-	if !ok {
-		return
-	}
-	if !auth.ValidateCSRF(r, session) {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-	if s.componentChecks == nil {
-		writeError(w, http.StatusServiceUnavailable, "component check unavailable")
-		return
-	}
-	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(r.Header.Get("Content-Type")))
-	if err != nil || mediaType != "application/json" {
-		writeError(w, http.StatusUnsupportedMediaType, "unsupported media type")
-		return
-	}
-	var request components.CheckRequest
-	if !s.decodeComponentCheckRequest(w, r, &request) {
-		return
-	}
-	if err := components.ValidateCheckRequest(request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid component check request")
-		return
-	}
-	result, err := s.componentChecks.Check(r.Context(), request)
-	if err != nil {
-		s.writeComponentCheckError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
-func (s *Server) readComponentPolicy(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireSession(w, r); !ok {
-		return
-	}
-	if s.componentPolicy == nil {
-		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "component policy unavailable")
-		return
-	}
-	writeJSON(w, http.StatusOK, s.componentPolicy.Status())
-}
-
-func (s *Server) setComponentPolicy(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.requireSession(w, r)
-	if !ok {
-		return
-	}
-	if !auth.ValidateCSRF(r, session) {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-	if s.componentPolicy == nil {
-		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "component policy unavailable")
-		return
-	}
-	var policy components.ComponentPolicy
-	if !s.decodeComponentPolicyRequest(w, r, &policy) {
-		return
-	}
-	status, err := s.componentPolicy.SetPolicy(policy)
-	if err != nil {
-		writeComponentPolicyError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, status)
-}
-
-func (s *Server) writeComponentCheckError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, components.ErrComponentPolicyDisabled):
-		writeCodedError(w, http.StatusConflict, "policy-disabled", "component policy disables component checks")
-	case errors.Is(err, components.ErrInvalidCheckRequest):
-		writeError(w, http.StatusBadRequest, "invalid component check request")
-	case errors.Is(err, components.ErrCheckBusy):
-		writeError(w, http.StatusConflict, "component check busy")
-	case errors.Is(err, components.ErrCheckTimeout):
-		writeError(w, http.StatusGatewayTimeout, "component check timed out")
-	case errors.Is(err, components.ErrUpstreamRejected):
-		writeError(w, http.StatusBadGateway, "component metadata rejected")
-	default:
-		writeError(w, http.StatusServiceUnavailable, "component check unavailable")
-	}
-}
-
-func writeComponentPolicyError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, components.ErrInvalidComponentPolicy):
-		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid component policy request")
-	case errors.Is(err, components.ErrComponentPolicySave), errors.Is(err, components.ErrComponentPolicyUnavailable):
-		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "component policy unavailable")
-	default:
-		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "component policy unavailable")
-	}
-}
-
-func (s *Server) previewComponentMutation(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.requireSession(w, r)
-	if !ok {
-		return
-	}
-	if !auth.ValidateCSRF(r, session) {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-	if s.componentMutations == nil {
-		writeComponentMutationError(w, components.ErrMutationUnavailable)
-		return
-	}
-	var request components.MutationRequest
-	if !s.decodeComponentMutationRequest(w, r, &request) {
-		return
-	}
-	if err := components.ValidateMutationRequest(request); err != nil {
-		writeComponentMutationError(w, err)
-		return
-	}
-	preview, err := s.componentMutations.Preview(r.Context(), session.CSRFToken, request)
-	if err != nil {
-		writeComponentMutationError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, preview)
-}
-
-func (s *Server) applyComponentMutation(w http.ResponseWriter, r *http.Request) {
-	s.applyOrRollbackComponentMutation(w, r, false)
-}
-
-func (s *Server) rollbackComponentMutation(w http.ResponseWriter, r *http.Request) {
-	s.applyOrRollbackComponentMutation(w, r, true)
-}
-
-func (s *Server) applyOrRollbackComponentMutation(w http.ResponseWriter, r *http.Request, rollback bool) {
-	session, ok := s.requireSession(w, r)
-	if !ok {
-		return
-	}
-	if !auth.ValidateCSRF(r, session) {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-	if s.componentMutations == nil {
-		writeComponentMutationError(w, components.ErrMutationUnavailable)
-		return
-	}
-	var request components.MutationTokenRequest
-	if !s.decodeComponentMutationRequest(w, r, &request) {
-		return
-	}
-	if err := components.ValidateMutationToken(request.PreviewToken); err != nil {
-		writeComponentMutationError(w, err)
-		return
-	}
-	var result components.MutationResult
-	var err error
-	if rollback {
-		result, err = s.componentMutations.Rollback(r.Context(), session.CSRFToken, request.PreviewToken)
-	} else {
-		result, err = s.componentMutations.Apply(r.Context(), session.CSRFToken, request.PreviewToken)
-	}
-	if err != nil {
-		writeComponentMutationError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
-func (s *Server) cancelComponentMutation(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.requireSession(w, r)
-	if !ok {
-		return
-	}
-	if !auth.ValidateCSRF(r, session) {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-	if s.componentMutations == nil {
-		writeComponentMutationError(w, components.ErrMutationUnavailable)
-		return
-	}
-	var request components.MutationTokenRequest
-	if !s.decodeComponentMutationRequest(w, r, &request) {
-		return
-	}
-	if err := components.ValidateMutationToken(request.PreviewToken); err != nil {
-		writeComponentMutationError(w, err)
-		return
-	}
-	s.componentMutations.Cancel(session.CSRFToken, request.PreviewToken)
-	writeJSON(w, http.StatusOK, struct {
-		Canceled bool `json:"canceled"`
-	}{Canceled: true})
-}
-
-func (s *Server) previewSetup(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.requireSession(w, r)
-	if !ok {
-		return
-	}
-	if !auth.ValidateCSRF(r, session) {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-	if s.setup == nil {
-		writeSetupError(w, components.ErrSetupUnavailable)
-		return
-	}
-	if !s.decodeSetupEmptyRequest(w, r) {
-		return
-	}
-	preview, err := s.setup.Preview(r.Context(), session.CSRFToken)
-	if err != nil {
-		writeSetupError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, preview)
-}
-
-func (s *Server) applySetup(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.requireSession(w, r)
-	if !ok {
-		return
-	}
-	if !auth.ValidateCSRF(r, session) {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-	if s.setup == nil {
-		writeSetupError(w, components.ErrSetupUnavailable)
-		return
-	}
-	var request components.MutationTokenRequest
-	if !s.decodeSetupTokenRequest(w, r, &request) {
-		return
-	}
-	if err := components.ValidateSetupToken(request.PreviewToken); err != nil {
-		writeSetupError(w, err)
-		return
-	}
-	result, err := s.setup.Apply(r.Context(), session.CSRFToken, request.PreviewToken)
-	if err != nil {
-		writeSetupError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
-func (s *Server) cancelSetup(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.requireSession(w, r)
-	if !ok {
-		return
-	}
-	if !auth.ValidateCSRF(r, session) {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-	if s.setup == nil {
-		writeSetupError(w, components.ErrSetupUnavailable)
-		return
-	}
-	var request components.MutationTokenRequest
-	if !s.decodeSetupTokenRequest(w, r, &request) {
-		return
-	}
-	if err := components.ValidateSetupToken(request.PreviewToken); err != nil {
-		writeSetupError(w, err)
-		return
-	}
-	s.setup.Cancel(session.CSRFToken, request.PreviewToken)
-	writeJSON(w, http.StatusOK, struct {
-		Canceled bool `json:"canceled"`
-	}{Canceled: true})
-}
-
 func decodePerformancePolicyBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
 	contentTypes := r.Header.Values("Content-Type")
 	if len(contentTypes) != 1 || strings.TrimSpace(contentTypes[0]) != "application/json" {
@@ -2314,157 +1779,6 @@ func writePerformancePolicyError(w http.ResponseWriter, err error) {
 		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "performance policy unavailable")
 	default:
 		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "performance policy unavailable")
-	}
-}
-
-func (s *Server) decodeSetupEmptyRequest(w http.ResponseWriter, r *http.Request) bool {
-	if !setupRequestHeaders(w, r) {
-		return false
-	}
-	if r.ContentLength > maxSetupBody {
-		writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
-		return false
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxSetupBody)
-	defer r.Body.Close()
-	decoder := json.NewDecoder(r.Body)
-	var value map[string]json.RawMessage
-	if err := decoder.Decode(&value); err != nil || value == nil || len(value) != 0 {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
-		} else {
-			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid setup request")
-		}
-		return false
-	}
-	var extra json.RawMessage
-	if err := decoder.Decode(&extra); err != io.EOF {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
-		} else {
-			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid setup request")
-		}
-		return false
-	}
-	return true
-}
-
-func (s *Server) decodeSetupTokenRequest(w http.ResponseWriter, r *http.Request, value *components.MutationTokenRequest) bool {
-	if !setupRequestHeaders(w, r) {
-		return false
-	}
-	if r.ContentLength > maxSetupBody {
-		writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
-		return false
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxSetupBody)
-	defer r.Body.Close()
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(value); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
-		} else {
-			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid setup request")
-		}
-		return false
-	}
-	var extra json.RawMessage
-	if err := decoder.Decode(&extra); err != io.EOF {
-		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid setup request")
-		return false
-	}
-	return true
-}
-
-func setupRequestHeaders(w http.ResponseWriter, r *http.Request) bool {
-	contentTypes := r.Header.Values("Content-Type")
-	if len(contentTypes) != 1 || strings.TrimSpace(contentTypes[0]) != "application/json" {
-		writeCodedError(w, http.StatusUnsupportedMediaType, "invalid-request", "unsupported media type")
-		return false
-	}
-	if r.URL.RawQuery != "" {
-		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid setup request")
-		return false
-	}
-	return true
-}
-
-func writeSetupError(w http.ResponseWriter, err error) {
-	var layout *components.SetupLayoutError
-	if errors.As(err, &layout) && layout != nil && layout.ReasonCode != "" {
-		writeCodedErrorWithReason(w, http.StatusConflict, string(layout.ReasonCode), "setup layout is blocked", string(layout.ReasonCode))
-		return
-	}
-	switch {
-	case errors.Is(err, components.ErrSetupPreviewExpired):
-		writeCodedError(w, http.StatusConflict, "preview-expired", "setup preview expired or invalid")
-	case errors.Is(err, components.ErrSetupPreviewStale):
-		writeCodedError(w, http.StatusConflict, "preview-stale", "setup preview is stale")
-	case errors.Is(err, components.ErrSetupBusy):
-		writeCodedError(w, http.StatusConflict, "busy", "setup is busy")
-	case errors.Is(err, components.ErrSetupBlocked):
-		writeCodedError(w, http.StatusConflict, "layout-blocked", "setup layout is blocked")
-	case errors.Is(err, components.ErrSetupSourceUnavailable):
-		writeCodedError(w, http.StatusBadGateway, "component-source-unavailable", "setup metadata unavailable")
-	case errors.Is(err, components.ErrSetupCandidateRejected):
-		writeCodedError(w, http.StatusBadGateway, "candidate-rejected", "setup candidate rejected")
-	case errors.Is(err, components.ErrSetupResourceInsufficient):
-		writeCodedError(w, http.StatusInsufficientStorage, "resource-insufficient", "setup resources are insufficient")
-	case errors.Is(err, components.ErrSetupTransactionRestored):
-		writeCodedError(w, http.StatusInternalServerError, "transaction-restored", "setup failed; fresh state was restored")
-	case errors.Is(err, components.ErrSetupTransactionUnproven):
-		writeCodedError(w, http.StatusServiceUnavailable, "transaction-unproven", "setup outcome is not proven")
-	case errors.Is(err, components.ErrSetupRuntimeUnavailable):
-		writeCodedError(w, http.StatusServiceUnavailable, "runtime-unavailable", "setup runtime is unavailable")
-	case errors.Is(err, components.ErrSetupVerificationFailed):
-		writeCodedError(w, http.StatusServiceUnavailable, "verification-failed", "setup verification failed")
-	case errors.Is(err, components.ErrSetupWriterConflict):
-		writeCodedError(w, http.StatusConflict, "writer-conflict", "a competing automatic writer was detected")
-	case errors.Is(err, components.ErrSetupMaintenance), errors.Is(err, components.ErrSetupRecoveryFailed):
-		writeCodedError(w, http.StatusServiceUnavailable, "maintenance", "setup unavailable during maintenance")
-	case errors.Is(err, components.ErrSetupUnavailable):
-		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "setup unavailable")
-	default:
-		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "setup unavailable")
-	}
-}
-
-func writeComponentMutationError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, components.ErrMutationPolicyDisabled), errors.Is(err, components.ErrComponentPolicyDisabled):
-		writeCodedError(w, http.StatusConflict, "policy-disabled", "component policy disables component updates")
-	case errors.Is(err, components.ErrInvalidMutationRequest), errors.Is(err, components.ErrMutationOperationMismatch):
-		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid component mutation request")
-	case errors.Is(err, components.ErrMutationBusy):
-		writeCodedError(w, http.StatusConflict, "busy", "component mutation busy")
-	case errors.Is(err, components.ErrMutationWriterConflict):
-		writeCodedError(w, http.StatusConflict, "writer-conflict", "a competing automatic writer was detected")
-	case errors.Is(err, components.ErrMutationPreviewExpired):
-		writeCodedError(w, http.StatusConflict, "preview-expired", "component mutation preview expired or invalid")
-	case errors.Is(err, components.ErrMutationPreviewStale):
-		writeCodedError(w, http.StatusConflict, "preview-stale", "component mutation preview is stale")
-	case errors.Is(err, components.ErrMutationNoPrevious):
-		writeCodedError(w, http.StatusConflict, "no-previous", "previous component generation unavailable")
-	case errors.Is(err, components.ErrMutationMetadataUnavailable):
-		writeCodedError(w, http.StatusBadGateway, "metadata-unavailable", "component metadata unavailable")
-	case errors.Is(err, components.ErrMutationCandidateRejected):
-		reasonCode, _ := components.MutationCandidateRejectionReason(err)
-		writeCodedErrorWithReason(w, http.StatusBadGateway, "candidate-rejected", "component candidate rejected", reasonCode)
-	case errors.Is(err, components.ErrMutationTransactionFailed):
-		writeCodedError(w, http.StatusInternalServerError, "transaction-restored", "component transaction failed; previous generation restored")
-	case errors.Is(err, components.ErrMutationTransactionUnproven):
-		writeCodedError(w, http.StatusInternalServerError, "transaction-unproven", "component transaction failed; outcome is not proven")
-	case errors.Is(err, components.ErrMutationRollbackUnproven):
-		writeCodedError(w, http.StatusServiceUnavailable, "rollback-unproven", "component rollback or recovery is not proven")
-	case errors.Is(err, components.ErrMutationMaintenance):
-		writeCodedError(w, http.StatusServiceUnavailable, "maintenance", "component mutation unavailable during maintenance")
-	case errors.Is(err, components.ErrMutationUnavailable):
-		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "component mutation unavailable")
-	default:
-		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "component mutation unavailable")
 	}
 }
 

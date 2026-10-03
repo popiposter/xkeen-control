@@ -118,3 +118,18 @@ Future live work needs bounded relevant snapshots/readback; service restarts are
 authorized under the active implementation scope. No router reboot, blanket opkg
 upgrade, credential rotation or sustained benchmark is planned. Credentials and
 raw infrastructure/subscription material stay outside Git/containers/public logs.
+
+
+Current native delivery has command jobs, Form/Text config editors, geodata
+membership/routing examples, enabled subscription refresh, encrypted transfer
+and [optional Telegram control](TELEGRAM-CONTROL.md). Production entry points for
+the old component/Setup/appliance restore owners and adoption/migration CLI are
+retired in the cleanup source with their tests. Signed panel update and current node/config rollback
+remain. Shared parsers/validation needed by those paths are retained.
+
+Hardware acceptance (unproxied LAN DNS/DIRECT/VPN/failures, second-router transfer)
+and real bot acceptance with configured private credentials are independent
+remaining checks; their absence does not create a Setup gate or justify native
+script patches. See the v2 plan for exact recorded development/live boundaries.
+
+The cleanup source also removes repository template deployment and legacy secret migration scripts. Native XKeen installation/update commands and the current encrypted transfer UI replace those obsolete entrypoints. This cleanup is not installed until its own exact-source delivery gate passes.

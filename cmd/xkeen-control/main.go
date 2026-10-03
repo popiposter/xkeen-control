@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/popiposter/xkeen-control/internal/appliance"
 	"github.com/popiposter/xkeen-control/internal/auth"
 	"github.com/popiposter/xkeen-control/internal/authority"
 	"github.com/popiposter/xkeen-control/internal/buildinfo"
@@ -27,7 +26,6 @@ import (
 	"github.com/popiposter/xkeen-control/internal/notifications"
 	"github.com/popiposter/xkeen-control/internal/panellistener"
 	"github.com/popiposter/xkeen-control/internal/performancepolicy"
-	"github.com/popiposter/xkeen-control/internal/restore"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
 	panelupdate "github.com/popiposter/xkeen-control/internal/update"
 	"github.com/popiposter/xkeen-control/internal/webassets"
@@ -35,25 +33,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
 
-const (
-	defaultListenAddress           = panellistener.DefaultAddress
-	componentMutationResponseGrace = components.DefaultMutationResponseGrace
-)
-
-var httpWriteTimeout = componentHTTPWriteWindow(
-	components.DefaultMutationWaitTimeout,
-	components.DefaultMutationOperationTimeout,
-	components.DefaultMutationRecoveryTimeout,
-	componentMutationResponseGrace,
-)
-
-func setupHTTPWriteWindow() time.Duration {
-	return components.DefaultSetupTransactionLimit + components.DefaultSetupRecoveryTimeout + componentMutationResponseGrace
-}
-
-func componentHTTPWriteWindow(admission, operation, recovery, responseGrace time.Duration) time.Duration {
-	return admission + operation + recovery + responseGrace
-}
+const defaultListenAddress = panellistener.DefaultAddress
 
 func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "native" {
@@ -110,12 +90,9 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) >= 2 && os.Args[1] == "appliance" {
-		if err := runApplianceCommand(os.Args[2:]); err != nil {
-			log.Print(err)
-			os.Exit(1)
-		}
-		return
+	if len(os.Args) > 1 {
+		log.Print("unsupported panel command; use native, nodes, password, version or self-update")
+		os.Exit(2)
 	}
 
 	listenerFile := getenv("XKEEN_CONTROL_LISTEN_FILE", panellistener.DefaultFilePath)
@@ -334,50 +311,8 @@ const (
 	defaultLegacyPath      = "/opt/etc/xkeen-control/secrets/04_outbounds.json"
 	defaultActiveOutbounds = "/opt/etc/xray/configs/04_outbounds.json"
 	defaultNodePreviousDir = "/opt/etc/xkeen-control/previous"
-	defaultAppliancePath   = "/opt/etc/xkeen-control/config/appliance.json"
 	defaultXrayConfigDir   = "/opt/etc/xray/configs"
 )
-
-func newApplianceService(lease *authority.Lease) *appliance.Service {
-	configDir := getenv("XKEEN_XRAY_CONFIG_DIR", "/opt/etc/xray/configs")
-	return appliance.NewService(appliance.Config{
-		AppliancePath:       getenv("XKEEN_APPLIANCE_PATH", defaultAppliancePath),
-		ConfigDir:           configDir,
-		XkeenConfigPath:     getenv("XKEEN_CONFIG_PATH", "/opt/etc/xkeen/xkeen.json"),
-		NodesPath:           getenv("XKEEN_NODES_PATH", defaultNodesPath),
-		ActiveOutboundsPath: getenv("XKEEN_ACTIVE_OUTBOUNDS", filepath.Join(configDir, "04_outbounds.json")),
-		Validator: nodes.CommandActivator{
-			XrayBinary:   getenv("XKEEN_XRAY_BINARY", "xray"),
-			XrayAssetDir: getenv("XKEEN_XRAY_ASSET_DIR", "/opt/etc/xray/dat"),
-		},
-		AuthorityLease: lease,
-	})
-}
-
-func newRestoreService(coordinator interface {
-	BeginApply(context.Context) (func(), error)
-}, lease *authority.Lease) *restore.Service {
-	configDir := getenv("XKEEN_XRAY_CONFIG_DIR", "/opt/etc/xray/configs")
-	return restore.NewService(restore.Config{
-		AppliancePath:       getenv("XKEEN_APPLIANCE_PATH", defaultAppliancePath),
-		NodesPath:           getenv("XKEEN_NODES_PATH", defaultNodesPath),
-		ConfigDir:           configDir,
-		XkeenConfigPath:     getenv("XKEEN_CONFIG_PATH", "/opt/etc/xkeen/xkeen.json"),
-		ActiveOutboundsPath: getenv("XKEEN_ACTIVE_OUTBOUNDS", filepath.Join(configDir, "04_outbounds.json")),
-		PreviousDir:         getenv("XKEEN_APPLIANCE_IMPORT_PREVIOUS_DIR", "/opt/etc/xkeen-control/previous/appliance-import"),
-		StateDir:            getenv("XKEEN_APPLIANCE_IMPORT_STATE_DIR", "/opt/etc/xkeen-control/state"),
-		Activator: nodes.CommandActivator{
-			XrayBinary:          getenv("XKEEN_XRAY_BINARY", "xray"),
-			XrayAssetDir:        getenv("XKEEN_XRAY_ASSET_DIR", "/opt/etc/xray/dat"),
-			XkeenBinary:         getenv("XKEEN_XKEEN_BINARY", "xkeen"),
-			APIAddress:          getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress),
-			ActiveOutboundsPath: getenv("XKEEN_ACTIVE_OUTBOUNDS", filepath.Join(configDir, "04_outbounds.json")),
-			RoutingPath:         filepath.Join(configDir, "05_routing.json"),
-		},
-		Coordinator:    coordinator,
-		AuthorityLease: lease,
-	})
-}
 
 func newNodeManager(coordinator interface {
 	BeginApply(context.Context) (func(), error)
@@ -424,7 +359,7 @@ func newNodeManager(coordinator interface {
 func runNodesCommand(args []string) error {
 	manager := newNodeManager(nil, authority.NewLease(), nil)
 	if len(args) == 0 {
-		return errors.New("usage: xkeen-control nodes {validate|render --output PATH|reconcile-runtime|migrate-legacy}")
+		return errors.New("usage: xkeen-control nodes {validate|render --output PATH|reconcile-runtime}")
 	}
 	switch args[0] {
 	case "validate":
@@ -453,65 +388,8 @@ func runNodesCommand(args []string) error {
 		}
 		_, err := io.WriteString(os.Stdout, "node runtime reconciled\n")
 		return err
-	case "migrate-legacy":
-		if len(args) != 1 {
-			return errors.New("usage: xkeen-control nodes migrate-legacy")
-		}
-		if err := manager.MigrateLegacy(context.Background()); err != nil {
-			return errors.New("legacy node migration failed")
-		}
-		_, err := io.WriteString(os.Stdout, "legacy node migration applied\n")
-		return err
 	default:
-		return errors.New("usage: xkeen-control nodes {validate|render --output PATH|reconcile-runtime|migrate-legacy}")
-	}
-}
-
-func runApplianceCommand(args []string) error {
-	usage := "usage: xkeen-control appliance {validate|adopt|verify|render --output DIR}"
-	if len(args) == 0 {
-		return errors.New(usage)
-	}
-	service := newApplianceService(authority.NewLease())
-	switch args[0] {
-	case "validate":
-		if len(args) != 1 {
-			return errors.New(usage)
-		}
-		if err := service.ValidateStored(); err != nil {
-			return errors.New("appliance authority validation failed")
-		}
-		_, err := io.WriteString(os.Stdout, "appliance authority valid\n")
-		return err
-	case "adopt":
-		if len(args) != 1 {
-			return errors.New(usage)
-		}
-		if err := service.Adopt(context.Background()); err != nil {
-			return errors.New("appliance authority adoption failed")
-		}
-		_, err := io.WriteString(os.Stdout, "appliance authority adopted\n")
-		return err
-	case "verify":
-		if len(args) != 1 {
-			return errors.New(usage)
-		}
-		if err := service.Verify(context.Background()); err != nil {
-			return errors.New("appliance authority verification failed")
-		}
-		_, err := io.WriteString(os.Stdout, "appliance authority verified\n")
-		return err
-	case "render":
-		if len(args) != 3 || args[1] != "--output" || args[2] == "" {
-			return errors.New(usage)
-		}
-		if err := service.Render(args[2]); err != nil {
-			return errors.New("appliance candidate render failed")
-		}
-		_, err := io.WriteString(os.Stdout, "appliance candidate rendered\n")
-		return err
-	default:
-		return errors.New(usage)
+		return errors.New("usage: xkeen-control nodes {validate|render --output PATH|reconcile-runtime}")
 	}
 }
 

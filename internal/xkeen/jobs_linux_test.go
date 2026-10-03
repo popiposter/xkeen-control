@@ -21,6 +21,22 @@ func testNativeJobs(t *testing.T, script string) *Jobs {
 	}
 	return NewJobs(path, authority.NewLease())
 }
+
+func TestNativeUpdateConsoleCanAnswerConditionalPrompt(t *testing.T) {
+	m := testNativeJobs(t, "[ \"$1\" = -ug ] || exit 9\nprintf 'Answer: '\nread -r answer\nprintf 'Got:%s' \"$answer\"\n")
+	v, err := m.Start("owner", CommandRequest{Action: "update-geodata"})
+	if err != nil || !v.Interactive {
+		t.Fatal("update prompt unavailable", err)
+	}
+	if err = m.Input("owner", v.ID, "yes\n"); err != nil {
+		t.Fatal(err)
+	}
+	final := waitNativeJob(t, m, v.ID)
+	output, _ := base64.StdEncoding.DecodeString(final.Output)
+	if final.State != "completed" || !strings.Contains(string(output), "Got:yes") {
+		t.Fatal("native update prompt was not answered")
+	}
+}
 func waitNativeJob(t *testing.T, m *Jobs, id string) JobView {
 	t.Helper()
 	until := time.Now().Add(3 * time.Second)

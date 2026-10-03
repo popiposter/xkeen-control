@@ -133,9 +133,6 @@ func (m *Jobs) start(owner string, r CommandRequest, editor *ConfigEditor, basel
 		return JobView{}, err
 	}
 	if unchanged != nil {
-		if r.Action == "update-xkeen" || r.Action == "update-xray" || r.Action == "update-geodata" {
-			spec.Interactive = true
-		}
 		ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
 		workspace, readErr := unchanged.Workspace(ctx)
 		done()

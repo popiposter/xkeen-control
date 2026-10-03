@@ -89,11 +89,11 @@ native Start подтверждены независимо. Native startup че�
 - Зависимости: нет. Приёмка: netfilter/init/cron не изменены, panel nodes/auth/update
   сохраняются; отсутствуют protocol dependencies и старые обязательные gates.
 
-| Task | Description | Completed | Date |
+| Task | Description | Evidence status | Date |
 |------|-------------|-----------|------|
 | TASK-001 | Сохранить локальный diff и удалить только замороженную 45-line runtime draft в `scripts/native-update-context.sh`. Удалить `scripts/native-operation-gate*`, `native-admission-*`, `native-event-*`, `native-update-*` и соответствующие fixture catalog entries `test-native-admission.sh`/`test-native-upstream.sh`. Удалить disabled-profile builder из packaging/check selectors; публичные ignored caches не являются поставкой. Перед удалением проверить imports/callers через rg. | Yes | 2026-10-03 |
 | TASK-002 | Удалить `internal/authority/nativegate/`, native adapters/context modes и node-intent bindings/callers. Сохранить ordinary `authority.Lease`, текущий `.pending` и scoped node/config rollback. В `internal/xkeen/lifecycle.go`, `internal/nodes` убрать admission environment/75–77 semantics; оставить timeout/unknown/independent readback. | Yes | 2026-10-03 |
-| TASK-003 | В `internal/xkeen/capabilities.go` убрать обязательный marker patched dispatcher (source done); capability определяется installed features. Обновить `docs/DEVELOPMENT.md` и selectors/tests для удалённых файлов, сохранив независимые Docker/embedded/audit и auth/node/security tests. Не устанавливать old native stop patch; воспроизводимую upstream ошибку оформить отдельно. Перед новым live milestone проверить, не осталось ли ранее установленных локальных native patches; если осталось — восстановить штатную сборку официальной native процедурой как новую отдельную операцию с сохранением конфигов, не replay прежнего installer. | No | — |
+| TASK-003 | В `internal/xkeen/capabilities.go` убрать обязательный marker patched dispatcher (source done); capability определяется installed features. Обновить `docs/DEVELOPMENT.md` и selectors/tests для удалённых файлов, сохранив независимые Docker/embedded/audit и auth/node/security tests. Не устанавливать old native stop patch; воспроизводимую upstream ошибку оформить отдельно. Перед новым live milestone проверить, не осталось ли ранее установленных локальных native patches; если осталось — восстановить штатную сборку официальной native процедурой как новую отдельную операцию с сохранением конфигов, не replay прежнего installer. | Stock native + source PASS | 2026-10-03 |
 
 ### Implementation Phase 2
 
@@ -101,12 +101,12 @@ native Start подтверждены независимо. Native startup че�
 - Зависимость: Phase1. Приёмка: CLI и UI дают одинаковые native settings/cron;
   panel stop не меняет native работу. Не требуется сначала охватить все 69 команд.
 
-| Task | Description | Completed | Date |
+| Task | Description | Evidence status | Date |
 |------|-------------|-----------|------|
-| TASK-004 | Добавить `internal/xkeen/commands.go`/`jobs.go`: allowlist operation→argv, один panel mutation job, bounded sanitized facts; query10s/service90s/update15min ceilings и interactive idle10min с measured refinement. Private RAM output256KiB/job, bounded input/resize, job/session ownership/auth/origin/CSRF; public output только facts. Interactive/conditional job запускает выбранный XKeen в PTY с начала; после exit shell не остаётся. Deadline/disconnect не запускает повтор; после crash/cancel unknown/readback. Проверить native foreground/TTY/service-children; native код не патчить. | No | — |
-| TASK-005 | Первая вертикаль по полной matrix: lifecycle, `-uk`, `-ux auto`, `-ug`, `-ugc`, `-dgc`, `-dns`, `-pr`, `-pbr`, `-killswitch`, `-sb`, `-kb`, `-xb`. Проверить installed argv/capabilities в focused native fixtures. Для cron `-ugc/-dgc` показывать native вопросы в терминале, оператор отвечает; не писать собственную prompt state machine/expect. Проверить actual cron после выполнения. `-sb on` может спросить prerequisites и запускает первый замер; учитывать traffic budget. Internal callbacks/`-sbt` не имеют прямого API. | No | — |
-| TASK-006 | Typed native actions/jobs в `internal/httpapi/server.go`; native cards + lazy `@xterm/xterm`/`@xterm/addon-fit` console, Go PTY adapter без Node на router. Noninteractive output read-only; interactive input связан с тем же job. Reconnect не respawn; закрытие вкладки detach, Ctrl-C explicit cancel. Disable OSC clipboard/external links/HTML, очистка UI при logout. Native download/backup принадлежит XKeen. Unknown result показывать понятно; exit0 не означает туннель PASS. Signed panel updater отдельно. | No | — |
-| TASK-007 | Удалить из `cmd/xkeen-control/main.go` factories `newXrayService/newGeodataService/newXKeenService/newSetupService` и obsolete component/Setup APIs/UI/tests/callers, когда native cards подключены. В `internal/components` оставить только реально нужные signed panel/bootstrap/read-only dependencies; не удалить весь пакет вслепую. Убрать old migration/recovery/appliance activation CLI, которые не нужны new-generation config edits. | No | — |
+| TASK-004 | Добавить `internal/xkeen/commands.go`/`jobs.go`: allowlist operation→argv, один panel mutation job, bounded sanitized facts; query10s/service90s/update15min ceilings и interactive idle10min с measured refinement. Private RAM output256KiB/job, bounded input/resize, job/session ownership/auth/origin/CSRF; public output только facts. Interactive/conditional job запускает выбранный XKeen в PTY с начала; после exit shell не остаётся. Deadline/disconnect не запускает повтор; после crash/cancel unknown/readback. Проверить native foreground/TTY/service-children; native код не патчить. | Delivered; local update-console correction pending | 2026-10-03 |
+| TASK-005 | Первая вертикаль по полной matrix: lifecycle, `-uk`, `-ux auto`, `-ug`, `-ugc`, `-dgc`, `-dns`, `-pr`, `-pbr`, `-killswitch`, `-sb`, `-kb`, `-xb`. Проверить installed argv/capabilities в focused native fixtures. Для cron `-ugc/-dgc` показывать native вопросы в терминале, оператор отвечает; не писать собственную prompt state machine/expect. Проверить actual cron после выполнения. `-sb on` может спросить prerequisites и запускает первый замер; учитывать traffic budget. Internal callbacks/`-sbt` не имеют прямого API. | Source/local PASS; live command matrix partial | 2026-10-03 |
+| TASK-006 | Typed native actions/jobs в `internal/httpapi/server.go`; native cards + lazy `@xterm/xterm`/`@xterm/addon-fit` console, Go PTY adapter без Node на router. Noninteractive output read-only; interactive input связан с тем же job. Reconnect не respawn; закрытие вкладки detach, Ctrl-C explicit cancel. Disable OSC clipboard/external links/HTML, очистка UI при logout. Native download/backup принадлежит XKeen. Unknown result показывать понятно; exit0 не означает туннель PASS. Signed panel updater отдельно. | Delivered; console fixtures PASS | 2026-10-03 |
+| TASK-007 | Удалить из `cmd/xkeen-control/main.go` factories `newXrayService/newGeodataService/newXKeenService/newSetupService` и obsolete component/Setup APIs/UI/tests/callers, когда native cards подключены. В `internal/components` оставить только реально нужные signed panel/bootstrap/read-only dependencies; не удалить весь пакет вслепую. Убрать old migration/recovery/appliance activation CLI, которые не нужны new-generation config edits. | Retirement cohort pending FULL | 2026-10-03 |
 
 ### Implementation Phase 3
 
@@ -114,11 +114,11 @@ native Start подтверждены независимо. Native startup че�
 - Зависимость: Phase2. Приёмка: native CLI config edit виден в GUI; неизвестные
   поля/неизменные файлы сохраняются; invalid candidate не активируется.
 
-| Task | Description | Completed | Date |
+| Task | Description | Evidence status | Date |
 |------|-------------|-----------|------|
-| TASK-008 | Добавить `internal/xkeen/config.go`: bounded JSONC read/projection и edits фиксированных native paths; сценарии [Form/Text, drafts, pending/apply/restore](../docs/CONFIG-EDITOR-WORKFLOWS.md) обязательны; snapshot hashes затронутых файлов, complete candidate Xray validation, final baseline check, atomic replacement. Multi-file change использует один существующий маленький current-operation transaction/backup, не native journal. Drift/unknown останавливает действия; rollback не перезаписывает чужие изменения. Не переписывать comments/opaque regions без нужды; семантически сохранить unknown fields. | No | — |
-| TASK-009 | Перевести `internal/routingpolicy/service.go`, `internal/dnsobservatory/service.go`, `internal/restore` с managed appliance twin на native snapshot/edit adapter; подключить providers в main HTTP config. `internal/appliance` сохранить только используемые parsing/validation utilities, убрать ProductDefault equivalence/adoption gates. Типизированные панели: XKeen settings/ports/IP lists, DNS, routing, observatory/balancers. | No | — |
-| TASK-010 | Сохранить `internal/nodes` import/batch/reconcile/native renderer, WL defaults и unmasked URL field. По source/runtime проверить 2subscriptions и profiles без повторного импорта. Явный onboarding managed pool/API только если оператор включает соответствующую функцию; просмотр редактора не создаёт routing/API/balancer. Auto refresh использует panel job owner, без global native gate prerequisites. | No | — |
+| TASK-008 | Добавить `internal/xkeen/config.go`: bounded JSONC read/projection и edits фиксированных native paths; сценарии [Form/Text, drafts, pending/apply/restore](../docs/CONFIG-EDITOR-WORKFLOWS.md) обязательны; snapshot hashes затронутых файлов, complete candidate Xray validation, final baseline check, atomic replacement. Multi-file change использует один существующий маленький current-operation transaction/backup, не native journal. Drift/unknown останавливает действия; rollback не перезаписывает чужие изменения. Не переписывать comments/opaque regions без нужды; семантически сохранить unknown fields. | Delivered; editor Apply/restore PASS | 2026-10-03 |
+| TASK-009 | Перевести `internal/routingpolicy/service.go`, `internal/dnsobservatory/service.go`, `internal/restore` с managed appliance twin на native snapshot/edit adapter; подключить providers в main HTTP config. `internal/appliance` сохранить только используемые parsing/validation utilities, убрать ProductDefault equivalence/adoption gates. Типизированные панели: XKeen settings/ports/IP lists, DNS, routing, observatory/balancers. | Native editors delivered; legacy retirement pending | 2026-10-03 |
+| TASK-010 | Сохранить `internal/nodes` import/batch/reconcile/native renderer, WL defaults и unmasked URL field. По source/runtime проверить 2subscriptions и profiles без повторного импорта. Явный onboarding managed pool/API только если оператор включает соответствующую функцию; просмотр редактора не создаёт routing/API/balancer. Auto refresh использует panel job owner, без global native gate prerequisites. | Delivered; subscriptions/WL/auto refresh PASS | 2026-10-03 |
 
 ### Implementation Phase 4
 
@@ -126,11 +126,11 @@ native Start подтверждены независимо. Native startup че�
 - Зависимость: Phase3. Приёмка: отдельно измерены DIRECT DNS/HTTPS при stopped
   XKeen и при proxy node failure; policy behavior подтверждён LAN-клиентом.
 
-| Task | Description | Completed | Date |
+| Task | Description | Evidence status | Date |
 |------|-------------|-----------|------|
-| TASK-011 | В native settings UI показать actual mode, client policy, DNS interception, PBR и killswitch через поддержанные команды/config. Политика с именем XKeen не обязательный install gate; для конкретного native режима объяснить выбор клиентов/всех клиентов. Панель сама не пишет Keenetic firewall или меняет WAN settings. | No | — |
-| TASK-012 | DNS editor: direct resolver/default для обычных имён; proxy resolver по domain/geosite match, transport route/bootstrapping и fallback явно. IP-only routing нельзя автоматически превратить в DNS domain match. Сохранять существующий user config, не включать global DNS interception/killswitch молча. Resolver failure и circular bootstrap имеют fixtures. | No | — |
-| TASK-013 | После ограниченного private snapshot выполнить native stop/start и node failure/recovery на отдельном LAN-клиенте; проверить DNS+HTTPS DIRECT/proxy, native cron/service и panel-off independence. PC Karing не источник LAN proof. Если клиент отсутствует, аппаратный результат NOT RUN; source/editor work не останавливать. Сохранить bounded observations, не unbounded logs. | No | — |
+| TASK-011 | В native settings UI показать actual mode, client policy, DNS interception, PBR и killswitch через поддержанные команды/config. Политика с именем XKeen не обязательный install gate; для конкретного native режима объяснить выбор клиентов/всех клиентов. Панель сама не пишет Keenetic firewall или меняет WAN settings. | Source delivered; LAN policy acceptance NOT RUN | 2026-10-03 |
+| TASK-012 | DNS editor: direct resolver/default для обычных имён; proxy resolver по domain/geosite match, transport route/bootstrapping и fallback явно. IP-only routing нельзя автоматически превратить в DNS domain match. Сохранять существующий user config, не включать global DNS interception/killswitch молча. Resolver failure и circular bootstrap имеют fixtures. | Editor delivered; live resolver failure NOT RUN | 2026-10-03 |
+| TASK-013 | После ограниченного private snapshot выполнить native stop/start и node failure/recovery на отдельном LAN-клиенте; проверить DNS+HTTPS DIRECT/proxy, native cron/service и panel-off independence. PC Karing не источник LAN proof. Если клиент отсутствует, аппаратный результат NOT RUN; source/editor work не останавливать. Сохранить bounded observations, не unbounded logs. | NOT RUN: separate LAN client required | 2026-10-03 |
 
 ### Implementation Phase 5
 
@@ -139,10 +139,10 @@ native Start подтверждены независимо. Native startup че�
 - Приёмка: category membership соответствует installed bytes; правила дают валидный
   Xray config, сохраняют first-match order и пользовательские unknown rules.
 
-| Task | Description | Completed | Date |
+| Task | Description | Evidence status | Date |
 |------|-------------|-----------|------|
-| TASK-014 | Добавить `internal/geodatareader/`: installed file inventory, lazy bounded protobuf category/content/search, file snapshot по size/hash с invalidation после native update. Начальные limits64MiB/file,64MiB additional RSS,100entries/page,256KiB response; проверить target footprint. Не persistent whole-dat JSON index/DOM. | No | — |
-| TASK-015 | `web/src/routing-policy.jsx`: categories, domain/IP/CIDR membership search с match type, свои lists, VPN/DIRECT/BLOCK, reorder и пример победившего правила. DNS bindings для domain lists по желанию, без full policy generator. Standard shadcn UI, lazy-load тяжёлых редакторов. | No | — |
+| TASK-014 | Добавить `internal/geodatareader/`: installed file inventory, lazy bounded protobuf category/content/search, file snapshot по size/hash с invalidation после native update. Начальные limits64MiB/file,64MiB additional RSS,100entries/page,256KiB response; проверить target footprint. Не persistent whole-dat JSON index/DOM. | Delivered; installed-data/RSS PASS | 2026-10-03 |
+| TASK-015 | `web/src/routing-policy.jsx`: categories, domain/IP/CIDR membership search с match type, свои lists, VPN/DIRECT/BLOCK, reorder и пример победившего правила. DNS bindings для domain lists по желанию, без full policy generator. Standard shadcn UI, lazy-load тяжёлых редакторов. | Delivered; first-match examples PASS with explicit limits | 2026-10-03 |
 
 ### Implementation Phase 6
 
@@ -150,31 +150,31 @@ native Start подтверждены независимо. Native startup че�
   измеренную пользу. Зависимость: Phase3/4 для live comparison.
 - Приёмка: конфиг balancing редактируется без panel daemon; второй writer не активен.
 
-| Task | Description | Completed | Date |
+| Task | Description | Evidence status | Date |
 |------|-------------|-----------|------|
-| TASK-016 | UI native leastPing/SB/ручной mode, pool/observatory/burst settings; команды `-sb` для supported native control. Native остаётся default. Сравнить существующие `internal/c1/adaptive.go` calibration/exploration fixes с native SB на одинаковом малом бюджете, не full sustained benchmark. | No | — |
-| TASK-017 | Если quality advantage подтверждён, отдельный milestone panel-adaptive: native SB выключается его командой, override имеет независимое expiry/crash release. Без такой квалификации показывать bounded one-node quality diagnostics, adaptive не включать. Не строить gate/event infrastructure для этого; не вводить новый background supervisor без отдельного обоснования. | No | — |
+| TASK-016 | UI native leastPing/SB/ручной mode, pool/observatory/burst settings; команды `-sb` для supported native control. Native остаётся default. Сравнить существующие `internal/c1/adaptive.go` calibration/exploration fixes с native SB на одинаковом малом бюджете, не full sustained benchmark. | Native editor delivered; quality comparison NOT RUN | 2026-10-03 |
+| TASK-017 | Если quality advantage подтверждён, отдельный milestone panel-adaptive: native SB выключается его командой, override имеет независимое expiry/crash release. Без такой квалификации показывать bounded one-node quality diagnostics, adaptive не включать. Не строить gate/event infrastructure для этого; не вводить новый background supervisor без отдельного обоснования. | Optional; disabled pending demonstrated benefit | 2026-10-03 |
 
 ### Implementation Phase 7
 
 - GOAL-007: Быстрый backup/перенос и Telegram. Зависимость: Phase3; не ждать
   panel-adaptive. Приёмка portable A→B и Telegram command auth/dedupe отдельно.
 
-| Task | Description | Completed | Date |
+| Task | Description | Evidence status | Date |
 |------|-------------|-----------|------|
-| TASK-018 | `internal/backup`, `internal/restore`: reuse encrypted envelope; native configs/custom lists/registry/preferences и native schedule description. Local backup через `-kb/-xb`; portable restore после обычной native установки, mapping интерфейсов/политик и preview. Не переносить executable/kernel/PID/auth/listener. Schedule восстановить native command, не cron engine. Второй router live test — отдельная доступность. | No | — |
-| TASK-019 | `internal/notifications`/новый `internal/bot`: reuse alerts, один long-poll receiver на router, allowlisted user/chat, короткие typed commands/status/restart/update/profile refresh и bounded dedupe/TTL. Native actions используют тот же panel jobs adapter. Не shell/raw configs/secrets. Optional fleet controller — последующий отдельный проект/milestone, не prerequisite одного router. До live test нужен private token. | No | — |
+| TASK-018 | `internal/backup`, `internal/restore`: reuse encrypted envelope; native configs/custom lists/registry/preferences и native schedule description. Local backup через `-kb/-xb`; portable restore после обычной native установки, mapping интерфейсов/политик и preview. Не переносить executable/kernel/PID/auth/listener. Schedule восстановить native command, не cron engine. Второй router live test — отдельная доступность. | Same-router export/preview/Cancel PASS; A-to-B NOT RUN | 2026-10-03 |
+| TASK-019 | `internal/notifications`/новый `internal/bot`: reuse alerts, один long-poll receiver на router, allowlisted user/chat, короткие typed commands/status/restart/update/profile refresh и bounded dedupe/TTL. Native actions используют тот же panel jobs adapter. Не shell/raw configs/secrets. Optional fleet controller — последующий отдельный проект/milestone, не prerequisite одного router. До live test нужен private token. | Delivered; source + disabled API PASS; real bot NOT RUN | 2026-10-03 |
 
 ### Implementation Phase 8
 
 - GOAL-008: Простота измеряется работающими сценариями. Каждый code milestone
   выпускается/проверяется отдельно; не ждать всего Phase1–7 ради первого native GUI.
 
-| Task | Description | Completed | Date |
+| Task | Description | Evidence status | Date |
 |------|-------------|-----------|------|
-| TASK-020 | Тесты удалённых протоколов удалить вместе с кодом. Focused parser/command/editor/auth/rollback cases и затронутые browser specs в итерации. Одна exact-clean-HEAD FULL по завершённому milestone перед поставкой, independent review отдельно. Docs-only audit — links/content/diff check, без149 browser. Build checks не зависят от native public caches. | No | — |
-| TASK-021 | Измерить dashboard/action/config-save time и ARM64 RSS; initial targets warm dashboardAPI≤1s, first screen≤2s LAN, application-only RSS≤64MiB idle. Native downloads/test latency измерять отдельно, не маскировать. Записать baseline и исправлять только фактический bottleneck; UI standard shadcn без собственного theme system. | No | — |
-| TASK-022 | Финальный checklist: native CLI↔GUI equivalence, native update сохраняет доступность панели, панель удалена/остановлена — XKeen работает, config invalid/drift отказ, DIRECT/proxy/DNS failure tests, подписки/WL, native selection. Signed panel release остаётся protected workflow; no merge/release/install без соответствующей задачи/авторизации. | No | — |
+| TASK-020 | Тесты удалённых протоколов удалить вместе с кодом. Focused parser/command/editor/auth/rollback cases и затронутые browser specs в итерации. Одна exact-clean-HEAD FULL по завершённому milestone перед поставкой, independent review отдельно. Docs-only audit — links/content/diff check, без149 browser. Build checks не зависят от native public caches. | Selective iteration/FULL cohorts PASS; retirement pending | 2026-10-03 |
+| TASK-021 | Измерить dashboard/action/config-save time и ARM64 RSS; initial targets warm dashboardAPI≤1s, first screen≤2s LAN, application-only RSS≤64MiB idle. Native downloads/test latency измерять отдельно, не маскировать. Записать baseline и исправлять только фактический bottleneck; UI standard shadcn без собственного theme system. | API/RSS PASS; first-screen timing NOT RUN | 2026-10-03 |
+| TASK-022 | Финальный checklist: native CLI↔GUI equivalence, native update сохраняет доступность панели, панель удалена/остановлена — XKeen работает, config invalid/drift отказ, DIRECT/proxy/DNS failure tests, подписки/WL, native selection. Signed panel release остаётся protected workflow; no merge/release/install без соответствующей задачи/авторизации. | Partial; remaining hardware/private-token checks explicit | 2026-10-03 |
 
 ## 3. Alternatives
 
@@ -317,3 +317,32 @@ is not silently marked complete.
   remains NOT RUN while the development PC uses Karing. Native leastPing remains
   the active selection owner; panel adaptive selection stays disabled without
   demonstrated benefit. No fleet controller or invasive native gate is required.
+
+
+### 2026-10-03 installed 6dba729 / cleanup cohort scope
+
+Telegram cohort FULL passed and development delivery independently passed;
+private API confirms bot control off/unconfigured, without external messages.
+Router panel RSS 20,468 KiB, bounded warm status requests 102/32/31 ms; browser
+first-screen timing is not claimed. Native files/process were preserved during
+replacement. Current managed subscriptions are provider-refreshed, with WL off.
+
+Source/local completion: TASK-003/004/006/008/010/014/015/019/020 are implemented
+and independently delivered in their recorded cohorts. TASK-005 native commands
+are installed-feature discoverable; not every mutating cron/update/setting was
+executed live solely for a test. TASK-009 primary editors/transfer replace the
+appliance twin; remaining old API/CLI are removed in the next cleanup cohort.
+TASK-011/012 source UI/diagnostics exist, but TASK-013 independent LAN failure
+acceptance remains NOT RUN. TASK-016 native editing is available; measured
+native-vs-panel quality comparison is NOT RUN. TASK-017 is optional and disabled.
+TASK-018 same-router export/preview/Cancel PASS; hardware Stage/Apply A→B NOT RUN.
+TASK-021 API/RSS PASS against initial limits; browser first-screen timing NOT RUN.
+TASK-022 source/live checklist is partial according to these explicit boundaries.
+
+Cleanup cohort removes unused production-reachable appliance adoption/migration
+CLI, dead factory wrappers, component/Setup/appliance restore HTTP plumbing and
+its obsolete tests. Preserve the shared private transfer budget/session/size
+helpers, auth security regressions, signed panel updater and native command/config
+paths. Conditional native update commands use PTY from start in the local panel
+as well as bot jobs, so native prompts remain inspectable and answerable locally.
+No native code changes or live update/setting/restart are required by cleanup.

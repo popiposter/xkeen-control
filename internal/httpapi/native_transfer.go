@@ -15,6 +15,8 @@ import (
 	"github.com/popiposter/xkeen-control/internal/xkeen"
 )
 
+const maxNativeTransferRequestBody = 10 << 20
+
 func (s *Server) handleNativeTransfer(w http.ResponseWriter, r *http.Request) {
 	session, ok := s.requireSession(w, r)
 	if !ok {
@@ -38,7 +40,7 @@ func (s *Server) handleNativeTransfer(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/api/v1/xkeen/transfer/preview" {
 		// One upload in RAM at a time; gate acquired before reading/decrypting.
-		release, admitted := s.tryRestorePreview()
+		release, admitted := s.tryTransferPreview()
 		if !admitted {
 			writeError(w, http.StatusConflict, "transfer preview busy")
 			return
@@ -50,7 +52,7 @@ func (s *Server) handleNativeTransfer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer clearBytes(archive)
-		if !s.restoreSessionStillActive(r, session) {
+		if !s.transferSessionStillActive(r, session) {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
@@ -59,7 +61,7 @@ func (s *Server) handleNativeTransfer(w http.ResponseWriter, r *http.Request) {
 			writeNativeTransferError(w, err)
 			return
 		}
-		if !s.restoreSessionStillActive(r, session) {
+		if !s.transferSessionStillActive(r, session) {
 			s.nativeTransfer.Cancel(session.CSRFToken, preview.Token)
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
@@ -83,7 +85,7 @@ func (s *Server) handleNativeTransfer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid transfer token request")
 		return
 	}
-	if !s.restoreSessionStillActive(r, session) {
+	if !s.transferSessionStillActive(r, session) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -133,14 +135,14 @@ func transferFields(d *json.Decoder, allowed map[string]bool) (map[string]json.R
 }
 
 func parseNativeTransferUpload(w http.ResponseWriter, r *http.Request) (archive []byte, passphrase string, mapping map[string]string, status int) {
-	if r.ContentLength > maxRestoreRequestBody {
+	if r.ContentLength > maxNativeTransferRequestBody {
 		return nil, "", nil, http.StatusRequestEntityTooLarge
 	}
 	media, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || media != "multipart/form-data" || len(params) != 1 || params["boundary"] == "" {
 		return nil, "", nil, http.StatusBadRequest
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxRestoreRequestBody)
+	r.Body = http.MaxBytesReader(w, r.Body, maxNativeTransferRequestBody)
 	defer r.Body.Close()
 	reader, err := r.MultipartReader()
 	if err != nil {
@@ -163,7 +165,7 @@ func parseNativeTransferUpload(w http.ResponseWriter, r *http.Request) (archive 
 			break
 		}
 		if err != nil {
-			if isRestoreBodyTooLarge(err) {
+			if isTransferBodyTooLarge(err) {
 				status = http.StatusRequestEntityTooLarge
 			} else {
 				status = http.StatusBadRequest
@@ -188,7 +190,7 @@ func parseNativeTransferUpload(w http.ResponseWriter, r *http.Request) (archive 
 		}
 	}
 	if _, err := io.Copy(io.Discard, r.Body); err != nil {
-		if isRestoreBodyTooLarge(err) {
+		if isTransferBodyTooLarge(err) {
 			status = http.StatusRequestEntityTooLarge
 		} else {
 			status = http.StatusBadRequest
@@ -234,7 +236,7 @@ func parseNativeTransferUpload(w http.ResponseWriter, r *http.Request) (archive 
 	return
 }
 
-func isTransferOversize(err error) bool { return err != nil && isRestoreBodyTooLarge(err) }
+func isTransferOversize(err error) bool { return err != nil && isTransferBodyTooLarge(err) }
 
 func writeNativeTransferError(w http.ResponseWriter, err error) {
 	var validation *xkeen.ValidationError

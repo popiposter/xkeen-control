@@ -64,21 +64,9 @@ legacy exact
 
 During that sequence bounded non-secret fingerprints for auth/listener/node/Xray/XKeen/selection/benchmark state remained unchanged.
 
-## Historical repository deployment
+## Native development installation
 
-Repository deployment remains an advanced developer/operator path for deliberate development qualification, not the normal production distribution path:
-
-```sh
-cd /opt/etc/xkeen/repo
-./scripts/deploy.sh
-./scripts/verify.sh
-```
-
-Build `xkeen-control` off-router. Do not install Go/Node on Keenetic.
-
-`deploy.sh` builds a complete `/tmp` candidate, renders outbounds from the local authoritative `nodes.json`, validates Xray, snapshots the active generation, swaps/restarts through the bounded foreground lifecycle and rolls back on failure.
-
-Do not copy only a generated `04_outbounds.json` as a restore mechanism.
+Repository template deployment and legacy secret migration are removed under Issue #121. Stock XKeen owns its components and configuration lifecycle. Build the panel off-router and follow the active issue's bounded panel-only installation and independent readback procedure. Do not copy a generated `04_outbounds.json` over a different node registry or deploy old repository templates as current native policy.
 
 ## Xray restart
 
@@ -379,7 +367,7 @@ Inspect at most 32 relevant cron/init/deployment configuration files, each
 at most 64 KiB, in a private bounded session: `/opt/etc/crontab`,
 `/opt/etc/cron.d`, `/opt/var/spool/cron/crontabs`, `/opt/etc/init.d` and the
 operator's active deployment/package job list. Review only relevant entries
-for `update-geodata`, `deploy.sh`, upstream geodata updates, legacy balancer,
+for `update-geodata`, the retired repository deployment script, upstream geodata updates, legacy balancer,
 watchdog and benchmark writers, including scripts those entries call. Do not
 publish raw crontabs, environments or process command lines. Report owned
 entry counts, schedules and active/inactive/unknown conclusions. Unknown
@@ -539,7 +527,7 @@ XKeen → complete rollback. Obtain a separate approval per exact pair, permitti
 one Apply and one explicit Rollback plus ordinary automatic recovery on failure.
 Never leave one class changed while diagnosing another. Use only F2/F1 paths
 above: no private engine calls, path environment overrides, `-ux/-uk/-i/-fixed`,
-`deploy.sh`, `update-geodata.sh` or manual active-file copies.
+the retired repository deployment script, `update-geodata.sh` or manual active-file copies.
 
 For component requests allow 540 seconds client-side: the server's synchronous
 window is 8m45s including independent recovery. Never abort a transaction to
@@ -637,7 +625,7 @@ recovery must be verified, not manufactured.
 
 The source D.2 core manages the complete product geodata set transactionally.
 Historical `scripts/update-geodata.sh` still replaces active files individually
-with fallback mirrors, and `scripts/deploy.sh` invokes it. Neither script is a
+with fallback mirrors, and the removed repository deployment script formerly invoked it. Neither script is a
 D.2 qualification shortcut or part of the typed component transaction boundary.
 
 Before any authorized live component trial, inspect relevant external writers

@@ -114,44 +114,17 @@ D.1 portable backup/restore is current production behavior in `v0.2.0`:
 
 Any secret-bearing D.1 backup remains operator secret material. Do not print it, attach it to issues/PRs or upload it as a CI artifact.
 
-For migration of an older working configuration, `scripts/migrate-secrets.sh` remains a one-time compatibility path where applicable. It is not the preferred portable backup mechanism for a D.1-managed appliance. Do not print or copy secret contents into GitHub evidence.
+For migration of an older working configuration, Legacy secret migration has been retired under Issue #121; use the native encrypted transfer UI for current configurations. It is not the preferred portable backup mechanism for a D.1-managed appliance. Do not print or copy secret contents into GitHub evidence.
 
 Never restore only a generated `04_outbounds.json` over a different registry and claim the logical state restored. Restore the logical authority through the supported typed path so generated outbounds and runtime readiness converge together.
 
-## Advanced repository deployment
+## Native development installation and verification
 
-Repository deployment remains available for deliberate development/operator work but is not the normal public distribution path:
+Repository template deployment and legacy secret migration have been removed under Issue #121. Install stock XKeen through its official mechanisms and install the separately qualified panel binary alongside it. Do not copy repository policy templates over native configuration or disable native cron/selection for panel ownership.
 
-1. obtain the intended `popiposter/xkeen-control` revision on a workstation;
-2. build/test `xkeen-control` off-router;
-3. copy only the intended repository/artifacts to the router;
-4. restore/adopt local appliance and secret state through the supported typed/compatibility paths as required;
-5. run the bounded repository deploy + verify path.
+Build and test the panel off-router. Use the active issue's bounded installation procedure, preserve credentials/configuration and independently verify the running binary, process and health. The native encrypted transfer UI supports restoring current settings after installation without copying scripts, binaries, auth or listener policy.
 
-```sh
-cd /opt/etc/xkeen/repo
-chmod +x scripts/*.sh
-./scripts/deploy.sh
-./scripts/verify.sh
-```
-
-The deploy builds a complete candidate under `/tmp`, renders outbounds from `nodes.json`, validates Xray, snapshots the current generation, activates/restarts through the bounded foreground lifecycle, waits for RoutingService and rolls back on failure.
-
-It also preserves C.1 ownership: legacy XKeen Speed Balancer/watchdog/full-benchmark writers stay disabled and the control plane owns stable selection/liveness/daily benchmark scheduling.
-
-Repository deployment is an advanced development/operator path, not the D.2 component lifecycle implementation. In particular, current repository geodata scripts must not be treated as equivalent to the source-only typed #4 update/rollback manager.
-
-## Verification
-
-For repository deployment use:
-
-```sh
-./scripts/verify.sh
-```
-
-For installed panel readiness use generic `/healthz`, local `xkeen-control version --json` and init/PID status. For an adopted D.1 appliance also use the typed appliance validation/verification path when the active procedure requires authority coherence evidence.
-
-Verify intended traffic behavior from a trusted LAN client when the active issue requires it. Never use a heavy benchmark merely as a restore smoke test.
+For panel readiness use `/healthz`, local `xkeen-control version --json` and init/PID status. Development build identity is established by the qualified artifact hash; it is not a signed release identity. Verify intended traffic behavior from a separate trusted LAN client; a workstation proxy is not LAN evidence. Do not run a sustained benchmark merely as a restore smoke test.
 
 ## Panel access
 

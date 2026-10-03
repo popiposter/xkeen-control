@@ -39,12 +39,7 @@ run_shell_fixtures() {
 	bash scripts/test-keenetic-env.sh
 	bash scripts/test-benchmark-policy.sh
 	bash scripts/test-xkeen-foreground.sh
-	if [ "$mode" = "--full" ]; then
-		XKEEN_STRESS_RACE=1 bash scripts/test-components.sh --fixtures-only
-	else
-		bash scripts/test-components.sh --fixtures-only
-	fi
-	bash scripts/test-appliance.sh
+	bash scripts/test-components.sh --fixtures-only
 	bash scripts/test-release.sh --fixtures-only
 }
 
