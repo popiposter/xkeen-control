@@ -776,9 +776,9 @@ but requires its stored identity, prepared dispatcher/stage/consumed exec proof
 and a canonical typed completion record; all are rechecked before return.
 It never grants body/finish authority or releases admission. The fixture's
 exclusive RAM completion publication is synthetic protocol evidence, not the
-native completion producer. Actual terminal publication, baseline/postcondition
-verification, already-current no-op handling and executor integration remain
-unimplemented and block enabling this candidate.
+native completion producer. The terminal publisher and update-specific verifier
+described below supply source primitives. Already-current no-op handling and
+executor integration remain unimplemented and block enabling this candidate.
 
 The existing native verifier now contains a source-only init identity reader
 primitive. It authenticates the direct wrapper pre/post context itself, checks
@@ -788,9 +788,9 @@ It checks prepared code equality, native Xray/autostart literals and unchanged
 input/parser hashes and call generation after projection. Only digests become
 result fields; raw settings never enter a diagnostic response. Unsafe input,
 existing query state, producer failure, code/setting or generation drift retains
-admission and any query evidence. The executable verifier still has no update
-branch: complete profile, config/core/kernel/package/cron baselines, native
-completion producer and final settlement remain required before wiring it.
+admission and any query evidence. The executable update branch described below
+composes this reader; native caller integration and final settlement remain
+required before enabling it.
 
 Update kernel readback now reuses the existing native Hybrid query/proof helper.
 A bounded read-only observer may descend below the live update wrapper (for the
@@ -829,8 +829,9 @@ refuses configuration pending state, protects/rechecks the fixed status, control
 (16 KiB limit) and parser, and produces bounded projections in an exclusive RAM
 query directory. Control/status identities must match exactly.
 It returns only hashes; failure retains admission/query evidence. Its post phase
-requires typed completion proof, but the real producer and update-main integration
-remain absent. No native commands are executed by this reader.
+requires typed completion proof. The producer and update-verifier composition
+now exist in source, but their native executor call points remain unwired. No
+native commands are executed by this reader.
 
 The profile compiler also emits an unconditionally fenced installed-profile
 checker. It checks the 72 prepared file hashes/sizes at fixed native locations
@@ -844,7 +845,8 @@ It leaves unrelated `/opt/sbin` programs outside its inventory. Protected librar
 bootstrap precedes authenticated read-only observer context; the original owner
 generation is rechecked after the inventory. No native code is executed, no
 body/stage/completion receipt is published, and admission is never released.
-This checker is not yet wired into updater acceptance and must not be installed.
+The source update verifier invokes this checker, but its unconditional fence
+remains in place; it must not be installed or treated as updater acceptance.
 
 The source-only update environment preflight now excludes legacy init/port/list
 migration and first-install/new-feature effects. It requires protected existing
@@ -861,8 +863,23 @@ replacement and preserve config/crontab content through their native operations.
 The native script's1711 bytes are derived from its pinned public echo-e literal;
 read-only installed-script hash comparison matches that generation on the target.
 No cron package installation or live native registration is performed or claimed.
-Main update wiring, complete prepared profile/package/kernel/config baselines
-and final native completion remain pending; all candidates stay fenced.
+The update-specific verifier now composes prepared profile, init/package identity,
+environment policy, complete configuration and Xray process checks, plus the
+existing native kernel pre/post proof. Its bounded exclusive RAM baseline binds
+the original owner/context and preservation digest, including the fixed verifier
+itself. Only the fixed raw opkg status row is excluded from the policy digest;
+the package projection separately requires unchanged foreign stanzas and exact
+own identity. Native timestamp and control-size changes are permitted. Initial
+running state must remain running (a new valid PID is allowed); initial stopped
+state must remain stopped with an unchanged owned kernel snapshot, regardless of
+autostart. Both phases run bounded full Xray validation without admission
+privileges, then repeat installed profile, source protection/content, process
+and original-generation checks. Failure retains admission and existing evidence;
+verified postflight consumes only its baseline. Composition fixtures use real
+gate ancestry and protected readers with synthetic core/kernel/profile callbacks
+and stored terminal receipts. The actual compiled profile remains fenced, so the
+new branch cannot authorize live update. Native executor entry/body/exec/success
+terminal integration and dirty-event settlement remain pending.
 
 Normal long-writer contention has a separate known-no-effect result. If an
 elected NDM invocation reaches its valid monotonic deadline after busy admission,

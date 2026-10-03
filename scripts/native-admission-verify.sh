@@ -334,17 +334,109 @@ _nv_update_package_identity() {
     [ "$_nu_gate_record" = "$_nv_pkg_gate" ] && [ "$_nu_context" = "$_nv_pkg_context" ] || return 77
 }
 # END UPDATE PACKAGE IDENTITY
+_nv_update_preserved() {
+    # Freeze all policy rows, allowing only native's own status registration
+    # rewrite. Package identity/foreign stanzas have a separate strict proof.
+    _nv_up_environment=$(_nv_update_environment_inputs) || return 76
+    _nv_up_policy=$(printf '%s\n' "$_nv_up_environment" | sed '\| /opt/lib/opkg/status$|d') || return 76
+    printf '%s\n' "$_nv_up_policy"
+    _nv_inputs || return 76
+    for _nv_up_file in /opt/sbin/xray /opt/bin/opkg /opt/bin/pidof /opt/libexec/timeout-coreutils /opt/lib/xkeen/native-operation-gate.sh /opt/lib/xkeen/native-admission-entry.sh /opt/lib/xkeen/native-admission-verify.sh /opt/lib/xkeen/native-update-context.sh /opt/lib/xkeen/native-admission-hook-verify.sh /opt/lib/xkeen/native-update-profile-check.sh /opt/lib/xkeen/native-update-packages.awk /opt/lib/xkeen/native-update-init.awk /opt/lib/xkeen/native-profile-v1/overlay-1.disabled.sh; do
+        _nv_file_ok "$_nv_up_file" || return 76
+        _native_gate_metadata "$_nv_up_file" || return 76
+        _nv_up_limit=1048576
+        [ "$_nv_up_file" != /opt/sbin/xray ] || _nv_up_limit=67108864
+        [ "$_ng_meta_size" -gt 0 ] && [ "$_ng_meta_size" -le "$_nv_up_limit" ] || return 76
+        _nv_hash "$_nv_up_file" || return 76
+        printf ' %s\n' "$_nv_up_file"
+    done
+}
+_nv_update_identity_recheck() {
+    # The projections are exclusive one-use reads. Recheck the exact source
+    # files without producing a second query or discarding failed evidence.
+    for _nv_up_file in "$_nv_update_live" "$_nv_update_template" "$_nv_update_parser" "$_nv_pkg_status" "$_nv_pkg_control"; do
+        _nv_update_init_file "$_nv_up_file" || return 77
+    done
+    _nv_file_ok "$_nv_pkg_parser" || return 77
+    [ "$(_nv_hash "$_nv_update_live")" = "$_nv_update_live_hash" ] &&
+        [ "$(_nv_hash "$_nv_update_template")" = "$_nv_update_template_hash" ] &&
+        [ "$(_nv_hash "$_nv_update_parser")" = "$_nv_update_parser_hash" ] &&
+        [ "$(_nv_hash "$_nv_pkg_status")" = "$_nv_pkg_status_hash" ] &&
+        [ "$(_nv_hash "$_nv_pkg_control")" = "$_nv_pkg_control_hash" ] &&
+        [ "$(_nv_hash "$_nv_pkg_parser")" = "$_nv_pkg_parser_hash" ] || return 77
+}
+_nv_update_main() {
+    _nv_file_ok /opt/lib/xkeen/native-update-context.sh || return 76
+    . /opt/lib/xkeen/native-update-context.sh
+    native_update_verifier_context "$_nv_phase" || return $?
+    _nv_up_gate=$_nu_gate_record; _nv_up_context=$_nu_context
+    _na_call_dir=$_nu_call
+    _nv_pending || return $?
+    for _nv_up_exec in /opt/sbin/xray /opt/bin/pidof /opt/bin/opkg /opt/libexec/timeout-coreutils; do
+        _nv_file_ok "$_nv_up_exec" && [ -x "$_nv_up_exec" ] || return 76
+    done
+    _nv_binary_hash=$(_nv_hash /opt/sbin/xray) || return 76
+    _nv_up_before=$(_nv_update_preserved) || return 76
+    /opt/libexec/timeout-coreutils -s KILL 15 /opt/bin/sh /opt/lib/xkeen/native-update-profile-check.sh "$_nv_phase" >/dev/null 2>&1 || return 76
+    if [ "$_nv_phase" = pre ]; then _nv_update_environment_pre || return $?; fi
+    _nv_update_init_identity "$_nv_phase" || return $?
+    _nv_update_package_identity "$_nv_phase" || return $?
+    _nv_runtime=$(_nv_core) || return 77
+    _nv_baseline=$_na_call_dir/update-preflight
+    if [ "$_nv_phase" = pre ]; then
+        _nv_previous=$_nv_runtime
+    else
+        _nv_ram_file "$_nv_baseline" 1024 || return 77
+        IFS= read -r _nv_saved < "$_nv_baseline" || return 77
+        [ "$_ng_meta_size" = "$(( ${#_nv_saved} + 1 ))" ] || return 77
+        _nv_previous=${_nv_saved##* }
+    fi
+    _nv_expect=running
+    [ "$_nv_previous" != absent ] || _nv_expect=unchanged
+    _nv_up_digest=$(printf '%s\n%s\n%s\n' "$_nv_up_gate" "$_nv_up_context" "$_nv_up_before" | sha256sum) || return 77
+    _nv_up_digest=${_nv_up_digest%% *}
+    _nv_frozen="v2 $_nv_up_digest $_nv_update_code $_nv_update_settings $_nv_pkg_other_hash $_nv_pkg_identity_hash $_nv_expect"
+    if [ "$_nv_phase" = post ]; then
+        [ "$_nv_saved" = "$_nv_frozen $_nv_previous" ] || return 77
+        case "$_nv_expect:$_nv_runtime" in running:absent) return 77;; unchanged:absent) ;; unchanged:*) return 77;; esac
+    fi
+    # Test complete configuration in both phases even when native was stopped.
+    # The validator receives no admission privilege and cannot become a writer.
+    (native_admission_strip; export XRAY_LOCATION_ASSET=/opt/etc/xray/dat;
+        /opt/libexec/timeout-coreutils -s KILL 15 /opt/sbin/xray run -test -confdir /opt/etc/xray/configs >/dev/null 2>&1) || return 76
+    /opt/libexec/timeout-coreutils -s KILL 15 /opt/bin/sh /opt/lib/xkeen/native-admission-hook-verify.sh "$_nv_phase" update update-xkeen forced "$_nv_expect" >/dev/null 2>&1 || return 77
+    # The compiled checker repeats the complete installed inventory. Its source
+    # and all other helpers are bound by the preservation digest as well.
+    /opt/libexec/timeout-coreutils -s KILL 15 /opt/bin/sh /opt/lib/xkeen/native-update-profile-check.sh "$_nv_phase" >/dev/null 2>&1 || return 77
+    _nv_update_identity_recheck || return 77
+    [ "$(_nv_update_preserved)" = "$_nv_up_before" ] || return 77
+    [ "$(_nv_core)" = "$_nv_runtime" ] || return 77
+    _nv_pending || return $?
+    native_update_verifier_context "$_nv_phase" || return 77
+    [ "$_nu_gate_record" = "$_nv_up_gate" ] && [ "$_nu_context" = "$_nv_up_context" ] || return 77
+    if [ "$_nv_phase" = pre ]; then
+        (umask 077; set -C; printf '%s\n' "$_nv_frozen $_nv_runtime" > "$_nv_baseline") || return 77
+        _nv_ram_file "$_nv_baseline" 1024 || return 77
+        native_update_verifier_context pre || return 77
+        [ "$_nu_gate_record" = "$_nv_up_gate" ] && [ "$_nu_context" = "$_nv_up_context" ] || return 77
+    else
+        # Only verified success consumes this preflight, never admission itself.
+        rm "$_nv_baseline" || return 77
+    fi
+}
 _nv_main() {
     [ "$#" = 4 ] && [ "$(id -u)" = 0 ] || return 76
     _nv_phase=$1; _na_role=$2; _na_action=$3; _na_mode=$4
     case "$_nv_phase:$_na_role:$_na_action:$_na_mode" in
         pre:dispatcher:start:forced|pre:dispatcher:stop:forced|pre:dispatcher:restart:forced|pre:init:start:forced|pre:init:stop:forced|pre:init:restart:forced|pre:init:start:automatic|pre:init:restart:automatic|post:dispatcher:start:forced|post:dispatcher:stop:forced|post:dispatcher:restart:forced|post:init:start:forced|post:init:stop:forced|post:init:restart:forced|post:init:start:automatic|post:init:restart:automatic|pre:hook:start:forced|pre:hook:restart:forced|pre:hook:start:automatic|pre:hook:restart:automatic|post:hook:start:forced|post:hook:restart:forced|post:hook:start:automatic|post:hook:restart:automatic) ;;
         pre:event:start:forced|pre:event:stop:forced|post:event:start:forced|post:event:stop:forced) ;;
+        pre:update:update-xkeen:forced|post:update:update-xkeen:forced) ;;
         *) return 76;;
     esac
     _nv_file_ok /opt/lib/xkeen/native-operation-gate.sh && _nv_file_ok /opt/lib/xkeen/native-admission-entry.sh || return 76
     . /opt/lib/xkeen/native-operation-gate.sh
     . /opt/lib/xkeen/native-admission-entry.sh
+    if [ "$_na_role" = update ]; then _nv_update_main; return $?; fi
     _na_call_dir=/tmp/.xkeen-admission/operation.lock.d/call.$_na_role
     _na_child_ok || return 77
     if [ "$_ng_action" = reconcile ]; then
