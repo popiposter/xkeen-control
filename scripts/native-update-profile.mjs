@@ -99,6 +99,27 @@ export function buildStageWorker(built) {
   return Buffer.from(text)
 }
 
+export function buildInstalledProfileCheck(built) {
+  const live = path => path === 'xkeen' ? '/opt/sbin/xkeen' : `/opt/sbin/.xkeen/${path.slice('_xkeen/'.length)}`
+  const shape = [...directories].filter(directory => directory.startsWith('_xkeen')).sort().map(directory => {
+    const children = [...sourceFiles.keys(), ...directories].filter(path => path && dirname(path) === directory).map(path => path.split('/').at(-1))
+    const path = directory === '_xkeen' ? '/opt/sbin/.xkeen' : live(directory)
+    return `    [ -d "${path}" ] && [ ! -L "${path}" ] || return 76
+    for _np_item in "${path}"/* "${path}"/.[!.]* "${path}"/..?*; do
+        [ -e "$_np_item" ] || [ -L "$_np_item" ] || continue
+        [ ! -L "$_np_item" ] || return 76
+        case "\${_np_item##*/}" in ${children.join('|')}) ;; *) return 76;; esac
+    done`
+  }).join('\n') + '\n    return 0'
+  const checks = built.manifest.prepared.map(file => `    _np_file ${live(file.path)} ${file.sha256} ${file.size} || return 76`).join('\n') + '\n    return 0'
+  let text = readFileSync(new URL('./native-update-profile-check.sh', import.meta.url), 'utf8')
+  for (const [anchor, value] of [['return 76 # COMPILE INSTALLED PROFILE SHAPE', shape], ['return 76 # COMPILE INSTALLED PROFILE INVENTORY', checks]]) {
+    if (text.split(anchor).length !== 2) throw new Error('installed profile anchor changed')
+    text = text.replace(anchor, value)
+  }
+  return Buffer.from(text)
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     if (process.argv.length !== 4) throw new Error('usage: PUBLIC_PROFILE_ROOT NEW_DIRECTORY')
@@ -112,6 +133,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const worker = buildStageWorker(built)
     writeFileSync(join(process.argv[3], 'stage-worker.disabled.sh'), worker, { flag: 'wx', mode: 0o600 })
     built.manifest.worker = { file: 'stage-worker.disabled.sh', size: worker.length, sha256: digest(worker) }
+    const check = buildInstalledProfileCheck(built)
+    writeFileSync(join(process.argv[3], 'installed-check.disabled.sh'), check, { flag: 'wx', mode: 0o600 })
+    built.manifest.installedCheck = { file: 'installed-check.disabled.sh', size: check.length, sha256: digest(check) }
     writeFileSync(join(process.argv[3], 'manifest.json'), JSON.stringify(built.manifest, null, 2) + '\n', { flag: 'wx', mode: 0o600 })
     console.log(JSON.stringify({ enabled: false, files: built.manifest.source.length, overlays: built.overlays.size }))
   } catch {

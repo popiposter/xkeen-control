@@ -19,6 +19,7 @@ node --test \
     scripts/native-admission-connected.test.mjs \
     scripts/native-admission-background.test.mjs \
     scripts/native-update-profile.test.mjs \
+    scripts/native-update-profile-check.test.mjs \
     scripts/native-update-stage.test.mjs \
     scripts/native-update-stage-install.test.mjs \
     scripts/native-update-dispatch-errors.test.mjs \

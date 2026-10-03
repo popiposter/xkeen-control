@@ -79,5 +79,10 @@ test('CLI publishes only disabled files and refuses an existing output directory
     const worker = readFileSync(join(output, parsed.worker.file))
     assert.equal(worker.length, parsed.worker.size)
     assert.equal(sha(worker), parsed.worker.sha256)
+    const check = readFileSync(join(output, parsed.installedCheck.file))
+    assert.equal(check.length, parsed.installedCheck.size)
+    assert.equal(sha(check), parsed.installedCheck.sha256)
+    const fenced = spawnSync('/bin/sh', [join(output, parsed.installedCheck.file), 'pre'], { encoding: 'utf8', timeout: 1000 })
+    assert.ifError(fenced.error); assert.equal(fenced.status, 76)
   } finally { rmSync(temporary, { recursive: true, force: true }) }
 })

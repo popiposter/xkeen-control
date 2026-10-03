@@ -804,6 +804,15 @@ missing completion retains the baseline. Fixtures use actual admission/proof
 code with synthetic kernel views and synthetic phase receipts: no updater,
 timeout utility on hardware, packet traffic or live completion is qualified.
 
+The profile compiler also emits an unconditionally fenced installed-profile
+checker. It checks the 72 prepared file hashes/sizes at fixed native locations
+and rejects unknown files/directories or unsafe links in the owned module tree.
+It leaves unrelated `/opt/sbin` programs outside its inventory. Protected library
+bootstrap precedes authenticated read-only observer context; the original owner
+generation is rechecked after the inventory. No native code is executed, no
+body/stage/completion receipt is published, and admission is never released.
+This checker is not yet wired into updater acceptance and must not be installed.
+
 The source-only update environment preflight now excludes legacy init/port/list
 migration and first-install/new-feature effects. It requires protected existing
 native configuration and ipset/crontab directories, valid native JSON and a
