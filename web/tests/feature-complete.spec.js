@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test'
 import { featureCompleteRequests, mountFeatureCompleteDashboard, PRIVATE_SENTINELS } from './fixtures/feature-complete-model.js'
 
 const lazySettingsPaths = [
-  '/api/v1/performance/policy',
+  '/api/v1/performance/quality',
   '/api/v1/notifications',
   '/api/v1/panel/listener',
   '/api/v1/update',
@@ -12,7 +12,6 @@ const lazySettingsPaths = [
 const openSection = async (page, name) => {
   await (await revealNavigation(page)).getByRole('button').filter({ hasText: name }).click()
   if (name === 'System / Panel') await revealSystemSettings(page)
-  if (name === 'Performance') await revealDetails(page, 'Fixed traffic and time limits')
 }
 
 const stringValues = (value) => typeof value === 'string' ? [value]
@@ -46,7 +45,7 @@ test('composes the final navigation lazily and leaves settings out of the dashbo
   for (const [section, path] of [
     ['Routing', null],
     ['DNS', null],
-    ['Performance', '/api/v1/performance/policy'],
+    ['Performance', '/api/v1/performance/quality'],
     ['Components / Updates', null],
     ['System / Panel', '/api/v1/panel/listener'],
     ['Backup & Restore', null],
@@ -77,33 +76,6 @@ test('composes the final navigation lazily and leaves settings out of the dashbo
   expect(model.requests.filter(({ path }) => /^\/api\/v1\/(components|setup)(\/|$)/.test(path))).toEqual([])
 })
 
-test('preserves dirty drafts through unrelated reads, navigation and dashboard telemetry refresh', async ({ page }) => {
-  test.setTimeout(35_000)
-  await page.clock.install()
-  const model = await mountFeatureCompleteDashboard(page)
-  page.__featureCompleteModel = model
-  await page.goto('/')
-
-  await openSection(page, 'Performance')
-  await page.getByLabel('Active probe interval').fill('120')
-  await openSection(page, 'Components / Updates')
-  await expect(page.getByRole('heading', { name: 'XKeen and components', exact: true })).toBeVisible()
-  await openSection(page, 'System / Panel')
-  await expect(page.getByRole('heading', { name: '0.2.0', exact: true })).toBeVisible()
-  await openSection(page, 'Backup & Restore')
-
-  const readsBefore = Object.fromEntries(lazySettingsPaths.slice(0, 3).map((path) => [path, featureCompleteRequests(model, path, 'GET').length]))
-  const telemetryBefore = featureCompleteRequests(model, '/api/v1/performance', 'GET').length
-  await page.clock.runFor(5_300)
-  await expect.poll(() => featureCompleteRequests(model, '/api/v1/performance', 'GET').length).toBeGreaterThan(telemetryBefore)
-  expect(Object.fromEntries(lazySettingsPaths.slice(0, 3).map((path) => [path, featureCompleteRequests(model, path, 'GET').length]))).toEqual(readsBefore)
-
-  await openSection(page, 'Performance')
-  await expect(page.getByLabel('Active probe interval')).toHaveValue('120')
-  await expect(page.getByText('Unsaved', { exact: true })).toBeVisible()
-  for (const [path, count] of Object.entries(readsBefore)) expect(featureCompleteRequests(model, path, 'GET')).toHaveLength(count)
-})
-
 test('gates new mutation initiation across all workspaces when lifecycle is blocked or unknown', async ({ page }) => {
   test.setTimeout(60_000)
   const model = await mountFeatureCompleteDashboard(page)
@@ -119,7 +91,7 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
   await page.getByRole('checkbox', { name: 'Select Feature test node', exact: true }).check()
   await expect(page.getByRole('button', { name: 'Enable', exact: true })).toBeEnabled()
   await openSection(page, 'Performance')
-  await expect(page.getByRole('button', { name: 'Preview performance changes' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Compare nodes' })).toBeEnabled()
   await openSection(page, 'Components / Updates')
   await expect(page.getByRole('heading', { name: 'XKeen and components' })).toBeVisible()
   await openSection(page, 'Backup & Restore')
@@ -144,8 +116,8 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
     await expect(page.getByRole('button', { name: 'Enable', exact: true })).toBeDisabled()
     await expect(page.getByText('Feature test node', { exact: true })).toBeVisible()
     await openSection(page, 'Performance')
-    await expect(page.getByRole('button', { name: 'Preview performance changes' })).toBeDisabled()
-    await expect(page.getByLabel('Source-owned performance ceilings')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Compare nodes' })).toBeDisabled()
+    await expect(page.getByText('Node quality', { exact: true })).toBeVisible()
     await openSection(page, 'Components / Updates')
     await expect(page.getByRole('heading', { name: 'XKeen and components' })).toBeVisible()
     await openSection(page, 'Backup & Restore')
@@ -201,18 +173,9 @@ test('clears cross-domain previews on session turnover and rejects old tokens af
   page.__featureCompleteModel = model
   await page.goto('/')
   const applyPathByOwner = {
-    performance: '/api/v1/performance/policy/apply',
     listener: '/api/v1/panel/listener/apply',
   }
   const scenarios = [
-    { owner: 'performance', section: 'Performance', preview: async () => {
-      await page.getByLabel('Active probe interval').fill('120')
-      await page.getByRole('button', { name: 'Preview performance changes' }).click()
-      await expect(page.getByRole('heading', { name: 'Review performance policy changes', exact: true })).toBeVisible()
-    }, cleared: async () => {
-      await expect(page.getByRole('heading', { name: 'Review performance policy changes', exact: true })).toHaveCount(0)
-      await expect(page.getByLabel('Active probe interval')).toHaveValue('60')
-    } },
     { owner: 'listener', section: 'System / Panel', preview: async () => {
       await page.getByLabel('New management host').selectOption('10.0.0.4')
       await page.getByRole('button', { name: 'Preview rebind' }).click()
@@ -316,7 +279,7 @@ test('keeps safe projections secretless, browser storage empty, and the Dashboar
     ['Nodes', page.getByText('Feature test node', { exact: true })],
     ['Routing', page.getByText('Native configuration', { exact: true })],
     ['DNS', page.getByText('Native configuration', { exact: true })],
-    ['Performance', page.getByLabel('Source-owned performance ceilings')],
+    ['Performance', page.getByText('Node quality', { exact: true })],
     ['Components / Updates', page.getByRole('heading', { name: 'XKeen and components', exact: true })],
     ['Backup & Restore', page.getByLabel('Backup bundle')],
     ['System / Panel', page.getByRole('heading', { name: '0.2.0', exact: true })],

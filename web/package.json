@@ -11,7 +11,7 @@
     "test:dns-ui": "playwright test tests/native-config.spec.js",
     "test:nodes-ui": "playwright test tests/nodes.spec.js",
     "test:performance-ui": "playwright test tests/performance-ui.spec.js",
-    "test:performance-policy-ui": "playwright test tests/performance-policy.spec.js",
+    "test:native-quality-ui": "playwright test tests/native-quality.spec.js",
     "test:routing-ui": "playwright test tests/native-config.spec.js",
     "test:feature-complete-ui": "playwright test tests/feature-complete.spec.js",
     "test:system-panel-ui": "playwright test tests/system-panel.spec.js",

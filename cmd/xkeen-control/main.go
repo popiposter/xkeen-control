@@ -22,6 +22,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/geodatareader"
 	"github.com/popiposter/xkeen-control/internal/httpapi"
 	"github.com/popiposter/xkeen-control/internal/nativebackup"
+	"github.com/popiposter/xkeen-control/internal/nativequality"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	"github.com/popiposter/xkeen-control/internal/notifications"
 	"github.com/popiposter/xkeen-control/internal/panellistener"
@@ -192,6 +193,8 @@ func main() {
 			return state.Lifecycle.Maintenance, state.Lifecycle.Applying, true
 		},
 	})
+	qualityService := &nativequality.Service{Editor: nativeConfig, Lease: authorityLease, Reader: xrayReader, Nodes: nodeReader, Measurement: coordinator}
+	defer qualityService.Stop()
 	nativeTransfer := &nativebackup.Service{Editor: nativeConfig, Nodes: nodeManager, Lease: authorityLease}
 	handler := httpapi.New(httpapi.Config{
 		Native:         xkeen.Discovery{},
@@ -203,6 +206,7 @@ func main() {
 		Nodes:          nodeManager,
 		Backup:         nativeTransfer,
 		NativeTransfer: nativeTransfer,
+		NativeQuality:  qualityService,
 		Benchmark:      coordinator,
 		// Selection writes stay unavailable until native ownership and independent
 		// override expiry are qualified. Not starting the loop alone is insufficient.
@@ -231,6 +235,7 @@ func main() {
 	go func() {
 		<-shutdown
 		cancelRuntime()
+		qualityService.Stop()
 		subscriptionRefresher.Stop()
 		panelNotifyScheduler.Stop()
 		coordinator.Stop()

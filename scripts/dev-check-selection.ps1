@@ -16,7 +16,7 @@ function Get-XKeenBrowserSpecs {
     param([string[]]$Changed)
     $specs = [Collections.Generic.HashSet[string]]::new()
     $areas = @{
-        'performance-policy' = 'performance-policy'; 'system-panel' = 'system-panel'
+        'native-quality' = 'native-quality'; 'system-panel' = 'system-panel'
         'notifications' = 'system-panel'; 'native-xkeen' = 'native-xkeen'
         'native-commands' = 'native-commands'; 'native-console' = 'native-commands'; 'native-config' = 'native-config'; 'native-config-form' = 'native-config'; 'native-geodata' = 'native-config'; 'native-routing-example' = 'native-config'
     }
@@ -24,7 +24,7 @@ function Get-XKeenBrowserSpecs {
         if ($path -match '^web/tests/[^/]+\.spec\.js$') { [void]$specs.Add($path.Substring(4)); continue }
         if ($path -match '^web/src/([^/]+)\.jsx$' -and $areas.ContainsKey($Matches[1])) {
             [void]$specs.Add("tests/$($areas[$Matches[1]]).spec.js")
-            if ($Matches[1] -like 'native-*') {
+            if ($Matches[1] -like 'native-*' -and $Matches[1] -ne 'native-quality') {
                 [void]$specs.Add('tests/native-xkeen.spec.js')
                 [void]$specs.Add('tests/native-commands.spec.js')
                 [void]$specs.Add('tests/native-config.spec.js')

@@ -303,6 +303,8 @@ export class FeatureCompleteModel {
       case '/api/v1/update/policy':
         this.update = { ...this.update, policy: { ...body }, channel: body.channel, latestCompatibleVersion: null, latestChannel: null, latestSource: '' }
         return json(route, updateProjection(this.update))
+      case '/api/v1/performance/quality':
+        return json(route, this.quality || { state: 'idle', generation: 0, canStage: false, poolCount: 0, progress: { state: 'idle', candidates: [] } })
       case '/api/v1/performance/policy':
         return this.recordProjection(route, performanceProjection(this.performancePolicy))
       case '/api/v1/performance/policy/preview': {

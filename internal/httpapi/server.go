@@ -95,6 +95,7 @@ type Server struct {
 	notifications       *notifications.Service
 	backup              BackupService
 	nativeTransfer      NativeTransferService
+	nativeQuality       NativeQualityService
 	performancePolicy   PerformancePolicyService
 	listener            PanelListenerService
 	transferPreviewGate chan struct{}
@@ -123,6 +124,7 @@ type Config struct {
 	Notifications     *notifications.Service
 	Backup            BackupService
 	NativeTransfer    NativeTransferService
+	NativeQuality     NativeQualityService
 	PerformancePolicy PerformancePolicyService
 	Listener          PanelListenerService
 }
@@ -131,7 +133,7 @@ func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, native: config.Native, nativeJobs: config.NativeJobs, nativeConfig: config.NativeConfig, geodata: config.Geodata, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, nativeTransfer: config.NativeTransfer, performancePolicy: config.PerformancePolicy, listener: config.Listener, transferPreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, native: config.Native, nativeJobs: config.NativeJobs, nativeConfig: config.NativeConfig, geodata: config.Geodata, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, nativeTransfer: config.NativeTransfer, nativeQuality: config.NativeQuality, performancePolicy: config.PerformancePolicy, listener: config.Listener, transferPreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -161,6 +163,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
 		"/api/v1/notifications", "/api/v1/notifications/configure", "/api/v1/notifications/enabled", "/api/v1/notifications/control", "/api/v1/notifications/test", "/api/v1/notifications/clear",
 		"/api/v1/session/password",
+		"/api/v1/performance/quality", "/api/v1/performance/quality/start", "/api/v1/performance/quality/stage",
 		"/api/v1/benchmark/run", "/api/v1/performance/manual-node",
 		"/api/v1/backup/export", "/api/v1/backup/export-secret",
 		"/api/v1/xkeen/transfer/preview", "/api/v1/xkeen/transfer/stage", "/api/v1/xkeen/transfer/cancel",
@@ -199,6 +202,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/api/v1/performance/quality", "/api/v1/performance/quality/start", "/api/v1/performance/quality/stage":
+		s.handleNativeQuality(w, r)
 	case "/api/v1/xkeen/transfer/preview", "/api/v1/xkeen/transfer/stage", "/api/v1/xkeen/transfer/cancel":
 		s.handleNativeTransfer(w, r)
 	case "/api/v1/geodata", "/api/v1/geodata/query":

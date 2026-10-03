@@ -26,12 +26,13 @@ type EditorDocument struct {
 	Draft *string `json:"draft,omitempty"`
 }
 type EditorWorkspace struct {
-	Digest        string                    `json:"digest"`
-	Documents     map[string]EditorDocument `json:"documents"`
-	Pending       *PendingConfiguration     `json:"pending,omitempty"`
-	HasPrevious   bool                      `json:"hasPrevious"`
-	PreviousDrift bool                      `json:"previousDrift"`
-	Targets       []ConfigTarget            `json:"targets,omitempty"`
+	Digest          string                    `json:"digest"`
+	Documents       map[string]EditorDocument `json:"documents"`
+	Pending         *PendingConfiguration     `json:"pending,omitempty"`
+	HasPrevious     bool                      `json:"hasPrevious"`
+	PreviousDrift   bool                      `json:"previousDrift"`
+	Targets         []ConfigTarget            `json:"targets,omitempty"`
+	TargetsComplete bool                      `json:"targetsComplete"`
 }
 
 // Explicit private editor metadata: tags only, never outbound credentials.
@@ -48,7 +49,7 @@ func (e *ConfigEditor) Workspace(ctx context.Context) (EditorWorkspace, error) {
 	if err != nil {
 		return EditorWorkspace{}, err
 	}
-	w := EditorWorkspace{Digest: snapshot.Digest, Documents: map[string]EditorDocument{}}
+	w := EditorWorkspace{Digest: snapshot.Digest, Documents: map[string]EditorDocument{}, TargetsComplete: true}
 	for name, data := range snapshot.files {
 		if name == registryConfigID {
 			continue
@@ -61,10 +62,16 @@ func (e *ConfigEditor) Workspace(ctx context.Context) (EditorWorkspace, error) {
 			Tag      string `json:"tag"`
 			Protocol string `json:"protocol"`
 		}
-		if raw, ok := object["outbounds"]; ok && json.Unmarshal(raw, &outbounds) == nil {
+		if raw, ok := object["outbounds"]; ok {
+			if json.Unmarshal(raw, &outbounds) != nil {
+				w.TargetsComplete = false
+				continue
+			}
 			for _, outbound := range outbounds {
 				if outbound.Tag != "" && len(outbound.Tag) <= 128 && len(outbound.Protocol) <= 32 && len(w.Targets) < 256 {
 					w.Targets = append(w.Targets, ConfigTarget{outbound.Tag, "outbound", outbound.Protocol})
+				} else {
+					w.TargetsComplete = false
 				}
 			}
 		}

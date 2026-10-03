@@ -145,22 +145,6 @@ test('System starts with access, reveals optional forms and never fetches on dis
   expect(model.requests.filter(({ method }) => method === 'GET').length).toBe(reads)
 })
 
-test('policy pages put editable work before protected context and expose the review sequence', async ({ page }) => {
-  page.__workspaceModel = await mountFeatureCompleteDashboard(page)
-  await page.goto('/')
-  for (const [name, editor, details] of [['Performance', '.performance-policy-editor', 'Fixed traffic and time limits']]) {
-    await openTask(page, name)
-    await expect(page.locator(editor)).toBeVisible()
-    await expect(page.getByRole('list', { name: 'Operation steps' })).toBeVisible()
-    const positions = await page.evaluate(({ editor, details }) => {
-      const target = [...document.querySelectorAll('details')].find((item) => item.querySelector('summary')?.textContent.includes(details))
-      return { editor: document.querySelector(editor).getBoundingClientRect().top, context: target.getBoundingClientRect().top, closed: !target.open }
-    }, { editor, details })
-    expect(positions.context).toBeGreaterThan(positions.editor)
-    expect(positions.closed).toBe(true)
-  }
-})
-
 for (const width of [320, 375, 768]) test(`navigation and every workspace fit ${width}px without page overflow`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 })
   page.__workspaceModel = await mountFeatureCompleteDashboard(page, { nodeEnabled: true })

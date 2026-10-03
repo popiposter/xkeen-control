@@ -24,7 +24,7 @@ Sources: [override bypass](https://raw.githubusercontent.com/XTLS/Xray-core/v26.
 - CohortC: installed-core compatibility, pending/rollback/config baseline, NEW native editor change for faster health checks (start30s), full Xray validation, one bounded Apply and independent readback. Preserve stock code/auth/registry/selective routing/DNS. Never replay old Apply.
 - CohortD: bounded failover proof with panel stopped, failed selected proxy/healthy backup, all unavailable, recovery; distinguish source fixtures/core/router API/LAN traffic. Karing is not LAN evidence. No provider manipulation or Keenetic firewall rewrite to manufacture failure.
 
-Current scorer/native-cost builder is source-only. GUI recommendation/apply and actual native cost/failover acceptance remain pending. Old adaptive override remains disabled; finishing unsafe pinning is unnecessary.
+Current scorer/native-cost builder and comparison/GUI are source-only. Actual native cost/failover acceptance remains pending. Old adaptive override remains disabled; finishing unsafe pinning is unnecessary.
 
 ## Recorded implementation boundary
 
@@ -32,4 +32,30 @@ CohortA scorer/native costs/current-first and focused entire c1 Go+vet PASS; ind
 
 NEW live interval-only native editor Save/Apply completed once and independent fresh API/SSH readback PASS:30s instead of5m, no override, native executable/newPID/API and unchanged routing/DNS/outbounds/registry/auth/init/core hashes. Config comparison proves only probeInterval changed; pending absent. Snapshot40healthy/60observed, provider health varies. No forced node failure or LAN-flow switch measurement. Never replay quality-liveness-20261003-new helper/Apply.
 
-Quality core and cost proposal remain source-only, not active native leastLoad. Next wire a bounded comparison/recommendation job without old override supervisor, then GUI same-editor native costs and compatible runtime qualification. No additional global updater/transaction/writer/watchdog. One final FULL before that coherent delivery, proportional Go-only iterations before it.
+Quality core, bounded comparison and GUI cost proposal remain source-only, not active native leastLoad. Next qualify and deliver this coherent candidate, then validate compatible native costs and runtime failover. No additional global updater/transaction/writer/watchdog. One final FULL before that coherent delivery, proportional Go-only iterations before it.
+
+## Comparison/editor cohort
+
+Explicit RAM-only comparison uses the existing coordinator lifecycle and fixed
+adaptive transfer runner, with the SAME panel lease held through cleanup. Current
+native target first, four fastest eligible alternatives, one rotating alternative;
+six candidates/144MiB/180s ceilings. Fresh native observations required, no override.
+The existing policy engine retains unique Observatory timestamps from ordinary
+collector reads, with no new poller or automatic selection loop. Three retained
+successes permit failure/jitter penalties; a single observation is not presented
+as a stability window. Native leastLoad also retains its own health/deviation logic.
+
+Authenticated GUI shows measured down/up and RTT. Save consumes the fresh
+recommendation, rejects config/registry drift and incomplete target projections,
+replaces only the native balancer strategy through the SAME lossless JSONC editor,
+validates the full candidate and creates an ordinary pending change. It does not
+restart or select. Existing Apply/discard/previous/diagnostics remain the sole
+configuration owner. No automatic bandwidth test, cadence or override write;
+native selection uses persisted costs and live health until another explicit
+comparison. Old inactive adaptive-policy GUI and its obsolete browser suite retired.
+
+NEW three-node fixed-provider diagnostics completed once, with independent
+readback of unchanged config digest, no pending/no override, completed manual
+state and no temporary diagnostic rules. Down/up Mbps respectively: current
+150.62/49.20, lowest-RTT alternative136.27/51.49, exploration27.51/27.41.
+Total transferred116MiB, within144MiB; no global ranking/LAN/failover-time claim.
