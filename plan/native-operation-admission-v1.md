@@ -804,6 +804,15 @@ missing completion retains the baseline. Fixtures use actual admission/proof
 code with synthetic kernel views and synthetic phase receipts: no updater,
 timeout utility on hardware, packet traffic or live completion is qualified.
 
+The data-only opkg status projection requires exactly one supported XKeen stanza,
+rejects duplicate package records and names beginning `xkeen` other than `xkeen`
+itself (the pinned native deletion uses a prefix match). It preserves unrelated
+stanza contents/order while normalizing only paragraph separators, and permits
+only native `Installed-Time` changes in the own identity projection. Native
+registration architecture must match the first status architecture that upstream
+uses. Caller protection, size/LF limits and authenticated pre/post integration
+are still required; the pure parser does not grant updater authority.
+
 The profile compiler also emits an unconditionally fenced installed-profile
 checker. It checks the 72 prepared file hashes/sizes at fixed native locations
 and rejects unknown files/directories or unsafe links in the owned module tree.
