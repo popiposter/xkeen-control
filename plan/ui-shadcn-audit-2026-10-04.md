@@ -63,8 +63,7 @@ workspaces at desktop and320/375/768px. Seven native command scenarios passed
 in the preceding focused run. Production frontend/embed and ARM64 build passed.
 Private current-run before screenshots and synthetic after screenshots inspected.
 
-Status: source cohort complete; exact-HEAD FULL and NEW live panel delivery
-remain pending. No native configuration or XKeen code changed live.
+Initial source checkpoint: superseded by the qualified and installed result below.
 
 Final-gate correction: b3fba27 reached93/98 browser PASS; five failures
 shared a missing native workspace read in the integration fixture. The fixture
@@ -82,8 +81,8 @@ stock init and60nodes53enabled2subscriptionsWL0, no pending generation.
 All eight live workspaces were captured and visually inspected in both themes;
 all seven fixed configuration forms and Form/Text were opened without writes.
 The live Text screenshot revealed CodeMirror style injection rejected by the
-production CSP, which Vite-only tests had not exercised. This remains a real
-blocker for complete editor acceptance despite d185's broader UI success.
+production CSP, which Vite-only tests had not exercised. The final833 correction
+below resolves this blocker.
 
 The correction gives each non-cached HTML document a fresh32-byte random style
 nonce, preserves the existing script and other CSP directives, and provides it
@@ -91,5 +90,46 @@ to CodeMirror. No unsafe-inline or script nonce is enabled. A Go fixture checks
 nonce uniqueness/header/meta matching and retained restrictions. A new browser
 case serves the actual production embedded HTML/JS/CSS under CSP and checks
 editor geometry, gutters and syntax colors. Both focused checks passed.
-A NEW exact FULL99browser and another NEW panel-only delivery remain pending;
-never replay the completed d185 replacement.
+The exact FULL and fresh delivery completed as recorded below; never replay
+the completed replacements.
+
+
+## Final qualified and installed result
+
+Installed immutable source: `8336462df830e670c15a83e1682e5ab23d2dabb6`.
+Its clean FULL gate passed Go, race, helper fixtures,99 browser cases,
+frontend/embed and dependency audit (zero findings). The actual ARM64 artifact
+is15,663,264 bytes, SHA256
+`27db049fa642cc84b68f3a133339301a41f038450fce37408efb165ad4ccd4f9`.
+This is a development deployment (build metadata dev/development/dev), not a
+signed release. The installed source is bound by the exact qualified binary hash.
+Any later documentation-only commit has no application qualification claim.
+
+One fresh panel-only replacement from d185 completed; independent inspection
+verified the running executable hash, one new panel process, health/authenticated
+API, unchanged native Xray PID/start/executable and preserved configs/registry/
+auth/stock init. Registry inventory remains60nodes/53enabled/2subscriptions;
+WL-enabled0 and pending markers absent. No native restart or config Apply was
+performed for UI delivery or its visual acceptance.
+
+Final live acceptance includes styled Text mode with flex scroller/gutters,
+288px editor and syntax colors under production CSP; fresh unique HTML style
+nonces match headers, cache is no-store, script-self/frame-none restrictions
+remain and no unsafe-inline was added. Browser reported zero CSP errors.
+All eight workspaces were inspected in light/dark on d185; final833 additionally
+verified Text, listener/logging forms, empty profile/subscription dialogs and
+expanded password/releases/notification blocks. All eight sections were checked
+at320/375/768px with no page horizontal overflow. Tables retain local scrolling.
+Subscription URL input is type=url. Private screenshots/receipts stay outside Git.
+
+A subscription scheduler activation failure occurred between the two UI deliveries.
+The first833 attempt stopped before intent/staging/mutation. Independent recovery
+inspection proved current registry/outbounds equal the retained previous generation,
+full native configuration validation, native API selection within enabled tags and
+Xray started after restored outbounds. Its stale marker was archived with a bounded
+private snapshot; no subscription update, config write or native restart was replayed.
+The underlying scheduler lifecycle failure needs a separate focused timing/diagnostic
+investigation; successful UI acceptance does not claim it repaired.
+
+Scope limits: no new LAN client, DNS outage/failover, configured Telegram bot or
+second-router acceptance. These are separate Issue121 work, not UI gate claims.
