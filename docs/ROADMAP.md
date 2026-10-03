@@ -78,9 +78,13 @@ remain pending. This does not enable or install any native candidate, and the
 prior FULL is not reused after edits.
 
 The exact `1f9d339` verifier checkpoint subsequently passed FULL in 3m37s
-(helpers190, browser149, Go/vet/race, frontend/audit0 and ARM64). Newer source
-adds only the forced update-to-init restart borrowing seam, using the existing
-init/hook contexts and real exec/ancestry fixtures. Native updater entry,
+(helpers190, browser149, Go/vet/race, frontend/audit0 and ARM64). The subsequent
+`a80911a` forced update-to-init borrowing seam passed independent review and FAST
+Go/helpers197/ARM64 without Chromium. `6182dd3` additionally checks all nine native
+update dependencies, preserves opkg configuration and refuses stopped hook
+cleanup drift. Independent focused checks passed 17 groups; the separate pinned
+public-source catalogue passed 153 cases. These are source iteration results.
+Native updater entry,
 terminal/cleanup/drain wiring and hardware qualification remain pending; this
 does not enable the native backend or adaptive writer.
 
