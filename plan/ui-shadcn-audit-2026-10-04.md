@@ -72,3 +72,24 @@ now checks lazy fixed-file inspection with CSRF and rejects mutations. Loaded
 mobile editors exposed short Form/Text targets; those are now44px. The17
 focused integration/responsive cases passed after that correction. The password
 reset scenario explicitly awaits Preview before entering its next form.
+
+## Live audit correction and document CSP
+
+Exact d185 FULL passed Go/race/helpers98browser/frontend/embed/audit0 and ARM64.
+One NEW panel-only replacement plus independent readback passed: exact running
+executable hash, unchanged native PID/start/executable, configs/registry/auth/
+stock init and60nodes53enabled2subscriptionsWL0, no pending generation.
+All eight live workspaces were captured and visually inspected in both themes;
+all seven fixed configuration forms and Form/Text were opened without writes.
+The live Text screenshot revealed CodeMirror style injection rejected by the
+production CSP, which Vite-only tests had not exercised. This remains a real
+blocker for complete editor acceptance despite d185's broader UI success.
+
+The correction gives each non-cached HTML document a fresh32-byte random style
+nonce, preserves the existing script and other CSP directives, and provides it
+to CodeMirror. No unsafe-inline or script nonce is enabled. A Go fixture checks
+nonce uniqueness/header/meta matching and retained restrictions. A new browser
+case serves the actual production embedded HTML/JS/CSS under CSP and checks
+editor geometry, gutters and syntax colors. Both focused checks passed.
+A NEW exact FULL99browser and another NEW panel-only delivery remain pending;
+never replay the completed d185 replacement.

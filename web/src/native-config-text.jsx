@@ -14,6 +14,7 @@ export default function NativeConfigText({ text, onChange, disabled, onUndo, onR
   callbacks.current = { onChange, onUndo, onRedo, disabled }
   useEffect(() => {
     const view = new EditorView({ parent: element.current, state: EditorState.create({ doc: text, extensions: [
+      EditorView.cspNonce.of(document.querySelector('meta[name="style-nonce"]')?.content || ''),
       lineNumbers(), highlightActiveLine(), highlightSpecialChars(), drawSelection(), json(), syntaxHighlighting(HighlightStyle.define([{ tag: [tags.string, tags.number, tags.bool, tags.null], color: 'var(--foreground)' }, { tag: [tags.propertyName, tags.punctuation], color: 'var(--muted-foreground)' }, { tag: tags.comment, color: 'var(--muted-foreground)', fontStyle: 'italic' }])),
       EditorView.lineWrapping,
       readOnly.current.of([EditorState.readOnly.of(disabled), EditorView.editable.of(!disabled)]),
