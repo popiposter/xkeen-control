@@ -795,7 +795,7 @@ func (s *Supervisor) PrepareAdaptiveGeneration(ctx context.Context, generation u
 		if count < requiredSamples {
 			continue
 		}
-		eligible = append(eligible, AdaptiveCandidateInput{Tag: node.Tag, RTTMS: median, Samples: count, LatestAt: latest})
+		eligible = append(eligible, AdaptiveCandidateInput{Tag: node.Tag, RTTMS: median, Samples: count, LatestAt: latest, HealthPenalty: adaptiveWindowPenalty(s.engine.samples[node.Tag], cutoff, now, median)})
 	}
 	currentEligible := false
 	for _, candidate := range eligible {
@@ -843,7 +843,8 @@ func (s *Supervisor) PrepareAdaptiveGeneration(ctx context.Context, generation u
 		shortlist = append(shortlist, tail[next])
 		s.adaptiveExploreAfter = stableIDs[tail[next].Tag]
 	}
-	shortlist = append(shortlist, adaptiveCandidateFor(eligible, stable))
+	// Establish the current baseline before exploration can exhaust the budget.
+	shortlist = append([]AdaptiveCandidateInput{adaptiveCandidateFor(eligible, stable)}, shortlist...)
 	if len(shortlist) > AdaptiveMaxCandidates {
 		shortlist = shortlist[:AdaptiveMaxCandidates]
 	}
@@ -1004,7 +1005,7 @@ func adaptiveGenerationMatchesResult(generation AdaptiveGeneration, result Adapt
 	seen := make(map[string]struct{}, len(result.Candidates))
 	for _, candidate := range result.Candidates {
 		input, ok := inputs[candidate.Tag]
-		if !ok || input.RTTMS != candidate.RTTMS {
+		if !ok || input.RTTMS != candidate.RTTMS || input.HealthPenalty != candidate.HealthPenalty {
 			return false
 		}
 		if _, duplicate := seen[candidate.Tag]; duplicate {

@@ -17,15 +17,15 @@ func TestAdaptiveExplorationVisitsTailWithinExistingCap(t *testing.T) {
 		if reason != "" || len(g.Candidates) != 6 {
 			t.Fatalf("generation: %+v reason=%s", g, reason)
 		}
-		if got := g.Candidates[4].Tag; got != want {
+		if got := g.Candidates[5].Tag; got != want {
 			t.Fatalf("generation %d exploration=%s want=%s", i+1, got, want)
 		}
 		for j, tag := range []string{"proxy-a", "proxy-b", "proxy-c", "proxy-d"} {
-			if g.Candidates[j].Tag != tag {
+			if g.Candidates[j+1].Tag != tag {
 				t.Fatalf("fast shortlist lost %s", tag)
 			}
 		}
-		if g.Candidates[5].Tag != tags[0] {
+		if g.Candidates[0].Tag != tags[0] {
 			t.Fatal("current lost")
 		}
 	}
@@ -41,25 +41,25 @@ func TestAdaptiveExplorationStableIDsSurviveOrderRemovalAndSingleSlot(t *testing
 	s.nodes = func(context.Context) []NodeState { return append([]NodeState(nil), nodes...) }
 	s.performancePolicy.AdaptiveChallengerLimit = 1
 	g, reason := s.PrepareAdaptiveGeneration(context.Background(), 1)
-	if reason != "" || g.Candidates[0].Tag != "proxy-b" {
+	if reason != "" || g.Candidates[1].Tag != "proxy-b" {
 		t.Fatalf("stable ID order: %+v %s", g, reason)
 	}
 	// Remove cursor's node, reverse reader order: successor remains ID m.
 	nodes = []NodeState{nodes[3], nodes[1], nodes[0]}
 	reader.snapshot.OutboundHealth[2].Alive = false
 	g, reason = s.PrepareAdaptiveGeneration(context.Background(), 2)
-	if reason != "" || len(g.Candidates) != 2 || g.Candidates[0].Tag != "proxy-c" {
+	if reason != "" || len(g.Candidates) != 2 || g.Candidates[1].Tag != "proxy-c" {
 		t.Fatalf("successor after removal: %+v %s", g, reason)
 	}
 	g, reason = s.PrepareAdaptiveGeneration(context.Background(), 3)
-	if reason != "" || g.Candidates[0].Tag != "proxy-a" {
+	if reason != "" || g.Candidates[1].Tag != "proxy-a" {
 		t.Fatalf("stable successor: %+v %s", g, reason)
 	}
 
 	nodes = append(nodes, NodeState{ID: "a", Tag: "proxy-b", Enabled: true})
 	reader.snapshot.OutboundHealth[2].Alive = true
 	g, reason = s.PrepareAdaptiveGeneration(context.Background(), 4)
-	if reason != "" || g.Candidates[0].Tag != "proxy-b" {
+	if reason != "" || g.Candidates[1].Tag != "proxy-b" {
 		t.Fatalf("readded ID did not wrap deterministically: %+v %s", g, reason)
 	}
 }

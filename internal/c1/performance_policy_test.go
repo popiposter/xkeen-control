@@ -69,7 +69,7 @@ func TestPerformancePolicyRetainsRTTEvidenceResetsCandidateAndBoundsShortlist(t 
 	if reason != "" {
 		t.Fatalf("preparation reason = %q", reason)
 	}
-	want := []string{"proxy-a", "proxy-b", "proxy-current"}
+	want := []string{"proxy-current", "proxy-a", "proxy-b"}
 	got := make([]string, 0, len(generation.Candidates))
 	for _, item := range generation.Candidates {
 		got = append(got, item.Tag)
@@ -85,7 +85,7 @@ func TestPerformancePolicyRetainsRTTEvidenceResetsCandidateAndBoundsShortlist(t 
 	policy.AdaptiveChallengerLimit = 1
 	fastCurrent.applyPerformancePolicy(policy)
 	generation, reason = fastCurrent.PrepareAdaptiveGeneration(context.Background(), 2)
-	if reason != "" || len(generation.Candidates) != 2 || generation.Candidates[0].Tag != "proxy-a" || generation.Candidates[1].Tag != "proxy-current" {
+	if reason != "" || len(generation.Candidates) != 2 || generation.Candidates[0].Tag != "proxy-current" || generation.Candidates[1].Tag != "proxy-a" {
 		t.Fatalf("one challenger plus current = %+v reason=%q", generation, reason)
 	}
 }

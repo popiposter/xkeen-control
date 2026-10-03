@@ -163,7 +163,7 @@ func TestAdaptiveRunnerEarlyStopFailureContinuationAndCleanupAbort(t *testing.T)
 	})
 }
 
-func TestAdaptiveScoreUsesFiniteFormulaAndExactRTTGuards(t *testing.T) {
+func TestAdaptiveScoreUsesFiniteFormulaAndAbsoluteRTTCeiling(t *testing.T) {
 	results := []AdaptiveCandidateResult{
 		{Tag: "proxy-current", RTTMS: 100, DownloadBPS: 10, UploadBPS: 10, Valid: true},
 		{Tag: "proxy-challenger", RTTMS: 110, DownloadBPS: 30, UploadBPS: 20, Valid: true},
@@ -178,7 +178,7 @@ func TestAdaptiveScoreUsesFiniteFormulaAndExactRTTGuards(t *testing.T) {
 
 	guarded := []AdaptiveCandidateResult{
 		{Tag: "proxy-current", RTTMS: 100, DownloadBPS: 10, UploadBPS: 10, Valid: true},
-		{Tag: "proxy-too-slow", RTTMS: 176, DownloadBPS: 1000, UploadBPS: 1000, Valid: true},
+		{Tag: "proxy-too-slow", RTTMS: 751, DownloadBPS: 1000, UploadBPS: 1000, Valid: true},
 	}
 	winner, _, _, challenger = scoreAdaptiveResults(guarded, "proxy-current")
 	if winner != "proxy-current" || challenger {
@@ -236,7 +236,7 @@ func TestSupervisorAdaptiveSnapshotUsesFreshUniqueRTTAndLowestFivePlusCurrent(t 
 	if generation.Generation != 1 || generation.CurrentTarget != "proxy-current" || len(generation.Candidates) != AdaptiveMaxCandidates {
 		t.Fatalf("adaptive generation = %+v", generation)
 	}
-	want := []string{"proxy-a", "proxy-b", "proxy-c", "proxy-d", "proxy-e", "proxy-current"}
+	want := []string{"proxy-current", "proxy-a", "proxy-b", "proxy-c", "proxy-d", "proxy-e"}
 	got := make([]string, 0, len(generation.Candidates))
 	for _, candidate := range generation.Candidates {
 		got = append(got, candidate.Tag)

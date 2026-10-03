@@ -119,7 +119,7 @@ func TestAdaptiveCalibrationInvalidRatesAndRTTGuards(t *testing.T) {
 	for _, test := range []struct {
 		currentRTT, challengerRTT int64
 		allowed                   bool
-	}{{50, 100, true}, {50, 101, false}, {100, 175, true}, {100, 176, false}, {50, 0, false}, {50, -1, false}} {
+	}{{50, 100, true}, {50, 101, true}, {100, 750, true}, {100, 751, false}, {50, 0, false}, {50, -1, false}} {
 		results := calibratedPair(10, float64(MiB))
 		results[0].RTTMS, results[1].RTTMS = test.currentRTT, test.challengerRTT
 		winner, _, _, challenger := scoreAdaptiveResults(results, "proxy-current")
