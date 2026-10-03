@@ -129,6 +129,10 @@ func commandArguments(r CommandRequest) (CommandSpec, []string, error) {
 			if s.Interactive {
 				s.limit = 15 * time.Minute
 			}
+			switch s.Action {
+			case "status", "pbr-status", "killswitch-status", "speed-balancer-status", "ports", "excluded-ports", "listen-ports", "help":
+				s.limit = 10 * time.Second
+			}
 		}
 		return s, args, nil
 	}

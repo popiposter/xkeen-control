@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 async function mountNativeCommands(page, { output = 'Native result\r\n', bootstrap } = {}) {
-  const model = { starts: [], reads: [], inputs: [], job: null }
+  const model = { starts: [], reads: [], inputs: [], resolves: [], job: null }
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
@@ -27,6 +27,7 @@ async function mountNativeCommands(page, { output = 'Native result\r\n', bootstr
     if (path === '/api/v1/xkeen/jobs/input') { model.inputs.push(body); return json({}) }
     if (path === '/api/v1/xkeen/jobs/resize') return json({})
     if (path === '/api/v1/xkeen/jobs/cancel') { model.job.state = 'unknown'; return json({}) }
+    if (path === '/api/v1/xkeen/jobs/resolve') { model.resolves.push(body); model.job.state = 'inspected'; return json({ ...model.job, output: '', cursor: 0, truncated: false }) }
     const value = {
       '/api/v1/session': { csrfToken: 'synthetic-native-csrf' },
       '/api/v1/status': { controlPlane: {}, xray: {}, xkeen: {}, balancer: {}, observatory: {}, benchmark: { controlPlane: {} }, selection: {}, lifecycle: { applying: false, maintenance: false }, native: { installation: 'available', version: '2.0.1', channel: 'beta', core: 'xray', panelIntegration: 'available', xrayRunning: true } },
@@ -136,5 +137,20 @@ test('stalled terminal input has a bounded queue and never sends queued answers 
   await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
   await expect(page.getByText('geodata-schedule: running', { exact: true })).toBeVisible()
   expect(sent).toBe(1)
+  expect(model.starts).toHaveLength(1)
+})
+
+
+test('inspects an interrupted command without replaying it before enabling new actions', async ({ page }) => {
+  const model = await mountNativeCommands(page)
+  await page.getByRole('button', { name: 'Set geodata schedule', exact: true }).click()
+  await page.getByRole('button', { name: 'Run native command', exact: true }).click()
+  await expect.poll(() => model.starts.length).toBe(1)
+  await page.getByRole('button', { name: 'Interrupt command', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'I inspected XKeen; allow new actions', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Check status', exact: true })).toBeDisabled()
+  await page.getByRole('button', { name: 'I inspected XKeen; allow new actions', exact: true }).click()
+  await expect.poll(() => model.resolves).toEqual([{ id: 'c'.repeat(32), inspected: true }])
+  await expect(page.getByRole('button', { name: 'Check status', exact: true })).toBeEnabled()
   expect(model.starts).toHaveLength(1)
 })

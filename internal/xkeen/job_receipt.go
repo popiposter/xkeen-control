@@ -65,7 +65,7 @@ func NewPersistentJobs(binary string, lease *authority.Lease, path string) (*Job
 	if r.State == "running" {
 		r.State = "unknown"
 	}
-	if r.State != "unknown" && r.State != "completed" && r.State != "failed" {
+	if r.State != "unknown" && r.State != "completed" && r.State != "failed" && r.State != "inspected" {
 		return nil, ErrJob
 	}
 	m.job = &nativeJob{id: r.ID, action: r.Action, state: r.State}

@@ -41,6 +41,16 @@ func TestNativeJobsRequireSessionCSRFAndPrivateOwner(t *testing.T) {
 		return result.CSRFToken
 	}
 	csrf := login(client)
+	response = postJSON(t, client, server.URL+"/api/v1/xkeen/jobs/resolve", map[string]any{"id": "c", "inspected": true}, "")
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatal("inspection bypassed CSRF", response.StatusCode)
+	}
+	response.Body.Close()
+	response = postJSON(t, client, server.URL+"/api/v1/xkeen/jobs/resolve", map[string]any{"id": "c", "inspected": false}, csrf)
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatal("inspection accepted without acknowledgement", response.StatusCode)
+	}
+	response.Body.Close()
 	response = postJSON(t, client, server.URL+"/api/v1/xkeen/jobs/start", xkeen.CommandRequest{Action: "geodata-schedule"}, "")
 	if response.StatusCode != http.StatusForbidden {
 		t.Fatal(response.StatusCode)

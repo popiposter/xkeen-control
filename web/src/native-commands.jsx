@@ -47,8 +47,8 @@ export function NativeCommands({ csrfToken, onUnauthorized, onRefresh }) {
     if (!response.ok) { const error = new Error(response.status === 503 ? 'Native commands are not enabled yet.' : 'Native action unavailable. Inspect its current state before retrying.'); error.status = response.status; throw error }
     const value = await response.json()
     if (!alive.current || owner.current !== csrfToken || epoch !== generation.current) throw new Error('Session changed.')
-    if (path === 'jobs/start' || path === 'jobs/read') {
-      if (!value || !/^[a-f0-9]{32}$/.test(value.id) || !['running', 'completed', 'failed', 'unknown'].includes(value.state) || typeof value.interactive !== 'boolean' || typeof value.output !== 'string' || value.output.length > 43692 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value.output) || !Number.isSafeInteger(value.cursor) || value.cursor < 0) throw new Error('Native job response could not be confirmed. Inspect before retrying.')
+    if (path === 'jobs/start' || path === 'jobs/read' || path === 'jobs/resolve') {
+      if (!value || !/^[a-f0-9]{32}$/.test(value.id) || !['running', 'completed', 'failed', 'unknown', 'inspected'].includes(value.state) || typeof value.interactive !== 'boolean' || typeof value.output !== 'string' || value.output.length > 43692 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value.output) || !Number.isSafeInteger(value.cursor) || value.cursor < 0) throw new Error('Native job response could not be confirmed. Inspect before retrying.')
     }
     return value
     } finally { clearTimeout(timeout); requests.current.delete(controller) }
@@ -123,6 +123,15 @@ export function NativeCommands({ csrfToken, onUnauthorized, onRefresh }) {
     if (job?.state !== 'running') return
     try { await request('jobs/cancel', { id: job.id }); if (alive.current) setNotice('Cancellation requested. Inspect the final state.') } catch (error) { if (alive.current) setNotice(error.message) }
   }
+  async function resolveInspection() {
+    if (!unknown || !job || pending) return
+    setPending(true)
+    try {
+      const value = await request('jobs/resolve', { id: job.id, inspected: true })
+      if (current()) { setJob(value); setUnknown(false); setNotice('Inspection recorded. The command was not repeated and its outcome remains unconfirmed.'); refresh.current?.() }
+    } catch (error) { if (current()) setNotice(error.message) }
+    finally { if (current()) setPending(false) }
+  }
   async function openConsole() {
     if (consoleOpen) return
     setConsoleOpen(true); cursor.current = 0
@@ -140,6 +149,7 @@ export function NativeCommands({ csrfToken, onUnauthorized, onRefresh }) {
         <div className="flex gap-2"><Button type="submit" disabled={busy}>Run native command</Button><Button type="button" variant="outline" disabled={pending} onClick={() => setSelected(null)}>Cancel</Button></div>
       </form>}
       {notice && <p role="status">{notice}</p>}
+      {unknown && job && <div className="space-y-2"><p>Review the console and current XKeen status before enabling another change. This does not repeat the interrupted command.</p><Button variant="outline" onClick={() => refresh.current?.()}>Refresh current status</Button><Button variant="outline" disabled={pending} onClick={resolveInspection}>I inspected XKeen; allow new actions</Button></div>}
       {job && <div className="flex flex-wrap items-center gap-2"><span>{job.action}: {job.state}</span><Button variant="outline" onClick={openConsole}>Console output</Button>{job.state === 'running' && <Button variant="outline" onClick={cancel}>Interrupt command</Button>}</div>}
       {consoleOpen && job && <Suspense fallback={<p>Loading console…</p>}><NativeConsole key={job.id} chunk={chunk} interactive={job.interactive && job.state === 'running' && !inputFault} onInput={input} onResize={resize} onCancel={cancel} onReady={() => setConsoleReady(true)} onConsumed={() => consumed.current?.()} /></Suspense>}
     </CardContent>

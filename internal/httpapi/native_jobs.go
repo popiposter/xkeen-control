@@ -29,7 +29,7 @@ func (s *Server) handleNativeJobs(w http.ResponseWriter, r *http.Request) {
 			methodNotAllowed(w, http.MethodGet)
 			return
 		}
-		writeJSON(w, http.StatusOK, xkeen.CommandCatalog())
+		writeJSON(w, http.StatusOK, s.nativeJobs.InstalledCatalog())
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -131,5 +131,23 @@ func (s *Server) handleNativeJobs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, struct{}{})
+	case "/api/v1/xkeen/jobs/resolve":
+		var request struct {
+			ID        string `json:"id"`
+			Inspected bool   `json:"inspected"`
+		}
+		if !decode(&request) {
+			return
+		}
+		if !request.Inspected {
+			writeError(w, http.StatusBadRequest, "inspect the current native state first")
+			return
+		}
+		result, err := s.nativeJobs.ResolveInspection(r.Context(), owner, request.ID)
+		if err != nil {
+			fail(err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 	}
 }

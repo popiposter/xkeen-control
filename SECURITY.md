@@ -90,6 +90,13 @@ clipboard/external-link controls. Logout removes access and clears browser outpu
 closing the viewer does not repeat or cancel the native job. Treat all console
 contents as private, even when upstream masks some fields.
 
+The native config editor additionally permits authenticated private JSON/JSONC
+text for fixed data-config IDs, with origin/CSRF checks, bounded bodies and
+root-only explicit draft/previous storage. Text may contain secrets; it must
+never enter sanitized status responses, browser localStorage, public evidence,
+Telegram or automatic exports. No arbitrary path, sourced script or generic
+filesystem API is authorized. See docs/CONFIG-EDITOR-WORKFLOWS.md.
+
 Sessions, throttling and high-churn runtime state stay in RAM. Issue #99 B caps
 sessions at 32 and remote attempt entries at 256. Expired state is pruned before
 admission; sessions evict by oldest expiry with a stable token tie-break. Attempt

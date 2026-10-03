@@ -17,8 +17,11 @@ tags: [architecture, refactor, native-xkeen, simplification]
 Цель: штатный XKeen работает самостоятельно; панель быстро вызывает его команды
 и помогает редактировать его конфигурацию. Оператор разрешил реализацию v2 после
 аудита. Phase1 удалена в исходниках; typed jobs/API и лениво загружаемая консоль
-реализованы, но пока не подключены в main. Перед включением остаются interrupted-job
-receipt, idle timeout, installed capabilities и independent readback. Live приёмка
+подключены в main в исходниках. Добавлены interrupted-job receipt, idle timeout,
+installed command discovery и явное завершение инспекции unknown без replay.
+Штатное состояние читается независимо через discovery; это не доказательство
+качества туннеля. Старые неиспользуемые component/Setup factories удалены;
+добавлены общий Form/Text editor, private drafts и pending-file tracking. Group Apply/restore, полные графические формы и остальная очистка API/packages ещё впереди. Live приёмка
 команд и редакторов ещё не выполнена.
 
 ## 1. Requirements & Constraints
@@ -100,7 +103,7 @@ receipt, idle timeout, installed capabilities и independent readback. Live пр
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-008 | Добавить `internal/xkeen/config.go`: bounded JSONC read/projection и edits фиксированных native paths; snapshot hashes затронутых файлов, complete candidate Xray validation, final baseline check, atomic replacement. Multi-file change использует один существующий маленький current-operation transaction/backup, не native journal. Drift/unknown останавливает действия; rollback не перезаписывает чужие изменения. Не переписывать comments/opaque regions без нужды; семантически сохранить unknown fields. | No | — |
+| TASK-008 | Добавить `internal/xkeen/config.go`: bounded JSONC read/projection и edits фиксированных native paths; сценарии [Form/Text, drafts, pending/apply/restore](../docs/CONFIG-EDITOR-WORKFLOWS.md) обязательны; snapshot hashes затронутых файлов, complete candidate Xray validation, final baseline check, atomic replacement. Multi-file change использует один существующий маленький current-operation transaction/backup, не native journal. Drift/unknown останавливает действия; rollback не перезаписывает чужие изменения. Не переписывать comments/opaque regions без нужды; семантически сохранить unknown fields. | No | — |
 | TASK-009 | Перевести `internal/routingpolicy/service.go`, `internal/dnsobservatory/service.go`, `internal/restore` с managed appliance twin на native snapshot/edit adapter; подключить providers в main HTTP config. `internal/appliance` сохранить только используемые parsing/validation utilities, убрать ProductDefault equivalence/adoption gates. Типизированные панели: XKeen settings/ports/IP lists, DNS, routing, observatory/balancers. | No | — |
 | TASK-010 | Сохранить `internal/nodes` import/batch/reconcile/native renderer, WL defaults и unmasked URL field. По source/runtime проверить 2subscriptions и profiles без повторного импорта. Явный onboarding managed pool/API только если оператор включает соответствующую функцию; просмотр редактора не создаёт routing/API/balancer. Auto refresh использует panel job owner, без global native gate prerequisites. | No | — |
 

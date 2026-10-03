@@ -183,6 +183,7 @@ func main() {
 	}
 	authorityLease := authority.NewLease()
 	nodeManager = newNodeManager(coordinator, authorityLease)
+	nativeJobs := newNativeJobs(authorityLease)
 	subscriptionRefresher := nodes.NewSubscriptionRefresher(nodeManager)
 	nodeManager.SetAutoRefreshStatusProvider(subscriptionRefresher.AutoRefreshStatuses)
 	collector := controlruntime.NewCollector(buildinfo.Current().Version, startedAt, controlruntime.Dependencies{
@@ -211,11 +212,13 @@ func main() {
 		},
 	})
 	handler := httpapi.New(httpapi.Config{
-		Native:    xkeen.Discovery{},
-		Collector: collector,
-		Auth:      authManager,
-		Nodes:     nodeManager,
-		Benchmark: coordinator,
+		Native:       xkeen.Discovery{},
+		NativeJobs:   nativeJobs,
+		NativeConfig: &xkeen.ConfigEditor{DraftDir: getenv("XKEEN_NATIVE_CONFIG_DRAFT_DIR", "/opt/etc/xkeen-control/secrets/config-drafts"), Dir: getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir), XrayBinary: getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary), Lease: authorityLease, PreviousDir: getenv("XKEEN_NATIVE_CONFIG_PREVIOUS_DIR", "/opt/etc/xkeen-control/previous/native-config"), AssetDir: getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)},
+		Collector:    collector,
+		Auth:         authManager,
+		Nodes:        nodeManager,
+		Benchmark:    coordinator,
 		// Selection writes stay unavailable until native ownership and independent
 		// override expiry are qualified. Not starting the loop alone is insufficient.
 		Assets:            webassets.Handler(),
@@ -251,7 +254,7 @@ func main() {
 		_ = server.Shutdown(ctx)
 	}()
 	// Native Xray owns automatic selection until the panel mode is explicitly qualified.
-	// Automatic subscription writes are enabled after shared native admission is installed.
+	// Automatic subscription refresh is enabled separately from native commands.
 	panelNotifyScheduler.Start(runtimeContext)
 
 	log.Printf("xkeen-control %s listening on %s", buildinfo.Current().Version, listenAddress)
@@ -261,215 +264,22 @@ func main() {
 	}
 }
 
-func newXrayService(coordinator *c1.Coordinator, lease *authority.Lease, applianceService *appliance.Service, nodeManager *nodes.Manager, xrayReader *xrayapi.Client, mutationGate *components.ComponentMutationGate, maintenance *components.ComponentMaintenance) *components.XrayService {
-	xrayBinary := getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary)
-	xrayAssetDir := getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)
-	configDir := getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir)
-	activeOutboundsPath := getenv("XKEEN_ACTIVE_OUTBOUNDS", filepath.Join(configDir, "04_outbounds.json"))
-	xkeenConfigPath := getenv("XKEEN_CONFIG_PATH", "/opt/etc/xkeen/xkeen.json")
-	nodesPath := getenv("XKEEN_NODES_PATH", defaultNodesPath)
-	appliancePath := getenv("XKEEN_APPLIANCE_PATH", defaultAppliancePath)
-	stateDir := getenv("XKEEN_APPLIANCE_IMPORT_STATE_DIR", "/opt/etc/xkeen-control/state")
-	return components.NewXrayService(components.XrayConfig{
-		Resolver:   components.NewXrayResolver(nil, nil),
-		Downloader: components.NewXrayArtifactDownloader(nil, nil),
-		Authority: components.NewFileAuthorityProvider(components.FileAuthorityConfig{
-			Appliance:           applianceService,
-			Nodes:               nodeManager,
-			AppliancePath:       appliancePath,
-			NodesPath:           nodesPath,
-			ConfigDir:           configDir,
-			XkeenConfigPath:     xkeenConfigPath,
-			ActiveOutboundsPath: activeOutboundsPath,
-		}),
-		Runtime: components.CommandXrayRuntime{
-			Activator: nodes.CommandActivator{
-				XrayBinary:          xrayBinary,
-				XrayAssetDir:        xrayAssetDir,
-				XkeenBinary:         getenv("XKEEN_XKEEN_BINARY", components.DefaultXkeenBinary),
-				APIAddress:          getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress),
-				ActiveOutboundsPath: activeOutboundsPath,
-				RoutingPath:         filepath.Join(configDir, "05_routing.json"),
-			},
-			ActiveBinary:   xrayBinary,
-			ConfigDir:      configDir,
-			AssetDir:       xrayAssetDir,
-			ProbeReachable: xrayReader.ProbeReachable,
-		},
-		CandidateProbe:     components.CommandXrayCandidateProbe{Binary: xrayBinary},
-		CandidateValidator: components.CommandXrayCandidateValidator{Binary: xrayBinary},
-		AuthorityLease:     lease,
-		Coordinator:        coordinator,
-		ActiveBinaryPath:   xrayBinary,
-		ConfigDir:          configDir,
-		AssetDir:           xrayAssetDir,
-		PreviousDir:        getenv("XKEEN_XRAY_PREVIOUS_DIR", components.DefaultXrayPreviousDir),
-		JournalPath:        getenv("XKEEN_COMPONENT_TRANSACTION_PATH", components.DefaultComponentTransactionJournal),
-		StagingDir:         getenv("XKEEN_COMPONENT_STAGING_DIR", components.DefaultXrayComponentStagingDir),
-		RestoreJournalPath: filepath.Join(stateDir, "appliance-import-transaction.json"),
-		MutationGate:       mutationGate,
-		Maintenance:        maintenance,
-	})
-}
-
-func newGeodataService(coordinator *c1.Coordinator, lease *authority.Lease, applianceService *appliance.Service, nodeManager *nodes.Manager, xrayReader *xrayapi.Client, mutationGate *components.ComponentMutationGate, maintenance *components.ComponentMaintenance) *components.GeodataService {
-	xrayBinary := getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary)
-	xrayAssetDir := getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)
-	configDir := getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir)
-	activeOutboundsPath := getenv("XKEEN_ACTIVE_OUTBOUNDS", filepath.Join(configDir, "04_outbounds.json"))
-	xkeenConfigPath := getenv("XKEEN_CONFIG_PATH", "/opt/etc/xkeen/xkeen.json")
-	nodesPath := getenv("XKEEN_NODES_PATH", defaultNodesPath)
-	appliancePath := getenv("XKEEN_APPLIANCE_PATH", defaultAppliancePath)
-	stateDir := getenv("XKEEN_APPLIANCE_IMPORT_STATE_DIR", "/opt/etc/xkeen-control/state")
-	return components.NewGeodataService(components.GeodataConfig{
-		Resolver:   components.NewGeodataResolver(nil, nil),
-		Downloader: components.NewGeodataArtifactDownloader(nil, nil),
-		Authority: components.NewFileAuthorityProvider(components.FileAuthorityConfig{
-			Appliance:           applianceService,
-			Nodes:               nodeManager,
-			AppliancePath:       appliancePath,
-			NodesPath:           nodesPath,
-			ConfigDir:           configDir,
-			XkeenConfigPath:     xkeenConfigPath,
-			ActiveOutboundsPath: activeOutboundsPath,
-		}),
-		Runtime: components.CommandXrayRuntime{
-			Activator: nodes.CommandActivator{
-				XrayBinary:          xrayBinary,
-				XrayAssetDir:        xrayAssetDir,
-				XkeenBinary:         getenv("XKEEN_XKEEN_BINARY", components.DefaultXkeenBinary),
-				APIAddress:          getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress),
-				ActiveOutboundsPath: activeOutboundsPath,
-				RoutingPath:         filepath.Join(configDir, "05_routing.json"),
-			},
-			ActiveBinary:   xrayBinary,
-			ConfigDir:      configDir,
-			AssetDir:       xrayAssetDir,
-			ProbeReachable: xrayReader.ProbeReachable,
-		},
-		CandidateProbe:     components.CommandXrayCandidateProbe{Binary: xrayBinary},
-		CandidateValidator: components.CommandXrayCandidateValidator{Binary: xrayBinary},
-		AuthorityLease:     lease,
-		Coordinator:        coordinator,
-		ActiveBinaryPath:   xrayBinary,
-		ConfigDir:          configDir,
-		AssetDir:           xrayAssetDir,
-		PreviousDir:        getenv("XKEEN_GEODATA_PREVIOUS_DIR", components.DefaultGeodataPreviousDir),
-		JournalPath:        getenv("XKEEN_COMPONENT_TRANSACTION_PATH", components.DefaultComponentTransactionJournal),
-		StagingDir:         getenv("XKEEN_GEODATA_COMPONENT_STAGING_DIR", components.DefaultGeodataComponentStagingDir),
-		RestoreJournalPath: filepath.Join(stateDir, "appliance-import-transaction.json"),
-		MutationGate:       mutationGate,
-		Maintenance:        maintenance,
-	})
-}
-
-func newXKeenService(coordinator *c1.Coordinator, lease *authority.Lease, applianceService *appliance.Service, nodeManager *nodes.Manager, xrayReader *xrayapi.Client, mutationGate *components.ComponentMutationGate, maintenance *components.ComponentMaintenance) *components.XKeenService {
-	xrayBinary := getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary)
-	xrayAssetDir := getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)
-	configDir := getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir)
-	activeOutboundsPath := getenv("XKEEN_ACTIVE_OUTBOUNDS", filepath.Join(configDir, "04_outbounds.json"))
-	xkeenBinary := getenv("XKEEN_XKEEN_BINARY", components.DefaultXkeenBinary)
-	moduleDir := getenv("XKEEN_XKEEN_MODULE_DIR", components.DefaultXkeenModuleDir)
-	lifecycleInit := components.DefaultXkeenRuntimeInit
-	legacyInit := components.DefaultXkeenLegacyRuntimeInit
-	siblingModule := filepath.Join(filepath.Dir(moduleDir), "_xkeen")
-	installHelper := "/opt/root/install.sh"
-	markerPath := getenv("XKEEN_XKEEN_GENERATION_MARKER", components.DefaultXKeenMarkerPath)
-	activationPath := getenv("XKEEN_XKEEN_ACTIVATION_PATH", components.DefaultXKeenActivationPath)
-	previousDir := getenv("XKEEN_XKEEN_PREVIOUS_DIR", components.DefaultXKeenPreviousDir)
-	stagingDir := getenv("XKEEN_XKEEN_COMPONENT_STAGING_DIR", components.DefaultXKeenComponentStagingDir)
-	xkeenConfigPath := getenv("XKEEN_CONFIG_PATH", components.DefaultXkeenConfig)
-	nodesPath := getenv("XKEEN_NODES_PATH", defaultNodesPath)
-	appliancePath := getenv("XKEEN_APPLIANCE_PATH", defaultAppliancePath)
-	stateDir := getenv("XKEEN_APPLIANCE_IMPORT_STATE_DIR", "/opt/etc/xkeen-control/state")
-	return components.NewXKeenService(components.XKeenConfig{
-		Resolver:   components.NewXKeenResolver(nil, nil),
-		Downloader: components.NewXKeenArtifactDownloader(nil, nil),
-		Authority: components.NewFileAuthorityProvider(components.FileAuthorityConfig{
-			Appliance: applianceService, Nodes: nodeManager, AppliancePath: appliancePath, NodesPath: nodesPath,
-			ConfigDir: configDir, XkeenConfigPath: xkeenConfigPath, ActiveOutboundsPath: activeOutboundsPath,
-		}),
-		Runtime: components.CommandXrayRuntime{
-			Activator: nodes.CommandActivator{
-				XrayBinary: xrayBinary, XrayAssetDir: xrayAssetDir, ConfigDir: configDir, FixedLifecycleInit: lifecycleInit,
-				APIAddress: getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress), ActiveOutboundsPath: activeOutboundsPath,
-				RoutingPath: filepath.Join(configDir, "05_routing.json"),
-			},
-			ActiveBinary: xrayBinary, ConfigDir: configDir, AssetDir: xrayAssetDir, ProbeReachable: xrayReader.ProbeReachable,
-		},
-		CandidateProbe: components.CommandXrayCandidateProbe{Binary: xrayBinary}, CandidateValidator: components.CommandXrayCandidateValidator{Binary: xrayBinary},
-		AuthorityLease: lease, Coordinator: coordinator,
-		ActiveBinaryPath: xkeenBinary, ModuleDir: moduleDir, LifecycleInitPath: lifecycleInit, LegacyInitPath: legacyInit,
-		SiblingModulePath: siblingModule, InstallHelperPath: installHelper, MarkerPath: markerPath, XrayBinaryPath: xrayBinary,
-		XrayConfigDir: configDir, XrayAssetDir: xrayAssetDir, PreviousDir: previousDir,
-		JournalPath: getenv("XKEEN_COMPONENT_TRANSACTION_PATH", components.DefaultComponentTransactionJournal), StagingDir: stagingDir,
-		RestoreJournalPath: filepath.Join(stateDir, "appliance-import-transaction.json"), ActivationPath: activationPath,
-		PreservedPaths: []string{
-			xkeenConfigPath, lifecycleInit, legacyInit, siblingModule, installHelper, xrayBinary, configDir, xrayAssetDir,
-			appliancePath, nodesPath, activeOutboundsPath, "/opt/lib/opkg", "/opt/var/lib/opkg/status", "/opt/var/lib/opkg/lists",
-			"/etc/crontabs/root", "/opt/etc/cron.d", "/opt/etc/init.d",
-		},
-		MutationGate: mutationGate, Maintenance: maintenance,
-	})
-}
-
-func newSetupService(coordinator *c1.Coordinator, lease *authority.Lease, xrayReader *xrayapi.Client, mutationGate *components.ComponentMutationGate, maintenance *components.ComponentMaintenance) *components.SetupService {
-	paths := components.DefaultSetupPaths()
-	configDir := getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir)
-	paths.XrayBinary = getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary)
-	paths.XrayConfigDir = configDir
-	paths.XrayAssetDir = getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)
-	paths.XkeenBinary = getenv("XKEEN_XKEEN_BINARY", components.DefaultXkeenBinary)
-	paths.XkeenModuleDir = getenv("XKEEN_XKEEN_MODULE_DIR", components.DefaultXkeenModuleDir)
-	paths.XkeenConfig = getenv("XKEEN_CONFIG_PATH", components.DefaultXkeenConfig)
-	paths.XkeenMarker = getenv("XKEEN_XKEEN_GENERATION_MARKER", components.DefaultXKeenMarkerPath)
-	paths.LifecycleInit = components.DefaultXkeenRuntimeInit
-	paths.LegacyLifecycleInit = components.DefaultXkeenLegacyRuntimeInit
-	paths.SiblingModule = filepath.Join(filepath.Dir(paths.XkeenModuleDir), "_xkeen")
-	paths.InstallHelper = "/opt/root/install.sh"
-	paths.Appliance = getenv("XKEEN_APPLIANCE_PATH", defaultAppliancePath)
-	paths.Nodes = getenv("XKEEN_NODES_PATH", defaultNodesPath)
-	paths.LegacyOutbounds = getenv("XKEEN_LEGACY_OUTBOUNDS", defaultLegacyPath)
-	paths.ActiveOutbounds = getenv("XKEEN_ACTIVE_OUTBOUNDS", filepath.Join(configDir, "04_outbounds.json"))
-	paths.Journal = getenv("XKEEN_COMPONENT_TRANSACTION_PATH", components.DefaultComponentTransactionJournal)
-	stateDir := getenv("XKEEN_APPLIANCE_IMPORT_STATE_DIR", "/opt/etc/xkeen-control/state")
-	paths.RestoreJournal = filepath.Join(stateDir, "appliance-import-transaction.json")
-	paths.StagingDir = getenv("XKEEN_SETUP_STAGING_DIR", components.DefaultSetupStagingDir)
-	paths.PreviousDir = setupPreviousDirFromEnvironment()
-	paths.XkeenActivation = getenv("XKEEN_SETUP_XKEEN_ACTIVATION", components.DefaultSetupXKeenActivation)
-	activator := nodes.CommandActivator{
-		XrayBinary: paths.XrayBinary, XrayAssetDir: paths.XrayAssetDir, ConfigDir: paths.XrayConfigDir, XkeenBinary: paths.XkeenBinary,
-		FixedLifecycleInit: paths.LifecycleInit, LegacyLifecycleInit: paths.LegacyLifecycleInit, SetupLifecycleIdentity: components.IsReviewedSetupLifecycle, SetupLifecycleDirectProcess: components.IsReviewedLegacySetupLifecycle, APIAddress: getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress),
-		ActiveOutboundsPath: paths.ActiveOutbounds, RoutingPath: filepath.Join(paths.XrayConfigDir, "05_routing.json"),
+func newNativeJobs(lease *authority.Lease) *xkeen.Jobs {
+	path := getenv("XKEEN_NATIVE_JOB_RECEIPT", "/opt/etc/xkeen-control/state/native-jobs/last-job.json")
+	if os.MkdirAll(filepath.Dir(path), 0700) != nil {
+		lease.Block()
+		log.Print("native job storage unavailable")
+		return nil
 	}
-	activeRuntime := components.CommandXrayRuntime{ActiveBinary: paths.XrayBinary, ConfigDir: paths.XrayConfigDir, AssetDir: paths.XrayAssetDir}
-	return components.NewSetupService(components.SetupConfig{
-		Paths:        paths,
-		XrayResolver: components.NewXrayResolver(nil, nil), XrayDownloader: components.NewXrayArtifactDownloader(nil, nil),
-		GeodataResolver: components.NewGeodataResolver(nil, nil), GeodataDownloader: components.NewGeodataArtifactDownloader(nil, nil),
-		XKeenResolver: components.NewXKeenResolver(nil, nil), XKeenDownloader: components.NewXKeenArtifactDownloader(nil, nil),
-		CandidateProbe: components.CommandXrayCandidateProbe{Binary: paths.XrayBinary}, CandidateValidator: components.CommandXrayCandidateValidator{Binary: paths.XrayBinary},
-		Runtime: components.SetupRuntimeFuncs{
-			StartFunc: activator.Start, WaitReadyFunc: activator.WaitReady, ProbeReachableFunc: xrayReader.ProbeReachable,
-			ValidateActiveConfigFunc: activeRuntime.ValidateActiveConfig, VerifyEmptyFunc: activator.VerifyEmptyOutboundTags,
-			StopFunc: activator.Stop, VerifyStoppedFunc: activator.VerifyStopped, VerifyFunc: activator.Verify,
-		},
-		Selection:    coordinator,
-		Interception: components.NewKeeneticHybridInterceptionOwner(paths),
-		MutationGate: mutationGate, Maintenance: maintenance, Coordinator: coordinator, AuthorityLease: lease,
-		TransactionTimeout: components.DefaultSetupTransactionLimit,
-	})
-}
-
-func setupPreviousDirFromEnvironment() string {
-	previous := getenv("XKEEN_SETUP_PREVIOUS_DIR", components.DefaultSetupPreviousDir)
-	if previous == components.DefaultSetupPreviousDir {
-		appliancePath := getenv("XKEEN_APPLIANCE_PATH", defaultAppliancePath)
-		if appliancePath != defaultAppliancePath {
-			return filepath.Join(filepath.Dir(appliancePath), "previous-setup")
-		}
+	jobs, err := xkeen.NewPersistentJobs(getenv("XKEEN_XKEEN_BINARY", "/opt/sbin/xkeen"), lease, path)
+	if err != nil {
+		lease.Block()
+		log.Print("native job state requires local inspection")
+		return nil
 	}
-	return previous
+	jobs.RequireInstalledCommands()
+	jobs.ConfigureRecovery(xkeen.Discovery{}, filepath.Join(getenv("XKEEN_NODE_PREVIOUS_DIR", defaultNodePreviousDir), ".pending"))
+	return jobs
 }
 
 func transactionJournalPresent(path string) (bool, error) {

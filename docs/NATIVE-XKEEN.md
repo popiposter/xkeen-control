@@ -54,6 +54,11 @@ action. No requirement to patch XKeen or freeze its full source tree to use the 
 
 Config editors operate on fixed config paths, not arbitrary files. Supported
 paths are data-only JSON/JSONC and native list files; no sourced shell files.
+The [editor workflows](CONFIG-EDITOR-WORKFLOWS.md) define shared Form/Text drafts,
+undo/redo, private draft saving, validated native saves, pending config sets,
+explicit native Restart and optional restoration of the previous generation.
+Raw config text is an explicit authenticated private editor surface for those
+fixed IDs, not a generic file API. Native/validation diagnostics stay private.
 fields/rules/lists have typed validation; full Xray candidate validation precedes
 activation. Save uses the existing small transaction/backup for its own changes,
 not a journal covering native install/update internals. Changed baseline prompts

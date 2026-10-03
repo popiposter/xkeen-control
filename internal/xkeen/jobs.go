@@ -48,13 +48,15 @@ type nativeJob struct {
 // Jobs retains just one bounded job. Closing a browser never cancels its process.
 // Lease is shared with config/node actions; it excludes panel actions only.
 type Jobs struct {
-	Binary        string
-	Lease         *authority.Lease
-	mu            sync.Mutex
-	job           *nativeJob
-	idleTimeout   time.Duration
-	receiptPath   string
-	startTerminal func(*exec.Cmd, bool) (*os.File, error)
+	Binary          string
+	Lease           *authority.Lease
+	mu              sync.Mutex
+	job             *nativeJob
+	idleTimeout     time.Duration
+	receiptPath     string
+	startTerminal   func(*exec.Cmd, bool) (*os.File, error)
+	checkInstalled  bool
+	inspectRecovery func(context.Context) error
 }
 
 func NewJobs(binary string, lease *authority.Lease) *Jobs {
@@ -74,6 +76,9 @@ func (m *Jobs) Start(owner string, r CommandRequest) (JobView, error) {
 	spec, args, err := commandArguments(r)
 	if err != nil {
 		return JobView{}, err
+	}
+	if m.checkInstalled && !m.supportsFlag(spec.flag) {
+		return JobView{}, ErrCommand
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -292,4 +297,30 @@ func (m *Jobs) Cancel(owner, id string) error {
 	}
 	j.cancel()
 	return nil
+}
+
+// ResolveInspection acknowledges an inspected unknown result, not command success.
+// It never runs/retries XKeen and cannot clear another operation's retained intent.
+func (m *Jobs) ResolveInspection(ctx context.Context, owner, id string) (JobView, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	j := m.job
+	if owner == "" || j == nil || j.id != id || j.state != "unknown" || j.owner != "" && j.owner != owner || m.inspectRecovery == nil {
+		return JobView{}, ErrJob
+	}
+	release, err := m.Lease.AcquireForRecovery(ctx, time.Second)
+	if err != nil {
+		return JobView{}, err
+	}
+	defer release()
+	if m.inspectRecovery(ctx) != nil {
+		return JobView{}, ErrJob
+	}
+	j.state = "inspected"
+	if m.saveReceipt(j) != nil {
+		j.state = "unknown"
+		return JobView{}, ErrJob
+	}
+	m.Lease.Unblock()
+	return m.view(j, 0), nil
 }
