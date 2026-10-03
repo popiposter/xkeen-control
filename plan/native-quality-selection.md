@@ -2,7 +2,7 @@
 
 Issue121 refinement, requested 2026-10-03. Stock XKeen code stays unchanged.
 
-## Factual baseline
+## Initial audit baseline
 
 Installed panel source0d6a, audit sourceabeeb9a. Main does not start the old C1 supervisor or expose override writes. Live read-only status: native/effective target present, no override, Observatory interval5m,43healthy/60observed at snapshot. This is configuration evidence, not a measured failover time or LAN success.
 
@@ -24,7 +24,7 @@ Sources: [override bypass](https://raw.githubusercontent.com/XTLS/Xray-core/v26.
 - CohortC: installed-core compatibility, pending/rollback/config baseline, NEW native editor change for faster health checks (start30s), full Xray validation, one bounded Apply and independent readback. Preserve stock code/auth/registry/selective routing/DNS. Never replay old Apply.
 - CohortD: bounded failover proof with panel stopped, failed selected proxy/healthy backup, all unavailable, recovery; distinguish source fixtures/core/router API/LAN traffic. Karing is not LAN evidence. No provider manipulation or Keenetic firewall rewrite to manufacture failure.
 
-Current scorer/native-cost builder and comparison/GUI are source-only. Actual native cost/failover acceptance remains pending. Old adaptive override remains disabled; finishing unsafe pinning is unnecessary.
+At the initial source checkpoint, scorer/native-cost builder and comparison/GUI were source-only. Installed acceptance is recorded below. Old adaptive override remains disabled.
 
 ## Recorded implementation boundary
 
@@ -32,7 +32,7 @@ CohortA scorer/native costs/current-first and focused entire c1 Go+vet PASS; ind
 
 NEW live interval-only native editor Save/Apply completed once and independent fresh API/SSH readback PASS:30s instead of5m, no override, native executable/newPID/API and unchanged routing/DNS/outbounds/registry/auth/init/core hashes. Config comparison proves only probeInterval changed; pending absent. Snapshot40healthy/60observed, provider health varies. No forced node failure or LAN-flow switch measurement. Never replay quality-liveness-20261003-new helper/Apply.
 
-Quality core, bounded comparison and GUI cost proposal remain source-only, not active native leastLoad. Next qualify and deliver this coherent candidate, then validate compatible native costs and runtime failover. No additional global updater/transaction/writer/watchdog. One final FULL before that coherent delivery, proportional Go-only iterations before it.
+Before delivery, quality core, bounded comparison and GUI cost proposal were source-only. The coherent candidate and native runtime acceptance are now recorded below. No additional global updater/transaction/writer/watchdog. One final FULL before that coherent delivery, proportional Go-only iterations before it.
 
 ## Comparison/editor cohort
 
