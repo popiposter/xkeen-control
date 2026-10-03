@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs'
 const metadata = JSON.parse(readFileSync(new URL('./native-update-profile-v1.json', import.meta.url)))
 export const commonPath = '_xkeen/02_install/07_install_register/00_register_common.sh'
 export const deletePath = '_xkeen/03_delete/05_delete_register.sh'
+export const registrationPath = '_xkeen/02_install/07_install_register/02_register_xkeen.sh'
 const fence = `# SOURCE-ONLY FENCE: native registration integration incomplete. Never install.
 return 76 2>/dev/null || exit 76
 # END SOURCE-ONLY FENCE
@@ -49,5 +50,43 @@ export function buildRegistrationWrites(entries) {
   body = replace(body, ' "$status_file" > "$status_tmp"', ' "$status_file" > "$status_tmp" || return 1')
   body = checkWrites(body)
   deletion = deletion.slice(0, start) + body
-  return new Map([[commonPath, Buffer.from(fence + common)], [deletePath, Buffer.from(fence + deletion)]])
+  let registration = pinned(entries, registrationPath)
+  const listStart = registration.indexOf('register_xkeen_list() {\n'), listEnd = registration.indexOf('register_xkeen_status() {\n', listStart)
+  if (listStart < 0 || listEnd < listStart) throw new Error('native list function changed')
+  registration = registration.slice(0, listStart) + `register_xkeen_list() {
+    # Preserve native inventory and extra paths; publish only complete output.
+    list_tmp="$register_dir/xkeen.list.tmp.$$"
+    (set -C; find "$xkeen_dir" -mindepth 1 > "$list_tmp") || return 1
+    echo "$install_dir/xkeen" >> "$list_tmp" || return 1
+    echo "$xkeen_dir" >> "$list_tmp" || return 1
+    echo "$initd_file" >> "$list_tmp" || return 1
+    echo "$log_dir/xkeen-detached.log" >> "$list_tmp" || return 1
+    mv -f "$list_tmp" "$register_dir/xkeen.list" || return 1
+}
+
+` + registration.slice(listEnd)
+  registration = replace(registration, '    current_datetime=$(date "+%Y-%m-%d_%H-%M-%S")', '    current_datetime=$(date "+%Y-%m-%d_%H-%M-%S") || return 1')
+  // Existing checked template copy/rename retain their native failure branches.
+  registration = registration.replace(/^(\s*cp [^\n]+)$/gm, line => line.includes('||') ? line : line + ' || return 1')
+  registration = registration.replace(/^(\s*sed -i [^\n]+|\s*chmod \+x [^\n]+)$/gm, '$1 || return 1')
+  for (const [variable, field, file] of [
+    ['autostart_val', 'autostart', 'source_start_backup'], ['start_delay_val', 'start_delay', 'source_start_backup'],
+    ['autostart_val', 'start_auto', 'source_main_backup'], ['start_delay_val', 'start_delay', 'source_main_backup'],
+  ]) {
+    const old = `${variable}=$(grep '^${field}=' "$${file}" | head -n 1 | cut -d'=' -f2)`
+    const checked = `${variable}=$(awk -F= '/^${field}=/ {print $2; exit}' "$${file}") || return 1`
+    if (file === 'source_main_backup') {
+      registration = replace(registration, `[ -z "$${variable}" ] && ${old}`, `if [ -z "$${variable}" ]; then ${checked}; fi`)
+    } else registration = replace(registration, old, checked)
+  }
+  registration = replace(registration, '                value=$(grep -m1 "^${var}=" "$source_main_backup") || continue', `                value=$(grep -m1 "^\${var}=" "$source_main_backup")
+                read_result=$?
+                case "$read_result" in 0) ;; 1) continue;; *) return 1;; esac`)
+  registration = replace(registration, "                escaped_value=$(printf '%s\\n' \"$value\" | sed 's:[&#/]:\\\\&:g')", `                escaped_value=$(sed 's:[&#/]:\\\\&:g' <<NATIVE_SETTING
+$value
+NATIVE_SETTING
+                ) || return 1`)
+  registration = replace(registration, '                position=$(grep -n "^${var}=" "$initd_tmp_file" | head -n 1 | cut -d: -f1)', `                position=$(awk -v name="$var" 'index($0,name "=")==1 {print NR; exit}' "$initd_tmp_file") || return 1`)
+  registration = replace(registration, '                [ -n "$position" ] && sed -i "${position}s#.*#${escaped_value}#" "$initd_tmp_file"', '                if [ -n "$position" ]; then sed -i "${position}s#.*#${escaped_value}#" "$initd_tmp_file" || return 1; fi')
+  return new Map([[commonPath, Buffer.from(fence + common)], [deletePath, Buffer.from(fence + deletion)], [registrationPath, Buffer.from(fence + registration)]])
 }

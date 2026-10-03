@@ -1082,7 +1082,7 @@ update persistence or a working panel/native concurrency integration.
 
 ### Checked native registration writes (source-only)
 
-The prepared profile now has six fenced overlays: the preceding four admission
+The common/delete registration step prepares six fenced overlays: the preceding four admission
 overlays plus the pinned common registration module and XKeen deletion module.
 The common module still implements upstream control/status registration; checked
 `du`, date, temporary creation, individual fields, input reads, cleanup,
@@ -1100,6 +1100,19 @@ list producer errors, cron-cache reuse, native backup/cleanup and the true termi
 are still prerequisites. All six payloads remain unconditionally fenced and
 uninstalled; backend/adaptive remain disabled. Fixtures run actual pinned helper
 bodies only in disposable storage and do not execute a complete native updater.
+
+The subsequent init/list step adds the pinned XKeen registration module as a
+seventh fenced overlay. The native list inventory is produced into an exclusive
+temporary file, checked before the four native extra paths and final rename;
+partial `find`, append or rename cannot replace the old list. The helper leaves
+the caller's working directory intact. Init registration checks its date and
+backup copies, reads optional fields with checked producers, distinguishes a
+missing grep match from a failed read, checks escaped-value/position producers,
+settings edits and chmod before the existing atomic live rename. Native field
+selection and backup choice remain upstream-owned; declared settings and absent
+optional fields retain their meaning. Destination/backup collision protection,
+config permission errors, backup-choice reader propagation and cleanup are still
+unqualified prerequisites. Seven overlays remain fenced and uninstalled.
 
 Reproduce the disabled native-function fixtures after placing only the two
 hash-verified **public** inputs at the indicated ignored `dist` paths (never
