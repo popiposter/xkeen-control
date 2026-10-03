@@ -326,6 +326,79 @@ func (s *Service) ExportSecret(ctx context.Context, passphrase string) ([]byte, 
 	}
 	defer clearBytes(plaintext)
 
+	return s.sealPayload(plaintext, passphrase)
+}
+
+// OpenEncrypted is an internal strict decrypt/open path for Phase B tests and
+// later bounded import. It never returns plaintext when envelope validation or
+// AEAD authentication fails.
+func OpenEncrypted(contents []byte, passphrase string) (Bundle, error) {
+	return openEncrypted(contents, passphrase, argon2.IDKey)
+}
+
+func openEncrypted(contents []byte, passphrase string, deriveKey KeyDeriver) (Bundle, error) {
+	plaintext, err := openPayload(contents, passphrase, deriveKey)
+	if err != nil {
+		return Bundle{}, err
+	}
+	defer clearBytes(plaintext)
+	bundle, err := ParseBundle(plaintext)
+	if err != nil || !bundle.Manifest.ContainsSecrets || bundle.Nodes == nil {
+		return Bundle{}, ErrDecryptionFailed
+	}
+	return bundle, nil
+}
+
+// SealPayload encrypts a bounded typed payload with the fixed portable envelope.
+// Callers must validate their own payload format; this does not authorize restore.
+func SealPayload(plaintext []byte, passphrase string) ([]byte, error) {
+	if len(plaintext) == 0 || len(plaintext) > MaxSecretPlaintext {
+		return nil, ErrInvalidBundle
+	}
+	if err := validatePassphrase(passphrase); err != nil {
+		return nil, err
+	}
+	release, ok := trySecretOperation()
+	if !ok {
+		return nil, ErrBusy
+	}
+	defer release()
+	return NewService(Config{}).sealPayload(plaintext, passphrase)
+}
+
+// SealProduced reserves the shared secret-operation budget before collecting
+// and encoding a private snapshot, not only before the expensive KDF. The
+// producer runs once and returned plaintext is cleared on every exit.
+func SealProduced(passphrase string, produce func() ([]byte, error)) ([]byte, error) {
+	if err := validatePassphrase(passphrase); err != nil {
+		return nil, err
+	}
+	if produce == nil {
+		return nil, ErrUnavailable
+	}
+	release, ok := trySecretOperation()
+	if !ok {
+		return nil, ErrBusy
+	}
+	defer release()
+	plaintext, err := produce()
+	defer clearBytes(plaintext)
+	if err != nil {
+		return nil, err
+	}
+	if len(plaintext) == 0 || len(plaintext) > MaxSecretPlaintext {
+		return nil, ErrInvalidBundle
+	}
+	return NewService(Config{}).sealPayload(plaintext, passphrase)
+}
+
+// OpenPayload authenticates a bounded envelope. Caller owns clearing returned
+// plaintext and strict validation of the expected application payload.
+func OpenPayload(contents []byte, passphrase string) ([]byte, error) {
+	return openPayload(contents, passphrase, argon2.IDKey)
+}
+
+func (s *Service) sealPayload(plaintext []byte, passphrase string) ([]byte, error) {
 	salt, err := s.randomBytes(Argon2SaltBytes)
 	if err != nil {
 		return nil, ErrRandomUnavailable
@@ -368,20 +441,13 @@ func (s *Service) ExportSecret(ctx context.Context, passphrase string) ([]byte, 
 	return marshalEnvelope(envelope)
 }
 
-// OpenEncrypted is an internal strict decrypt/open path for Phase B tests and
-// later bounded import. It never returns plaintext when envelope validation or
-// AEAD authentication fails.
-func OpenEncrypted(contents []byte, passphrase string) (Bundle, error) {
-	return openEncrypted(contents, passphrase, argon2.IDKey)
-}
-
-func openEncrypted(contents []byte, passphrase string, deriveKey KeyDeriver) (Bundle, error) {
+func openPayload(contents []byte, passphrase string, deriveKey KeyDeriver) ([]byte, error) {
 	if err := validatePassphrase(passphrase); err != nil {
-		return Bundle{}, err
+		return nil, err
 	}
 	salt, nonce, ciphertext, aad, err := parseEnvelope(contents)
 	if err != nil {
-		return Bundle{}, err
+		return nil, err
 	}
 	release, ok := trySecretOperation()
 	if !ok {
@@ -389,7 +455,7 @@ func openEncrypted(contents []byte, passphrase string, deriveKey KeyDeriver) (Bu
 		clearBytes(nonce)
 		clearBytes(ciphertext)
 		clearBytes(aad)
-		return Bundle{}, ErrBusy
+		return nil, ErrBusy
 	}
 	defer release()
 	defer clearBytes(ciphertext)
@@ -397,7 +463,7 @@ func openEncrypted(contents []byte, passphrase string, deriveKey KeyDeriver) (Bu
 	password := []byte(passphrase)
 	if deriveKey == nil {
 		clearBytes(password)
-		return Bundle{}, ErrDecryptionFailed
+		return nil, ErrDecryptionFailed
 	}
 	key := deriveKey(password, salt, Argon2MemoryKiB, Argon2Iterations, Argon2Parallelism, Argon2KeyBytes)
 	clearBytes(password)
@@ -406,22 +472,14 @@ func openEncrypted(contents []byte, passphrase string, deriveKey KeyDeriver) (Bu
 	defer clearBytes(nonce)
 	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
-		return Bundle{}, ErrDecryptionFailed
+		return nil, ErrDecryptionFailed
 	}
 	plaintext, err := aead.Open(nil, nonce, ciphertext, aad)
 	if err != nil || len(plaintext) > MaxSecretPlaintext {
 		clearBytes(plaintext)
-		return Bundle{}, ErrDecryptionFailed
+		return nil, ErrDecryptionFailed
 	}
-	bundle, err := ParseBundle(plaintext)
-	clearBytes(plaintext)
-	if err != nil {
-		return Bundle{}, ErrDecryptionFailed
-	}
-	if !bundle.Manifest.ContainsSecrets || bundle.Nodes == nil {
-		return Bundle{}, ErrDecryptionFailed
-	}
-	return bundle, nil
+	return plaintext, nil
 }
 
 // ParseBundle strictly opens already-decoded typed bundle bytes. It is kept

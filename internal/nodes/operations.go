@@ -47,24 +47,27 @@ type Config struct {
 	Coordinator    interface {
 		BeginApply(context.Context) (func(), error)
 	}
-	Fetcher     SubscriptionFetcher
-	PreviewTTL  time.Duration
-	MaxPreviews int
-	Now         func() time.Time
+	Fetcher SubscriptionFetcher
+	// Called under the ordinary panel lease before a runtime-changing commit.
+	BeforeCommit func(context.Context) error
+	PreviewTTL   time.Duration
+	MaxPreviews  int
+	Now          func() time.Time
 }
 
 const DefaultApplyGateWaitTimeout = 15 * time.Second
 
 type Manager struct {
-	store       Store
-	legacyPath  string
-	tx          Transaction
-	fetcher     SubscriptionFetcher
-	ttl         time.Duration
-	maxPreviews int
-	now         func() time.Time
-	gateTimeout time.Duration
-	coordinator interface {
+	store        Store
+	legacyPath   string
+	tx           Transaction
+	fetcher      SubscriptionFetcher
+	beforeCommit func(context.Context) error
+	ttl          time.Duration
+	maxPreviews  int
+	now          func() time.Time
+	gateTimeout  time.Duration
+	coordinator  interface {
 		BeginApply(context.Context) (func(), error)
 	}
 	managedCoordinator interface {
@@ -145,8 +148,9 @@ func NewManager(config Config) *Manager {
 	manager := &Manager{
 		store: config.Store, legacyPath: config.LegacyPath, tx: config.Transaction,
 		fetcher: config.Fetcher, ttl: config.PreviewTTL, maxPreviews: config.MaxPreviews, now: config.Now,
-		gateTimeout: DefaultApplyGateWaitTimeout,
-		coordinator: config.Coordinator, authority: lease, previews: make(map[string]previewEntry),
+		gateTimeout:  DefaultApplyGateWaitTimeout,
+		beforeCommit: config.BeforeCommit,
+		coordinator:  config.Coordinator, authority: lease, previews: make(map[string]previewEntry),
 	}
 	if managed, ok := config.Coordinator.(interface {
 		TryBeginManagedApply() (func(), error)
@@ -298,6 +302,30 @@ func (m *Manager) SnapshotUnderLease(context.Context) (Registry, error) {
 		return Registry{}, ErrSnapshotUnavailable
 	}
 	return copy, nil
+}
+
+// NativeSnapshotUnderLease includes positive registry absence in the baseline.
+// A stock native installation need not create panel-managed nodes to export.
+// Missing is distinct from unreadable, corrupt, or a dangling symlink.
+func (m *Manager) NativeSnapshotUnderLease(context.Context) (Registry, string, error) {
+	if m == nil {
+		return Registry{}, "", ErrSnapshotUnavailable
+	}
+	registry, err := m.store.Load()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if _, statErr := os.Lstat(m.store.Path); errors.Is(statErr, os.ErrNotExist) {
+				return NewRegistry(), "absent", nil
+			}
+		}
+		return Registry{}, "", ErrSnapshotUnavailable
+	}
+	copy, err := cloneRegistry(registry)
+	if err != nil || copy.Validate() != nil {
+		return Registry{}, "", ErrSnapshotUnavailable
+	}
+	digest := registryDigest(copy)
+	return copy, "present:" + hex.EncodeToString(digest[:]), nil
 }
 
 func (m *Manager) PreviewImport(binding, profiles string) (Preview, error) {
@@ -760,6 +788,9 @@ func (m *Manager) Apply(ctx context.Context, binding, token string, acceptMissin
 	m.mu.Unlock()
 	if entry.Noop {
 		return ApplyResult{Operation: entry.Operation, Nodes: entry.Registry.PublicNodes(), Changes: entry.Changes}, nil
+	}
+	if m.beforeCommit != nil && m.beforeCommit(applyContext) != nil {
+		return ApplyResult{}, ErrOperationUnavailable
 	}
 	if err := m.tx.Apply(applyContext, entry.Registry); err != nil {
 		if errors.Is(err, ErrNodeRecoveryRequired) || errors.Is(err, ErrRollbackFailed) {

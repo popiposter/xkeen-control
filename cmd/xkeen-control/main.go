@@ -22,6 +22,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/configview"
 	"github.com/popiposter/xkeen-control/internal/geodatareader"
 	"github.com/popiposter/xkeen-control/internal/httpapi"
+	"github.com/popiposter/xkeen-control/internal/nativebackup"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	"github.com/popiposter/xkeen-control/internal/notifications"
 	"github.com/popiposter/xkeen-control/internal/panellistener"
@@ -183,7 +184,8 @@ func main() {
 		os.Exit(1)
 	}
 	authorityLease := authority.NewLease()
-	nodeManager = newNodeManager(coordinator, authorityLease)
+	nativeConfig := &xkeen.ConfigEditor{DraftDir: getenv("XKEEN_NATIVE_CONFIG_DRAFT_DIR", "/opt/etc/xkeen-control/secrets/config-drafts"), Dir: getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir), XrayBinary: getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary), Lease: authorityLease, PreviousDir: getenv("XKEEN_NATIVE_CONFIG_PREVIOUS_DIR", "/opt/etc/xkeen-control/previous/native-config"), AssetDir: getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)}
+	nodeManager = newNodeManager(coordinator, authorityLease, nativeConfig)
 	nativeJobs := newNativeJobs(authorityLease)
 	subscriptionRefresher := nodes.NewSubscriptionRefresher(nodeManager)
 	nodeManager.SetAutoRefreshStatusProvider(subscriptionRefresher.AutoRefreshStatuses)
@@ -216,10 +218,11 @@ func main() {
 		Native:       xkeen.Discovery{},
 		NativeJobs:   nativeJobs,
 		Geodata:      &geodatareader.Reader{Dir: getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)},
-		NativeConfig: &xkeen.ConfigEditor{DraftDir: getenv("XKEEN_NATIVE_CONFIG_DRAFT_DIR", "/opt/etc/xkeen-control/secrets/config-drafts"), Dir: getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir), XrayBinary: getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary), Lease: authorityLease, PreviousDir: getenv("XKEEN_NATIVE_CONFIG_PREVIOUS_DIR", "/opt/etc/xkeen-control/previous/native-config"), AssetDir: getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)},
+		NativeConfig: nativeConfig,
 		Collector:    collector,
 		Auth:         authManager,
 		Nodes:        nodeManager,
+		Backup:       &nativebackup.Service{Editor: nativeConfig, Nodes: nodeManager, Lease: authorityLease},
 		Benchmark:    coordinator,
 		// Selection writes stay unavailable until native ownership and independent
 		// override expiry are qualified. Not starting the loop alone is insufficient.
@@ -257,6 +260,7 @@ func main() {
 	}()
 	// Native Xray owns automatic selection until the panel mode is explicitly qualified.
 	// Automatic subscription refresh is enabled separately from native commands.
+	subscriptionRefresher.Start(runtimeContext)
 	panelNotifyScheduler.Start(runtimeContext)
 
 	log.Printf("xkeen-control %s listening on %s", buildinfo.Current().Version, listenAddress)
@@ -350,13 +354,27 @@ func newRestoreService(coordinator interface {
 
 func newNodeManager(coordinator interface {
 	BeginApply(context.Context) (func(), error)
-}, lease *authority.Lease) *nodes.Manager {
+}, lease *authority.Lease, editor *xkeen.ConfigEditor) *nodes.Manager {
 	registryPath := getenv("XKEEN_NODES_PATH", defaultNodesPath)
 	configDir := getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir)
 	activeOutboundsPath := getenv("XKEEN_ACTIVE_OUTBOUNDS", filepath.Join(configDir, "04_outbounds.json"))
+	var beforeCommit func(context.Context) error
+	if editor != nil {
+		beforeCommit = func(ctx context.Context) error {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			pending, err := editor.HasSavedChanges()
+			if err != nil || pending {
+				return nodes.ErrOperationUnavailable
+			}
+			return nil
+		}
+	}
 	return nodes.NewManager(nodes.Config{
-		Store:      nodes.Store{Path: registryPath},
-		LegacyPath: getenv("XKEEN_LEGACY_OUTBOUNDS", defaultLegacyPath),
+		BeforeCommit: beforeCommit,
+		Store:        nodes.Store{Path: registryPath},
+		LegacyPath:   getenv("XKEEN_LEGACY_OUTBOUNDS", defaultLegacyPath),
 		Transaction: nodes.Transaction{
 			Store:               nodes.Store{Path: registryPath},
 			ActiveOutboundsPath: activeOutboundsPath,
@@ -377,7 +395,7 @@ func newNodeManager(coordinator interface {
 }
 
 func runNodesCommand(args []string) error {
-	manager := newNodeManager(nil, authority.NewLease())
+	manager := newNodeManager(nil, authority.NewLease(), nil)
 	if len(args) == 0 {
 		return errors.New("usage: xkeen-control nodes {validate|render --output PATH|reconcile-runtime|migrate-legacy}")
 	}

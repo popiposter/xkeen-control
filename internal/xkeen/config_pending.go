@@ -49,6 +49,13 @@ func (e *ConfigEditor) readPending() (*pendingConfig, error) {
 	return e.readGeneration("pending.json")
 }
 
+// HasSavedChanges is a read-only check for other panel operations that would
+// restart the core. The caller owns the shared lease; external CLI is separate.
+func (e *ConfigEditor) HasSavedChanges() (bool, error) {
+	pending, err := e.readPending()
+	return pending != nil, err
+}
+
 // PendingDigest is non-secret bookkeeping for native Start/Restart cards.
 // An unavailable editor history does not prevent ordinary native command use.
 func (e *ConfigEditor) PendingDigest() (string, bool) {

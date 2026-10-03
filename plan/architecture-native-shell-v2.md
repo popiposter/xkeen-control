@@ -264,17 +264,22 @@ is not silently marked complete.
   six files, category/content/domain/IP membership pages tied to source hashes;
   observed maximum panel RSS28,736KiB. No persistent whole-database index.
 - TASK-015 rule lists/reorder/custom domain/IP lists and geodata-rule insertion
-  are delivered. First-match example preview is the next source candidate:
+  are delivered. First-match example preview is installed in development973d58d:
   explicit sample facts, bounded installed geodata queries, no DNS lookup and
   uncertain earlier conditions prevent a false winner. Native balancer member
   selection and an IPIfNonMatch second DNS pass are not simulated.
-- TASK-012 resolver forms and split-DNS guidance are implemented; newly added
-  per-resolver fields are source-only until the next delivery. Existing DNS
+- TASK-012 resolver forms and split-DNS guidance, including per-resolver fields,
+  are installed in development973d58d. Existing DNS
   policy was preserved during comment-only live editor acceptance.
 - Still incomplete: portable native configuration/registry transfer and native
   schedule mapping (TASK-018), inbound Telegram/auth/dedupe (TASK-019),
   subscription scheduler/native settings completion, native selection comparison,
   broader local performance and final acceptance checklist.
+- The next combined source cohort restores enabled subscription scheduling and
+  postpones node commits while editor changes await Apply. Native encrypted
+  export is connected without the appliance twin; positive registry absence,
+  drift and managed-outbound coherence are checked. Import/UI and live delivery
+  remain incomplete; see [native transfer](../docs/NATIVE-TRANSFER.md).
 - TASK-013 independent LAN DNS/DIRECT/proxy failure acceptance is NOT RUN: this
   workstation uses Karing. Router process/API/config observations do not replace
   an independent LAN client. Source work continues without claiming that result.

@@ -528,6 +528,9 @@ func (m *Manager) refreshSavedSubscription(ctx context.Context, subscriptionID s
 	}
 	applyContext, cancelApply := context.WithTimeout(ctx, m.tx.totalTimeout())
 	defer cancelApply()
+	if m.beforeCommit != nil && m.beforeCommit(applyContext) != nil {
+		return automaticRefreshResult{}, automaticError(autoRefreshRuntime, true, false)
+	}
 	if err := m.tx.Apply(applyContext, candidate); err != nil {
 		if errors.Is(err, ErrNodeRecoveryRequired) || errors.Is(err, ErrRollbackFailed) {
 			m.authority.Block()
