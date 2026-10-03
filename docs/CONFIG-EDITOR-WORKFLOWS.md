@@ -106,3 +106,26 @@ is fetched at a time. Private document JSON responses have a separate 32 MiB cap
 to account for escaping; sanitized status responses retain their 512 KiB cap.
 Validation output captures 256 KiB with explicit truncation. Drafts and pending
 originals are explicit 0600 files in 0700 directories, excluded from public logs.
+
+### Routing examples and DNS resolver controls
+
+The routing example checks the current Form/Text draft, not a separately saved
+policy. The operator supplies a domain, known destination IP, inbound tag,
+network and destination port as needed. Evaluation follows first-match order.
+A known false condition skips its rule; an uncertain earlier rule stops the
+example rather than inventing a later winner. Domain/CIDR/geodata matches and
+port/network/inbound conditions are bounded. Other native conditions, dotless
+patterns, missing facts, unavailable categories and a DNS second pass remain
+uncertain. The example performs no DNS lookup, traffic probe, Save or Restart.
+Editing its input or the draft invalidates an old response.
+
+DNS per-resolver fields include address, domain/geosite matches, expected IPs,
+fallback participation, address family, cache and traffic tag. Domain matching
+chooses a resolver; the resolver's network traffic has separate routing. A
+direct default plus explicitly matched VPN resolvers can implement split DNS.
+IP-only routing does not identify a name before resolution. Local transports
+bypass routing; resolver hostnames need a reachable bootstrap path. The editor
+does not silently enable interception or rewrite the existing DNS policy.
+
+Sources: [Xray routing](https://xtls.github.io/en/config/routing.html),
+[Xray DNS](https://xtls.github.io/en/config/dns.html).

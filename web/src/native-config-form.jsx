@@ -7,6 +7,7 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { appendDocumentItem, documentNode, editDocumentPath, moveDocumentItem, nodeValue, prependDocumentItem } from './native-config-document'
 
 const GeodataBrowser = lazy(() => import('./native-geodata.jsx'))
+const RoutingExample = lazy(() => import('./native-routing-example.jsx'))
 
 function lines(value) { return Array.isArray(value) && value.every((item) => typeof item === 'string') ? value.join('\n') : '' }
 function list(value) {
@@ -33,6 +34,7 @@ function StringListField({ id, value, disabled, onChange, onError }) {
 export function NativeConfigForm({ file, text, tree, disabled, onChange, onError, request, targets = [] }) {
   const [shown, setShown] = useState(12)
   const [browseGeodata, setBrowseGeodata] = useState(false)
+  const [showExample, setShowExample] = useState(false)
   const value = (path) => nodeValue(tree, path)
   const node = (path) => documentNode(tree, path)
   const edit = (path, next) => { try { return onChange(editDocumentPath(text, path, next)) } catch (error) { onError(error.message); return false } }
@@ -49,6 +51,7 @@ export function NativeConfigForm({ file, text, tree, disabled, onChange, onError
   if (file === '02_dns.json') return <div className="space-y-4">
     <h3 className="font-semibold">DNS resolvers</h3>
     <p className="text-sm text-muted-foreground">Domain/geosite matches select resolvers. Network routing of resolver requests is separate; local transports bypass routing.</p>
+    <p className="text-sm text-muted-foreground">For split DNS, use a direct default resolver and domain/geosite matches on the VPN resolver. Route that resolver's traffic separately. IP-only traffic rules do not identify names before resolution. A resolver's hostname needs a reachable bootstrap path; avoid depending on the same unresolved VPN connection.</p>
     {stringField(['dns', 'tag'], 'DNS traffic tag for routing')}
     {stringField(['dns', 'disableFallbackIfMatch'], 'Disable fallback after a domain match', { boolean: true })}
     {array(['dns', 'servers']).slice(0, 32).map((server, index) => <fieldset key={index} className="space-y-3 rounded-lg border p-3"><legend>Resolver {index + 1}</legend>
@@ -57,6 +60,9 @@ export function NativeConfigForm({ file, text, tree, disabled, onChange, onError
         {stringField(['dns', 'servers', index, 'domains'], `Resolver ${index + 1} domain / geosite matches (one per line)`, { multiline: true })}
         {stringField(['dns', 'servers', index, 'expectedIPs'], `Resolver ${index + 1} expected IP / geoip matches (one per line)`, { multiline: true })}
         {stringField(['dns', 'servers', index, 'skipFallback'], `Resolver ${index + 1} exclude from fallback`, { boolean: true })}
+        {stringField(['dns', 'servers', index, 'queryStrategy'], `Resolver ${index + 1} address family`, { choices: ['UseIP', 'UseIPv4', 'UseIPv6'] })}
+        {stringField(['dns', 'servers', index, 'disableCache'], `Resolver ${index + 1} disable cache`, { boolean: true })}
+        {stringField(['dns', 'servers', index, 'tag'], `Resolver ${index + 1} traffic tag`)}
       </> : <p>Custom resolver; edit in Text.</p>}
       <Button variant="outline" disabled={disabled} onClick={() => edit(['dns', 'servers', index], undefined)}>Remove resolver {index + 1}</Button>
     </fieldset>)}
@@ -64,6 +70,8 @@ export function NativeConfigForm({ file, text, tree, disabled, onChange, onError
     <Button variant="outline" disabled={disabled} onClick={() => add(['dns', 'servers'], { address: '', domains: [], skipFallback: false })}>Add resolver</Button>
   </div>
   if (file === '05_routing.json') return <div className="space-y-4">
+    <Button variant="outline" disabled={disabled} onClick={() => setShowExample(!showExample)}>{showExample ? 'Close routing example' : 'Check a routing example'}</Button>
+    {showExample && <Suspense fallback={<p>Loading routing example…</p>}><RoutingExample text={text} request={request} disabled={disabled} /></Suspense>}
     <Button variant="outline" disabled={disabled} onClick={() => setBrowseGeodata(!browseGeodata)}>{browseGeodata ? 'Close geodata browser' : 'Browse installed geodata'}</Button>
     {browseGeodata && <Suspense fallback={<p>Loading geodata browser…</p>}><GeodataBrowser request={request} disabled={disabled} targets={[...targets, ...array(['routing', 'balancers']).map((_, index) => ({ kind: 'balancer', tag: value(['routing', 'balancers', index, 'tag']) })).filter((target) => typeof target.tag === 'string')]} onAdd={(rule, position) => {
       try { return onChange((position === 'first' ? prependDocumentItem : appendDocumentItem)(text, ['routing', 'rules'], rule)) } catch (error) { onError(error.message); return false }

@@ -233,7 +233,7 @@ native Start подтверждены независимо. Native startup че�
   многие файлы никогда не поставлялись. Цель — убрать обязанности и tests/tooling.
 - **ASSUMPTION-001**: Панель используется одним оператором в private LAN; полная
   транзакционность всех внешних CLI/cron и backwards compatibility не требуются.
-- **ASSUMPTION-002**: В этом задании меняются план/контракт, не live configuration.
+- **ASSUMPTION-002**: Оператор авторизовал реализацию и bounded live qualification; XKeen code не меняется. Перезапуски выполняются его штатными командами, результаты подтверждаются отдельно.
 
 ## 8. Related Specifications / Further Reading
 
@@ -242,3 +242,43 @@ native Start подтверждены независимо. Native startup че�
 - [Pinned upstream command source](https://github.com/jameszeroX/XKeen/blob/68eca60fedf03957952d1f8b44bfdd98f8a282e5/scripts/xkeen),
   [native configuration guide](https://github.com/jameszeroX/XKeen/wiki/Configuration),
   [Xray DNS](https://xtls.github.io/en/config/dns.html), [routing](https://xtls.github.io/en/config/routing.html).
+
+## Current implementation evidence (2026-10-03)
+
+This checkpoint supersedes the initial No task estimates above; a partial task
+is not silently marked complete.
+
+- Native command adapter/private console and native configuration Form/Text,
+  drafts, Save/Apply/discard/previous restore are implemented and delivered.
+  Main Routing/DNS pages share one workspace. Old managed routing/DNS brokers
+  and their obsolete UI tests were removed.
+- Stock native code/init was restored using operator-authorized official
+  installation/registration, without a panel patch. Native Xray remains the
+  traffic/selection owner. Automatic panel adaptive selection stays disabled.
+- Exact development source 2445277a79670ec513e21aeb10ae0068ae2167c7 passed
+  FULL Go/vet/race/helpers/frontend/embed/unit7/browser107/audit0 and is installed.
+  ARM64 SHA256 be14e82e915b0b497ad772ba22e05a89fd597b271ae81d37ccee7f10e26e987f.
+  Independent runtime/config preservation readback and one new native editor
+  Apply passed;59nodes/52enabled/2subscriptions/0WL enabled.
+- TASK-014 installed geodata browsing is implemented and router-qualified:
+  six files, category/content/domain/IP membership pages tied to source hashes;
+  observed maximum panel RSS28,736KiB. No persistent whole-database index.
+- TASK-015 rule lists/reorder/custom domain/IP lists and geodata-rule insertion
+  are delivered. First-match example preview is the next source candidate:
+  explicit sample facts, bounded installed geodata queries, no DNS lookup and
+  uncertain earlier conditions prevent a false winner. Native balancer member
+  selection and an IPIfNonMatch second DNS pass are not simulated.
+- TASK-012 resolver forms and split-DNS guidance are implemented; newly added
+  per-resolver fields are source-only until the next delivery. Existing DNS
+  policy was preserved during comment-only live editor acceptance.
+- Still incomplete: portable native configuration/registry transfer and native
+  schedule mapping (TASK-018), inbound Telegram/auth/dedupe (TASK-019),
+  subscription scheduler/native settings completion, native selection comparison,
+  broader local performance and final acceptance checklist.
+- TASK-013 independent LAN DNS/DIRECT/proxy failure acceptance is NOT RUN: this
+  workstation uses Karing. Router process/API/config observations do not replace
+  an independent LAN client. Source work continues without claiming that result.
+- Full qualification is run once per final delivery candidate; focused checks
+  cover iteration. A missing embedded-output refresh caused one rejected gate
+  before delivery; generated assets were explicitly corrected, then the final
+  exact-source gate passed.

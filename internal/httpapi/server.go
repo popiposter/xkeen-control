@@ -183,7 +183,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case "/api/v1/session/login", "/api/v1/session/logout", "/api/v1/session",
 		"/api/v1/xkeen",
-		"/api/v1/xkeen/commands", "/api/v1/xkeen/jobs/start", "/api/v1/xkeen/jobs/read", "/api/v1/xkeen/jobs/input", "/api/v1/xkeen/jobs/resize", "/api/v1/xkeen/jobs/cancel", "/api/v1/xkeen/jobs/resolve", "/api/v1/xkeen/config", "/api/v1/xkeen/config/save", "/api/v1/xkeen/config/workspace", "/api/v1/xkeen/config/text", "/api/v1/xkeen/config/draft", "/api/v1/xkeen/config/document", "/api/v1/xkeen/config/save-set", "/api/v1/xkeen/config/apply", "/api/v1/xkeen/config/inspect", "/api/v1/xkeen/config/restore-saved", "/api/v1/xkeen/config/restore-previous",
+		"/api/v1/xkeen/commands", "/api/v1/xkeen/jobs/start", "/api/v1/xkeen/jobs/read", "/api/v1/xkeen/jobs/input", "/api/v1/xkeen/jobs/resize", "/api/v1/xkeen/jobs/cancel", "/api/v1/xkeen/jobs/resolve", "/api/v1/xkeen/config", "/api/v1/xkeen/config/save", "/api/v1/xkeen/config/workspace", "/api/v1/xkeen/config/text", "/api/v1/xkeen/config/draft", "/api/v1/xkeen/config/document", "/api/v1/xkeen/config/example", "/api/v1/xkeen/config/save-set", "/api/v1/xkeen/config/apply", "/api/v1/xkeen/config/inspect", "/api/v1/xkeen/config/restore-saved", "/api/v1/xkeen/config/restore-previous",
 		"/api/v1/geodata", "/api/v1/geodata/query", "/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary", "/api/v1/components", "/api/v1/components/check", "/api/v1/components/policy",
 		"/api/v1/components/preview", "/api/v1/components/apply", "/api/v1/components/rollback", "/api/v1/components/cancel",
 		"/api/v1/setup/preview", "/api/v1/setup/apply", "/api/v1/setup/cancel",
@@ -231,7 +231,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/api/v1/geodata", "/api/v1/geodata/query":
 		s.handleGeodata(w, r)
-	case "/api/v1/xkeen/config", "/api/v1/xkeen/config/save", "/api/v1/xkeen/config/workspace", "/api/v1/xkeen/config/text", "/api/v1/xkeen/config/draft", "/api/v1/xkeen/config/document", "/api/v1/xkeen/config/save-set", "/api/v1/xkeen/config/apply", "/api/v1/xkeen/config/inspect", "/api/v1/xkeen/config/restore-saved", "/api/v1/xkeen/config/restore-previous":
+	case "/api/v1/xkeen/config", "/api/v1/xkeen/config/save", "/api/v1/xkeen/config/workspace", "/api/v1/xkeen/config/text", "/api/v1/xkeen/config/draft", "/api/v1/xkeen/config/document", "/api/v1/xkeen/config/example", "/api/v1/xkeen/config/save-set", "/api/v1/xkeen/config/apply", "/api/v1/xkeen/config/inspect", "/api/v1/xkeen/config/restore-saved", "/api/v1/xkeen/config/restore-previous":
 		s.handleNativeConfig(w, r)
 	case "/api/v1/xkeen/commands", "/api/v1/xkeen/jobs/start", "/api/v1/xkeen/jobs/read", "/api/v1/xkeen/jobs/input", "/api/v1/xkeen/jobs/resize", "/api/v1/xkeen/jobs/cancel", "/api/v1/xkeen/jobs/resolve":
 		s.handleNativeJobs(w, r)

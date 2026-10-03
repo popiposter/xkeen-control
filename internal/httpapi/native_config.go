@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/popiposter/xkeen-control/internal/auth"
 	"github.com/popiposter/xkeen-control/internal/xkeen"
@@ -61,6 +63,28 @@ func (s *Server) handleNativeConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
+	case "/api/v1/xkeen/config/example":
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		defer r.Body.Close()
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		var request struct {
+			Text   string              `json:"text"`
+			Sample xkeen.RoutingSample `json:"sample"`
+		}
+		if decoder.Decode(&request) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+			writeError(w, http.StatusBadRequest, "invalid routing example")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		value, err := xkeen.PreviewRouting(ctx, request.Text, request.Sample, s.geodata)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid routing example")
+			return
+		}
+		writePrivateConfigJSON(w, http.StatusOK, value)
+		return
 	case "/api/v1/xkeen/config/save-set", "/api/v1/xkeen/config/apply", "/api/v1/xkeen/config/inspect", "/api/v1/xkeen/config/restore-saved", "/api/v1/xkeen/config/restore-previous":
 		s.handleNativeConfigSet(w, r, session.CSRFToken)
 		return

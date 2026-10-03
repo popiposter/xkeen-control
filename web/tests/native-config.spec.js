@@ -243,3 +243,30 @@ test('native database replacement invalidates pagination without changing config
   await expect(page.getByRole('button', { name: 'Add traffic rule', exact: true })).toBeEnabled()
   expect(writes).toEqual([])
 })
+test('routing examples use the current draft and clear stale results without saving', async ({ page }) => {
+  const { writes, model } = await mountEditor(page)
+  await page.getByLabel('Configuration file', { exact: true }).selectOption('05_routing.json')
+  let finish
+  const queries = []
+  await page.route('**/api/v1/xkeen/config/example', (route) => {
+    queries.push(route.request().postDataJSON())
+    return new Promise((resolve) => { finish = () => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ state: 'matched', rule: 1, targetKind: 'outbound', target: 'vpn' }) }).then(resolve) })
+  })
+  await page.getByRole('button', { name: 'Check a routing example', exact: true }).click()
+  await page.getByLabel('Domain name', { exact: true }).fill('example.test')
+  await page.getByRole('button', { name: 'Check routing example', exact: true }).click()
+  await expect.poll(() => queries.length).toBe(1)
+  await page.getByLabel('Domain name', { exact: true }).fill('other.test')
+  await finish()
+  await expect(page.getByText('Rule 1: outbound vpn', { exact: true })).toHaveCount(0)
+  await page.route('**/api/v1/xkeen/config/example', (route) => {
+    queries.push(route.request().postDataJSON())
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ state: 'unknown', rule: 1, reason: 'Earlier rule needs protocol facts.' }) })
+  })
+  await page.getByRole('button', { name: 'Check routing example', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Earlier rule needs protocol facts.' })).toBeVisible()
+  expect(queries[1].sample.domain).toBe('other.test')
+  expect(queries[1].text).toContain('"routing"')
+  expect(writes).toEqual([])
+  expect(model.requests.filter((request) => request.path === '/api/v1/xkeen/jobs/start')).toEqual([])
+})
