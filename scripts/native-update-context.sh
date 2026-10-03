@@ -1,7 +1,6 @@
 #!/bin/sh
-# Source-only update body binding and fixed staged-child proof. No executor here.
-# The future updater must load the protected gate and entry libraries first.
-# This does not grant native body/finish authority or settle an operation.
+# Source-only fixed native updater protocol. All compiled candidates stay fenced.
+# Load the protected gate and entry libraries before calling this protocol.
 _nu_read_record() {
     _na_small_file "$1" || return 77
     IFS= read -r _nu_record < "$1" || return 77
@@ -525,3 +524,167 @@ native_update_init_observer_context() (
         [ "$_nu_record" = "$_nu_init_record" ] || return 77
     fi
 )
+
+# Validate the WHOLE known call shape before deleting any evidence. Query files
+# are RAM data, not executable paths; include hidden entries and dangling links.
+_nu_gate_shape() (
+    case "$1" in before|completed) ;; *) exit 77;; esac
+    _nu_lock=/tmp/.xkeen-admission/operation.lock.d
+    _native_gate_directory "$_nu_lock" 0700 || exit 77
+    _native_gate_read_owner /tmp/.xkeen-admission || exit 77
+    [ "$_ng_record" = "$_na_gate_identity" ] || exit 77
+    for _nu_item in "$_nu_lock"/* "$_nu_lock"/.[!.]* "$_nu_lock"/..?*; do
+        [ -e "$_nu_item" ] || [ -L "$_nu_item" ] || continue
+        case "${_nu_item##*/}:$1" in
+            owner:*) ;;
+            call.update:completed) ;;
+            *) exit 77;;
+        esac
+    done
+    sha256sum "$_nu_lock/owner" || exit 77
+)
+_nu_cleanup_shape() (
+    _nu_gate_shape completed || exit 77
+    _native_gate_directory "$_nu_call" 0700 || exit 77
+    for _nu_item in "$_nu_call"/* "$_nu_call"/.[!.]* "$_nu_call"/..?*; do
+        [ -e "$_nu_item" ] || [ -L "$_nu_item" ] || continue
+        case "${_nu_item##*/}" in
+            context|body|staged|completed|exec.argv|terminal.argv|init-parent.argv) ;;
+            environment.pre|init-identity.pre|init-identity.post|package-identity.pre|package-identity.post|packages.initial|packages.post|exec.used) ;;
+            *) exit 77;;
+        esac
+    done
+    for _nu_dir in environment.pre init-identity.pre init-identity.post package-identity.pre package-identity.post packages.initial packages.post exec.used; do
+        _native_gate_directory "$_nu_call/$_nu_dir" 0700 || exit 77
+        case "$_nu_dir" in
+            environment.pre|packages.initial) _nu_files=packages;;
+            packages.post) _nu_files='packages argv.before argv.after';;
+            init-identity.*) _nu_files='live-code live-settings template-code template-settings';;
+            package-identity.*) _nu_files='other identity control';;
+            exec.used) _nu_files=;;
+        esac
+        for _nu_item in "$_nu_call/$_nu_dir"/* "$_nu_call/$_nu_dir"/.[!.]* "$_nu_call/$_nu_dir"/..?*; do
+            [ -e "$_nu_item" ] || [ -L "$_nu_item" ] || continue
+            case " $_nu_files " in *" ${_nu_item##*/} "*) ;; *) exit 77;; esac
+        done
+        for _nu_name in $_nu_files; do
+            _nu_path=$_nu_call/$_nu_dir/$_nu_name
+            [ ! -L "$_nu_path" ] && [ -f "$_nu_path" ] || exit 77
+            _native_gate_metadata "$_nu_path" || exit 77
+            [ "$_ng_meta_mode:$_ng_meta_uid:$_ng_meta_links" = 8180:0:1 ] && [ "$_ng_meta_size" -le 524288 ] || exit 77
+            printf '%s %s ' "$_nu_dir/$_nu_name" "$_ng_meta_size"
+            sha256sum "$_nu_path" || exit 77
+        done
+    done
+    for _nu_name in context body staged completed exec.argv terminal.argv init-parent.argv; do
+        if [ "$_nu_name" = init-parent.argv ] && [ ! -e "$_nu_call/$_nu_name" ] && [ ! -L "$_nu_call/$_nu_name" ]; then continue; fi
+        _na_small_file "$_nu_call/$_nu_name" || exit 77
+        printf '%s %s ' "$_nu_name" "$_ng_meta_size"
+        sha256sum "$_nu_call/$_nu_name" || exit 77
+    done
+)
+_nu_cleanup() {
+    # Called only by the original wrapper after successful independent postproof.
+    _nu_load_call || return 77
+    [ "$_nu_gate_record" = "$_na_gate_identity" ] && [ "$_nu_context" = "$_nu_entry_context" ] || return 77
+    _nu_cleanup_gate=$_nu_gate_record; _nu_cleanup_context=$_nu_context
+    _native_gate_self || return 77
+    [ "$_ng_self_pid:$_ng_self_start" = "$_nu_wrapper_pid:$_nu_wrapper_start" ] || return 77
+    _nu_cleanup_before=$(_nu_cleanup_shape) || return 77
+    _nu_recheck_call || return 77
+    [ "$_nu_gate_record" = "$_nu_cleanup_gate" ] && [ "$_nu_context" = "$_nu_cleanup_context" ] || return 77
+    [ "$(_nu_cleanup_shape)" = "$_nu_cleanup_before" ] || return 77
+    _nu_recheck_call || return 77
+    # Fixed operands only. Unknown/unsafe shape above retains every file. A
+    # failed actual removal retains admission; it cannot authorize a replay.
+    for _nu_dir in environment.pre init-identity.pre init-identity.post package-identity.pre package-identity.post packages.initial packages.post; do
+        case "$_nu_dir" in
+            environment.pre|packages.initial) _nu_files=packages;;
+            packages.post) _nu_files='packages argv.before argv.after';;
+            init-identity.*) _nu_files='live-code live-settings template-code template-settings';;
+            package-identity.*) _nu_files='other identity control';;
+        esac
+        for _nu_name in $_nu_files; do rm "$_nu_call/$_nu_dir/$_nu_name" || return 77; done
+        rmdir "$_nu_call/$_nu_dir" || return 77
+    done
+    rmdir "$_nu_call/exec.used" || return 77
+    if [ -e "$_nu_call/init-parent.argv" ]; then rm "$_nu_call/init-parent.argv" || return 77; fi
+    rm "$_nu_call/body" "$_nu_call/staged" "$_nu_call/completed" "$_nu_call/exec.argv" "$_nu_call/terminal.argv" "$_nu_call/context" && rmdir "$_nu_call" || return 77
+}
+native_update_enter() {
+    # Two fixed phases, one wrapper, one actual native body retained across exec.
+    # No callback/path selector, second baseline, updater daemon or repair path.
+    _na_body=0
+    [ "$#" = 1 ] && [ "$(id -u)" = 0 ] || return 76
+    case "$1" in -uk|-uk_post_update) _nu_entry_arg=$1;; *) return 76;; esac
+    _na_file_ok /opt/lib/xkeen/native-operation-gate.sh || return 76
+    . /opt/lib/xkeen/native-operation-gate.sh
+    if [ -n "${XKEEN_ADMISSION_ROLE-}${XKEEN_ADMISSION_ACTION-}${XKEEN_ADMISSION_CALL-}" ]; then
+        # A malformed hint can never create a fresh wrapper. Post phase must
+        # consume the actual same-body exec proof before imports/prefix effects.
+        case "$_nu_entry_arg" in
+            -uk) native_update_bind_body || return $?;;
+            -uk_post_update) native_update_exec_context || return $?;;
+        esac
+        _na_body=1
+        return 0
+    fi
+    [ "$_nu_entry_arg" = -uk ] || return 77
+    _nu_owns=0
+    if [ -n "${XKEEN_GATE_ROOT-}${XKEEN_GATE_TOKEN-}" ]; then
+        native_gate_join /tmp/.xkeen-admission "${XKEEN_GATE_TOKEN-}" || return 77
+        [ "$_ng_action" = update-xkeen ] || return 77
+    else
+        native_gate_prepare || return $?
+        native_gate_acquire /tmp/.xkeen-admission update-xkeen || return $?
+        _nu_owns=1
+    fi
+    # Acquire sets _ng_owned_record rather than _ng_record; freeze by join.
+    native_gate_join /tmp/.xkeen-admission "$XKEEN_GATE_TOKEN" || return 77
+    _na_gate_identity=$_ng_record
+    _nu_gate_shape before >/dev/null || { _na_poison; return 77; }
+    _nu_call=/tmp/.xkeen-admission/operation.lock.d/call.update
+    (umask 077; mkdir "$_nu_call") 2>/dev/null || { _na_poison; return 77; }
+    _native_gate_self || { _na_poison; return 77; }
+    _nu_nonce=$(dd if=/dev/urandom bs=16 count=1 2>/dev/null | od -v -b | awk 'NF>1 {for(i=2;i<=NF;i++){n++; if($i !~ /^[0-3][0-7][0-7]$/)bad=1; v=substr($i,1,1)*64+substr($i,2,1)*8+substr($i,3,1); s=s sprintf("%02x",v)}} END{if(n==16&&!bad)printf "%s",s}')
+    [ "${#_nu_nonce}" = 32 ] || { _na_poison; return 77; }
+    _nu_context="v1 $_ng_self_pid $_ng_self_start $_nu_nonce update update-xkeen forced $XKEEN_GATE_TOKEN"
+    _nu_entry_context=$_nu_context
+    (umask 077; set -C; printf '%s\n' "$_nu_context" > "$_nu_call/context") || { _na_poison; return 77; }
+    XKEEN_ADMISSION_ROLE=update; XKEEN_ADMISSION_ACTION=update-xkeen; XKEEN_ADMISSION_CALL=$_nu_nonce
+    export XKEEN_ADMISSION_ROLE XKEEN_ADMISSION_ACTION XKEEN_ADMISSION_CALL
+    _na_file_ok /opt/lib/xkeen/native-admission-verify.sh && _na_file_ok /opt/sbin/xkeen || { _na_poison; return 76; }
+    /opt/bin/sh /opt/lib/xkeen/native-admission-verify.sh pre update update-xkeen forced || { _na_poison; return 77; }
+    _nu_load_call || { _na_poison; return 77; }
+    [ "$_nu_gate_record" = "$_na_gate_identity" ] && [ "$_nu_context" = "$_nu_entry_context" ] || return 77
+    /opt/bin/sh /opt/sbin/xkeen -uk
+    _nu_child_rc=$?
+    [ "$_nu_child_rc" = 0 ] || { _na_poison; return 77; }
+    _nu_load_call || { _na_poison; return 77; }
+    [ "$_nu_gate_record" = "$_na_gate_identity" ] && [ "$_nu_context" = "$_nu_entry_context" ] || return 77
+    # Exit zero alone is insufficient: postproof authenticates typed completed,
+    # staged/exec/body receipts and independently checks the installed result.
+    _na_file_ok /opt/lib/xkeen/native-admission-verify.sh || { _na_poison; return 76; }
+    /opt/bin/sh /opt/lib/xkeen/native-admission-verify.sh post update update-xkeen forced || { _na_poison; return 77; }
+    _nu_load_call || { _na_poison; return 77; }
+    [ "$_nu_gate_record" = "$_na_gate_identity" ] && [ "$_nu_context" = "$_nu_entry_context" ] || return 77
+    _nu_cleanup || { _na_poison; return 77; }
+    if [ "$_nu_owns" = 0 ]; then
+        # An ancestor (e.g. panel's Go operation) still owns admission. It must
+        # release before fresh current-state drain; no wait while holding it.
+        native_admission_strip
+        _na_body=0
+        return 0
+    fi
+    native_gate_release || return 77
+    native_admission_strip
+    _na_body=0
+    # Do not create an artificial event on a clean completion. If real dirty
+    # work exists, elect a fresh bounded reader after releasing update ownership.
+    _na_file_ok /opt/lib/xkeen/native-event-notification.sh && _na_file_ok /opt/lib/xkeen/native-event-convergence.sh || return 76
+    . /opt/lib/xkeen/native-event-notification.sh
+    . /opt/lib/xkeen/native-event-convergence.sh
+    _ne_prepare || return 76
+    if [ -e "$_ne_root/dirty" ] || [ -L "$_ne_root/dirty" ]; then native_event_converge; return $?; fi
+    return 0
+}

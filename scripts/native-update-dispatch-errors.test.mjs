@@ -76,3 +76,19 @@ echo WRONG_SUCCESS
   assert.ifError(r.error); assert.equal(r.status, 1, r.stderr)
   assert.equal(r.stdout, '')
 })
+
+test('both update phases bypass generic lifecycle completion after the native argv loop has shifted', () => {
+  const tail = text.slice(text.lastIndexOf('\ncase "$_na_entry_action" in\n'))
+  assert.ok(tail.startsWith('\ncase "$_na_entry_action" in\n'))
+  for (const argument of ['-uk', '-uk_post_update']) {
+    const r = spawnSync('/bin/sh', ['-c', `
+set -- '${argument}'
+_na_entry_action=update-xkeen
+while [ "$#" -gt 0 ]; do shift; done
+xkeen_rc=0
+native_admission_finish() { echo WRONG_LIFECYCLE; return 88; }
+${tail}
+`], { encoding: 'utf8', timeout: 1000 })
+    assert.ifError(r.error); assert.equal(r.status, 0, r.stderr); assert.equal(r.stdout, '')
+  }
+})

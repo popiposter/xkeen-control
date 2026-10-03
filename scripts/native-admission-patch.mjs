@@ -28,7 +28,11 @@ function entryPrelude(role) {
 [ "$#" = 0 ] || exit 76
 ` : role === 'dispatcher' ? `
 [ "$#" = 1 ] || exit 76
-case "$1" in -start|-stop|-restart) _na_entry_action=\${1#-};; *) exit 76;; esac
+case "$1" in
+    -start|-stop|-restart) _na_entry_action=\${1#-};;
+    -uk|-uk_post_update) _na_entry_action=update-xkeen;;
+    *) exit 76;;
+esac
 _na_entry_mode=forced
 ` : `
 case "$#:$1:\${2-}" in
@@ -64,7 +68,13 @@ while :; do
     [ -n "$_na_boot_path" ] || _na_boot_path=/
 done
 . /opt/lib/xkeen/native-admission-entry.sh
-${role === 'hook' ? 'native_admission_hook_enter' : `native_admission_enter ${role} "$_na_entry_action" "$_na_entry_mode"`} || exit $?
+${role === 'hook' ? 'native_admission_hook_enter' : role === 'dispatcher' ? `if [ "$_na_entry_action" = update-xkeen ]; then
+    _na_file_ok /opt/lib/xkeen/native-update-context.sh || exit 76
+    . /opt/lib/xkeen/native-update-context.sh
+    native_update_enter "$1"
+else
+    native_admission_enter dispatcher "$_na_entry_action" "$_na_entry_mode"
+fi` : `native_admission_enter ${role} "$_na_entry_action" "$_na_entry_mode"`} || exit $?
 [ "$_na_body" = 1 ] || exit 0
 XKEEN_FOREGROUND=1; export XKEEN_FOREGROUND
 # END NATIVE ADMISSION ENTRY
@@ -473,14 +483,19 @@ monitor_fd() {
 }
 `)
   text = replaceOnce(text, '\nexit "$_cmd_rc"\n', '\nnative_admission_finish "$_cmd_rc"\nexit $?\n')
-  let dispatcherText = replaceOnce(dispatcher.toString('utf8'), '\nexit "$xkeen_rc"\n', '\nnative_admission_finish "$xkeen_rc"\nexit $?\n')
+  let dispatcherText = replaceOnce(dispatcher.toString('utf8'), '\nexit "$xkeen_rc"\n', `
+case "$_na_entry_action" in
+    update-xkeen) exit "$xkeen_rc";;
+    *) native_admission_finish "$xkeen_rc"; exit $?;;
+esac
+`)
   // The post-update proof pins the actual interpreter/path/argument vector;
   // PATH lookup and a caller-selected $0 must not alter that handoff.
   dispatcherText = replaceOnce(dispatcherText, 'exec sh "$0" -uk_post_update', 'exec /opt/bin/sh /opt/sbin/xkeen -uk_post_update')
   dispatcherText = patchUpdaterFailures(dispatcherText)
   // Lifecycle is not installation. These exact classified actions must neither
   // rename an installation nor invoke the package manager under the gate.
-  dispatcherText = replaceOnce(dispatcherText, '\ninstall_xkeen_rename\n', '\ncase "$1" in -start|-stop|-restart) ;; *) install_xkeen_rename;; esac\n')
+  dispatcherText = replaceOnce(dispatcherText, '\ninstall_xkeen_rename\n', '\ncase "$1" in -start|-stop|-restart|-uk|-uk_post_update) ;; *) install_xkeen_rename;; esac\n')
   dispatcherText = replaceOnce(dispatcherText,
     '    ""|-sbt|-h|-help|-v|-version|-about|-ad|-donate|-af|-feedback) ;;',
     '    -start|-stop|-restart|""|-sbt|-h|-help|-v|-version|-about|-ad|-donate|-af|-feedback) ;;')

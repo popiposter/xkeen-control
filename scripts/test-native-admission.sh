@@ -9,6 +9,7 @@ node --test \
     scripts/native-admission-hook-verify.test.mjs \
     scripts/native-event-notification.test.mjs \
     scripts/native-update-context.test.mjs \
+    scripts/native-update-entry.test.mjs \
     scripts/native-update-init-borrow.test.mjs \
     scripts/native-update-packages.test.mjs \
     scripts/native-update-packages-verify.test.mjs \

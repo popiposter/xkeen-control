@@ -998,6 +998,43 @@ and update persistence remain fenced prerequisites before installation.
 
 ## Actual Entware shell protocol probe (2026-10-02)
 
+### Fenced fixed updater caller (2026-10-03)
+
+The dispatcher candidate now classifies exactly one `-uk` or
+`-uk_post_update` argument before its native prefix. It loads only the protected
+fixed context library. Initial entry acquires/borrows `update-xkeen`, creates one
+exclusive `call.update/context`, runs direct pre-verification, and executes only
+`/opt/bin/sh /opt/sbin/xkeen -uk`. The direct child binds its actual body before
+imports. The same body must consume authenticated exec at post entry. Neither
+entry invokes `install_xkeen_rename`; update also bypasses generic lifecycle
+completion. Unsupported/malformed hints never create another wrapper.
+
+The outer caller freezes its original gate/context across both verifier calls.
+It requires child exit zero and update-specific post-verification, including
+typed completion, before cleanup. Cleanup checks the complete fixed RAM tree,
+including hidden/dangling/unknown entries, modes, ownership, single links, bounded
+sizes and content snapshots before deleting any evidence. It removes only fixed
+records/query files and empty directories. Consumed `update-preflight` must be
+absent. Failures retain admission. Only the actual owner releases, strips
+authority and starts fresh bounded current-state convergence for existing dirty
+work. Borrowers leave release/drain to their ancestor. Queued and unresolved
+convergence results remain distinct.
+
+This connects the envelope; it does **not** connect the real native successful
+terminal yet. All compiled candidates remain unconditionally fenced and
+uninstalled. The actual dispatcher cannot supply `completed` yet, so its zero
+exit cannot pass this envelope. Fixtures exercise actual process/gate/exec/
+terminal authentication with synthetic native bodies, verifier postconditions
+and event worker, not a complete installer or router update.
+
+Independent source inspection identified the remaining prerequisites for the
+real terminal: checked inner registration/backup/cleanup writers, cron cache
+reuse and exact no-op script proof, absence/protection of unrelated native
+cleanup and prefix destinations, and exact supported archive verification
+**before** extraction. Postconditions alone do not make masked native writer
+failures successful. These must be resolved before installing or enabling this
+caller; no fence removal or target mutation is part of this cohort.
+
 The first isolated RAM probe of the old shell library stopped before creating a
 gate: the appliance BusyBox `od` supports neither GNU `-A`, `-N` nor `-t`. Its
 empty test directory was removed after independent before/after PID and config
