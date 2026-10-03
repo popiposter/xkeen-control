@@ -218,6 +218,11 @@ _nv_update_environment_inputs() {
         printf ' %s\n' "$_nv_env_path"
     done
     jq -e 'type == "object" and (.xkeen == null or (.xkeen | type) == "object")' /opt/etc/xkeen/xkeen.json >/dev/null 2>&1 || return 76
+    _nv_file_ok /opt/etc/opkg.conf || return 76
+    _native_gate_metadata /opt/etc/opkg.conf || return 76
+    [ "$_ng_meta_size" -gt 0 ] && [ "$_ng_meta_size" -le 65536 ] || return 76
+    _nv_hash /opt/etc/opkg.conf || return 76
+    printf ' opkg-config\n'
     _nv_env_cron_init=/opt/etc/init.d/S05crond
     if [ -e "$_nv_env_cron_init" ] || [ -L "$_nv_env_cron_init" ]; then
         _nv_file_ok "$_nv_env_cron_init" || return 76
@@ -262,6 +267,39 @@ _nv_update_environment_pre() {
     (umask 077; set -C; ulimit -f 512 || exit 76
         /opt/libexec/timeout-coreutils -s KILL 15 /opt/bin/opkg list-installed > "$_nv_env_query/packages" 2>/dev/null) || return 76
     _nv_ram_file "$_nv_env_query/packages" 262144 || return 77
+    [ "$(_nv_update_environment_inputs)" = "$_nv_env_before" ] || return 77
+    [ "$(tail -c 1 "$_nv_env_query/packages" | od -v -b | awk 'NF>1{print $2}')" = 012 ] || return 76
+    _nv_update_init_file /opt/lib/opkg/status || return 76
+    # The pinned dispatcher self-heals these nine packages before -uk. Refuse
+    # before granting its body unless the exact bounded query and protected
+    # status agree that every prerequisite is already fully installed.
+    LC_ALL=C awk -v query="$_nv_env_query/packages" '
+      BEGIN {
+        split("curl jq ip-full iptables ipset ca-bundle coreutils-uname coreutils-nohup conntrack", names, " ")
+        for(i in names) required[names[i]]=1
+        while((read=(getline line < query))>0) {
+          if(line !~ /^[A-Za-z0-9][A-Za-z0-9+_.-]* - [A-Za-z0-9][A-Za-z0-9+_.:~()-]*$/) {bad=1;continue}
+          split(line, parts, " "); if(++listed[parts[1]]!=1) bad=1
+          versions[parts[1]]=parts[3]
+        }
+        if(read<0) bad=1; close(query); RS=""
+      }
+      {
+        count=split($0, rows, "\n"); package=""; version=""; state=""; previous=""; p=0; v=0; s=0
+        for(i=1;i<=count;i++) {
+          if(rows[i] ~ /^[ \t]/ && previous ~ /^(Package|Version|Status): /) bad=1
+          if(rows[i] ~ /^Package: /) {package=substr(rows[i],10);p++}
+          if(rows[i] ~ /^Version: /) {version=substr(rows[i],10);v++}
+          if(rows[i] ~ /^Status: /) {state=substr(rows[i],9);s++}
+          if(rows[i] !~ /^[ \t]/) previous=rows[i]
+        }
+        if(p!=1 || rows[1] !~ /^Package: [A-Za-z0-9][A-Za-z0-9+_.-]*$/ || ++seen[package]!=1) bad=1
+        if(package in required) {
+          if(p!=1 || v!=1 || s!=1 || ++healthy[package]!=1 || listed[package]!=1 || version!=versions[package] || (state!="install ok installed" && state!="install user installed")) bad=1
+        }
+      }
+      END {for(package in required) if(healthy[package]!=1) bad=1; if(bad)exit 76}
+    ' /opt/lib/opkg/status || return 76
     _nv_env_cron_count=$(LC_ALL=C awk '
       /^[A-Za-z0-9][A-Za-z0-9+_.-]* - [A-Za-z0-9][A-Za-z0-9+_.:~()-]*$/ {if($1=="cron")cron++;next}
       {bad=1} END {if(bad || cron>1)exit 76; print cron+0}' "$_nv_env_query/packages") || return 76
@@ -385,6 +423,11 @@ _nv_update_main() {
     _nv_baseline=$_na_call_dir/update-preflight
     if [ "$_nv_phase" = pre ]; then
         _nv_previous=$_nv_runtime
+        if [ "$_nv_runtime" = absent ]; then
+            # Native delete_tmp removes even an empty proxy hook. Stopped update
+            # cannot promise preservation when that cleanup would change it.
+            [ ! -e /opt/etc/ndm/netfilter.d/proxy.sh ] && [ ! -L /opt/etc/ndm/netfilter.d/proxy.sh ] || return 76
+        fi
     else
         _nv_ram_file "$_nv_baseline" 1024 || return 77
         IFS= read -r _nv_saved < "$_nv_baseline" || return 77
@@ -415,6 +458,9 @@ _nv_update_main() {
     native_update_verifier_context "$_nv_phase" || return 77
     [ "$_nu_gate_record" = "$_nv_up_gate" ] && [ "$_nu_context" = "$_nv_up_context" ] || return 77
     if [ "$_nv_phase" = pre ]; then
+        if [ "$_nv_runtime" = absent ]; then
+            [ ! -e /opt/etc/ndm/netfilter.d/proxy.sh ] && [ ! -L /opt/etc/ndm/netfilter.d/proxy.sh ] || return 77
+        fi
         (umask 077; set -C; printf '%s\n' "$_nv_frozen $_nv_runtime" > "$_nv_baseline") || return 77
         _nv_ram_file "$_nv_baseline" 1024 || return 77
         native_update_verifier_context pre || return 77

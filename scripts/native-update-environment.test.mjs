@@ -27,15 +27,21 @@ const nativeCronInit = cronPayload.replaceAll('\\\\', '\\') + '\n'
 assert.equal(Buffer.byteLength(nativeCronInit), 1711)
 assert.equal(createHash('sha256').update(nativeCronInit).digest('hex'), '516226b527a140fc733d349c42dd8e92b3182dbc7ac3df38c78e75bbb7a713e2')
 const nativePorts = fragment('_xkeen/04_tools/01_tools_ports.sh', 'migrate_ports_from_initd() {\n')
+const nativePackagesInfo = fragment('_xkeen/01_info/02_info_packages.sh', 'info_packages() {\n')
+const nativePackagesInstall = fragment('_xkeen/02_install/01_install_packages.sh', 'install_packages() {\n')
 const verifier = readFileSync('scripts/native-admission-verify.sh', 'utf8').split('\n_nv_main() {')[0]
+const required = ['curl', 'jq', 'ip-full', 'iptables', 'ipset', 'ca-bundle', 'coreutils-uname', 'coreutils-nohup', 'conntrack']
+const packageQuery = required.map(name => `${name} - 1.0\n`).join('')
+const packageStatus = required.map(name => `Package: ${name}\nVersion: 1.0\nStatus: install ok installed\n\n`).join('')
 
-function fixture({ setup = '', query = "printf 'cron - 1.0\nfixture - 1.0\n'", cron = '0 4 * * * /opt/sbin/xkeen -ug\n0 5 * * * /opt/sbin/xkeen -sbt\n', readerSetup = '', cronInit = null } = {}) {
+function fixture({ setup = '', query = `printf '${packageQuery}cron - 1.0\nfixture - 1.0\n'`, cron = '0 4 * * * /opt/sbin/xkeen -ug\n0 5 * * * /opt/sbin/xkeen -sbt\n', readerSetup = '', cronInit = null } = {}) {
   const ram = mkdtempSync('/tmp/native-update-env-'), code = mkdtempSync('/root/native-update-env-')
   chmodSync(ram, 0o700); chmodSync(code, 0o700)
   const path = name => join(code, name)
   const rewrite = value => value.replaceAll('/tmp/.xkeen-admission', ram)
     .replaceAll('/opt/etc/init.d', path('init.d')).replaceAll('/opt/etc/xkeen_exclude.lst', path('legacy-exclude'))
     .replaceAll('/opt/etc/xkeen', path('settings')).replaceAll('/opt/lib/opkg/status', path('status'))
+    .replaceAll('/opt/etc/opkg.conf', path('opkg.conf'))
     .replaceAll('/opt/var/spool/cron/crontabs', path('crontabs')).replaceAll('/opt/bin/opkg', path('bin/opkg'))
     .replaceAll('/opt/libexec/timeout-coreutils', path('bin/timeout')).replaceAll('@CODE@', code).replaceAll('@RAM@', ram)
   const put = (name, text, mode = 0o600) => writeFileSync(path(name), rewrite(text), { mode })
@@ -44,11 +50,12 @@ function fixture({ setup = '', query = "printf 'cron - 1.0\nfixture - 1.0\n'", c
   put('functions', verifier)
   put('settings/xkeen.json', '{}\n')
   for (const name of ['port_proxying.lst', 'port_exclude.lst', 'ip_exclude.lst']) put(`settings/${name}`, '# synthetic list\n')
-  put('status', 'Package: cron\nVersion: 1.0\nStatus: install ok installed\n\nPackage: fixture\nVersion: 1.0\nStatus: install ok installed\n\n')
+  put('status', packageStatus + 'Package: cron\nVersion: 1.0\nStatus: install ok installed\n\nPackage: fixture\nVersion: 1.0\nStatus: install ok installed\n\n')
+  put('opkg.conf', '# fixture repository configuration\n')
   if (cron !== null) writeFileSync(path('crontabs/root'), cron, { mode: 0o600 })
   if (cronInit !== null) writeFileSync(path('init.d/S05crond'), cronInit, { mode: 0o600 })
   put('bin/opkg', `#!/bin/sh
-[ "$*" = list-installed ] || exit 99
+[ "$*" = list-installed ] || { echo PACKAGE >> '@CODE@/effects'; exit 99; }
 ${query}
 `, 0o700)
   put('bin/timeout', '#!/bin/sh\n[ "$1 $2 $3" = "-s KILL 15" ] || exit 99\nshift 3\nexec "$@"\n', 0o700)
@@ -69,6 +76,10 @@ ${nativeCron}
 ${nativeCronRewrite}
 ${nativeConfig}
 ${nativePorts}
+${nativePackagesInfo}
+${nativePackagesInstall}
+_load_packages_info || exit 97
+_ensure_installed_packages || exit 98
 new_features; [ "$?" = 0 ] || exit 90
 register_cron_initd || exit 91
 migrate_ports_from_initd; [ "$?" = 1 ] || exit 92
@@ -99,12 +110,14 @@ test('supported environment makes actual native feature/cron/migration functions
     const r = fixture({ cron }); assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /^[a-f0-9]{64}\n$/)
     assert.equal(r.effects || r.cronInit, false); assert.equal(r.query && r.held, true)
   }
+  const user = fixture({ setup: "sed -i 's/install ok installed/install user installed/g' '@CODE@/status'" })
+  assert.equal(user.status, 0, JSON.stringify(user)); assert.equal(user.effects, false)
 })
 test('native script cron without a cron package preserves exact upstream init and tasks', () => {
-  const r = fixture({ query: "printf 'fixture - 1.0\\n'", cronInit: nativeCronInit })
+  const r = fixture({ query: `printf '${packageQuery}fixture - 1.0\\n'`, cronInit: nativeCronInit })
   assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /^[a-f0-9]{64}\n$/); assert.equal(r.effects, false); assert.equal(r.cronInit, true)
   for (const cronInit of [null, nativeCronInit + '# manual drift\n', nativeCronInit.replace('version="0.6"', 'version="0.5"')]) {
-    const bad = fixture({ query: "printf 'fixture - 1.0\\n'", cronInit }); assert.equal(bad.status, 76); assert.equal(bad.stdout, ''); assert.equal(bad.query && bad.held, true)
+    const bad = fixture({ query: `printf '${packageQuery}fixture - 1.0\\n'`, cronInit }); assert.equal(bad.status, 76); assert.equal(bad.stdout, ''); assert.equal(bad.query && bad.held, true)
   }
 })
 test('legacy/new-feature/missing native configuration refuses before package query or body', () => {
@@ -139,7 +152,36 @@ test('configuration/status/cron or capability protection drift during query refu
     "printf '# changed\\n' >> '@CODE@/settings/ip_exclude.lst'", "printf '\\nPackage: extra\\n' >> '@CODE@/status'",
     "printf '# changed\\n' >> '@CODE@/crontabs/root'", "chmod 666 '@CODE@/status'", "chmod 777 '@CODE@/crontabs'",
     "chmod 666 '@CODE@/bin/timeout'", "rm '@CODE@/crontabs/root'",
+    "printf '# drift\\n' >> '@CODE@/opkg.conf'", "chmod 666 '@CODE@/opkg.conf'",
   ]) {
-    const r = fixture({ query: `${change}\nprintf 'cron - 1.0\\nfixture - 1.0\\n'` }); assert.equal(r.status, 77, r.stderr); assert.equal(r.stdout, ''); assert.equal(r.query && r.held, true)
+    const r = fixture({ query: `${change}\nprintf '${packageQuery}cron - 1.0\\nfixture - 1.0\\n'` }); assert.equal(r.status, 77, r.stderr); assert.equal(r.stdout, ''); assert.equal(r.query && r.held, true)
+  }
+})
+
+test('package field tricks, duplicate stanzas and unterminated query refuse before native calls', () => {
+  for (const options of [
+    { query: `printf '${packageQuery}cron - 1.0'` },
+    { setup: "printf 'Package: curl\\nVersion: 1.0\\nStatus: install ok installed\\n\\n' >> '@CODE@/status'" },
+    { setup: "printf 'Package: curl\\nVersion: 1.0\\nStatus: install ok installed\\nPackage: fake\\n\\n' >> '@CODE@/status'" },
+    { setup: "sed -i '/^Package: curl$/a Version: 1.0' '@CODE@/status'" },
+    { setup: "sed -i '/^Package: curl$/a\\ continuation' '@CODE@/status'" },
+    { setup: "sed -i '/^Package: curl$/,/^$/s/install ok installed/install ok unpacked/' '@CODE@/status'" },
+  ]) {
+    const r = fixture(options); assert.equal(r.status, 76, JSON.stringify(r))
+    assert.equal(r.query && r.held, true); assert.equal(r.effects || r.cronInit, false)
+  }
+})
+
+test('every prefix prerequisite must be unique, healthy and version-consistent before body', () => {
+  for (const name of required) {
+    for (const options of [
+      { query: `printf '${packageQuery.replace(`${name} - 1.0\n`, '')}cron - 1.0\n'` },
+      { query: `printf '${packageQuery}${name} - 1.0\ncron - 1.0\n'` },
+      { setup: `sed -i '/^Package: ${name}$/,/^$/s/install ok installed/deinstall ok installed/' '@CODE@/status'` },
+      { setup: `sed -i '/^Package: ${name}$/,/^$/s/Version: 1.0/Version: 2.0/' '@CODE@/status'` },
+    ]) {
+      const r = fixture(options); assert.equal(r.status, 76, JSON.stringify(r))
+      assert.equal(r.effects || r.cronInit, false); assert.equal(r.query && r.held, true)
+    }
   }
 })

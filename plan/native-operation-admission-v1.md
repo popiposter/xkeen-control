@@ -829,6 +829,16 @@ synthetic lifecycle verifier, not the native updater or kernel. Dispatcher updat
 entry, prefix prerequisites, terminal placement, fixed cleanup and final dirty
 drain still require integration; all native candidates remain fenced.
 
+The existing bounded environment preflight additionally requires all nine pinned
+dispatcher dependencies to be uniquely installed, with query/status versions in
+agreement and exact healthy `install ok installed` or `install user installed`
+state. The latter is opkg's explicit-install flag, not a failure. The protected
+opkg configuration joins policy preservation. Stopped updates require the proxy
+hook absent before and after proof, because native cleanup removes even an empty
+hook. Public fixtures exercise the actual native package checks without installs.
+This does not yet protect the body's second package reload or bound/propagate the
+native Entware feed refresh; those remain prefix integration prerequisites.
+
 The data-only opkg status projection requires exactly one supported XKeen stanza,
 rejects duplicate package records and names beginning `xkeen` other than `xkeen`
 itself (the pinned native deletion uses a prefix match). It preserves unrelated

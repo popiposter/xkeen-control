@@ -12,6 +12,9 @@ const built = buildCandidates({ init: readFileSync(process.env.XKEEN_ADMISSION_I
 const init = built.registrationTemplate.toString('utf8')
 const status = 'Package: cron\nVersion: 1.0\nArchitecture: aarch64-fixture\nStatus: install ok installed\n\nPackage: xkeen\nVersion: 2.0.1\nDepends: jq, curl, coreutils-uname, coreutils-nohup, iptables, ipset, ip-full, conntrack\nStatus: install user installed\nArchitecture: aarch64-fixture\nInstalled-Time: 1720000000\n'
 const control = 'Package: xkeen\nVersion: 2.0.1\nDepends: jq, curl, coreutils-uname, coreutils-nohup, iptables, ipset, ip-full, conntrack\nSource: Skrill\nSourceName: xkeen\nSection: net\nSourceDateEpoch: 1720000000\nMaintainer: Skrill / jameszero\nArchitecture: aarch64-fixture\nInstalled-Size: 1234\nDescription: The platform that makes Xray work.\n'
+const required = ['curl', 'jq', 'ip-full', 'iptables', 'ipset', 'ca-bundle', 'coreutils-uname', 'coreutils-nohup', 'conntrack']
+const packageQuery = required.map(name => `${name} - 1.0\n`).join('')
+const packageStatus = required.map(name => `Package: ${name}\nVersion: 1.0\nStatus: install ok installed\n\n`).join('')
 
 function fixture({ running = true, auto = 'on', before = '', between = '', profile = ':', hook = ':', validator = ':', terminal = true, nested = false, publicationChange = '' } = {}) {
   const code = mkdtempSync('/root/native-update-verify-'), ram = mkdtempSync('/tmp/native-update-verify-')
@@ -37,6 +40,8 @@ function fixture({ running = true, auto = 'on', before = '', between = '', profi
     .replaceAll('/opt/etc/xray/dat', path('assets'))
     .replaceAll('/opt/lib/opkg/info/xkeen.control', path('control'))
     .replaceAll('/opt/lib/opkg/status', path('status'))
+    .replaceAll('/opt/etc/opkg.conf', path('opkg.conf'))
+    .replaceAll('/opt/etc/ndm/netfilter.d/proxy.sh', path('proxy.sh'))
     .replaceAll('/opt/var/spool/cron/crontabs', path('crontabs'))
     .replaceAll('/opt/libexec/timeout-coreutils', path('bin/timeout'))
     .replaceAll('/opt/bin/opkg', path('bin/opkg'))
@@ -62,7 +67,7 @@ _nv_main "$@"`)
   writeFileSync(path('init.d/S05xkeen'), init.replace(/^start_auto=.*$/m, `start_auto="${auto}"`), { mode: 0o600 })
   put('init-parser', readFileSync('scripts/native-update-init.awk', 'utf8'))
   put('package-parser', readFileSync('scripts/native-update-packages.awk', 'utf8'))
-  put('status', status); put('control', control)
+  put('status', packageStatus + status); put('control', control)
   put('settings/xkeen.json', '{}\n'); put('configs/01.json', '{}\n')
   for (const name of ['port_proxying.lst', 'port_exclude.lst', 'ip_exclude.lst']) put(`settings/${name}`, '# fixture\n')
   put('crontabs/root', '# unrelated cron\n')
@@ -78,7 +83,8 @@ echo VALIDATE >> '@CODE@/validation-calls'
 ${validator}
 `, 0o700)
   put('bin/pidof', "#!/bin/sh\n[ -s '@CODE@/pids' ] || exit 1\ncat '@CODE@/pids'\n", 0o700)
-  put('bin/opkg', "#!/bin/sh\n[ \"$*\" = list-installed ] || exit 90\nprintf 'cron - 1.0\\nfixture - 1.0\\n'\n", 0o700)
+  put('bin/opkg', `#!/bin/sh\n[ "$*" = list-installed ] || exit 90\nprintf '${packageQuery}cron - 1.0\\nfixture - 1.0\\n'\n`, 0o700)
+  put('opkg.conf', '# fixture repository configuration\n')
   put('bin/timeout', '#!/bin/sh\n[ "$1 $2 $3" = "-s KILL 15" ] || exit 90\nshift 3\nexec "$@"\n', 0o700)
   const authenticated = `. '@CODE@/gate'; . '@CODE@/entry'; . '@CODE@/context'
 native_update_observer_context "$1" || exit $?
@@ -127,6 +133,15 @@ test('complete verifier preserves running/stopped state independently of autosta
     assert.equal(r.hooks, `pre update update-xkeen forced ${expect}\npost update update-xkeen forced ${expect}\n`)
     assert.equal(r.validation, 'VALIDATE\nVALIDATE\n'); assert.equal(r.stdout, '')
   }
+})
+
+test('stopped update refuses even empty or dangling proxy cleanup and late appearance', () => {
+  for (const before of ["touch '@CODE@/proxy.sh'", "ln -s '@CODE@/absent' '@CODE@/proxy.sh'"]) {
+    const r = fixture({ running: false, before }); assert.equal(r.status, 76, JSON.stringify(r))
+    assert.equal(r.baseline, false); assert.equal(r.held, true)
+  }
+  const r = fixture({ running: false, hook: '[ "$1" != pre ] || touch @CODE@/proxy.sh' })
+  assert.equal(r.status, 77, JSON.stringify(r)); assert.equal(r.baseline, false); assert.equal(r.held, true)
 })
 test('native timestamp/control size rewrite and running process replacement are permitted', () => {
   const r = fixture({ between: "sed -i 's/1720000000/1720000001/g' '@CODE@/status' '@CODE@/control'; sed -i 's/Installed-Size: 1234/Installed-Size: 5678/' '@CODE@/control'; sed -i 's/ 42 0$/ 43 0/' '@CODE@/proc/123/stat'" })
