@@ -45,6 +45,12 @@ _na_gate_ok() {
         reconcile:start|reconcile:stop)
             case "$_na_role" in event|hook) ;; *) return 77;; esac
             ;;
+        update-xkeen:restart)
+            case "$_na_role:$_na_mode" in init:forced|hook:forced) ;; *) return 77;; esac
+            _na_file_ok /opt/lib/xkeen/native-update-context.sh || return 76
+            . /opt/lib/xkeen/native-update-context.sh
+            native_update_init_observer_context || return 77
+            ;;
         *) return 77;;
     esac
     [ ! -e /tmp/.xkeen-admission/operation.lock.d/unresolved ] &&
@@ -217,6 +223,13 @@ native_admission_enter() {
             [ "$_na_role:$_na_action:$_na_mode" = hook:start:forced ] || return 77
             _na_hook_parent=$(_na_hook_context) || return $?
             [ "$_na_hook_parent" = 'start forced' ] || return 77
+            ;;
+        update)
+            [ "$_na_role:$_na_action:$_na_mode" = init:restart:forced ] || return 77
+            _na_file_ok /opt/lib/xkeen/native-update-context.sh || return 76
+            . /opt/lib/xkeen/native-update-context.sh
+            native_update_init_enter || return 77
+            _na_gate_ok || return $?
             ;;
         *) return 77;;
     esac

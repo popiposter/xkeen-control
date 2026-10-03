@@ -137,6 +137,10 @@ test('preflight authenticates the immediate live wrapper before a body is bound'
     const r = fixture({ verifyPhase: 'pre', borrowed })
     assert.equal(r.status, 0, r.stderr); assert.equal(r.bodyPresent, false)
   }
+  for (const name of ['terminal.argv', 'init-parent.argv']) {
+    const r = fixture({ verifyPhase: 'pre', wrapperSetup: `touch '@ROOT@/operation.lock.d/call.update/${name}'; chmod 600 '@ROOT@/operation.lock.d/call.update/${name}'` })
+    assert.equal(r.status, 77, r.stderr); assert.equal(r.bodyPresent, false)
+  }
 })
 
 test('read-only observer may nest below the wrapper but cannot bind a native body', () => {

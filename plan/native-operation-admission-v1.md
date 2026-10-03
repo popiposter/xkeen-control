@@ -813,6 +813,22 @@ Its fixtures use a real isolated shell exec chain, including spoofed stored argv
 and valid replacement-owner drift. It is not yet wired into the pinned native
 successful terminal; caller-point review and whole updater verification remain.
 
+The source init adapter now permits one forced restart borrowed directly from
+the live authenticated post-exec update body. Before creating the existing
+`call.init`, it proves body-to-wrapper ancestry, canonical body/staged/consumed
+exec identity, absence of terminal completion, and the actual bounded parent
+argv. The exclusive `init-parent.argv` prevents a second restart attempt. Existing
+init and hook contexts keep their own child completion/readback; neither releases
+the update owner. Their read-only proof binds the protected init wrapper to the
+same live body and freezes the complete bounded ancestor chain and original
+update generation. Environment substitution for reading the fixed update context
+is confined to a proof subshell. Other actions, automatic mode, deeper initial
+callers, spoofed phase evidence, completed bodies and failed readback refuse and
+retain evidence. Fixtures execute a real isolated exec/init/hook chain with a
+synthetic lifecycle verifier, not the native updater or kernel. Dispatcher update
+entry, prefix prerequisites, terminal placement, fixed cleanup and final dirty
+drain still require integration; all native candidates remain fenced.
+
 The data-only opkg status projection requires exactly one supported XKeen stanza,
 rejects duplicate package records and names beginning `xkeen` other than `xkeen`
 itself (the pinned native deletion uses a prefix match). It preserves unrelated

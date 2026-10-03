@@ -63,7 +63,7 @@ _nu_observation_context() {
     _nu_verify_pid=$_ng_self_pid; _nu_verify_start=$_ng_self_start
     _nu_verify_chain=$(_nu_observer_chain) || return 77
     if [ "$_nu_verify_phase" = pre ]; then
-        for _nu_verify_name in body staged exec.used exec.argv completed; do
+        for _nu_verify_name in body staged exec.used exec.argv completed terminal.argv init-parent.argv; do
             [ ! -e "$_nu_call/$_nu_verify_name" ] && [ ! -L "$_nu_call/$_nu_verify_name" ] || return 77
         done
     else
@@ -110,7 +110,7 @@ _nu_observation_context() {
     [ "$_ng_proc_start" = "$_nu_verify_start" ] || return 77
     [ "$(_nu_observer_chain)" = "$_nu_verify_chain" ] || return 77
     if [ "$_nu_verify_phase" = pre ]; then
-        for _nu_verify_name in body staged exec.used exec.argv completed; do
+        for _nu_verify_name in body staged exec.used exec.argv completed terminal.argv init-parent.argv; do
             [ ! -e "$_nu_call/$_nu_verify_name" ] && [ ! -L "$_nu_call/$_nu_verify_name" ] || return 77
         done
     fi
@@ -293,3 +293,112 @@ native_update_complete() {
     _nu_read_record "$_nu_call/completed" || return 77
     [ "$_nu_record" = "$_nu_done_record" ] || return 77
 }
+
+_nu_init_body_live() {
+    # Called only with the authenticated fixed update context. The native body
+    # must still be executing; an already completed/terminal body cannot borrow.
+    _nu_read_record "$_nu_call/body" || return 77
+    _nu_init_body=$_nu_record
+    set -- $_nu_init_body
+    [ "$#" = 4 ] && [ "$1" = v1 ] && [ "$4" = "$_nu_nonce" ] || return 77
+    _native_gate_decimal "$2" && _native_gate_decimal "$3" || return 77
+    _nu_init_body_pid=$2; _nu_init_body_start=$3
+    [ "$_nu_init_body" = "v1 $_nu_init_body_pid $_nu_init_body_start $_nu_nonce" ] || return 77
+    _native_gate_proc "$_nu_init_body_pid" || return 77
+    [ "$_ng_proc_start" = "$_nu_init_body_start" ] && [ "$_ng_parent" = "$_nu_wrapper_pid" ] || return 77
+    _native_gate_proc "$_nu_wrapper_pid" || return 77
+    [ "$_ng_proc_start" = "$_nu_wrapper_start" ] || return 77
+    _nu_read_record "$_nu_call/staged" || return 77
+    _nu_init_staged=$_nu_record
+    _nu_dispatcher_hash || return 77
+    [ "$_nu_init_staged" = "$_nu_init_body $_nu_hash" ] || return 77
+    _native_gate_directory "$_nu_call/exec.used" 0700 || return 77
+    _na_small_file "$_nu_call/exec.argv" || return 77
+    _nu_init_argv=$(sha256sum "$_nu_call/exec.argv" 2>/dev/null) || return 77
+    [ "${_nu_init_argv%% *}" = f7549ee949d9d02fa5ba2e6586f286394c31c2243d32d7ed1b520aa37d5439fe ] || return 77
+    for _nu_init_absent in completed terminal.argv; do
+        [ ! -e "$_nu_call/$_nu_init_absent" ] && [ ! -L "$_nu_call/$_nu_init_absent" ] || return 77
+    done
+}
+native_update_init_enter() {
+    # One direct forced init wrapper, before it creates the existing call.init.
+    # This is not a general descendant writer privilege or a second executor.
+    [ "$#" = 0 ] || return 76
+    _nu_load_call && _nu_init_body_live || return 77
+    _nu_init_gate=$_nu_gate_record; _nu_init_context=$_nu_context
+    _nu_init_original_body=$_nu_init_body; _nu_init_original_staged=$_nu_init_staged
+    _native_gate_self || return 77
+    _nu_init_pid=$_ng_self_pid; _nu_init_start=$_ng_self_start
+    _native_gate_proc "$_nu_init_pid" || return 77
+    [ "$_ng_parent" = "$_nu_init_body_pid" ] || return 77
+    [ ! -e "$_nu_call/init-parent.argv" ] && [ ! -L "$_nu_call/init-parent.argv" ] || return 77
+    (umask 077; set -C; dd if="/proc/$_nu_init_body_pid/cmdline" bs=128 count=1 > "$_nu_call/init-parent.argv" 2>/dev/null) || return 77
+    _na_small_file "$_nu_call/init-parent.argv" || return 77
+    _nu_init_parent_argv=$(sha256sum "$_nu_call/init-parent.argv" 2>/dev/null) || return 77
+    [ "${_nu_init_parent_argv%% *}" = f7549ee949d9d02fa5ba2e6586f286394c31c2243d32d7ed1b520aa37d5439fe ] || return 77
+    _nu_load_call && _nu_init_body_live || return 77
+    [ "$_nu_gate_record" = "$_nu_init_gate" ] && [ "$_nu_context" = "$_nu_init_context" ] &&
+        [ "$_nu_init_body" = "$_nu_init_original_body" ] && [ "$_nu_init_staged" = "$_nu_init_original_staged" ] || return 77
+    _native_gate_proc "$_nu_init_pid" || return 77
+    [ "$_ng_proc_start" = "$_nu_init_start" ] && [ "$_ng_parent" = "$_nu_init_body_pid" ] || return 77
+}
+native_update_init_observer_context() (
+    # Read-only proof for the existing init/hook wrappers and their verifiers.
+    # Environment substitution is confined to this subshell, never inherited by
+    # the native init/core. Fixed call.init still owns subordinate completion.
+    [ "$#" = 0 ] || return 76
+    _nu_init_hint_role=${XKEEN_ADMISSION_ROLE-}; _nu_init_hint_call=${XKEEN_ADMISSION_CALL-}
+    case "$_nu_init_hint_role:${XKEEN_ADMISSION_ACTION-}" in
+        update:update-xkeen|init:restart|hook:restart) ;;
+        *) return 77;;
+    esac
+    _nu_read_record /tmp/.xkeen-admission/operation.lock.d/call.update/context || return 77
+    set -- $_nu_record
+    [ "$#" = 8 ] || return 77
+    XKEEN_ADMISSION_ROLE=update; XKEEN_ADMISSION_ACTION=update-xkeen; XKEEN_ADMISSION_CALL=$4
+    export XKEEN_ADMISSION_ROLE XKEEN_ADMISSION_ACTION XKEEN_ADMISSION_CALL
+    _nu_load_call && _nu_init_body_live || return 77
+    _nu_init_ob_gate=$_nu_gate_record; _nu_init_ob_context=$_nu_context
+    _nu_init_ob_body=$_nu_init_body; _nu_init_ob_staged=$_nu_init_staged
+    _na_small_file "$_nu_call/init-parent.argv" || return 77
+    _nu_init_ob_argv=$(sha256sum "$_nu_call/init-parent.argv" 2>/dev/null) || return 77
+    [ "${_nu_init_ob_argv%% *}" = f7549ee949d9d02fa5ba2e6586f286394c31c2243d32d7ed1b520aa37d5439fe ] || return 77
+    _native_gate_self || return 77
+    _nu_verify_pid=$_ng_self_pid; _nu_verify_mode=observer
+    if [ "$_nu_init_hint_role" = update ]; then
+        # Only during creation: this proof subshell's direct parent is the init
+        # wrapper, which must itself be the post-exec body's immediate child.
+        [ "$_nu_init_hint_call" = "$_nu_nonce" ] || return 77
+        _native_gate_proc "$_nu_verify_pid" || return 77
+        _nu_init_wrapper=$_ng_parent
+        _native_gate_proc "$_nu_init_wrapper" || return 77
+        _nu_init_wrapper_start=$_ng_proc_start
+    else
+        _native_gate_directory /tmp/.xkeen-admission/operation.lock.d/call.init 0700 || return 77
+        _nu_read_record /tmp/.xkeen-admission/operation.lock.d/call.init/context || return 77
+        _nu_init_record=$_nu_record
+        set -- $_nu_record
+        [ "$#" = 8 ] && [ "$1:$5:$6:$7:$8" = "v1:init:restart:forced:$XKEEN_GATE_TOKEN" ] || return 77
+        _native_gate_decimal "$2" && _native_gate_decimal "$3" || return 77
+        [ "${#4}" = 32 ] || return 77
+        case "$4" in *[!0-9a-f]*) return 77;; esac
+        [ "$_nu_init_record" = "v1 $2 $3 $4 init restart forced $XKEEN_GATE_TOKEN" ] || return 77
+        [ "$_nu_init_hint_role" != init ] || [ "$4" = "$_nu_init_hint_call" ] || return 77
+        _nu_init_wrapper=$2; _nu_init_wrapper_start=$3
+    fi
+    _native_gate_proc "$_nu_init_wrapper" || return 77
+    [ "$_ng_proc_start" = "$_nu_init_wrapper_start" ] && [ "$_ng_parent" = "$_nu_init_body_pid" ] || return 77
+    _nu_init_chain=$(_nu_observer_chain) || return 77
+    case "$_nu_init_chain " in *" $_nu_init_wrapper:$_nu_init_wrapper_start "*) ;; *) return 77;; esac
+    _nu_load_call && _nu_init_body_live || return 77
+    [ "$_nu_gate_record" = "$_nu_init_ob_gate" ] && [ "$_nu_context" = "$_nu_init_ob_context" ] &&
+        [ "$_nu_init_body" = "$_nu_init_ob_body" ] && [ "$_nu_init_staged" = "$_nu_init_ob_staged" ] || return 77
+    _na_small_file "$_nu_call/init-parent.argv" || return 77
+    [ "$(sha256sum "$_nu_call/init-parent.argv" 2>/dev/null)" = "$_nu_init_ob_argv" ] || return 77
+    [ "$(_nu_observer_chain)" = "$_nu_init_chain" ] || return 77
+    if [ "$_nu_init_hint_role" != update ]; then
+        _native_gate_directory /tmp/.xkeen-admission/operation.lock.d/call.init 0700 || return 77
+        _nu_read_record /tmp/.xkeen-admission/operation.lock.d/call.init/context || return 77
+        [ "$_nu_record" = "$_nu_init_record" ] || return 77
+    fi
+)

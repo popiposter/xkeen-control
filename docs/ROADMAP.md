@@ -77,6 +77,13 @@ synthetic runtime callbacks; native executor integration and target acceptance
 remain pending. This does not enable or install any native candidate, and the
 prior FULL is not reused after edits.
 
+The exact `1f9d339` verifier checkpoint subsequently passed FULL in 3m37s
+(helpers190, browser149, Go/vet/race, frontend/audit0 and ARM64). Newer source
+adds only the forced update-to-init restart borrowing seam, using the existing
+init/hook contexts and real exec/ancestry fixtures. Native updater entry,
+terminal/cleanup/drain wiring and hardware qualification remain pending; this
+does not enable the native backend or adaptive writer.
+
 ## Historical production baseline
 
 Slices A/B/C/C.1 and D remain production-qualified. The validated fresh-source migration baseline merged as #7, the canonical Go module/import identity cleanup merged as #9 / Issue #8, and Slice D completed through Issue #2 with historical signed stable release `v0.1.1` from source `8f15246099538426ef08163b832c3aa6f73e8265` plus bounded live Keenetic adoption → rollback → re-adoption qualification. D.1 / Issue #3 is also production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. Issue #78 Slice F is present on source main as source-qualified-only work and is not a production-qualification or release claim.
