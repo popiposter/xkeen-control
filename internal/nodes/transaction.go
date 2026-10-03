@@ -180,9 +180,9 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 			settled = true
 			return
 		}
-		if errors.Is(err, xkeen.ErrLifecycleUnknown) || errors.Is(err, xkeen.ErrLifecycleAdmission) {
+		if errors.Is(err, xkeen.ErrLifecycleUnknown) {
 			// Keep both the current candidate and previous snapshot untouched.
-			// Native hooks may not have settled, or admission was lost after
+			// Native hooks may not have settled after
 			// committing the candidate. Neither permits unowned rollback writes
 			// or a second lifecycle mutation in place of independent readback.
 			err = errors.Join(ErrNodeRecoveryRequired, err)
@@ -224,7 +224,7 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 
 func (t Transaction) activate(ctx context.Context, registry Registry) error {
 	if err := t.Activator.Restart(ctx); err != nil {
-		if errors.Is(err, xkeen.ErrLifecycleUnknown) || errors.Is(err, xkeen.ErrLifecycleAdmission) {
+		if errors.Is(err, xkeen.ErrLifecycleUnknown) {
 			return err
 		}
 		return errors.New("Xray restart failed")
@@ -483,7 +483,7 @@ func (a CommandActivator) Restart(ctx context.Context) error {
 	if restartErr == nil {
 		return nil
 	}
-	if a.NativeLifecycleInit != "" || errors.Is(restartErr, xkeen.ErrLifecycleUnknown) || errors.Is(restartErr, xkeen.ErrLifecycleAdmission) {
+	if a.NativeLifecycleInit != "" || errors.Is(restartErr, xkeen.ErrLifecycleUnknown) {
 		// Native init owns Stop/Start ordering. Never turn its failed Stop into
 		// a separate forced Start; configuration rollback remains its caller's job.
 		return restartErr
@@ -493,7 +493,7 @@ func (a CommandActivator) Restart(ctx context.Context) error {
 	// activation and rollback can still prove readiness on the selected files.
 	if restartContext.Err() == nil {
 		startErr := a.runXkeenLifecycle(restartContext, "-start")
-		if startErr == nil || errors.Is(startErr, xkeen.ErrLifecycleUnknown) || errors.Is(startErr, xkeen.ErrLifecycleAdmission) {
+		if startErr == nil || errors.Is(startErr, xkeen.ErrLifecycleUnknown) {
 			return startErr
 		}
 	}

@@ -13,7 +13,7 @@ var ErrAttachmentConflict = errors.New("native configuration needs explicit inte
 // BuildAttachment builds a minimal candidate from native files. It never writes
 // files, starts services, or replaces native interception, DNS or scheduling.
 // The caller must snapshot, validate the complete candidate with Xray, and commit
-// under native-operation admission before recording successful attachment.
+// under the panel operation lease before recording successful attachment.
 func BuildAttachment(files map[string][]byte) (map[string][]byte, error) {
 	if len(files) == 0 || len(files) > maxNativeConfigFiles {
 		return nil, ErrAttachmentConflict

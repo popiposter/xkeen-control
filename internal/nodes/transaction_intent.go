@@ -4,19 +4,19 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-
-	"github.com/popiposter/xkeen-control/internal/authority"
 )
 
 type nodeIntent struct {
-	file    *os.File
-	info    os.FileInfo
-	binding authority.NodeIntentBinding
+	file *os.File
+	info os.FileInfo
 }
 
 // The intent fences panel node writers across process restarts. It does not
-// serialize external native CLI/cron; that requires the native admission seam.
+// serialize external native CLI/cron; the panel does not exclude those writers.
 func acquireNodeIntent(ctx context.Context, previousDir string) (*nodeIntent, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := ensurePrivateDir(previousDir); err != nil {
 		return nil, err
 	}
@@ -38,34 +38,20 @@ func acquireNodeIntent(ctx context.Context, previousDir string) (*nodeIntent, er
 		_ = pending.Close()
 		return nil, ErrNodeRecoveryRequired
 	}
-	binding, err := authority.BindNodeIntent(ctx, pending)
-	if err != nil {
-		_ = pending.Close()
+	if pending.Close() != nil {
 		return nil, ErrNodeRecoveryRequired
 	}
-	// Only native binding needs a live descriptor through lifecycle. Preserve the
-	// original close-before-unlink behavior for ordinary authority (Windows open
-	// handles do not permit this file's later deletion).
-	if binding == nil && pending.Close() != nil {
-		return nil, ErrNodeRecoveryRequired
-	}
-	return &nodeIntent{file: pending, info: info, binding: binding}, nil
+	return &nodeIntent{file: pending, info: info}, nil
 }
 
 func (i *nodeIntent) Close() { _ = i.file.Close() }
 
 func (i *nodeIntent) Settle() error {
-	if i.binding != nil && i.binding.Verify() != nil {
-		return ErrNodeRecoveryRequired
-	}
 	info, err := os.Lstat(i.file.Name())
 	if err != nil || !os.SameFile(info, i.info) || info.Mode() != i.info.Mode() {
 		return ErrNodeRecoveryRequired
 	}
 	if os.Remove(i.file.Name()) != nil || syncNodeDirectory(filepath.Dir(i.file.Name())) != nil {
-		return ErrNodeRecoveryRequired
-	}
-	if i.binding != nil && i.binding.Clear() != nil {
 		return ErrNodeRecoveryRequired
 	}
 	return nil

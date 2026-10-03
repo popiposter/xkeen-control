@@ -135,7 +135,7 @@ func (t Transaction) reconcileRuntime(ctx context.Context, registry Registry, re
 	activationErr := t.activate(activationContext, registry)
 	cancelActivation()
 	if activationErr != nil {
-		if errors.Is(activationErr, xkeen.ErrLifecycleUnknown) || errors.Is(activationErr, xkeen.ErrLifecycleAdmission) {
+		if errors.Is(activationErr, xkeen.ErrLifecycleUnknown) {
 			return errors.Join(ErrNodeRecoveryRequired, activationErr)
 		}
 		return ErrNodeRecoveryRequired

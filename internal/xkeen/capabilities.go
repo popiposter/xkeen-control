@@ -78,7 +78,7 @@ func (d Discovery) Inspect(ctx context.Context) Capabilities {
 	r.Lifecycle = initState
 	if initState == CapabilityAvailable {
 		r.Core = literalAssignment(init, "name_client", `xray|mihomo`)
-		if r.Core == "" || state != CapabilityAvailable || !strings.Contains(string(dispatcher), "XKEEN_FOREGROUND") {
+		if r.Core == "" || state != CapabilityAvailable {
 			r.Lifecycle = CapabilityUnsupported
 		}
 	}

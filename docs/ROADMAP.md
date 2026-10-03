@@ -15,16 +15,19 @@ The [complete native command matrix](../plan/xkeen-command-inventory-v2.md) maps
 69 dispatcher branches to panel workflows. Interactive actions use a native
 command-bound console; parameterized actions use forms/buttons with optional output.
 
-Next: remove undelivered native gates/patches/profile workers; add a thin native
+Phase1 source cleanup is implemented: the undelivered native gates/patches/profile
+workers and their fixtures are removed; ordinary panel lease and node intent remain.
+Next: add a thin native
 command/job adapter (including native geodata schedule commands); replace managed
 appliance-only editors with native config editors; qualify DNS/direct availability;
 then geodata UX, optional quality selection, portable backup and Telegram.
 Keenetic policy/firewall/service/update/cron ownership stays native. The panel lock
 serializes panel operations only; external CLI/cron exclusion is not claimed.
 
-No source deletion or live mutation was performed by this contract audit. The
-45-line uncommitted runtime draft is frozen for removal at implementation Phase1.
-Native candidates remain uninstalled; prior development installation and FULL
+The audit itself made no source/live changes. Following operator implementation
+permission, Phase1 removed the obsolete protocol; its frozen runtime draft was
+backed up privately and removed with the obsolete source. No live mutation yet.
+Prior native candidates remain uninstalled; development installation and FULL
 checkpoints below are historical evidence, not acceptance of this revised plan.
 
 ### Historical 2026-10-02 direction and checkpoints

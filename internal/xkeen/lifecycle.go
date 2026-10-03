@@ -7,8 +7,6 @@ import (
 	"os/exec"
 	"strings"
 	"time"
-
-	"github.com/popiposter/xkeen-control/internal/authority"
 )
 
 type LifecycleAction string
@@ -22,12 +20,9 @@ const (
 var (
 	ErrLifecycleFailed  = errors.New("native XKeen lifecycle failed")
 	ErrLifecycleUnknown = errors.New("native XKeen lifecycle outcome unknown; inspect before retry")
-	// ErrLifecycleAdmission forbids lifecycle fallback and transaction rollback
-	// writes: the foreground command could not prove mutation ownership.
-	ErrLifecycleAdmission = errors.New("native XKeen lifecycle admission lost; recovery required")
 )
 
-// Lifecycle is the fixed-command subprocess boundary. The caller owns admission,
+// Lifecycle is the fixed-command subprocess boundary. The caller owns panel serialization,
 // the transaction receipt and independent runtime verification. Exit zero means
 // only that the native foreground command completed; it is not tunnel proof.
 type Lifecycle struct {
@@ -40,17 +35,7 @@ type Lifecycle struct {
 }
 
 func (l Lifecycle) Run(ctx context.Context, action LifecycleAction) error {
-	err := authority.WithForeground(ctx, os.Environ(), func(env []string) error {
-		err := l.runForeground(ctx, action, env)
-		if errors.Is(err, ErrLifecycleUnknown) || errors.Is(err, ErrLifecycleAdmission) {
-			authority.BlockContext(ctx)
-		}
-		return err
-	})
-	if errors.Is(err, authority.ErrOwnershipLost) || errors.Is(err, authority.ErrBlocked) {
-		return errors.Join(ErrLifecycleAdmission, err)
-	}
-	return err
+	return l.runForeground(ctx, action, os.Environ())
 }
 
 func (l Lifecycle) runForeground(ctx context.Context, action LifecycleAction, env []string) error {
@@ -103,16 +88,6 @@ func (l Lifecycle) runForeground(ctx context.Context, action LifecycleAction, en
 			return ErrLifecycleUnknown
 		}
 		if err != nil {
-			// Reserved native-operation-gate.sh protocol refusals, not generic
-			// command failures: callers must retain intent and cannot fall back
-			// to Start or issue rollback writes without admission.
-			var exit *exec.ExitError
-			if errors.As(err, &exit) {
-				switch exit.ExitCode() {
-				case 75, 76, 77:
-					return ErrLifecycleAdmission
-				}
-			}
 			return ErrLifecycleFailed
 		}
 		return nil
