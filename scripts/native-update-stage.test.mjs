@@ -75,7 +75,7 @@ test('stage worker artifact and source template are unconditionally fenced', () 
     } finally { rmSync(code, { recursive: true, force: true }) }
   }
 })
-test('authenticated immediate child decorates exactly three files and publishes last', () => {
+test('authenticated immediate child decorates exactly four files and publishes last', () => {
   const r = fixture(); assert.equal(r.status, 0, r.stderr); assert.equal(r.staged, true)
   for (const file of built.manifest.prepared) {
     assert.equal(r.files.get(file.path).length, file.size)

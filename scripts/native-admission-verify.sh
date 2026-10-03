@@ -265,41 +265,11 @@ _nv_update_environment_pre() {
     (umask 077; mkdir "$_nv_env_query") 2>/dev/null || return 77
     _native_gate_directory "$_nv_env_query" 0700 || return 77
     (umask 077; set -C; ulimit -f 512 || exit 76
+        native_admission_strip
         /opt/libexec/timeout-coreutils -s KILL 15 /opt/bin/opkg list-installed > "$_nv_env_query/packages" 2>/dev/null) || return 76
     _nv_ram_file "$_nv_env_query/packages" 262144 || return 77
     [ "$(_nv_update_environment_inputs)" = "$_nv_env_before" ] || return 77
-    [ "$(tail -c 1 "$_nv_env_query/packages" | od -v -b | awk 'NF>1{print $2}')" = 012 ] || return 76
-    _nv_update_init_file /opt/lib/opkg/status || return 76
-    # The pinned dispatcher self-heals these nine packages before -uk. Refuse
-    # before granting its body unless the exact bounded query and protected
-    # status agree that every prerequisite is already fully installed.
-    LC_ALL=C awk -v query="$_nv_env_query/packages" '
-      BEGIN {
-        split("curl jq ip-full iptables ipset ca-bundle coreutils-uname coreutils-nohup conntrack", names, " ")
-        for(i in names) required[names[i]]=1
-        while((read=(getline line < query))>0) {
-          if(line !~ /^[A-Za-z0-9][A-Za-z0-9+_.-]* - [A-Za-z0-9][A-Za-z0-9+_.:~()-]*$/) {bad=1;continue}
-          split(line, parts, " "); if(++listed[parts[1]]!=1) bad=1
-          versions[parts[1]]=parts[3]
-        }
-        if(read<0) bad=1; close(query); RS=""
-      }
-      {
-        count=split($0, rows, "\n"); package=""; version=""; state=""; previous=""; p=0; v=0; s=0
-        for(i=1;i<=count;i++) {
-          if(rows[i] ~ /^[ \t]/ && previous ~ /^(Package|Version|Status): /) bad=1
-          if(rows[i] ~ /^Package: /) {package=substr(rows[i],10);p++}
-          if(rows[i] ~ /^Version: /) {version=substr(rows[i],10);v++}
-          if(rows[i] ~ /^Status: /) {state=substr(rows[i],9);s++}
-          if(rows[i] !~ /^[ \t]/) previous=rows[i]
-        }
-        if(p!=1 || rows[1] !~ /^Package: [A-Za-z0-9][A-Za-z0-9+_.-]*$/ || ++seen[package]!=1) bad=1
-        if(package in required) {
-          if(p!=1 || v!=1 || s!=1 || ++healthy[package]!=1 || listed[package]!=1 || version!=versions[package] || (state!="install ok installed" && state!="install user installed")) bad=1
-        }
-      }
-      END {for(package in required) if(healthy[package]!=1) bad=1; if(bad)exit 76}
-    ' /opt/lib/opkg/status || return 76
+    _nu_installed_dependencies "$_nv_env_query/packages" || return $?
     _nv_env_cron_count=$(LC_ALL=C awk '
       /^[A-Za-z0-9][A-Za-z0-9+_.-]* - [A-Za-z0-9][A-Za-z0-9+_.:~()-]*$/ {if($1=="cron")cron++;next}
       {bad=1} END {if(bad || cron>1)exit 76; print cron+0}' "$_nv_env_query/packages") || return 76

@@ -1,5 +1,5 @@
 // One pinned public native profile. Build-time only; no router/network execution.
-// Upstream payload remains upstream-owned; only three admission overlays change.
+// Upstream payload remains upstream-owned; four narrow admission overlays change.
 import { createHash } from 'node:crypto'
 import { constants, closeSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -12,6 +12,7 @@ export const profile = Object.freeze({ ...metadata, files: Object.freeze(metadat
 const digest = value => createHash('sha256').update(value).digest('hex')
 const template = '_xkeen/02_install/07_install_register/04_register_init.sh'
 const installer = '_xkeen/02_install/03_install_xkeen.sh'
+const packages = '_xkeen/01_info/02_info_packages.sh'
 const directories = new Set([''])
 const sourceFiles = new Map(profile.files.map(file => [file.path, file]))
 for (const { path } of profile.files) {
@@ -52,8 +53,21 @@ export function buildUpdateProfile(entries) {
   }
   const admission = buildCandidates({ dispatcher: entries.get('xkeen'), init: entries.get(template) })
   const update = buildUpdateCandidate(entries.get(installer))
+  const packageText = entries.get(packages).toString('utf8')
+  const packageAnchor = '    _packages_cache=$(opkg list-installed 2>/dev/null)\n'
+  if (packageText.split(packageAnchor).length !== 2) throw new Error('native package loader anchor changed')
+  const packageOverlay = Buffer.from(`# SOURCE-ONLY FENCE: native updater integration incomplete. Never install.
+return 76 2>/dev/null || exit 76
+# END SOURCE-ONLY FENCE
+` + packageText.replace(packageAnchor, `    case "\${XKEEN_ADMISSION_ROLE-}:\${XKEEN_ADMISSION_ACTION-}" in
+        update:update-xkeen) native_update_packages_cache || return $?;;
+        update:*|*:update-xkeen) return 77;;
+        *) _packages_cache=$(opkg list-installed 2>/dev/null);;
+    esac
+`))
   const overlays = new Map([
     ['xkeen', admission.dispatcher], [template, admission.registrationTemplate], [installer, update.candidate],
+    [packages, packageOverlay],
   ])
   const prepared = profile.files.map(file => {
     const bytes = overlays.get(file.path)

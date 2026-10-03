@@ -678,8 +678,10 @@ SHA-256 `1d246871d8fc9df2e68e80cef18562e6222661e40eaea1b6853cf8e0e6348b5f`.
 The checked-in inventory contains all 72 regular files (559,777 content bytes),
 including `import.sh` and every module. Every path, size and hash must match;
 extra/missing/changed files, unknown directories, symlinks and hard links refuse.
-The compiler invokes the existing builders for exactly three overlays:
-dispatcher, registration template and native installer module. The complete
+The compiler prepares exactly four overlays: dispatcher, registration template,
+native installer and the native package-info module. The latter preserves its
+classifier and assignments while using the checked cache for authenticated update.
+The complete
 prepared inventory preserves all other hashes. All overlays remain fenced;
 an exclusive new output directory and manifest-last publication do not install
 anything.
@@ -688,8 +690,8 @@ The compiler now emits one disabled fixed stage worker with literal inventory
 checks; it does not source a staging manifest or accept a profile selector.
 Its isolated executable bootstrap protects the fixed libraries before sourcing.
 The authenticated immediate stage child verifies every source path/type/size/hash
-and all three protected overlay payloads before any decoration. Exclusive bounded
-temporary copies are verified before replacing only the three named staging
+and all four protected overlay payloads before any decoration. Exclusive bounded
+temporary copies are verified before replacing only the four named staging
 files. Complete prepared-profile checks and the original owner/context/body proof
 surround receipt publication. Failures retain admission; the native installer
 owns staging cleanup and live replacement. Both the template and compiled worker
@@ -836,8 +838,20 @@ state. The latter is opkg's explicit-install flag, not a failure. The protected
 opkg configuration joins policy preservation. Stopped updates require the proxy
 hook absent before and after proof, because native cleanup removes even an empty
 hook. Public fixtures exercise the actual native package checks without installs.
-This does not yet protect the body's second package reload or bound/propagate the
-native Entware feed refresh; those remain prefix integration prerequisites.
+The body-time native package loader now uses one bounded protected query for each
+initial/post-exec phase, feeds its existing classifier and refuses before native
+ensure unless all nine flags are installed. A shared query/status reader serves
+preflight and these two fixed RAM queries. Original body/owner/phase and protected
+opkg/timeout/status/config hashes are rechecked; query children receive no admission
+authority. Failed or replayed queries retain evidence. Public fixtures exercise
+real body/exec ancestry and native package functions, not the complete updater.
+The admitted pinned `-uk` path deliberately omits `test_entware`: subsequent native
+GitHub download/archive install/registration uses no refreshed feed list, and the
+nine dependencies must already be healthy. This removes unused Packages.gz access
+and unchecked feed writes, not native component installation authority. All other
+Entware callsites and native connection/health/GitHub checks remain unchanged.
+Updater entry/terminal/cleanup/drain still need integration; all four overlays
+remain unconditionally fenced and uninstalled.
 
 The data-only opkg status projection requires exactly one supported XKeen stanza,
 rejects duplicate package records and names beginning `xkeen` other than `xkeen`

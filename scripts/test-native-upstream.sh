@@ -27,4 +27,5 @@ node --test \
     scripts/native-update-init.test.mjs \
     scripts/native-update-init-verify.test.mjs \
     scripts/native-update-environment.test.mjs \
+    scripts/native-update-prefix-packages.test.mjs \
     scripts/native-update-verify.test.mjs

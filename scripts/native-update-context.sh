@@ -63,7 +63,7 @@ _nu_observation_context() {
     _nu_verify_pid=$_ng_self_pid; _nu_verify_start=$_ng_self_start
     _nu_verify_chain=$(_nu_observer_chain) || return 77
     if [ "$_nu_verify_phase" = pre ]; then
-        for _nu_verify_name in body staged exec.used exec.argv completed terminal.argv init-parent.argv; do
+        for _nu_verify_name in body staged exec.used exec.argv completed terminal.argv init-parent.argv packages.initial packages.post; do
             [ ! -e "$_nu_call/$_nu_verify_name" ] && [ ! -L "$_nu_call/$_nu_verify_name" ] || return 77
         done
     else
@@ -110,7 +110,7 @@ _nu_observation_context() {
     [ "$_ng_proc_start" = "$_nu_verify_start" ] || return 77
     [ "$(_nu_observer_chain)" = "$_nu_verify_chain" ] || return 77
     if [ "$_nu_verify_phase" = pre ]; then
-        for _nu_verify_name in body staged exec.used exec.argv completed terminal.argv init-parent.argv; do
+        for _nu_verify_name in body staged exec.used exec.argv completed terminal.argv init-parent.argv packages.initial packages.post; do
             [ ! -e "$_nu_call/$_nu_verify_name" ] && [ ! -L "$_nu_call/$_nu_verify_name" ] || return 77
         done
     fi
@@ -178,6 +178,129 @@ _nu_file_hash() {
     case "$_nu_hash" in *[!0-9a-f]*) return 76;; esac
 }
 _nu_dispatcher_hash() { _nu_file_hash /opt/sbin/xkeen; }
+_nu_installed_dependencies() {
+    # One data reader for the three fixed update queries, never a command path.
+    [ "$#" = 1 ] || return 76
+    _nu_dep_query=$1
+    _nu_load_call || return 77
+    case "$_nu_dep_query" in
+        "$_nu_call/environment.pre/packages"|"$_nu_call/packages.initial/packages"|"$_nu_call/packages.post/packages") ;;
+        *) return 76;;
+    esac
+    _native_gate_directory "${_nu_dep_query%/*}" 0700 || return 77
+    [ ! -L "$_nu_dep_query" ] && [ -f "$_nu_dep_query" ] && _na_file_ok /opt/lib/opkg/status || return 76
+    _native_gate_metadata "$_nu_dep_query" || return 76
+    [ "$_ng_meta_mode:$_ng_meta_uid:$_ng_meta_links" = 8180:0:1 ] && [ "$_ng_meta_size" -le 262144 ] || return 76
+    _native_gate_metadata /opt/lib/opkg/status || return 76
+    [ "$_ng_meta_size" -gt 0 ] && [ "$_ng_meta_size" -le 524288 ] || return 76
+    for _nu_dep_file in "$_nu_dep_query" /opt/lib/opkg/status; do
+        _nu_dep_last=$(tail -c 1 "$_nu_dep_file" | od -v -b) || return 76
+        set -- $_nu_dep_last
+        [ "$#" = 3 ] && [ "$1:$2:$3" = 0000000:012:0000001 ] || return 76
+    done
+    LC_ALL=C awk -v query="$_nu_dep_query" '
+      BEGIN {
+        split("curl jq ip-full iptables ipset ca-bundle coreutils-uname coreutils-nohup conntrack", names, " ")
+        for(i in names) required[names[i]]=1
+        while((read=(getline line < query))>0) {
+          if(line !~ /^[A-Za-z0-9][A-Za-z0-9+_.-]* - [A-Za-z0-9][A-Za-z0-9+_.:~()-]*$/) {bad=1;continue}
+          split(line, parts, " "); if(++listed[parts[1]]!=1) bad=1
+          versions[parts[1]]=parts[3]
+        }
+        if(read<0) bad=1; close(query); RS=""
+      }
+      {
+        count=split($0, rows, "\n"); package=""; version=""; state=""; previous=""; p=0; v=0; s=0
+        for(i=1;i<=count;i++) {
+          if(rows[i] ~ /^[ \t]/ && previous ~ /^(Package|Version|Status): /) bad=1
+          if(rows[i] ~ /^Package: /) {package=substr(rows[i],10);p++}
+          if(rows[i] ~ /^Version: /) {version=substr(rows[i],10);v++}
+          if(rows[i] ~ /^Status: /) {state=substr(rows[i],9);s++}
+          if(rows[i] !~ /^[ \t]/) previous=rows[i]
+        }
+        if(p!=1 || rows[1] !~ /^Package: [A-Za-z0-9][A-Za-z0-9+_.-]*$/ || ++seen[package]!=1) bad=1
+        if(package in required) {
+          if(p!=1 || v!=1 || s!=1 || ++healthy[package]!=1 || listed[package]!=1 || version!=versions[package] || (state!="install ok installed" && state!="install user installed")) bad=1
+        }
+      }
+      END {for(package in required) if(healthy[package]!=1) bad=1; if(bad)exit 76}
+    ' /opt/lib/opkg/status
+}
+_nu_package_body_context() {
+    _nu_load_call || return 77
+    _nu_read_record "$_nu_call/body" || return 77
+    _nu_pkg_body=$_nu_record
+    _native_gate_self || return 77
+    _nu_pkg_self=$_ng_self_pid
+    [ "$_nu_pkg_body" = "v1 $_ng_self_pid $_ng_self_start $_nu_nonce" ] || return 77
+    _native_gate_proc "$_ng_self_pid" || return 77
+    [ "$_ng_parent" = "$_nu_wrapper_pid" ] || return 77
+    _native_gate_proc "$_nu_wrapper_pid" || return 77
+    [ "$_ng_proc_start" = "$_nu_wrapper_start" ] || return 77
+    if [ -e "$_nu_call/exec.used" ] || [ -L "$_nu_call/exec.used" ]; then
+        _nu_init_body_live || return 77
+        _nu_pkg_phase=post
+    else
+        for _nu_pkg_absent in staged exec.argv completed terminal.argv init-parent.argv; do
+            [ ! -e "$_nu_call/$_nu_pkg_absent" ] && [ ! -L "$_nu_call/$_nu_pkg_absent" ] || return 77
+        done
+        _nu_pkg_phase=initial
+    fi
+}
+native_update_packages_cache() {
+    # Feed the actual native info_packages classifier; never run an installer.
+    # One bounded query per actual bound body phase in the existing RAM scope.
+    [ "$#" = 0 ] || return 76
+    _nu_package_body_context || return 77
+    _nu_pkg_gate=$_nu_gate_record; _nu_pkg_context=$_nu_context
+    _nu_pkg_original_body=$_nu_pkg_body; _nu_pkg_original_phase=$_nu_pkg_phase
+    _nu_pkg_inputs=
+    for _nu_pkg_file in /opt/bin/opkg /opt/libexec/timeout-coreutils /opt/lib/opkg/status /opt/etc/opkg.conf; do
+        _nu_file_hash "$_nu_pkg_file" || return 76
+        _nu_pkg_inputs="$_nu_pkg_inputs $_nu_hash:$_ng_meta_mode:$_ng_meta_uid:$_ng_meta_links"
+    done
+    [ -x /opt/bin/opkg ] && [ -x /opt/libexec/timeout-coreutils ] || return 76
+    _nu_pkg_query=$_nu_call/packages.$_nu_pkg_phase
+    (umask 077; mkdir "$_nu_pkg_query") 2>/dev/null || return 77
+    _native_gate_directory "$_nu_pkg_query" 0700 || return 77
+    if [ "$_nu_pkg_phase" = post ]; then
+        (umask 077; set -C; dd if="/proc/$_nu_pkg_self/cmdline" bs=128 count=1 > "$_nu_pkg_query/argv.before" 2>/dev/null) || return 77
+        _na_small_file "$_nu_pkg_query/argv.before" || return 77
+        _nu_pkg_argv=$(sha256sum "$_nu_pkg_query/argv.before" 2>/dev/null) || return 77
+        [ "${_nu_pkg_argv%% *}" = f7549ee949d9d02fa5ba2e6586f286394c31c2243d32d7ed1b520aa37d5439fe ] || return 77
+    fi
+    (umask 077; set -C; ulimit -f 512 || exit 76
+        native_admission_strip
+        /opt/libexec/timeout-coreutils -s KILL 15 /opt/bin/opkg list-installed > "$_nu_pkg_query/packages" 2>/dev/null) || return 77
+    _nu_installed_dependencies "$_nu_pkg_query/packages" || return 77
+    _nu_pkg_query_hash=$(sha256sum "$_nu_pkg_query/packages" 2>/dev/null) || return 77
+    _packages_cache=$(cat "$_nu_pkg_query/packages") || return 77
+    if [ "$_nu_pkg_original_phase" = post ]; then
+        (umask 077; set -C; dd if="/proc/$_nu_pkg_self/cmdline" bs=128 count=1 > "$_nu_pkg_query/argv.after" 2>/dev/null) || return 77
+    fi
+    _nu_installed_dependencies "$_nu_pkg_query/packages" || return 77
+    _nu_pkg_after=
+    for _nu_pkg_file in /opt/bin/opkg /opt/libexec/timeout-coreutils /opt/lib/opkg/status /opt/etc/opkg.conf; do
+        _nu_file_hash "$_nu_pkg_file" || return 77
+        _nu_pkg_after="$_nu_pkg_after $_nu_hash:$_ng_meta_mode:$_ng_meta_uid:$_ng_meta_links"
+    done
+    [ "$_nu_pkg_inputs" = "$_nu_pkg_after" ] && [ -x /opt/bin/opkg ] && [ -x /opt/libexec/timeout-coreutils ] || return 77
+    _native_gate_directory "$_nu_pkg_query" 0700 || return 77
+    [ ! -L "$_nu_pkg_query/packages" ] && [ -f "$_nu_pkg_query/packages" ] || return 77
+    _native_gate_metadata "$_nu_pkg_query/packages" || return 77
+    [ "$_ng_meta_mode:$_ng_meta_uid:$_ng_meta_links" = 8180:0:1 ] && [ "$_ng_meta_size" -le 262144 ] || return 77
+    [ "$(sha256sum "$_nu_pkg_query/packages" 2>/dev/null)" = "$_nu_pkg_query_hash" ] || return 77
+    if [ "$_nu_pkg_original_phase" = post ]; then
+        for _nu_pkg_argv_name in argv.before argv.after; do
+            _na_small_file "$_nu_pkg_query/$_nu_pkg_argv_name" || return 77
+            _nu_pkg_argv=$(sha256sum "$_nu_pkg_query/$_nu_pkg_argv_name" 2>/dev/null) || return 77
+            [ "${_nu_pkg_argv%% *}" = f7549ee949d9d02fa5ba2e6586f286394c31c2243d32d7ed1b520aa37d5439fe ] || return 77
+        done
+    fi
+    _nu_package_body_context || return 77
+    [ "$_nu_gate_record" = "$_nu_pkg_gate" ] && [ "$_nu_context" = "$_nu_pkg_context" ] &&
+        [ "$_nu_pkg_body" = "$_nu_pkg_original_body" ] && [ "$_nu_pkg_phase" = "$_nu_pkg_original_phase" ] || return 77
+}
 native_update_bind_staged() {
     # Publish only the actual fixed stage child's bounded prepared dispatcher.
     # The caller must first validate/decorate the complete supported profile;

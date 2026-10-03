@@ -73,6 +73,14 @@ XKEEN_FOREGROUND=1; export XKEEN_FOREGROUND
 function addEntry(text, role) { return '#!/bin/sh\n' + entryPrelude(role) + text.slice('#!/bin/sh\n'.length) }
 
 function patchUpdaterFailures(text) {
+  // Healthy installed dependencies are required before the admitted update
+  // body. Native -uk uses GitHub archives, never the refreshed Entware feeds.
+  const updateBegin = text.indexOf('        -uk)    # Обновление XKeen\n')
+  const updateEnd = text.indexOf('        -uk_post_update)\n', updateBegin)
+  if (updateBegin < 0 || updateEnd <= updateBegin) throw new Error('native update prerequisite anchor missing')
+  const initial = replaceOnce(text.slice(updateBegin, updateEnd), '            test_entware\n',
+    '            # Entware feed refresh is unused with all dependencies installed.\n')
+  text = text.slice(0, updateBegin) + initial + text.slice(updateEnd)
   // Patch only the pinned post-update branch. Do not reinterpret optional
   // native probes/no-op return codes or claim to repair internal module errors.
   const begin = text.indexOf('        -uk_post_update)\n')
@@ -88,6 +96,18 @@ function patchUpdaterFailures(text) {
     post = replaceOnce(post, command + '\n', command + ' || exit 1\n')
   }
   text = text.slice(0, begin) + post + text.slice(end)
+  const installedFlags = ['curl', 'jq', 'ip_full', 'iptables', 'ipset', 'cabundle', 'uname', 'nohup', 'conntrack']
+  text = replaceOnce(text, '    *)\n        _load_packages_info\n        _ensure_installed_packages\n',
+    `    -uk|-uk_post_update)
+        # The checked native loader keeps its classifier but cannot self-heal.
+        _load_packages_info || exit 1
+        [ "${installedFlags.map(name => `$info_packages_${name}`).join(':')}" = "${installedFlags.map(() => 'installed').join(':')}" ] || exit 1
+        _ensure_installed_packages || exit 1
+        ;;
+    *)
+        _load_packages_info
+        _ensure_installed_packages
+`)
   return replaceOnce(text,
     '            grep -E "^[[:space:]]*-uk_post_update[[:space:]]*\\)" "$0" > /dev/null && exec /opt/bin/sh /opt/sbin/xkeen -uk_post_update\n',
     `            # A missing/failed handoff must not fall through to success.

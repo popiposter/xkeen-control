@@ -55,6 +55,7 @@ function fixture({ setup = '', query = `printf '${packageQuery}cron - 1.0\nfixtu
   if (cron !== null) writeFileSync(path('crontabs/root'), cron, { mode: 0o600 })
   if (cronInit !== null) writeFileSync(path('init.d/S05crond'), cronInit, { mode: 0o600 })
   put('bin/opkg', `#!/bin/sh
+[ -z "\${XKEEN_GATE_TOKEN+x}\${XKEEN_ADMISSION_ROLE+x}\${XKEEN_ADMISSION_CALL+x}" ] || exit 99
 [ "$*" = list-installed ] || { echo PACKAGE >> '@CODE@/effects'; exit 99; }
 ${query}
 `, 0o700)
@@ -62,6 +63,8 @@ ${query}
   put('reader', `. '@CODE@/native-operation-gate'; . '@CODE@/native-admission-entry'; . '@CODE@/native-update-context'; . '@CODE@/functions'
 ${readerSetup}
 _nv_update_environment_pre || exit $?
+# These subsequent extracted upstream no-op functions are not an admitted body.
+native_admission_strip
 # Actual pinned native functions; callbacks trace any forbidden effect branch.
 PATH='@CODE@/bin':$PATH; export PATH
 ipset_cfg='@CODE@/settings/ipset'; initd_cron='@CODE@/init.d/S05crond'
