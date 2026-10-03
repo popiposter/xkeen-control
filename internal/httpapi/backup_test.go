@@ -85,7 +85,7 @@ func fastHTTPBackupDeriver(password, salt []byte, _, _ uint32, _ uint8, keyBytes
 func TestBackupHTTPAuthOriginAndDownloadBoundary(t *testing.T) {
 	hashPath := filepath.Join(t.TempDir(), "auth", "password.bcrypt")
 	const password = "synthetic-current-password"
-	if err := auth.SetPassword(hashPath, []byte(password)); err != nil {
+	if err := setHTTPTestPassword(hashPath, []byte(password)); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(New(Config{
@@ -170,7 +170,7 @@ func TestBackupHTTPAuthOriginAndDownloadBoundary(t *testing.T) {
 func TestSecretExportHTTPReturnsSafeLockoutResponse(t *testing.T) {
 	hashPath := filepath.Join(t.TempDir(), "auth", "password.bcrypt")
 	const password = "synthetic-current-password"
-	if err := auth.SetPassword(hashPath, []byte(password)); err != nil {
+	if err := setHTTPTestPassword(hashPath, []byte(password)); err != nil {
 		t.Fatal(err)
 	}
 	manager := auth.NewManager(auth.Config{HashPath: hashPath, LockoutAfter: 2, LockoutFor: time.Hour})
@@ -207,7 +207,7 @@ func TestSecretExportHTTPReturnsSafeLockoutResponse(t *testing.T) {
 func TestSecretExportDoesNotWriteAfterConcurrentSessionInvalidation(t *testing.T) {
 	hashPath := filepath.Join(t.TempDir(), "auth", "password.bcrypt")
 	const password = "synthetic-current-password"
-	if err := auth.SetPassword(hashPath, []byte(password)); err != nil {
+	if err := setHTTPTestPassword(hashPath, []byte(password)); err != nil {
 		t.Fatal(err)
 	}
 	manager := auth.NewManager(auth.Config{HashPath: hashPath})

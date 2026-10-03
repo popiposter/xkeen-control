@@ -24,14 +24,17 @@ type lookupIP func(context.Context, string) ([]net.IPAddr, error)
 type dialIP func(context.Context, string, string) (net.Conn, error)
 
 func newTelegram() *telegram {
+	return newTelegramWithTimeout(requestTimeout)
+}
+func newTelegramWithTimeout(timeout time.Duration) *telegram {
 	transport := &http.Transport{
 		Proxy:               nil, // Deliberately ignores HTTP(S)_PROXY environment variables.
 		DialContext:         telegramDial(net.DefaultResolver.LookupIPAddr, (&net.Dialer{Timeout: requestTimeout}).DialContext),
 		TLSClientConfig:     &tls.Config{ServerName: telegramHost, MinVersion: tls.VersionTLS12},
-		TLSHandshakeTimeout: requestTimeout, ResponseHeaderTimeout: requestTimeout,
+		TLSHandshakeTimeout: requestTimeout, ResponseHeaderTimeout: timeout,
 		DisableKeepAlives: true, MaxResponseHeaderBytes: maxResponseBytes,
 	}
-	return &telegram{client: &http.Client{Transport: transport, Timeout: requestTimeout,
+	return &telegram{client: &http.Client{Transport: transport, Timeout: timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return Error("provider-rejected") },
 	}}
 }

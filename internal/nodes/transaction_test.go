@@ -113,7 +113,7 @@ func TestTransactionPreservesPolicyAndRollsBackActivationFailure(t *testing.T) {
 		t.Fatal("active routing policy was modified")
 	}
 
-	rollbackActivator := &fakeActivator{restartErr: errors.New("synthetic restart failure")}
+	rollbackActivator := &fakeActivator{restartErrs: []error{errors.New("synthetic restart failure"), nil}}
 	tx.Activator = rollbackActivator
 	if err := tx.Apply(context.Background(), old); err == nil {
 		t.Fatal("restart failure unexpectedly succeeded")
@@ -413,7 +413,10 @@ esac
 	}
 }
 
-func TestCommandActivatorReservesTimeForStartAfterHangingRestart(t *testing.T) {
+func TestCommandActivatorDoesNotReplayAfterHangingRestart(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("native process fixture requires Linux")
+	}
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "marker")
 	fakeXkeen := filepath.Join(dir, "xkeen")
@@ -434,15 +437,14 @@ esac
 		RestartAttemptTimeout: 50 * time.Millisecond,
 	}
 	started := time.Now()
-	if err := activator.Restart(context.Background()); err != nil {
-		t.Fatal(err)
+	if err := activator.Restart(context.Background()); err == nil {
+		t.Fatal("ambiguous restart reported success")
 	}
 	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
 		t.Fatalf("restart/start fallback exceeded total budget: %s", elapsed)
 	}
-	contents, err := os.ReadFile(marker)
-	if err != nil || string(contents) != "start" {
-		t.Fatalf("fallback marker = %q, %v", contents, err)
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("start replayed after ambiguous restart: %v", err)
 	}
 }
 

@@ -9,6 +9,9 @@ import (
 
 func configureCommandProcessGroup(_ *exec.Cmd) {}
 
+// Non-Linux builds are development fixtures, not router durability evidence.
+func syncNodeDirectory(string) error { return nil }
+
 func killCommandProcessGroup(command *exec.Cmd) {
 	if command.Process != nil {
 		_ = command.Process.Kill()

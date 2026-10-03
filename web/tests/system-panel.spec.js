@@ -10,7 +10,7 @@ const status = {
   xkeen: { running: true },
   observatory: { healthy: 2, total: 3, apiReachable: true },
   balancer: {}, selection: {}, benchmark: { controlPlane: { running: false } },
-  setup: { runtime: 'running', credential: 'configured', xkeen: 'ready', xray: 'ready', configuration: 'ready' },
+  native: { installation: 'available', panelIntegration: 'available', version: '2.0.1', channel: 'beta', core: 'xray', xrayRunning: true },
   lifecycle: { maintenance: false, applying: false },
 }
 
@@ -80,6 +80,7 @@ async function prepare(page, options = {}) {
         state.notification = { ...state.notification, configured: true, enabled: false, authorityState: 'configured' }
         if (options.rejectNotificationConfigure) return json(route, { error: 'synthetic_notification_token_sentinel', code: 'invalid-request' }, 400)
         return json(route, state.notification)
+      case '/api/v1/notifications/control': state.notification = { ...state.notification, controlEnabled: body.enabled, controlConfigured: !!body.allowedUserId, controlState: body.enabled ? 'listening' : 'disabled' }; return json(route, state.notification)
       case '/api/v1/notifications/enabled': state.notification.enabled = body.enabled; return json(route, state.notification)
       case '/api/v1/notifications/test': state.notification.deliveryState = 'delivered'; return json(route, state.notification)
       case '/api/v1/notifications/clear': state.notification = { provider: 'telegram', configured: false, enabled: false, authorityState: 'unconfigured', deliveryState: 'idle' }; return json(route, state.notification)
@@ -138,7 +139,7 @@ test('configures tests enables disables and clears without redisplaying or stori
   await page.getByLabel('Telegram bot token').fill('123456:synthetic_notification_token_sentinel')
   await page.getByLabel('Telegram chat ID').fill('-1234567890123')
   expect(await page.getByLabel('Telegram bot token').getAttribute('type')).toBe('password')
-  expect(await page.getByLabel('Telegram chat ID').getAttribute('type')).toBe('password')
+  expect(await page.getByLabel('Telegram chat ID').getAttribute('type')).toBe('text')
   await page.getByRole('button', { name: 'Configure notifications', exact: true }).click()
   await expect(page.getByLabel('Telegram bot token')).toHaveValue('')
   await expect(page.getByLabel('Telegram chat ID')).toHaveValue('')
@@ -212,22 +213,6 @@ test.afterEach(async ({ page }) => {
   if (page.__systemIssues) expect(page.__systemIssues).toEqual([])
 })
 
-test('keeps System / Panel lazy and uses the final tail navigation', async ({ page }) => {
-  const state = await prepare(page); page.__systemIssues = state.issues
-  await page.goto('/')
-  await expect(page.locator('.section-nav button')).toHaveCount(8)
-  expect(await page.locator('.section-nav button').allTextContents()).toEqual(['Overview', 'Nodes 0', 'Routing', 'DNS', 'Performance', 'Components / Updates', 'Backup & Restore', 'System / Panel'])
-  expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener' || path === '/api/v1/update' || path === '/api/v1/notifications')).toHaveLength(0)
-  await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
-  await expect(page.getByText('Management listener', { exact: true })).toBeVisible()
-  await expect.poll(() => state.requests.filter(({ path }) => path === '/api/v1/panel/listener')).toHaveLength(1)
-  await expect.poll(() => state.requests.filter(({ path }) => path === '/api/v1/update')).toHaveLength(1)
-  await page.waitForTimeout(5_300)
-  expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener')).toHaveLength(1)
-  expect(state.requests.filter(({ path }) => path === '/api/v1/update')).toHaveLength(1)
-})
-
 for (const host of ['127.0.0.1', '10.0.0.4', 'fd00::4']) {
   test(`private management guidance uses loaded ${host} listener without extra work`, async ({ page }) => {
     const state = await prepare(page, { listener: { host } }); page.__systemIssues = state.issues
@@ -243,7 +228,6 @@ for (const host of ['127.0.0.1', '10.0.0.4', 'fd00::4']) {
     await expect(card).toContainText('Never bind to WAN or open a WAN firewall rule')
     await expect(card).toContainText('does not automate')
     await expect(card.locator('button, input, select, a')).toHaveCount(0)
-    await page.waitForTimeout(5_300)
     expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener')).toHaveLength(1)
     expect(state.requests.filter(({ method }) => method !== 'GET')).toHaveLength(0)
     expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 })
@@ -264,7 +248,7 @@ test('sends only the server-listed host and presents rebind 202 as a handoff', a
   await expect(page.getByText('Listener rebind handoff started', { exact: true })).toBeVisible()
   expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener/apply')).toHaveLength(1)
   expect(state.requests.find(({ path }) => path === '/api/v1/panel/listener/apply').body).toEqual({ previewToken: 'listener-preview-1' })
-  await expect(page.locator('div.notice.warning').filter({ hasText: /reconnect and verify/i })).toBeVisible()
+  await expect(page.getByRole('alert').filter({ hasText: /reconnect and verify/i })).toBeVisible()
   await expect(page.locator('p.system-blocked').filter({ hasText: /same-session Refresh cannot prove completion/i })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Preview rebind' })).toBeDisabled()
   await expect(page.getByLabel('New management host')).toBeDisabled()
@@ -463,4 +447,25 @@ test('password replacement uses the exact RAM-only request and returns to login'
   await expect(page.getByRole('heading', { name: 'XKeen Control' })).toBeVisible()
   expect(state.requests.find(({ path }) => path === '/api/v1/session/password').body).toEqual({ newPassword: 'synthetic-new-password' })
   expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 })
+})
+
+test('bot control requires an explicit user, clears its input, and disables separately', async ({ page }) => {
+ const state = await prepare(page); page.__systemIssues = state.issues
+ await page.goto('/')
+ await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+ await revealSystemSettings(page)
+ await expect(page.getByRole('button', { name: 'Enable bot control', exact: true })).toBeDisabled()
+ await page.getByLabel('Telegram bot token').fill('123456:synthetic_notification_token_sentinel')
+ await page.getByLabel('Telegram chat ID').fill('-1234567890123')
+ await page.getByRole('button', { name: 'Configure notifications', exact: true }).click()
+ await page.getByLabel('Allowed Telegram user ID').fill('12345')
+ await page.getByRole('button', { name: 'Enable bot control', exact: true }).click()
+ await expect(page.getByLabel('Allowed Telegram user ID')).toHaveValue('')
+ await expect(page.getByRole('button', { name: 'Disable bot control', exact: true })).toBeEnabled()
+ await page.getByRole('button', { name: 'Disable bot control', exact: true }).click()
+ await expect(page.getByRole('button', { name: 'Disable bot control', exact: true })).toBeDisabled()
+ const controls = state.requests.filter(({path}) => path === '/api/v1/notifications/control')
+ expect(controls.map(({body})=>body)).toEqual([{enabled:true,allowedUserId:'12345'},{enabled:false,allowedUserId:''}])
+ expect(controls.every(({csrf})=>csrf===csrfToken)).toBe(true)
+ expect(await page.evaluate(()=>[localStorage.length,sessionStorage.length])).toEqual([0,0])
 })

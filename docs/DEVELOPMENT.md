@@ -30,7 +30,47 @@ During iteration, run the focused fixture for the changed subsystem and the fast
 pwsh -NoProfile -File scripts/dev-check.ps1
 ```
 
-Fast mode classifies the branch and local checkout diff against `origin/main`. It runs only affected Go, helper/build or web lanes, always checks public hygiene and host diff whitespace, and does not run race, the complete browser suite or dependency audit.
+Fast mode prints a JSON check plan before execution. By default it checks uncommitted
+changes (tracked, staged and untracked); in a clean checkout it checks the latest
+commit. This is iteration evidence, not qualification of the whole branch.
+
+```powershell
+# Inspect without building or running tests:
+pwsh -NoProfile -File scripts/dev-check.ps1 -Plan
+# Explicit scopes (commit/branch also include local changes):
+pwsh -NoProfile -File scripts/dev-check.ps1 -Scope working
+pwsh -NoProfile -File scripts/dev-check.ps1 -Scope commit
+pwsh -NoProfile -File scripts/dev-check.ps1 -Scope branch -Base origin/main
+```
+
+`XKEEN_CHECK_BASE` retains its historical meaning: it selects branch comparison
+against that base. An invalid requested base fails instead of silently skipping.
+Renames include both paths. Unknown paths broaden lane selection.
+
+Go iteration selects changed packages and their transitive reverse dependencies,
+including test imports. Missing/deleted packages, graph failure and shared build
+inputs broaden to all packages. Test-only edits do not rebuild ARM64 artifacts.
+Frontend iteration runs Node unit tests and selected browser specs; shared shell,
+style, fixture, dependency or HTTP/session changes select the whole browser suite.
+Known page modules also select cross-workspace integration and responsive tests.
+Test-only changes skip the production web build and embedded comparison; the plan
+reports `webBuild: 0`. The browser tests use the Vite development server.
+A deleted spec broadens browser selection instead of producing an empty pass.
+Race tests and dependency audit remain final/release checks.
+The FULL web lane audits dependencies immediately after its clean install, before
+the production build and browser suite, so a rejected audit fails without that wait.
+
+The superseded native admission/profile/event/update fixtures and builders were
+removed under the lightweight native contract. Qualification has no dependency on
+public upstream caches. Native command adapters use focused synthetic subprocess
+fixtures; they never run a complete installer or receive router credentials.
+Selector, Git-scope and Go-graph helper changes use their dispatch fixtures;
+actual dev-check orchestration changes retain the browser fallback.
+
+Documentation-only iteration runs host diff hygiene without Docker; inspect links
+and content as part of review. Code lanes run public hygiene before toolchains.
+Fast npm reuse requires matching package/lockfile, Node/npm/platform identity and
+an intact top-level dependency tree. Full/release always use a clean npm install.
 
 After the candidate is final, run one exact-HEAD full gate:
 
@@ -48,7 +88,7 @@ go vet ./...
 go test -race ./...
 unique shell/runtime fixtures without repeating package tests
 npm ci
-one frontend production build + complete Playwright suite
+one frontend production build + Node unit tests + complete Playwright suite
 npm audit at repository threshold
 tracked embedded-asset consistency
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 build
@@ -117,8 +157,8 @@ The protected manual Release workflow:
 - checks that `source_ref` equals the exact checkout and current remote `main`;
 - admits UID 0 immediately after checkout and adds only `$GITHUB_WORKSPACE` to the build job's global Git `safe.directory` before reading Git identity; checkout's own trust configuration is temporary and does not cover subsequent steps;
 - runs the read-only-permission build job in a `node:24-bookworm` container with explicit UID 0 and Bash, admits UID 0 and installs `build-essential`, Git and jq before qualification; Linux auth/notification fixtures require root-owned synthetic authorities and ownership-negative cases;
-- runs `scripts/dev-check.sh --full`, including the lockfile-pinned, single-worker Chromium `test:ui` suite, before unsigned assembly; a failure blocks `publish` through `needs: build`;
-- assembles unsigned deterministic assets in the unprivileged build job;
+- runs `scripts/dev-check.sh --full`, including the lockfile-pinned, two-worker Chromium `test:ui` suite, before unsigned assembly; a failure blocks `publish` through `needs: build`;
+- assembles unsigned deterministic assets from those verified embedded bytes in the unprivileged build job; assembly does not repeat npm installation/build or rewrite tracked assets;
 - transfers only secretless release inputs to the protected `release` environment;
 - verifies the protected public key matches the compiled/source-pinned trust anchor;
 - signs the exact manifest with the protected private key;
@@ -242,97 +282,13 @@ rollback target rotation/stale rejection and sanitized transaction errors. F1
 has no UI, persisted policy, scheduler, automatic update or production
 qualification; all fixtures remain offline/synthetic.
 
-Phase F2 adds the real mounted Components / Updates UI and two bounded
-presentation seams: stable allowlisted component-mutation error codes and the
-Coordinator-backed `maintenance` / `applying` status projection. The pinned
-dev-only Chromium suite uses synthetic intercepted API responses, one browser
-and one worker; it performs no external metadata passthrough and stores no
-production cookies, HAR files or component tokens. Run it after `npm ci` with:
+Historical Phase F2's panel-owned component updater and Setup browser UI were
+removed under Issue121 together with their browser suites and standalone session
+fixture. Current native installation/status and component ownership coverage is
+`web/tests/native-xkeen.spec.js`; cross-workspace lifecycle gating remains in
+`feature-complete.spec.js`. Server-side historical component fixtures remain until
+their callers are retired; do not infer removal of all old backend code.
 
-```sh
-cd web
-npm run test:components-ui
-```
-
-The suite covers lazy inventory, explicit Check/Preview, token-only one-shot
-Apply/Rollback, navigation and dashboard refresh during a delayed synchronous
-request, cancellation/expiry/session invalidation, conservative unknown
-outcomes, lifecycle maintenance, browser-storage absence, keyboard focus and
-desktop/mobile screenshots from synthetic fixtures. The pinned development
-image already contains Chromium; full local and protected release qualification
-run this suite off-router.
-
-## Issue #89 DNS + Observatory UI focused suite
-
-The visual DNS workspace uses only synthetic intercepted API responses. Its
-focused Chromium suite covers lazy loading, safe resolver labels and locked
-facts, ordered resolver editing, canonical cache/stale behavior, Observatory
-cadence, dirty refresh, read-only drift/unavailable states, semantic Preview,
-token-only one-shot Apply/Cancel, conservative error outcomes, session and
-navigation races, narrow symmetric Routing/DNS peer-Preview invalidation and
-unknown-outcome fresh-read gating, keyboard-stable resolver reordering,
-browser-storage absence, and desktop/mobile rendering:
-
-```sh
-cd web
-npm run test:dns-ui
-```
-
-It does not contact resolver providers, read production policy, access a router
-or perform a live mutation. The aggregate full gate runs it through `test:ui`.
-
-## Issue #91 F integrated Dashboard suite
-
-The final #5 composition suite mounts the real Dashboard and its owner
-controllers against one shared, bounded synthetic appliance model. It verifies
-final navigation order, lazy settings reads, token-only Routing/DNS/Performance
-Preview and Apply paths, the narrow shared Routing/DNS uncertainty gate,
-draft retention through telemetry refresh, lifecycle admission across every
-workspace, System listener reconnect handling, session turnover, safe
-projections, empty browser storage, and desktop/mobile usability:
-
-```sh
-cd web
-npm run test:feature-complete-ui
-```
-
-The separate per-owner suites remain in place. This fixture makes no network
-calls to upstream providers, reads no production state and performs no router
-or live mutation. The complete suite runs once through `npm run test:ui` in the
-final local full gate.
-
-## Issue #3 Phase B focused fixtures
-
-The typed backup/export qualification fixture is:
-
-```sh
-bash scripts/test-backup.sh
-```
-
-It covers deterministic secretless export, typed section metadata, encrypted round trips, strict envelope tamper rejection, coherent node snapshots, single-flight crypto, HTTP session/origin/CSRF/re-authentication and session invalidation. It uses synthetic credentials and never reads router state.
-
-## Issue #3 Phase C1 focused fixtures
-
-The internal restore/transaction/recovery qualification fixture is:
-
-```sh
-bash scripts/test-restore.sh
-```
-
-It covers strict safe/encrypted mode handling, stable-ID replace/merge semantics, bounded session-bound previews, exact authority stale checks, fixed-template/current-generation blockers, complete candidate validation before mutation, deterministic generated-file/runtime convergence, logical previous-generation rollback, secret-free journal metadata and interrupted-import startup recovery. It uses synthetic authorities and never mutates a production Keenetic.
-
-## Issue #3 Phase C2 focused fixtures
-
-The bounded import HTTP/UI adapter qualification is covered by the HTTP package tests together with the existing backup and restore fixtures:
-
-```sh
-go test -count=1 ./internal/httpapi
-bash scripts/test-backup.sh
-bash scripts/test-restore.sh
-npm --prefix web run test:backup-restore-ui
-```
-
-The HTTP regressions cover authenticated same-origin/CSRF routes, strict query/multipart/body limits, hostile filenames without temporary uploads, preview single-flight admission, logout/password/in-flight session invalidation, token-only Apply/Cancel, fixed safe error mappings and response secret scanning. The frontend check covers the first-class Backup & Restore flows and tracked embedded assets. These tests use synthetic data and do not mutate a production Keenetic.
 
 ## Qualification inventory
 
@@ -341,7 +297,6 @@ authorities, injected transport/DNS fixtures and locally signed release metadata
 
 ```sh
 go test -count=1 ./internal/notifications ./internal/components ./internal/update ./internal/httpapi ./cmd/xkeen-control
-npm --prefix web run test:components-ui
 npm --prefix web run test:system-panel-ui
 ```
 
@@ -370,10 +325,9 @@ does not scale a wall-clock deadline or change production limits.
 | --- | --- | --- |
 | `go test -count=1 ./...` | Complete normal Go package suite | Once |
 | `go test -race ./...` | Cross-package race detection | Full only, once |
-| `test-c1.sh`, `test-backup.sh`, `test-restore.sh`, `test-setup.sh` | Convenient focused package subsets | Not repeated after the complete Go suite |
+| `test-c1.sh`, `test-backup.sh` | Convenient focused package subsets | Not repeated after the complete Go suite |
 | `test-components.sh` | Focused component packages/race plus prohibited-surface assertions | Aggregate uses `--fixtures-only` |
 | `test-release.sh` | Focused release packages plus bootstrap/updater/legacy integration | Aggregate uses `--fixtures-only` |
-| `test-appliance.sh` | Binary-level appliance/deploy candidate integration | Retained when helpers/build paths change |
 | `test-keenetic-env.ps1`, `test-keenetic-env.sh` | Synthetic operator-local environment parser and secret-output boundaries | Helper lane runs both host and container fixtures |
 | `test-benchmark-policy.sh`, `test-xkeen-foreground.sh` | Legacy-writer retirement and foreground runtime shell contracts | Retained when helpers/build paths change |
 | Playwright per-area scripts | Focused behavioral UI iteration | `test:ui` once in full mode |
@@ -416,3 +370,12 @@ mount them.
 Build/test first, then copy/use only the exact release/artifact/scripts required for the bounded smoke. Snapshot affected state, use repository/typed transactions, sanitize evidence and remove temporary uploads/tunnels afterward.
 
 Go/Node/build tooling is never installed on Keenetic.
+
+
+Native-shell cleanup retires obsolete component/Setup/appliance restore HTTP tests,
+`internal/restore`, the old appliance/migration CLI and their standalone helper
+scripts. Native encrypted transfer retains its private upload/session/budget
+regressions. The deleted component HTTP recovery path no longer triggers a
+five-repeat race stress loop. Aggregate FULL still runs the actual complete Go
+and race suites, auth/node/config/transfer tests, current browser suite, embedded
+assets, dependency audit and ARM64 assembly once per finished delivery cohort.

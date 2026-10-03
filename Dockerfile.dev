@@ -24,8 +24,11 @@ RUN apt-get update \
 
 # Browser and OS dependencies are image inputs, not per-test setup. Rebuilding
 # this layer is required only when the pinned frontend dependency graph changes.
-COPY web/package.json web/package-lock.json /tmp/xkeen-playwright/
+# Derive the temporary manifest from the lockfile root so script-only edits to
+# package.json do not download Chromium again. Actual builds still use both files.
+COPY web/package-lock.json /tmp/xkeen-playwright/
 RUN cd /tmp/xkeen-playwright \
+    && node -e 'const fs = require("fs"); fs.writeFileSync("package.json", JSON.stringify(require("./package-lock.json").packages[""]))' \
     && npm ci --ignore-scripts \
     && npx playwright install --with-deps chromium \
     && chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH" \

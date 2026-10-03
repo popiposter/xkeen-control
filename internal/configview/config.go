@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/popiposter/xkeen-control/internal/benchmarkpolicy"
+	"github.com/popiposter/xkeen-control/internal/configjson"
 )
 
 const maxConfigFileSize = 4 << 20
@@ -88,7 +89,7 @@ func (r Reader) Read(ctx context.Context) Summary {
 				} `json:"balancers"`
 			} `json:"routing"`
 		}
-		if json.Unmarshal(raw, &document) == nil {
+		if configjson.Decode(raw, &document) == nil {
 			result.Routing.RuleCount = len(document.Routing.Rules)
 			for _, rule := range document.Routing.Rules {
 				if label := safeRuleDisplayLabel(rule.RuleTag); label != "" {
@@ -110,7 +111,7 @@ func (r Reader) Read(ctx context.Context) Summary {
 				Servers []json.RawMessage `json:"servers"`
 			} `json:"dns"`
 		}
-		if json.Unmarshal(raw, &document) == nil {
+		if configjson.Decode(raw, &document) == nil {
 			for _, server := range document.DNS.Servers {
 				if upstream, ok := parseDNSServer(server); ok {
 					result.DNS.Upstreams = append(result.DNS.Upstreams, upstream)
@@ -127,7 +128,7 @@ func (r Reader) Read(ctx context.Context) Summary {
 				ProbeInterval   string   `json:"probeInterval"`
 			} `json:"observatory"`
 		}
-		if json.Unmarshal(raw, &document) == nil {
+		if configjson.Decode(raw, &document) == nil {
 			for _, selector := range document.Observatory.SubjectSelector {
 				if safeConfigLabel(selector) != "" {
 					result.Observatory.SubjectSelectors = append(result.Observatory.SubjectSelectors, selector)
@@ -151,7 +152,7 @@ func (r Reader) Read(ctx context.Context) Summary {
 				} `json:"xray"`
 			} `json:"xkeen"`
 		}
-		if json.Unmarshal(raw, &document) == nil {
+		if configjson.Decode(raw, &document) == nil {
 			policy := benchmarkpolicy.Parse(raw)
 			result.SpeedBalancer = SpeedBalancerSummary{
 				Enabled:       document.Xkeen.Xray.SpeedBalancer.Enabled,

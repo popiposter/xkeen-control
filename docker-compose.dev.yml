@@ -8,6 +8,7 @@ services:
     environment:
       CGO_ENABLED: "1"
       GOTOOLCHAIN: local
+      GOPATH: /go
       npm_config_cache: /root/.npm
       PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
     volumes:

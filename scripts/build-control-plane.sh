@@ -10,8 +10,12 @@ CHANNEL="${CHANNEL:-development}"
 ASSET_DIR="$ROOT/internal/webassets/dist"
 WEB_DIR="$ROOT/web"
 OUTPUT="${OUTPUT:-$ROOT/dist/xkeen-control-linux-arm64}"
+MODE="${1:---build-web}"
+case "$MODE" in --build-web|--embedded) ;; *) echo 'usage: build-control-plane.sh [--build-web|--embedded]' >&2; exit 2 ;; esac
+[ "$#" -le 1 ] || exit 2
 
 command -v "$GO_BIN" >/dev/null 2>&1 || { echo "ERROR: Go toolchain is required off-router" >&2; exit 1; }
+if [ "$MODE" = --build-web ]; then
 command -v "$NPM_BIN" >/dev/null 2>&1 || { echo "ERROR: Node/npm toolchain is required off-router" >&2; exit 1; }
 
 cd "$WEB_DIR"
@@ -23,7 +27,9 @@ find "$ASSET_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 cp -R "$WEB_DIR/dist/." "$ASSET_DIR/"
 # Vite preserves CRLF from index.html on Windows bind mounts. Embedded assets
 # are normalized so repository hygiene and arm64 builds stay deterministic.
-find "$ASSET_DIR" -type f -exec sed -i 's/\r$//' {} +
+find "$ASSET_DIR" -type f \( -name '*.html' -o -name '*.css' -o -name '*.js' -o -name '*.svg' \) -exec sed -i 's/\r$//' {} +
+fi
+[ -s "$ASSET_DIR/index.html" ] || { echo 'embedded assets missing' >&2; exit 1; }
 
 mkdir -p "$(dirname -- "$OUTPUT")"
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 "$GO_BIN" build \

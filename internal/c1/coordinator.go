@@ -67,6 +67,7 @@ type Coordinator struct {
 	supervisorWake          chan struct{}
 	supervisorPolicyChanged chan struct{}
 	adaptivePolicyChanged   chan struct{}
+	adaptiveEvidenceChanged chan struct{}
 
 	mu              sync.Mutex
 	benchmarkCancel context.CancelFunc
@@ -74,15 +75,16 @@ type Coordinator struct {
 	// benchmarkCancel/Done are the shared Coordinator performance owner for
 	// legacy-full, manual-node and adaptive modes. The historical field names
 	// remain for source compatibility with the C.1 tests and state projection.
-	performanceMode    string
-	supervisorCancel   context.CancelFunc
-	supervisorDone     chan struct{}
-	benchmark          BenchmarkStatus
-	manual             ManualPerformanceStatus
-	adaptive           AdaptivePerformanceStatus
-	adaptiveGeneration uint64
-	applyWaiters       int
-	applyActive        bool
+	performanceMode     string
+	supervisorCancel    context.CancelFunc
+	supervisorDone      chan struct{}
+	benchmark           BenchmarkStatus
+	manual              ManualPerformanceStatus
+	adaptive            AdaptivePerformanceStatus
+	adaptiveGeneration  uint64
+	adaptiveInitialDone bool
+	applyWaiters        int
+	applyActive         bool
 	// maintenance is set when an interrupted appliance import cannot yet prove
 	// recovery. It is deliberately process-wide for every lifecycle mutation;
 	// only BeginRecovery may enter while it is set.
@@ -102,7 +104,7 @@ type Coordinator struct {
 
 func NewCoordinator(policy Policy, supervisor *Supervisor, runner *BenchmarkRunner, nodes NodeReader) *Coordinator {
 	policy = policy.normalized()
-	c := &Coordinator{policy: policy, performancePolicy: DefaultPerformancePolicy(), supervisor: supervisor, runner: runner, nodes: nodes, lifecycle: make(chan struct{}, 1), supervisorWake: make(chan struct{}, 1), supervisorPolicyChanged: make(chan struct{}, 1), adaptivePolicyChanged: make(chan struct{}, 1), clock: func() time.Time { return time.Now().UTC() }}
+	c := &Coordinator{policy: policy, performancePolicy: DefaultPerformancePolicy(), supervisor: supervisor, runner: runner, nodes: nodes, lifecycle: make(chan struct{}, 1), supervisorWake: make(chan struct{}, 1), supervisorPolicyChanged: make(chan struct{}, 1), adaptivePolicyChanged: make(chan struct{}, 1), adaptiveEvidenceChanged: make(chan struct{}, 1), clock: func() time.Time { return time.Now().UTC() }}
 	c.lifecycle <- struct{}{}
 	c.benchmark = BenchmarkStatus{Enabled: policy.Enabled, State: "idle", Schedule: ExplicitBenchmarkSchedule, TotalBudgetBytes: policy.TotalBudgetBytes, MinimumPayloadBytes: policy.MinimumPayloadBytes, PerNodeTimeoutMS: policy.PerNodeTimeout.Milliseconds(), Samples: make(map[string]ThroughputStatus)}
 	c.manual = idleManualPerformanceStatus()
@@ -456,6 +458,10 @@ func throughputStatuses(samples map[string]ThroughputSample) map[string]Throughp
 // manual-node, and skips without transfer when operator/lifecycle/performance
 // ownership is already active.
 func (c *Coordinator) runScheduledAdaptive(parent context.Context) {
+	c.runAdaptiveAdmission(parent, false)
+}
+
+func (c *Coordinator) runAdaptiveAdmission(parent context.Context, initialOnly bool) {
 	if c == nil {
 		return
 	}
@@ -463,6 +469,10 @@ func (c *Coordinator) runScheduledAdaptive(parent context.Context) {
 		parent = context.Background()
 	}
 	c.mu.Lock()
+	if initialOnly && c.adaptiveInitialDone {
+		c.mu.Unlock()
+		return
+	}
 	if !c.policy.Enabled || c.supervisor == nil || c.adaptiveRunner == nil {
 		c.setAdaptiveSkippedLocked(AdaptiveReasonUnavailable)
 		c.mu.Unlock()
@@ -518,6 +528,19 @@ func (c *Coordinator) runAdaptive(ctx context.Context, done chan struct{}, token
 	if skipReason != "" {
 		c.setAdaptiveSkipped(done, skipReason)
 		return
+	}
+	// Consume the initial opportunity before any transfer, including a failed
+	// or cancelled generation. Insufficient evidence and busy admission never
+	// reach this point; retries only come from existing supervisor ticks.
+	c.mu.Lock()
+	initial := !c.adaptiveInitialDone
+	c.adaptiveInitialDone = true
+	if initial {
+		c.adaptive.NextRunAt = generation.StartedAt.Add(c.performancePolicy.adaptiveCadence())
+	}
+	c.mu.Unlock()
+	if initial {
+		notifyPolicyChange(c.adaptivePolicyChanged)
 	}
 	c.updateAdaptiveStatus(done, AdaptivePerformanceStatus{
 		State:          "running",
@@ -938,7 +961,9 @@ func (c *Coordinator) supervisorLoop(ctx context.Context) {
 			}
 		}
 		if reconciled {
-			_ = c.runSupervisorOperation(ctx, c.supervisor.Tick)
+			if c.runSupervisorOperation(ctx, c.supervisor.Tick) == nil {
+				notifyPolicyChange(c.adaptiveEvidenceChanged)
+			}
 		}
 	}
 	run()
@@ -1049,6 +1074,15 @@ func (c *Coordinator) schedule(ctx context.Context) {
 		case <-ctx.Done():
 			stopTimer(timer)
 			return
+		case <-c.adaptiveEvidenceChanged:
+			stopTimer(timer)
+			c.mu.Lock()
+			initial := !c.adaptiveInitialDone
+			c.mu.Unlock()
+			if initial {
+				c.runAdaptiveAdmission(ctx, true)
+			}
+			continue
 		case <-c.adaptivePolicyChanged:
 			stopTimer(timer)
 			c.mu.Lock()
@@ -1056,6 +1090,9 @@ func (c *Coordinator) schedule(ctx context.Context) {
 			c.mu.Unlock()
 			continue
 		case <-timer.C:
+			c.mu.Lock()
+			c.adaptiveInitialDone = true
+			c.mu.Unlock()
 			c.runScheduledAdaptive(ctx)
 			now := c.now()
 			cadence := c.currentPerformancePolicy().adaptiveCadence()

@@ -1,5 +1,8 @@
 # Architecture
 
+> **Active implementation:** [Native XKeen contract](NATIVE-XKEEN.md) governs Issue #121 on clean Entware. Older panel migration/recovery compatibility is not required. Historical behavior below is not the new installation authority.
+
+
 This document describes the **currently production-qualified architecture**. Slices A/B/C/C.1/D/D.1 are qualified; later D.2/D.3/#5 capabilities on source main, including Setup and the completed source-only #5 visual configuration program, remain source-qualified only and must not be treated as deployed behavior. Detailed design for active work lives in the active GitHub issue.
 
 ## System goal

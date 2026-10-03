@@ -23,8 +23,7 @@ const (
 	AdaptiveMaxCandidates               = 6
 	AdaptiveMaxGenerationBytes          = 144 * MiB
 	AdaptiveMaxGenerationWallTime       = 180 * time.Second
-	AdaptiveRTTGuardMS                  = 75
-	AdaptiveRTTGuardRatio               = 2
+	AdaptiveMaximumRTTMS                = 750
 	AdaptiveQualityHysteresis           = 1.10
 )
 
@@ -56,10 +55,11 @@ const (
 // Supervisor to one quality generation. The input is built only from the
 // Observatory samples already retained by PolicyEngine.
 type AdaptiveCandidateInput struct {
-	Tag      string
-	RTTMS    int64
-	Samples  int
-	LatestAt time.Time
+	Tag           string
+	RTTMS         int64
+	Samples       int
+	LatestAt      time.Time
+	HealthPenalty float64
 }
 
 // AdaptiveCandidate is a concise compatibility name for the frozen input
@@ -77,13 +77,14 @@ type AdaptiveGeneration struct {
 }
 
 type AdaptiveCandidateResult struct {
-	Tag         string
-	RTTMS       int64
-	DownloadBPS float64
-	UploadBPS   float64
-	Score       float64
-	Valid       bool
-	ErrorCode   string
+	Tag           string
+	RTTMS         int64
+	DownloadBPS   float64
+	UploadBPS     float64
+	Score         float64
+	Valid         bool
+	ErrorCode     string
+	HealthPenalty float64
 }
 
 type AdaptiveResult struct {
@@ -258,12 +259,13 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 		}
 
 		candidate := AdaptiveCandidateResult{
-			Tag:         input.Tag,
-			RTTMS:       input.RTTMS,
-			DownloadBPS: execution.downloadBPS,
-			UploadBPS:   execution.uploadBPS,
-			Valid:       probeErr == nil && candidateErr == nil && finitePositive(execution.downloadBPS) && finitePositive(execution.uploadBPS),
-			ErrorCode:   classifyAdaptiveCandidateError(probeErr, candidateErr, execution),
+			Tag:           input.Tag,
+			RTTMS:         input.RTTMS,
+			HealthPenalty: input.HealthPenalty,
+			DownloadBPS:   execution.downloadBPS,
+			UploadBPS:     execution.uploadBPS,
+			Valid:         probeErr == nil && candidateErr == nil && finitePositive(execution.downloadBPS) && finitePositive(execution.uploadBPS),
+			ErrorCode:     classifyAdaptiveCandidateError(probeErr, candidateErr, execution),
 		}
 		if candidate.Valid {
 			result.AggregateBytes += execution.bytes
@@ -459,7 +461,7 @@ func adaptiveResultStatuses(results []AdaptiveCandidateResult) []AdaptiveCandida
 		if finitePositive(candidate.DownloadBPS) {
 			item.DownloadBPS = candidate.DownloadBPS
 		}
-		if finitePositive(candidate.UploadBPS) {
+		if finitePositive(candidate.UploadBPS) && finitePositive(adaptiveHealthPenalty(candidate.HealthPenalty)) {
 			item.UploadBPS = candidate.UploadBPS
 		}
 		if finiteNonNegative(candidate.Score) {
@@ -476,7 +478,7 @@ func adaptiveResultStatuses(results []AdaptiveCandidateResult) []AdaptiveCandida
 func countAdaptiveValid(results []AdaptiveCandidateResult) int {
 	count := 0
 	for _, candidate := range results {
-		if candidate.Valid && candidate.RTTMS > 0 && finitePositive(candidate.DownloadBPS) && finitePositive(candidate.UploadBPS) {
+		if candidate.Valid && candidate.RTTMS > 0 && finitePositive(candidate.DownloadBPS) && finitePositive(candidate.UploadBPS) && finitePositive(adaptiveHealthPenalty(candidate.HealthPenalty)) {
 			count++
 		}
 	}
@@ -486,7 +488,7 @@ func countAdaptiveValid(results []AdaptiveCandidateResult) int {
 func adaptiveCandidateValid(results []AdaptiveCandidateResult, tag string) bool {
 	for _, candidate := range results {
 		if candidate.Tag == tag {
-			return candidate.Valid && candidate.RTTMS > 0 && finitePositive(candidate.DownloadBPS) && finitePositive(candidate.UploadBPS)
+			return candidate.Valid && candidate.RTTMS > 0 && finitePositive(candidate.DownloadBPS) && finitePositive(candidate.UploadBPS) && finitePositive(adaptiveHealthPenalty(candidate.HealthPenalty))
 		}
 	}
 	return false
@@ -497,7 +499,7 @@ func scoreAdaptiveResults(results []AdaptiveCandidateResult, current string) (wi
 	bestDownload := 0.0
 	bestUpload := 0.0
 	for _, candidate := range results {
-		if !candidate.Valid || candidate.RTTMS <= 0 || !finitePositive(candidate.DownloadBPS) || !finitePositive(candidate.UploadBPS) {
+		if !candidate.Valid || candidate.RTTMS <= 0 || !finitePositive(candidate.DownloadBPS) || !finitePositive(candidate.UploadBPS) || !finitePositive(adaptiveHealthPenalty(candidate.HealthPenalty)) {
 			continue
 		}
 		if bestRTT == 0 || candidate.RTTMS < bestRTT {
@@ -516,13 +518,19 @@ func scoreAdaptiveResults(results []AdaptiveCandidateResult, current string) (wi
 	bestCandidateScore := -1.0
 	for index := range results {
 		candidate := &results[index]
-		if !candidate.Valid || candidate.RTTMS <= 0 || !finitePositive(candidate.DownloadBPS) || !finitePositive(candidate.UploadBPS) {
+		if !candidate.Valid || candidate.RTTMS <= 0 || !finitePositive(candidate.DownloadBPS) || !finitePositive(candidate.UploadBPS) || !finitePositive(adaptiveHealthPenalty(candidate.HealthPenalty)) {
 			continue
 		}
-		latencyComponent := clampFloat(float64(bestRTT)/float64(candidate.RTTMS), 0, 1)
-		downloadComponent := math.Log1p(candidate.DownloadBPS) / math.Log1p(bestDownload)
-		uploadComponent := math.Log1p(candidate.UploadBPS) / math.Log1p(bestUpload)
-		candidate.Score = 0.35*latencyComponent + 0.45*downloadComponent + 0.20*uploadComponent
+		// Dimensionless geometric quality preserves pairwise ratios when the
+		// measurement units or another candidate's normalization maxima change.
+		// The 0.40 exponent keeps opposing +/-10% noise on all three axes
+		// below 10% hysteresis while equal-RTT 2x throughput clears it.
+		// Subtract logs before exponentiating: dividing finite extreme rates
+		// first could underflow a valid positive component to zero.
+		latencyComponent := math.Log(float64(bestRTT)) - math.Log(float64(candidate.RTTMS))
+		downloadComponent := math.Log(candidate.DownloadBPS) - math.Log(bestDownload)
+		uploadComponent := math.Log(candidate.UploadBPS) - math.Log(bestUpload)
+		candidate.Score = math.Exp(0.40*(0.35*latencyComponent+0.45*downloadComponent+0.20*uploadComponent)) / adaptiveHealthPenalty(candidate.HealthPenalty)
 		if !finiteNonNegative(candidate.Score) {
 			candidate.Valid = false
 			candidate.Score = 0
@@ -532,7 +540,7 @@ func scoreAdaptiveResults(results []AdaptiveCandidateResult, current string) (wi
 			currentScore = candidate.Score
 		}
 		if candidate.Tag != current {
-			if float64(candidate.RTTMS) <= float64(bestRTT)+AdaptiveRTTGuardMS && float64(candidate.RTTMS) <= float64(bestRTT)*AdaptiveRTTGuardRatio {
+			if candidate.RTTMS <= AdaptiveMaximumRTTMS {
 				challenger = true
 			} else {
 				continue
@@ -649,4 +657,64 @@ func sortAdaptiveCandidates(candidates []AdaptiveCandidateInput) {
 		}
 		return candidates[i].Tag < candidates[j].Tag
 	})
+}
+
+// adaptiveRTTEvidence reads the existing deduplicated RAM window. Failed or
+// future observations cannot count toward the initial three usable RTTs.
+func adaptiveRTTEvidence(values []sample, cutoff, now time.Time) (int64, int, time.Time) {
+	delays := make([]int64, 0, len(values))
+	var latest time.Time
+	for _, value := range values {
+		if !value.alive || value.delay <= 0 || value.at.Before(cutoff) || value.at.After(now) {
+			continue
+		}
+		delays = append(delays, value.delay)
+		if value.at.After(latest) {
+			latest = value.at
+		}
+	}
+	if len(delays) == 0 {
+		return 0, 0, time.Time{}
+	}
+	sort.Slice(delays, func(i, j int) bool { return delays[i] < delays[j] })
+	return delays[len(delays)/2], len(delays), latest
+}
+
+// Zero means no retained health window (compatibility fixtures), not failure.
+// A populated window contributes failure frequency and median RTT deviation.
+func adaptiveHealthPenalty(value float64) float64 {
+	if value == 0 {
+		return 1
+	}
+	if !finitePositive(value) || value < 1 {
+		return math.Inf(1)
+	}
+	return value
+}
+
+func adaptiveWindowPenalty(values []sample, cutoff, now time.Time, median int64) float64 {
+	total, failures := 0, 0
+	deviations := make([]int64, 0, len(values))
+	for _, value := range values {
+		if value.at.Before(cutoff) || value.at.After(now) {
+			continue
+		}
+		total++
+		if !value.alive {
+			failures++
+			continue
+		}
+		delta := value.delay - median
+		if delta < 0 {
+			delta = -delta
+		}
+		deviations = append(deviations, delta)
+	}
+	if total == 0 || len(deviations) == 0 || median <= 0 {
+		return 0
+	}
+	sort.Slice(deviations, func(i, j int) bool { return deviations[i] < deviations[j] })
+	success := float64(total-failures) / float64(total)
+	jitter := float64(deviations[len(deviations)/2]) / math.Max(float64(median), 20)
+	return (1 + math.Min(jitter, 2)) / (success * success)
 }

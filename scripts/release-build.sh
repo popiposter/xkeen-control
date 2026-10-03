@@ -15,9 +15,14 @@ if [ "$MODE" = signed ]; then
 	[ -n "$KEY_FILE" ] || { echo "protected release signing key file is required" >&2; exit 2; }
 fi
 
+# The full gate already built and checked these bytes. Release assembly must
+# neither install npm dependencies again nor rewrite its qualified Go embed input.
+git -C "$ROOT" diff --exit-code HEAD -- "$ROOT/internal/webassets/dist"
+bash "$ROOT/scripts/verify-webassets.sh"
 rm -rf "$OUT"
 mkdir -p "$OUT"
-VERSION="$VERSION" CHANNEL="$CHANNEL" COMMIT="$COMMIT" ./scripts/build-control-plane.sh
+VERSION="$VERSION" CHANNEL="$CHANNEL" COMMIT="$COMMIT" ./scripts/build-control-plane.sh --embedded
+git -C "$ROOT" diff --exit-code HEAD -- "$ROOT/internal/webassets/dist"
 cp "$ROOT/dist/xkeen-control-linux-arm64" "$OUT/xkeen-control-linux-arm64"
 cp "$ROOT/packaging/S99xkeen-control" "$OUT/S99xkeen-control"
 cp "$ROOT/scripts/xkeen-control-updater" "$OUT/xkeen-control-updater"

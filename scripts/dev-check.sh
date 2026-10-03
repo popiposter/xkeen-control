@@ -10,6 +10,18 @@ case "$mode" in
 	*) echo "usage: $0 [--fast|--full]" >&2; exit 2 ;;
 esac
 
+if [ "$mode" = --fast ]; then
+	for name in XKEEN_CHECK_GO XKEEN_CHECK_HELPERS XKEEN_CHECK_WEB XKEEN_CHECK_ARTIFACT; do
+		case "${!name:-}" in
+			0|1) ;;
+			*) echo "fast mode requires an explicit 0/1 selection for $name; use scripts/dev-check.ps1" >&2; exit 2 ;;
+		esac
+	done
+fi
+
+echo "== Repository hygiene =="
+bash scripts/test-public-hygiene.sh
+
 lane_enabled() {
 	local value="${!1:-0}"
 	[ "$mode" = "--full" ] || [ "$value" = "1" ]
@@ -17,31 +29,47 @@ lane_enabled() {
 
 run_shell_fixtures() {
 	echo "== Unique shell and integration fixtures =="
-	bash -n scripts/*.sh scripts/xkeen-control-updater
+	for script in scripts/*.sh scripts/xkeen-control-updater packaging/S99xkeen-control; do
+		bash -n "$script"
+	done
+	bash scripts/test-dev-check-dispatch.sh
+	bash scripts/test-build-embedded.sh
+	bash scripts/test-web-dependencies.sh
+	node --test scripts/dev-check-go.test.mjs
 	bash scripts/test-keenetic-env.sh
 	bash scripts/test-benchmark-policy.sh
 	bash scripts/test-xkeen-foreground.sh
-	if [ "$mode" = "--full" ]; then
-		XKEEN_STRESS_RACE=1 bash scripts/test-components.sh --fixtures-only
-	else
-		bash scripts/test-components.sh --fixtures-only
-	fi
-	bash scripts/test-appliance.sh
+	bash scripts/test-components.sh --fixtures-only
 	bash scripts/test-release.sh --fixtures-only
 }
 
 run_web_checks() {
 	echo "== Web checks =="
-	npm --prefix web ci --ignore-scripts --prefer-offline
-	npm --prefix web run build
+	if [ "$mode" = --full ]; then
+		bash scripts/web-dependencies.sh --clean
+		# Reject dependency failures before production build and Chromium work.
+		bash scripts/npm-audit.sh
+	else
+		bash scripts/web-dependencies.sh --reuse
+	fi
+	if [ "$mode" = --full ] || [ "${XKEEN_CHECK_WEB_BUILD:-1}" != 0 ]; then
+		bash scripts/test-web-source-boundary.sh
+		bash scripts/verify-webassets.sh
+	else
+		echo 'Web source unchanged: production build and embedded comparison omitted'
+	fi
+	npm --prefix web run test:unit
 	if [ "$mode" = "--full" ]; then
 		if [ "${XKEEN_PLAYWRIGHT_INSTALL:-0}" = "1" ]; then
 			(cd web && npx playwright install --with-deps chromium)
 		fi
 		npm --prefix web run test:ui
-		bash scripts/npm-audit.sh
+	elif [ "${XKEEN_CHECK_UI-*}" = '*' ]; then
+		npm --prefix web run test:ui
+	elif [ -n "${XKEEN_CHECK_UI:-}" ]; then
+		read -r -a specs <<< "$XKEEN_CHECK_UI"
+		npm --prefix web run test:ui -- "${specs[@]}"
 	fi
-	bash scripts/verify-webassets.sh
 }
 
 echo "== toolchain =="
@@ -53,8 +81,14 @@ echo "selected lanes: go=${XKEEN_CHECK_GO:-0} helpers=${XKEEN_CHECK_HELPERS:-0} 
 
 if lane_enabled XKEEN_CHECK_GO; then
 	echo "== Go tests =="
-	go test -count=1 ./...
-	go vet ./...
+	packages=(./...)
+	if [ "$mode" = --fast ]; then
+		mapfile -t packages < <(node scripts/dev-check-go.mjs)
+		[ "${#packages[@]}" -gt 0 ] || { echo 'empty Go plan' >&2; exit 1; }
+	fi
+	printf 'Selected Go packages: %s\n' "${packages[*]}"
+	go test -count=1 "${packages[@]}"
+	go vet "${packages[@]}"
 	if [ "$mode" = "--full" ]; then
 		go test -race ./...
 	fi
@@ -80,6 +114,4 @@ if lane_enabled XKEEN_CHECK_ARTIFACT; then
 	sha256sum dist/xkeen-control-linux-arm64
 fi
 
-echo "== Repository hygiene =="
-bash scripts/test-public-hygiene.sh
 echo "git diff --check is run by scripts/dev-check.ps1 on the host"

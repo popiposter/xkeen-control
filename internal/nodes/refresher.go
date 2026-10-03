@@ -119,6 +119,7 @@ type SubscriptionRefresher struct {
 	started     bool
 	stop        context.CancelFunc
 	wait        sync.WaitGroup
+	requested   chan struct{}
 }
 
 func NewSubscriptionRefresher(manager *Manager) *SubscriptionRefresher {
@@ -131,7 +132,39 @@ func newSubscriptionRefresher(manager *Manager, now func() time.Time) *Subscript
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &SubscriptionRefresher{manager: manager, now: now, entries: make(map[string]*subscriptionRefreshEntry)}
+	return &SubscriptionRefresher{manager: manager, now: now, entries: make(map[string]*subscriptionRefreshEntry), requested: make(chan struct{}, 1)}
+}
+
+// RequestRefresh queues one bounded refresh through the existing scheduler.
+func (r *SubscriptionRefresher) RequestRefresh() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	started := r.started
+	r.mu.Unlock()
+	if !started {
+		return false
+	}
+	select {
+	case r.requested <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+func (r *SubscriptionRefresher) requestDue() {
+	now := r.clock()
+	if r.reconcile(now) != nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, entry := range r.entries {
+		if entry.status.state != autoRefreshDisabled {
+			entry.nextRunAt = now
+		}
+	}
 }
 
 // Start performs only the initial bounded registry rescan. It does not fetch
@@ -173,6 +206,9 @@ func (r *SubscriptionRefresher) Stop() {
 		stop()
 	}
 	r.wait.Wait()
+	r.mu.Lock()
+	r.started = false
+	r.mu.Unlock()
 }
 
 // AutoRefreshStatuses returns a copy of the safe RAM-only status map for the
@@ -193,6 +229,14 @@ func (r *SubscriptionRefresher) AutoRefreshStatuses() map[string]AutoRefreshStat
 func (r *SubscriptionRefresher) loop(ctx context.Context) {
 	_ = r.reconcile(r.clock())
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+		select {
+		case <-r.requested:
+			r.requestDue()
+		default:
+		}
 		now := r.clock()
 		r.mu.Lock()
 		scanDue := r.rescanAt.IsZero() || !now.Before(r.rescanAt)
@@ -231,6 +275,9 @@ func (r *SubscriptionRefresher) loop(ctx context.Context) {
 			}
 			return
 		case <-timer.C:
+		case <-r.requested:
+			timer.Stop()
+			r.requestDue()
 		}
 	}
 }
@@ -448,7 +495,7 @@ func normalizeAutoRefreshTime(value time.Time) time.Time {
 	return value
 }
 
-func (m *Manager) refreshSavedSubscription(ctx context.Context, subscriptionID string) (automaticRefreshResult, error) {
+func (m *Manager) refreshSavedSubscription(ctx context.Context, subscriptionID string) (result automaticRefreshResult, resultErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -509,11 +556,15 @@ func (m *Manager) refreshSavedSubscription(ctx context.Context, subscriptionID s
 	if m.authority == nil {
 		return automaticRefreshResult{}, automaticError(autoRefreshAuthority, true, false)
 	}
-	releaseAuthority, err := m.authority.TryAcquire()
+	ctx, releaseAuthority, err := m.authority.TryAcquireContext(ctx)
 	if err != nil {
 		return automaticRefreshResult{}, automaticError(autoRefreshAuthority, true, false)
 	}
-	defer releaseAuthority()
+	defer func() {
+		if releaseAuthority() != nil {
+			result, resultErr = automaticRefreshResult{}, automaticError(autoRefreshActivation, false, false)
+		}
+	}()
 
 	current, currentTarget, err = m.savedEnabledSubscription(subscriptionID)
 	if err != nil {
@@ -524,7 +575,13 @@ func (m *Manager) refreshSavedSubscription(ctx context.Context, subscriptionID s
 	}
 	applyContext, cancelApply := context.WithTimeout(ctx, m.tx.totalTimeout())
 	defer cancelApply()
+	if m.beforeCommit != nil && m.beforeCommit(applyContext) != nil {
+		return automaticRefreshResult{}, automaticError(autoRefreshRuntime, true, false)
+	}
 	if err := m.tx.Apply(applyContext, candidate); err != nil {
+		if errors.Is(err, ErrNodeRecoveryRequired) || errors.Is(err, ErrRollbackFailed) {
+			m.authority.Block()
+		}
 		if ctx.Err() != nil {
 			return automaticRefreshResult{}, ctx.Err()
 		}

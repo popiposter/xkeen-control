@@ -20,7 +20,7 @@ import (
 func TestMutationRoutesRequireCSRFAndReturnSanitizedPreview(t *testing.T) {
 	dir := t.TempDir()
 	passwordPath := filepath.Join(dir, "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-panel-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-panel-password")); err != nil {
 		t.Fatal(err)
 	}
 	store := nodes.Store{Path: filepath.Join(dir, "secrets", "nodes.json")}
@@ -93,7 +93,7 @@ func (f *subscriptionHTTPFetcher) Fetch(context.Context, string) ([]byte, error)
 func TestSubscriptionRefreshRouteReturnsExactSafeRemovalAndTokenOnlyApply(t *testing.T) {
 	dir := t.TempDir()
 	passwordPath := filepath.Join(dir, "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-panel-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-panel-password")); err != nil {
 		t.Fatal(err)
 	}
 	registry := syntheticSubscriptionHTTPRegistry(t)
@@ -163,7 +163,7 @@ func TestSubscriptionRefreshRouteReturnsExactSafeRemovalAndTokenOnlyApply(t *tes
 func TestSubscriptionRefreshRouteFailurePreservesSavedSubscription(t *testing.T) {
 	dir := t.TempDir()
 	passwordPath := filepath.Join(dir, "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-panel-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-panel-password")); err != nil {
 		t.Fatal(err)
 	}
 	registry := syntheticSubscriptionHTTPRegistry(t)
@@ -233,7 +233,7 @@ func syntheticSubscriptionHTTPRegistry(t *testing.T) nodes.Registry {
 func TestBatchMutationRoutesAreStrictAtomicAndKeepSubscriptionRecords(t *testing.T) {
 	dir := t.TempDir()
 	passwordPath := filepath.Join(dir, "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-panel-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-panel-password")); err != nil {
 		t.Fatal(err)
 	}
 	registry := syntheticBatchHTTPRegistry(t)
@@ -330,7 +330,7 @@ func TestBatchMutationRoutesAreStrictAtomicAndKeepSubscriptionRecords(t *testing
 
 func TestBatchMutationRoutesEnforceBoundaryGuards(t *testing.T) {
 	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-panel-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-panel-password")); err != nil {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(New(Config{Auth: auth.NewManager(auth.Config{HashPath: passwordPath})}))

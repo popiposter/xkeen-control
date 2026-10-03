@@ -40,16 +40,17 @@ type SelectionStatus struct {
 }
 
 type Supervisor struct {
-	policy            Policy
-	performancePolicy PerformancePolicy
-	xray              xrayapi.Reader
-	api               xrayapi.RoutingController
-	nodes             NodeReader
-	probe             *ProbeRouter
-	selection         SelectionStore
-	engine            *PolicyEngine
-	activeProbe       ActiveProbe
-	clock             func() time.Time
+	policy               Policy
+	performancePolicy    PerformancePolicy
+	adaptiveExploreAfter string // RAM-only stable ID cursor, protected by policyMu
+	xray                 xrayapi.Reader
+	api                  xrayapi.RoutingController
+	nodes                NodeReader
+	probe                *ProbeRouter
+	selection            SelectionStore
+	engine               *PolicyEngine
+	activeProbe          ActiveProbe
+	clock                func() time.Time
 
 	// policyMu serializes policy-engine state, liveness counters and runtime
 	// selection decisions. Benchmark samples use the same ProbeRouter lease,
@@ -768,6 +769,11 @@ func (s *Supervisor) PrepareAdaptiveGeneration(ctx context.Context, generation u
 	}
 	eligible := make([]AdaptiveCandidateInput, 0, len(nodes))
 	seenNodes := make(map[string]struct{}, len(nodes))
+	stableIDs := make(map[string]string, len(nodes))
+	requiredSamples := s.policy.LatencyObservations
+	if requiredSamples < 3 {
+		requiredSamples = 3
+	}
 	cutoff := now.Add(-s.policy.LatencyWindow)
 	for _, node := range nodes {
 		if !node.Enabled || !validTag(node.Tag) {
@@ -777,16 +783,19 @@ func (s *Supervisor) PrepareAdaptiveGeneration(ctx context.Context, generation u
 			continue
 		}
 		seenNodes[node.Tag] = struct{}{}
+		stableIDs[node.Tag] = node.ID
+		if node.ID == "" {
+			stableIDs[node.Tag] = node.Tag
+		}
 		item, observed := health[node.Tag]
-		if !observed || !item.Alive || s.engine.SampleCount(node.Tag) < s.policy.LatencyObservations {
+		if !observed || !item.Alive {
 			continue
 		}
-		median, medianOK := s.engine.RollingMedian(node.Tag)
-		latest, latestOK := s.engine.LatestSampleAt(node.Tag)
-		if !medianOK || median <= 0 || !latestOK || latest.Before(cutoff) || latest.After(now) {
+		median, count, latest := adaptiveRTTEvidence(s.engine.samples[node.Tag], cutoff, now)
+		if count < requiredSamples {
 			continue
 		}
-		eligible = append(eligible, AdaptiveCandidateInput{Tag: node.Tag, RTTMS: median, Samples: s.engine.SampleCount(node.Tag), LatestAt: latest})
+		eligible = append(eligible, AdaptiveCandidateInput{Tag: node.Tag, RTTMS: median, Samples: count, LatestAt: latest, HealthPenalty: adaptiveWindowPenalty(s.engine.samples[node.Tag], cutoff, now, median)})
 	}
 	currentEligible := false
 	for _, candidate := range eligible {
@@ -806,17 +815,36 @@ func (s *Supervisor) PrepareAdaptiveGeneration(ctx context.Context, generation u
 	if challengerLimit < MinAdaptiveChallengerLimit || challengerLimit > MaxAdaptiveChallengerLimit {
 		challengerLimit = AdaptiveShortlistLimit
 	}
-	shortlist := make([]AdaptiveCandidateInput, 0, minInt(len(eligible), challengerLimit+1))
+	challengers := make([]AdaptiveCandidateInput, 0, len(eligible)-1)
 	for _, candidate := range eligible {
-		if candidate.Tag == stable {
-			continue
-		}
-		shortlist = append(shortlist, candidate)
-		if len(shortlist) == challengerLimit {
-			break
+		if candidate.Tag != stable {
+			challengers = append(challengers, candidate)
 		}
 	}
-	shortlist = append(shortlist, adaptiveCandidateFor(eligible, stable))
+	shortlist := challengers
+	if len(challengers) > challengerLimit {
+		// One exploration place replaces the final RTT place; it never adds
+		// a candidate or changes the runner's byte/time envelope.
+		shortlist = append([]AdaptiveCandidateInput(nil), challengers[:challengerLimit-1]...)
+		tail := challengers[challengerLimit-1:]
+		sort.Slice(tail, func(i, j int) bool {
+			if stableIDs[tail[i].Tag] == stableIDs[tail[j].Tag] {
+				return tail[i].Tag < tail[j].Tag
+			}
+			return stableIDs[tail[i].Tag] < stableIDs[tail[j].Tag]
+		})
+		next := 0
+		for i, candidate := range tail {
+			if stableIDs[candidate.Tag] > s.adaptiveExploreAfter {
+				next = i
+				break
+			}
+		}
+		shortlist = append(shortlist, tail[next])
+		s.adaptiveExploreAfter = stableIDs[tail[next].Tag]
+	}
+	// Establish the current baseline before exploration can exhaust the budget.
+	shortlist = append([]AdaptiveCandidateInput{adaptiveCandidateFor(eligible, stable)}, shortlist...)
 	if len(shortlist) > AdaptiveMaxCandidates {
 		shortlist = shortlist[:AdaptiveMaxCandidates]
 	}
@@ -977,7 +1005,7 @@ func adaptiveGenerationMatchesResult(generation AdaptiveGeneration, result Adapt
 	seen := make(map[string]struct{}, len(result.Candidates))
 	for _, candidate := range result.Candidates {
 		input, ok := inputs[candidate.Tag]
-		if !ok || input.RTTMS != candidate.RTTMS {
+		if !ok || input.RTTMS != candidate.RTTMS || input.HealthPenalty != candidate.HealthPenalty {
 			return false
 		}
 		if _, duplicate := seen[candidate.Tag]; duplicate {

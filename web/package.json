@@ -7,26 +7,42 @@
     "dev": "vite",
     "build": "vite build",
     "test:ui": "playwright test",
-    "test:backup-restore-ui": "playwright test tests/backup-restore.spec.js",
-    "test:components-ui": "playwright test tests/components-session.spec.js tests/components-updates.spec.js",
-    "test:dns-ui": "playwright test tests/dns-observatory.spec.js",
+    "test:backup-restore-ui": "playwright test tests/native-transfer.spec.js",
+    "test:dns-ui": "playwright test tests/native-config.spec.js",
     "test:nodes-ui": "playwright test tests/nodes.spec.js",
     "test:performance-ui": "playwright test tests/performance-ui.spec.js",
-    "test:performance-policy-ui": "playwright test tests/performance-policy.spec.js",
-    "test:routing-ui": "playwright test tests/routing-policy.spec.js",
-    "test:setup-ui": "playwright test tests/setup.spec.js",
+    "test:native-quality-ui": "playwright test tests/native-quality.spec.js",
+    "test:routing-ui": "playwright test tests/native-config.spec.js",
     "test:feature-complete-ui": "playwright test tests/feature-complete.spec.js",
-    "test:system-panel-ui": "playwright test tests/system-panel.spec.js"
+    "test:system-panel-ui": "playwright test tests/system-panel.spec.js",
+    "test:unit": "node --test unit/*.test.js"
   },
   "dependencies": {
+    "@base-ui/react": "1.8.0",
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/lang-json": "6.0.2",
+    "@codemirror/language": "6.12.4",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.13",
+    "@fontsource-variable/geist": "5.3.0",
     "@tabler/icons-react": "3.48.0",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
+    "class-variance-authority": "0.7.1",
+    "cn": "0.4.0",
     "flag-icons": "7.5.0",
+    "jsonc-parser": "3.3.1",
+    "lucide-react": "1.49.0",
     "react": "19.1.1",
-    "react-dom": "19.1.1"
+    "react-dom": "19.1.1",
+    "tw-animate-css": "1.4.0",
+    "@lezer/highlight": "1.2.5"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
+    "@tailwindcss/vite": "4.3.3",
     "@vitejs/plugin-react": "5.0.4",
+    "tailwindcss": "4.3.3",
     "vite": "7.3.6"
   }
 }
