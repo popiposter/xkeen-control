@@ -18,4 +18,6 @@ node --test \
     scripts/native-admission-hook-entry.test.mjs \
     scripts/native-admission-connected.test.mjs \
     scripts/native-admission-background.test.mjs \
-    scripts/native-update-profile.test.mjs
+    scripts/native-update-profile.test.mjs \
+    scripts/native-update-stage.test.mjs \
+    scripts/native-update-stage-install.test.mjs

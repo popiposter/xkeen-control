@@ -58,6 +58,17 @@ These proofs do not enable an updater: staged profile decoration, entry/finish
 integration, update readback and all native writer/cron coverage remain pending.
 All generated native candidates remain fenced and uninstalled.
 
+The updater generation proof checkpoint `a967ea2` passed FULL in 4m07s
+(helpers154, browser149, Go/vet/race, frontend/audit and ARM64). Later `82fd985`
+passed FAST Go/helpers159/ARM64 without browsers, race or audit. A complete
+72-file pinned public archive profile and fixed authenticated staging worker now
+have independent source review. Extracted native-installer integration preserves
+the old live files on refusal and promotes the three decorated overlays plus all
+unchanged modules on success. The explicit public-source catalogue passed110
+cases; this is separate from the default FULL gate and hardware acceptance.
+Full updater entry/finish, post-update verification, writer/cron coverage and
+target qualification remain prerequisites to enabling native admission.
+
 ## Historical production baseline
 
 Slices A/B/C/C.1 and D remain production-qualified. The validated fresh-source migration baseline merged as #7, the canonical Go module/import identity cleanup merged as #9 / Issue #8, and Slice D completed through Issue #2 with historical signed stable release `v0.1.1` from source `8f15246099538426ef08163b832c3aa6f73e8265` plus bounded live Keenetic adoption → rollback → re-adoption qualification. D.1 / Issue #3 is also production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. Issue #78 Slice F is present on source main as source-qualified-only work and is not a production-qualification or release claim.

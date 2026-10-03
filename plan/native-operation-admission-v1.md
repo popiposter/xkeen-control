@@ -682,8 +682,27 @@ The compiler invokes the existing builders for exactly three overlays:
 dispatcher, registration template and native installer module. The complete
 prepared inventory preserves all other hashes. All overlays remain fenced;
 an exclusive new output directory and manifest-last publication do not install
-anything. The future fixed stage worker still needs to check this whole inventory,
-apply only these prepared overlays and publish the authenticated receipt last.
+anything.
+
+The compiler now emits one disabled fixed stage worker with literal inventory
+checks; it does not source a staging manifest or accept a profile selector.
+Its isolated executable bootstrap protects the fixed libraries before sourcing.
+The authenticated immediate stage child verifies every source path/type/size/hash
+and all three protected overlay payloads before any decoration. Exclusive bounded
+temporary copies are verified before replacing only the three named staging
+files. Complete prepared-profile checks and the original owner/context/body proof
+surround receipt publication. Failures retain admission; the native installer
+owns staging cleanup and live replacement. Both the template and compiled worker
+retain unconditional fences.
+
+Fixtures execute the actual extracted native installer function with this real
+authenticated worker on disposable paths: missing worker/unknown module preserves
+both old live files, while success promotes all 72 prepared files. Successful
+archive cleanup belongs to the later native post-update phase; the installer
+function leaves that archive in place. These are source-function integration
+results, not execution of the complete updater, update postconditions or router
+acceptance. Updater entry/finish, exec integration, registration/error propagation,
+all writer/cron coverage and target qualification still block activation.
 
 The disabled `native-admission-update-patch.mjs` experiment pins the actual
 native installer module by SHA-256 and inserts a fixed protected staging callback

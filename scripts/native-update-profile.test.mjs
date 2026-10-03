@@ -76,5 +76,8 @@ test('CLI publishes only disabled files and refuses an existing output directory
     assert.deepEqual(readFileSync(join(output, 'manifest.json')), manifest)
     const parsed = JSON.parse(manifest)
     assert.equal(parsed.prepared.filter(file => file.overlay).length, 3)
+    const worker = readFileSync(join(output, parsed.worker.file))
+    assert.equal(worker.length, parsed.worker.size)
+    assert.equal(sha(worker), parsed.worker.sha256)
   } finally { rmSync(temporary, { recursive: true, force: true }) }
 })
