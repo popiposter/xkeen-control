@@ -98,7 +98,7 @@ function patchUpdaterFailures(text) {
   if (begin < 0 || end < begin) throw new Error('native updater branch missing')
   let post = text.slice(begin, end)
   for (const command of ['register_xkeen_initd', 'create_xkeen_cfg',
-    'register_xkeen_list', 'register_xkeen_control', 'register_xkeen_status', 'fixed_register_packages']) {
+    'delete_register_xkeen', 'register_xkeen_list', 'register_xkeen_control', 'register_xkeen_status', 'fixed_register_packages']) {
     post = replaceOnce(post, `            ${command}\n`, `            ${command} || exit 1\n`)
   }
   for (const command of ['chmod 700 "$xkeen_cfg" 2>/dev/null', 'chmod 600 "$xkeen_config" 2>/dev/null',

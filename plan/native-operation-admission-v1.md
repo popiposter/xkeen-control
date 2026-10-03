@@ -1080,6 +1080,27 @@ protocol paths with the actual PATH utilities, not all utilities as BusyBox.
 It does not qualify native hooks, Go-owner hardware execution, reboot recovery,
 update persistence or a working panel/native concurrency integration.
 
+### Checked native registration writes (source-only)
+
+The prepared profile now has six fenced overlays: the preceding four admission
+overlays plus the pinned common registration module and XKeen deletion module.
+The common module still implements upstream control/status registration; checked
+`du`, date, temporary creation, individual fields, input reads, cleanup,
+normalization and atomic rename propagate failure instead of allowing a later
+successful command to hide it. Optional empty Depends/absent previous status are
+preserved. Only `delete_register_xkeen` is decorated in the deletion module;
+the Xray/Mihomo/Yq functions remain byte-for-byte upstream-owned. Failed AWK stops
+before rename and control/list removal, and failed rename/removal propagates.
+The post-update dispatcher now stops on a failed `delete_register_xkeen`, before
+later registration or success output; control/status wrappers were already checked.
+
+These are inner-error guarantees, not complete destination safety or updater
+acceptance. Fixed destination protection, bounded temporary cleanup, init backup,
+list producer errors, cron-cache reuse, native backup/cleanup and the true terminal
+are still prerequisites. All six payloads remain unconditionally fenced and
+uninstalled; backend/adaptive remain disabled. Fixtures run actual pinned helper
+bodies only in disposable storage and do not execute a complete native updater.
+
 Reproduce the disabled native-function fixtures after placing only the two
 hash-verified **public** inputs at the indicated ignored `dist` paths (never
 mount the operator credential/artifact directory):

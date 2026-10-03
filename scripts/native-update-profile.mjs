@@ -1,11 +1,12 @@
 // One pinned public native profile. Build-time only; no router/network execution.
-// Upstream payload remains upstream-owned; four narrow admission overlays change.
+// Upstream payload remains upstream-owned; narrow admission/error overlays change.
 import { createHash } from 'node:crypto'
 import { constants, closeSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { buildCandidates } from './native-admission-patch.mjs'
 import { buildUpdateCandidate } from './native-admission-update-patch.mjs'
+import { buildRegistrationWrites } from './native-update-registration-patch.mjs'
 
 const metadata = JSON.parse(readFileSync(new URL('./native-update-profile-v1.json', import.meta.url), 'utf8'))
 export const profile = Object.freeze({ ...metadata, files: Object.freeze(metadata.files.map(file => Object.freeze(file))) })
@@ -68,6 +69,7 @@ return 76 2>/dev/null || exit 76
   const overlays = new Map([
     ['xkeen', admission.dispatcher], [template, admission.registrationTemplate], [installer, update.candidate],
     [packages, packageOverlay],
+    ...buildRegistrationWrites(entries),
   ])
   const prepared = profile.files.map(file => {
     const bytes = overlays.get(file.path)
