@@ -3,6 +3,7 @@ module github.com/popiposter/xkeen-control
 go 1.27
 
 require (
+	github.com/creack/pty v1.1.24
 	golang.org/x/crypto v0.49.0
 	golang.org/x/term v0.41.0
 	google.golang.org/grpc v1.79.3
