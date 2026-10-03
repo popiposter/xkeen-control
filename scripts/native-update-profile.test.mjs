@@ -12,7 +12,7 @@ assert.ok(root, 'pinned complete public profile input required')
 const source = readProfileDirectory(root)
 const sha = bytes => createHash('sha256').update(bytes).digest('hex')
 
-test('complete pinned native import closure preserves all but seven fenced overlays', () => {
+test('complete pinned native import closure preserves all but nine fenced overlays', () => {
   const built = buildUpdateProfile(source)
   assert.equal(profile.upstreamCommit, '5aaece27a70d5bd002c615248614914ebbc4569d')
   assert.equal(profile.archiveSHA256, '1d246871d8fc9df2e68e80cef18562e6222661e40eaea1b6853cf8e0e6348b5f')
@@ -20,7 +20,7 @@ test('complete pinned native import closure preserves all but seven fenced overl
   assert.equal(profile.files.reduce((sum, file) => sum + file.size, 0), 559777)
   assert.equal(built.manifest.enabled, false)
   assert.equal(built.manifest.installed, false)
-  assert.equal(built.overlays.size, 7)
+  assert.equal(built.overlays.size, 9)
   assert.ok(source.has('_xkeen/import.sh'))
   for (const file of built.manifest.prepared) {
     const bytes = built.overlays.get(file.path)
@@ -75,7 +75,7 @@ test('CLI publishes only disabled files and refuses an existing output directory
     const second = run(); assert.ifError(second.error); assert.equal(second.status, 1)
     assert.deepEqual(readFileSync(join(output, 'manifest.json')), manifest)
     const parsed = JSON.parse(manifest)
-    assert.equal(parsed.prepared.filter(file => file.overlay).length, 7)
+    assert.equal(parsed.prepared.filter(file => file.overlay).length, 9)
     const worker = readFileSync(join(output, parsed.worker.file))
     assert.equal(worker.length, parsed.worker.size)
     assert.equal(sha(worker), parsed.worker.sha256)

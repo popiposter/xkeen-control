@@ -90,7 +90,8 @@ function patchUpdaterFailures(text) {
   if (updateBegin < 0 || updateEnd <= updateBegin) throw new Error('native update prerequisite anchor missing')
   const initial = replaceOnce(text.slice(updateBegin, updateEnd), '            test_entware\n',
     '            # Entware feed refresh is unused with all dependencies installed.\n')
-  text = text.slice(0, updateBegin) + initial + text.slice(updateEnd)
+  const checkedInitial = replaceOnce(initial, '            backup_xkeen\n', '            backup_xkeen || exit 1\n')
+  text = text.slice(0, updateBegin) + checkedInitial + text.slice(updateEnd)
   // Patch only the pinned post-update branch. Do not reinterpret optional
   // native probes/no-op return codes or claim to repair internal module errors.
   const begin = text.indexOf('        -uk_post_update)\n')

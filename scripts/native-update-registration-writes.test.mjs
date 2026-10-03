@@ -151,3 +151,33 @@ test('native init preserves declared settings and legitimate missing optional fi
   assert.equal(result.status, 0, result.stderr)
   assert.equal(result.init, oldInit)
 })
+test('failed init backup choice refuses before backup/copy/live rename', () => {
+  const result = run(`${initSetup}\nchoice_backup_xkeen() { return 2; }\ncp() { echo UNEXPECTED_COPY; command cp "$@"; }\nregister_xkeen_initd`)
+  assert.notEqual(result.status, 0)
+  assert.equal(result.init, oldInit)
+  assert.equal(result.stdout, '')
+})
+test('init cleanup failure after live replacement remains an error for either native backup choice', () => {
+  for (const choice of [0, 1]) {
+    const result = run(`${initSetup}
+      printf '# new template\\n' >> "$xinstall_dir/07_install_register/04_register_init.sh"
+      choice_backup_xkeen() { return ${choice}; }
+      rm() { return 7; }
+      register_xkeen_initd`)
+    assert.equal(result.status, 1, String(choice))
+    assert.ok(result.init.endsWith('# new template\n'), 'live replacement has already happened; failure must remain visible')
+  }
+})
+test('failed native config permission changes restore umask and report failure', () => {
+  for (const mode of ['700', '600']) {
+    const result = run(`
+      xkeen_cfg="$register_dir/config"; mkdir "$xkeen_cfg"
+      file_ip_exclude="$xkeen_cfg/ip"; file_port_exclude="$xkeen_cfg/exclude"; file_port_proxying="$xkeen_cfg/proxy"; xkeen_config="$xkeen_cfg/config"
+      touch "$file_ip_exclude" "$file_port_exclude" "$file_port_proxying" "$xkeen_config"
+      chmod() { [ "$1" != '${mode}' ]; }
+      before=$(umask); create_xkeen_cfg; rc=$?; after=$(umask)
+      [ "$before" = "$after" ] || exit 99
+      exit "$rc"`)
+    assert.equal(result.status, 1, mode)
+  }
+})

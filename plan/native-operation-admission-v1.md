@@ -1114,6 +1114,18 @@ optional fields retain their meaning. Destination/backup collision protection,
 config permission errors, backup-choice reader propagation and cleanup are still
 unqualified prerequisites. Seven overlays remain fenced and uninstalled.
 
+The next error-propagation step prepares nine fenced overlays by adding the
+pinned backup-choice and native backup modules. A failed backup-choice AWK now
+returns a distinct error, consumed by both native callers before their first
+write. Disabled automatic backup and explicit manual backup retain native
+semantics. Native backup mkdir/copy/rename failures propagate, and initial `-uk`
+stops before download when backup fails. Native restore remains byte-for-byte
+upstream-owned. Init registration checks its cleanup removals; config permission
+failure restores the caller's umask and returns failure. This step does not yet
+qualify destination collision protection, bounded temporary cleanup or archive/
+backup resource limits. Cron-cache proof, native cleanup and actual updater
+terminal still block activation; all nine overlays remain fenced/uninstalled.
+
 Reproduce the disabled native-function fixtures after placing only the two
 hash-verified **public** inputs at the indicated ignored `dist` paths (never
 mount the operator credential/artifact directory):

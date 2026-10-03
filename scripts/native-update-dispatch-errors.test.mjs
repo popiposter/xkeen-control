@@ -76,6 +76,25 @@ echo WRONG_SUCCESS
   assert.ifError(r.error); assert.equal(r.status, 1, r.stderr)
   assert.equal(r.stdout, '')
 })
+test('reported initial backup failure stops before download or live installer', () => {
+  const initialBegin = text.indexOf('        -uk)    # Обновление XKeen\n')
+  const initialEnd = text.indexOf('        -uk_post_update)\n', initialBegin)
+  assert.ok(initialBegin > 0 && initialEnd > initialBegin)
+  const result = spawnSync('/bin/sh', ['-c', `
+    test_connection() { :; }; check_health() { :; }; test_entware() { :; }; test_github() { :; }
+    sleep() { :; }; smart_clear() { :; }; xkeen_info() { :; }; xkeen_set_info() { :; }
+    xkeen_build=Beta
+    backup_xkeen() { return 7; }
+    download_xkeen_dev() { echo UNEXPECTED_DOWNLOAD; }
+    install_xkeen() { echo UNEXPECTED_INSTALL; }
+    case -uk in
+    ${text.slice(initialBegin, initialEnd)}
+    esac
+  `], { encoding: 'utf8', timeout: 1000 })
+  assert.ifError(result.error)
+  assert.equal(result.status, 1)
+  assert.ok(!result.stdout.includes('UNEXPECTED_'))
+})
 
 test('both update phases bypass generic lifecycle completion after the native argv loop has shifted', () => {
   const tail = text.slice(text.lastIndexOf('\ncase "$_na_entry_action" in\n'))

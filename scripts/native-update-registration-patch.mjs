@@ -51,6 +51,18 @@ export function buildRegistrationWrites(entries) {
   body = checkWrites(body)
   deletion = deletion.slice(0, start) + body
   let registration = pinned(entries, registrationPath)
+  registration = replace(registration, 'register_xkeen_initd() {\n', `register_xkeen_initd() {
+    # Read the native backup choice before the first copy/live replacement.
+    choice_backup_xkeen
+    _init_backup_choice=$?
+    case "$_init_backup_choice" in 0|1) ;; *) return 1;; esac
+`)
+  registration = replace(registration, '    if choice_backup_xkeen; then', '    if [ "$_init_backup_choice" = 0 ]; then')
+  registration = replace(registration, '        rm -f "$source_main_backup" "$source_start_backup"', '        rm -f "$source_main_backup" "$source_start_backup" || return 1')
+  registration = replace(registration, '    rm -f "$old_initd_file" "$old_start_file" "$pre_initd_file"', '    rm -f "$old_initd_file" "$old_start_file" "$pre_initd_file" || return 1')
+  for (const command of ['chmod 700 "$xkeen_cfg" 2>/dev/null', 'chmod 600 "$xkeen_config" 2>/dev/null']) {
+    registration = replace(registration, command + '\n', command + ' || { umask "$previous_umask"; return 1; }\n')
+  }
   const listStart = registration.indexOf('register_xkeen_list() {\n'), listEnd = registration.indexOf('register_xkeen_status() {\n', listStart)
   if (listStart < 0 || listEnd < listStart) throw new Error('native list function changed')
   registration = registration.slice(0, listStart) + `register_xkeen_list() {
