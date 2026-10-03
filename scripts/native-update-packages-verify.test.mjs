@@ -7,12 +7,14 @@ import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
 
 const status = 'Package: fixture\nArchitecture: aarch64-fixture\nUnknown: unchanged\n\nPackage: xkeen\nVersion: 2.0.1\nDepends: jq, curl, coreutils-uname, coreutils-nohup, iptables, ipset, ip-full, conntrack\nStatus: install user installed\nArchitecture: aarch64-fixture\nInstalled-Time: 1720000000\n'
+const control = 'Package: xkeen\nVersion: 2.0.1\nDepends: jq, curl, coreutils-uname, coreutils-nohup, iptables, ipset, ip-full, conntrack\nSource: Skrill\nSourceName: xkeen\nSection: net\nSourceDateEpoch: 1720000000\nMaintainer: Skrill / jameszero\nArchitecture: aarch64-fixture\nInstalled-Size: 1234\nDescription: The platform that makes Xray work.\n'
 const verifier = readFileSync('scripts/native-admission-verify.sh', 'utf8').split('\n_nv_main() {')[0]
-function fixture({ input = status, before = '', setup = '', phase = 'pre', nested = false } = {}) {
+function fixture({ input = status, controlInput = control, before = '', setup = '', phase = 'pre', nested = false } = {}) {
   const ram = mkdtempSync('/tmp/native-package-read-'), code = mkdtempSync('/root/native-package-read-')
   chmodSync(ram, 0o700); chmodSync(code, 0o700)
   const rewrite = text => text.replaceAll('/tmp/.xkeen-admission', ram)
     .replaceAll('/opt/lib/opkg/status', `${code}/status`)
+    .replaceAll('/opt/lib/opkg/info/xkeen.control', `${code}/control`)
     .replaceAll('/opt/lib/xkeen/native-update-packages.awk', `${code}/parser`)
     .replaceAll('/opt/sbin/xkeen', `${code}/dispatcher`)
     .replaceAll('/opt/etc/xkeen-control/secrets/previous/.pending', `${code}/legacy-pending`)
@@ -21,6 +23,7 @@ function fixture({ input = status, before = '', setup = '', phase = 'pre', neste
   const put = (name, text) => writeFileSync(join(code, name), rewrite(text), { mode: 0o600 })
   for (const name of ['native-operation-gate', 'native-admission-entry', 'native-update-context']) put(name, readFileSync(`scripts/${name}.sh`, 'utf8'))
   writeFileSync(join(code, 'status'), input, { mode: 0o600 })
+  writeFileSync(join(code, 'control'), controlInput, { mode: 0o600 })
   put('parser', readFileSync('scripts/native-update-packages.awk', 'utf8'))
   put('functions', verifier); put('dispatcher', '# fixture dispatcher, never executed\n')
   put('reader', `. '@CODE@/native-operation-gate'; . '@CODE@/native-admission-entry'; . '@CODE@/native-update-context'; . '@CODE@/functions'
@@ -66,6 +69,7 @@ test('unsafe, nonterminated or oversized status/parser refuse before creating qu
     "mv '@CODE@/parser' '@CODE@/saved'; ln -s '@CODE@/saved' '@CODE@/parser'",
     "ln '@CODE@/status' '@CODE@/linked'", "truncate -s 524289 '@CODE@/status'",
     "truncate -s 65537 '@CODE@/parser'", "rm '@CODE@/parser'",
+    "chmod 666 '@CODE@/control'", "truncate -s 16385 '@CODE@/control'", "rm '@CODE@/control'",
   ]) { const r = fixture({ before }); assert.equal(r.status, 76, r.stderr); assert.equal(r.query, false); assert.equal(r.stdout, '') }
   const r = fixture({ input: status.trimEnd() }); assert.equal(r.status, 76); assert.equal(r.query, false)
 })
@@ -83,12 +87,20 @@ test('pending configuration blocks metadata reads without query creation', () =>
 test('late status/parser content or protection and owner drift refuse with query retained', () => {
   for (const change of ["printf changed >> '@CODE@/status'", "chmod 666 '@CODE@/status'",
     "chmod 666 '@CODE@/parser'", "printf '# changed\\n' >> '@CODE@/parser'",
+    "chmod 666 '@CODE@/control'", "printf '# changed\\n' >> '@CODE@/control'",
     "printf 'v1 changed\\n' >| '@RAM@/operation.lock.d/owner'",
   ]) {
     const r = fixture({ setup: `awk() {
 command awk "$@" || return $?
-case "$*" in *mode=identity*) ${change};; esac
+case "$*" in *mode=control*) ${change};; esac
 }` })
     assert.equal(r.status, 77, r.stderr); assert.equal(r.query, true); assert.equal(r.stdout, '')
+  }
+})
+test('control and status must agree; native timestamp/size changes preserve metadata identity', () => {
+  const original = fixture(), changed = fixture({ controlInput: control.replace('1720000000', '1720000001').replace('1234', '5678') })
+  assert.equal(original.status, 0); assert.equal(changed.status, 0); assert.equal(original.stdout, changed.stdout)
+  for (const controlInput of [control.replace('aarch64-fixture', 'different-architecture'), control.replace('Version: 2.0.1', 'Version: 2.0.2'), control.trimEnd()]) {
+    const r = fixture({ controlInput }); assert.equal(r.status, 76, r.stderr); assert.equal(r.stdout, '')
   }
 })

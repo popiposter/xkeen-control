@@ -816,8 +816,9 @@ Its control-file projection checks the exact native package/source/dependency/
 maintainer/description fields and returns the same identity as status, allowing
 only bounded decimal native `SourceDateEpoch` and `Installed-Size` variation.
 The source-only package identity reader authenticates the direct wrapper child,
-refuses configuration pending state, protects/rechecks the fixed status and
-parser, and produces two bounded projections in an exclusive RAM query directory.
+refuses configuration pending state, protects/rechecks the fixed status, control
+(16 KiB limit) and parser, and produces bounded projections in an exclusive RAM
+query directory. Control/status identities must match exactly.
 It returns only hashes; failure retains admission/query evidence. Its post phase
 requires typed completion proof, but the real producer and update-main integration
 remain absent. No native commands are executed by this reader.
