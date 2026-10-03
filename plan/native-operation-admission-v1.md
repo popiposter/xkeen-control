@@ -812,6 +812,9 @@ only native `Installed-Time` changes in the own identity projection. Native
 registration architecture must match the first status architecture that upstream
 uses. Caller protection, size/LF limits and authenticated pre/post integration
 are still required; the pure parser does not grant updater authority.
+Its control-file projection checks the exact native package/source/dependency/
+maintainer/description fields and returns the same identity as status, allowing
+only bounded decimal native `SourceDateEpoch` and `Installed-Size` variation.
 The source-only package identity reader authenticates the direct wrapper child,
 refuses configuration pending state, protects/rechecks the fixed status and
 parser, and produces two bounded projections in an exclusive RAM query directory.

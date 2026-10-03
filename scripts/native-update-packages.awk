@@ -4,7 +4,7 @@
 # contents and order for unrelated packages must remain identical.
 BEGIN {
     RS = ""
-    if (mode != "other" && mode != "identity") bad = 1
+    if (mode != "other" && mode != "identity" && mode != "control") bad = 1
     if (version != "2.0.1") bad = 1 # Pinned public native profile only.
 }
 {
@@ -35,23 +35,33 @@ BEGIN {
     }
     if (package == "xkeen") {
         own++
-        if (count != 6 || fields["Version"] != version ||
+        if (fields["Version"] != version ||
             fields["Depends"] != "jq, curl, coreutils-uname, coreutils-nohup, iptables, ipset, ip-full, conntrack" ||
-            fields["Status"] != "install user installed" ||
-            fields["Architecture"] !~ /^[A-Za-z0-9][A-Za-z0-9_.-]*$/ ||
-            fields["Installed-Time"] !~ /^(0|[1-9][0-9]*)$/ || length(fields["Installed-Time"]) > 10) bad = 1
+            fields["Architecture"] !~ /^[A-Za-z0-9][A-Za-z0-9_.-]*$/) bad = 1
         architecture = fields["Architecture"]
-        for (key in fields) if (key != "Package" && key != "Version" && key != "Depends" && key != "Status" && key != "Architecture" && key != "Installed-Time") bad = 1
+        if (mode == "control") {
+            if (count != 11 || fields["Source"] != "Skrill" || fields["SourceName"] != "xkeen" ||
+                fields["Section"] != "net" || fields["Maintainer"] != "Skrill / jameszero" ||
+                fields["Description"] != "The platform that makes Xray work." ||
+                fields["SourceDateEpoch"] !~ /^(0|[1-9][0-9]*)$/ || length(fields["SourceDateEpoch"]) > 10 ||
+                fields["Installed-Size"] !~ /^(0|[1-9][0-9]*)$/ || length(fields["Installed-Size"]) > 10) bad = 1
+            allowed = " Package Version Depends Source SourceName Section SourceDateEpoch Maintainer Architecture Installed-Size Description "
+        } else {
+            if (count != 6 || fields["Status"] != "install user installed" ||
+                fields["Installed-Time"] !~ /^(0|[1-9][0-9]*)$/ || length(fields["Installed-Time"]) > 10) bad = 1
+            allowed = " Package Version Depends Status Architecture Installed-Time "
+        }
+        for (key in fields) if (!index(allowed, " " key " ")) bad = 1
     } else {
         other[++others] = $0
     }
 }
 END {
     # Native derives registration architecture from the first status stanza.
-    if (own != 1 || first_architecture != architecture) bad = 1
+    if (own != 1 || first_architecture != architecture || (mode == "control" && NR != 1)) bad = 1
     if (bad) exit 76 # Never emit partial output that could be mistaken for proof.
-    if (mode == "identity") {
-        # Only Installed-Time is expected to vary during native registration.
+    if (mode == "identity" || mode == "control") {
+        # Native registration timestamps/size vary; declarative identity does not.
         print "xkeen " version " " architecture
     } else for (i = 1; i <= others; i++) printf "%s\n\n", other[i]
 }

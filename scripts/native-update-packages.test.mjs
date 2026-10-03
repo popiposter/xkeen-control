@@ -5,6 +5,7 @@ import { test } from 'node:test'
 
 export const own = 'Package: xkeen\nVersion: 2.0.1\nDepends: jq, curl, coreutils-uname, coreutils-nohup, iptables, ipset, ip-full, conntrack\nStatus: install user installed\nArchitecture: aarch64-fixture\nInstalled-Time: 1720000000\n'
 const other = 'Package: fixture\nVersion: 1.0\nStatus: install ok installed\nArchitecture: aarch64-fixture\nDescription: preserved unknown fields\n continuation: not a header\nUnknown-Field: literal value\n'
+const control = 'Package: xkeen\nVersion: 2.0.1\nDepends: jq, curl, coreutils-uname, coreutils-nohup, iptables, ipset, ip-full, conntrack\nSource: Skrill\nSourceName: xkeen\nSection: net\nSourceDateEpoch: 1720000000\nMaintainer: Skrill / jameszero\nArchitecture: aarch64-fixture\nInstalled-Size: 1234\nDescription: The platform that makes Xray work.\n'
 function project(input, mode = 'other', version = '2.0.1', command = 'awk') {
   const r = spawnSync(command, ['-v', `mode=${mode}`, '-v', `version=${version}`, '-f', 'scripts/native-update-packages.awk'], { input, encoding: 'utf8', timeout: 2000 })
   assert.ifError(r.error); return r
@@ -48,4 +49,17 @@ test('bounded malformed/oversized stanza and package inventories do not emit par
     own + '\n' + Array.from({ length: 512 }, (_, i) => other.replace('Package: fixture', `Package: fixture-${i}`)).join('\n'),
     own + '\n' + other.replace('literal value', 'x'.repeat(66000)),
   ]) { const r = project(input); assert.equal(r.status, 76); assert.equal(r.stdout, '') }
+})
+test('control metadata preserves native identity while admitting only dynamic timestamp and size', () => {
+  assert.equal(ok(control, 'control'), ok(own, 'identity'))
+  assert.equal(ok(control.replace('1720000000', '1720000001').replace('1234', '5678'), 'control'), ok(control, 'control'))
+  for (const input of [own, control + '\n' + control, control + '\n' + other,
+    control.replace('Source: Skrill', 'Source: unknown'), control.replace('SourceName: xkeen', 'SourceName: other'),
+    control.replace('Section: net', 'Section: other'), control.replace('Skrill / jameszero', 'unknown'),
+    control.replace('The platform that makes Xray work.', 'different description'),
+    control.replace('SourceDateEpoch: 1720000000', 'SourceDateEpoch: $(id)'),
+    control.replace('Installed-Size: 1234', 'Installed-Size: -1'),
+    control.replace('Installed-Size: 1234', 'Installed-Size: 12345678901'),
+    control.replace('Architecture: aarch64-fixture', 'Architecture: '), control + 'Unknown: field\n',
+  ]) { const r = project(input, 'control'); assert.equal(r.status, 76); assert.equal(r.stdout, '') }
 })

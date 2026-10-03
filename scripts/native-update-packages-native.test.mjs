@@ -15,9 +15,9 @@ const deleted = source.get('_xkeen/03_delete/05_delete_register.sh').toString('u
 const registered = source.get('_xkeen/02_install/07_install_register/02_register_xkeen.sh').toString('utf8')
 const architectureReader = source.get('_xkeen/01_info/08_info_router.sh').toString('utf8').split('\n').find(line => line.trim().startsWith('status_architecture='))
 assert.ok(architectureReader?.includes("grep -m 1 '^Architecture:'"))
-const fragments = common.slice(common.indexOf('write_opkg_status() {\n')) + '\n' +
+const fragments = common + '\n' +
   deleted.slice(deleted.indexOf('delete_register_xkeen() {\n')) + '\n' +
-  registered.slice(registered.indexOf('register_xkeen_status() {\n'), registered.indexOf('register_xkeen_initd() {\n'))
+  registered.slice(0, registered.indexOf('register_xkeen_initd() {\n'))
 function fixture(input) {
   const root = mkdtempSync('/tmp/native-package-registration-')
   const before = join(root, 'before'), after = join(root, 'status')
@@ -29,6 +29,11 @@ ${fragments}
 delete_register_xkeen
 register_xkeen_status
 fixed_register_packages
+install_dir='${root}'
+register_xkeen_control
+awk -v mode=control -v version=2.0.1 -f scripts/native-update-packages.awk '${root}/xkeen.control' > '${root}/control-identity' || exit $?
+awk -v mode=identity -v version=2.0.1 -f scripts/native-update-packages.awk "$status_file" > '${root}/status-identity' || exit $?
+cmp '${root}/control-identity' '${root}/status-identity' || exit 91
 awk -v mode=other -v version=2.0.1 -f scripts/native-update-packages.awk "$status_file" > '${root}/other-after' || exit $?
 cmp '${root}/other-before' '${root}/other-after' || exit 90
 awk -v mode=identity -v version=2.0.1 -f scripts/native-update-packages.awk "$status_file"
