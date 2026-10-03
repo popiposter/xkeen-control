@@ -722,9 +722,10 @@ archive extraction and the existing `.old` replacement remain upstream-owned.
 Missing or rejected preservation leaves both live dispatcher and module tree
 unchanged in the actual extracted-function fixture. A successful synthetic
 callback proves only replacement ordering, not real admission preservation.
-The module output is unconditionally fenced; the authenticated staging worker,
-updater role/exec handoff, postconditions and long-update event settlement remain
-unimplemented. Nothing from this experiment may be installed.
+The module output is unconditionally fenced. The authenticated staging worker
+and complete supported profile now have source fixtures described above;
+updater executor/exec wiring, full postconditions and long-update event settlement
+remain unimplemented. Nothing from this experiment may be installed.
 
 The opt-in fixture requires the exact **public** installer input, outside the
 default helper catalogue:
@@ -766,6 +767,18 @@ must first authenticate admission, protect/bound the input and require a final
 LF, then compare both code and settings digests. That caller, update baseline,
 package/kernel postconditions and executor integration are not implemented by
 the primitive and still block activation. It is not installed on the router.
+
+`native_update_verifier_context pre|post` now supplies read-only invocation
+authentication for a future update-specific verifier: immediate live wrapper
+parent with the canonical current call generation. Preflight refuses existing
+body/exec/completion evidence. Postflight permits the native body to have exited,
+but requires its stored identity, prepared dispatcher/stage/consumed exec proof
+and a canonical typed completion record; all are rechecked before return.
+It never grants body/finish authority or releases admission. The fixture's
+exclusive RAM completion publication is synthetic protocol evidence, not the
+native completion producer. Actual terminal publication, baseline/postcondition
+verification, already-current no-op handling and executor integration remain
+unimplemented and block enabling this candidate.
 
 Normal long-writer contention has a separate known-no-effect result. If an
 elected NDM invocation reaches its valid monotonic deadline after busy admission,

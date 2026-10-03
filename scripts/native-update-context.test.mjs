@@ -8,7 +8,7 @@ import { test } from 'node:test'
 const hash = value => createHash('sha256').update(value).digest('hex')
 const argvHash = hash(Buffer.from('/opt/bin/sh\0/opt/sbin/xkeen\0-uk_post_update\0'))
 assert.ok(readFileSync('scripts/native-update-context.sh', 'utf8').includes(argvHash))
-function fixture({ action = 'update-xkeen', setup = '', child = 'native_update_stage_context "$stage"', body = '', borrowed = false, beforeBind = '', execFlow = false, stageFlow = false, execProbe = 'native_update_exec_context', stagedChange = '', execArgument = '-uk_post_update', withoutExec = false } = {}) {
+function fixture({ action = 'update-xkeen', setup = '', child = 'native_update_stage_context "$stage"', body = '', borrowed = false, beforeBind = '', execFlow = false, stageFlow = false, execProbe = 'native_update_exec_context', stagedChange = '', execArgument = '-uk_post_update', withoutExec = false, verifyPhase = '', verifierSetup = '', wrapperSetup = '', nestedVerifier = false } = {}) {
   const root = mkdtempSync('/tmp/native-update-context-')
   const code = mkdtempSync('/root/native-update-exec-')
   chmodSync(code, 0o700)
@@ -20,6 +20,11 @@ function fixture({ action = 'update-xkeen', setup = '', child = 'native_update_s
     .replaceAll(argvHash, hash(Buffer.from(`/bin/sh\0${executable}\0-uk_post_update\0`)))
   const put = (name, text) => writeFileSync(join(root, name), rewrite(text), { mode: 0o600 })
   for (const name of ['native-operation-gate', 'native-admission-entry', 'native-update-context']) put(name, readFileSync(`scripts/${name}.sh`, 'utf8'))
+  put('verifier', `. '@ROOT@/native-operation-gate'; . '@ROOT@/native-admission-entry'; . '@ROOT@/native-update-context'
+${verifierSetup}
+native_update_verifier_context '${verifyPhase}'
+`)
+  const verifyInvoke = nestedVerifier ? `/bin/sh -c '/bin/sh "@ROOT@/verifier"'` : `/bin/sh '@ROOT@/verifier'`
   put('child', `. '@ROOT@/native-operation-gate'; . '@ROOT@/native-admission-entry'; . '@ROOT@/native-update-context'
 ${setup}
 ${execFlow ? `native_update_bind_staged "$stage" || exit $?
@@ -45,8 +50,11 @@ XKEEN_ADMISSION_ROLE=update; XKEEN_ADMISSION_ACTION=update-xkeen; XKEEN_ADMISSIO
 export XKEEN_ADMISSION_ROLE XKEEN_ADMISSION_ACTION XKEEN_ADMISSION_CALL
 mkdir -m 700 '@ROOT@/operation.lock.d/call.update' || exit 91
 (umask 077; printf 'v1 %s %s %s update update-xkeen forced %s\\n' "$_ng_self_pid" "$_ng_self_start" "$XKEEN_ADMISSION_CALL" "$XKEEN_GATE_TOKEN" > '@ROOT@/operation.lock.d/call.update/context') || exit 92
+${wrapperSetup}
+${verifyPhase === 'pre' ? `${verifyInvoke}; exit $?` : ''}
 /bin/sh '@ROOT@/body'
 rc=$?
+${verifyPhase === 'post' ? `[ "$rc" = 0 ] || exit "$rc"; ${verifyInvoke}; rc=$?` : ''}
 # Authentication helper must never release or settle the owner.
 [ -f '@ROOT@/operation.lock.d/owner' ] || exit 93
 exit "$rc"
@@ -64,6 +72,81 @@ native_gate_acquire '@ROOT@' '${action}' || exit 90
       execArgv: existsSync(join(root, 'operation.lock.d/call.update/exec.argv')) }
   } finally { rmSync(root, { recursive: true, force: true }); rmSync(code, { recursive: true, force: true }) }
 }
+
+// Synthetic completion publication exercises read-only verifier timing only;
+// no native terminal producer or end-to-end updater is claimed by this fixture.
+const completedExec = `native_update_exec_context || exit $?
+(umask 077; set -C; printf '%s updated %s\\n' "$_nu_body" "$_nu_expected_hash" > '@ROOT@/operation.lock.d/call.update/completed')
+`
+test('preflight authenticates the immediate live wrapper before a body is bound', () => {
+  for (const borrowed of [false, true]) {
+    const r = fixture({ verifyPhase: 'pre', borrowed })
+    assert.equal(r.status, 0, r.stderr); assert.equal(r.bodyPresent, false)
+  }
+})
+
+test('preflight rejects existing body/phase evidence and inherited descendants', () => {
+  for (const name of ['body', 'staged', 'exec.used', 'exec.argv', 'completed']) {
+    for (const create of [`touch '@ROOT@/operation.lock.d/call.update/${name}'`, `ln -s '@ROOT@/absent' '@ROOT@/operation.lock.d/call.update/${name}'`]) {
+      const r = fixture({ verifyPhase: 'pre', wrapperSetup: create })
+      assert.equal(r.status, 77, r.stderr)
+    }
+  }
+  assert.equal(fixture({ verifyPhase: 'pre', nestedVerifier: true }).status, 77)
+})
+
+test('postflight authenticates under the wrapper after actual exec body exit', () => {
+  for (const borrowed of [false, true]) {
+    const r = fixture({ verifyPhase: 'post', execFlow: true, execProbe: completedExec, borrowed })
+    assert.equal(r.status, 0, r.stderr); assert.equal(r.execUsed && r.stagedPresent, true)
+  }
+})
+
+test('preflight refuses phase evidence appearing during the final generation check', () => {
+  for (const name of ['body', 'staged', 'exec.used', 'exec.argv', 'completed']) {
+    for (const create of [`touch '@ROOT@/operation.lock.d/call.update/${name}'`, `ln -s '@ROOT@/absent' '@ROOT@/operation.lock.d/call.update/${name}'`]) {
+      const verifierSetup = `eval "$(sed 's/^_nu_recheck_call()/original_recheck_call()/' '@ROOT@/native-update-context')"
+_nu_recheck_call() { ${create}; original_recheck_call; }`
+      const r = fixture({ verifyPhase: 'pre', verifierSetup })
+      assert.equal(r.status, 77, r.stderr)
+    }
+  }
+})
+
+test('exec/staged evidence alone never proves completion; missing or drifted records refuse', () => {
+  const missing = fixture({ verifyPhase: 'post', execFlow: true })
+  assert.equal(missing.status, 77); assert.equal(missing.execUsed && missing.stagedPresent, true)
+  for (const verifierSetup of [
+    "printf 'changed\\n' > '@ROOT@/operation.lock.d/call.update/body'",
+    "printf 'changed\\n' > '@ROOT@/operation.lock.d/call.update/staged'",
+    "printf 'changed\\n' > '@ROOT@/operation.lock.d/call.update/completed'",
+    "printf 'changed\\n' > '@ROOT@/operation.lock.d/call.update/exec.argv'",
+    "chmod 644 '@ROOT@/operation.lock.d/call.update/completed'",
+    "printf '# changed\\n' >> '@EXEC@'",
+    "XKEEN_ADMISSION_CALL=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sed -i 's/ forced / automatic /' '@ROOT@/operation.lock.d/call.update/context'",
+  ]) {
+    const r = fixture({ verifyPhase: 'post', execFlow: true, execProbe: completedExec, verifierSetup })
+    assert.equal(r.status, 77, r.stderr); assert.equal(r.execUsed, true)
+  }
+  assert.equal(fixture({ verifyPhase: 'post', execFlow: true, execProbe: completedExec, nestedVerifier: true }).status, 77)
+})
+
+test('postflight rechecks immutable records and exec proof after authentication', () => {
+  for (const change of [
+    "printf 'changed\\n' > '@ROOT@/operation.lock.d/call.update/body'",
+    "printf 'changed\\n' > '@ROOT@/operation.lock.d/call.update/staged'",
+    "printf 'changed\\n' > '@ROOT@/operation.lock.d/call.update/completed'",
+    "printf 'changed\\n' > '@ROOT@/operation.lock.d/call.update/exec.argv'",
+    "chmod 755 '@ROOT@/operation.lock.d/call.update/exec.used'",
+    "printf '# changed\\n' >> '@EXEC@'",
+  ]) {
+    const verifierSetup = `eval "$(sed 's/^_nu_recheck_call()/original_recheck_call()/' '@ROOT@/native-update-context')"
+_nu_recheck_call() { ${change}; original_recheck_call; }`
+    const r = fixture({ verifyPhase: 'post', execFlow: true, execProbe: completedExec, verifierSetup })
+    assert.equal(r.status, 77, r.stderr); assert.equal(r.execUsed && r.bodyPresent && r.stagedPresent, true)
+  }
+})
 
 test('only the fixed stage child of the bound native update body authenticates', () => {
   const r = fixture(); assert.equal(r.status, 0, r.stderr)

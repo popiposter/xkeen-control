@@ -33,6 +33,76 @@ _nu_recheck_call() {
     _nu_read_record "$_nu_call/context" || return 77
     [ "$_nu_record" = "$_nu_context" ] || return 77
 }
+native_update_verifier_context() {
+    # Read-only verifier invocation, not body/stage/finish authority. Preflight
+    # precedes body binding; postflight runs after that body has exited, so its
+    # live parent is the wrapper. Never authenticate by requiring a live body.
+    [ "$#" = 1 ] || return 76
+    case "$1" in pre|post) ;; *) return 76;; esac
+    _nu_verify_phase=$1
+    _nu_load_call || return $?
+    _nu_verify_gate=$_nu_gate_record; _nu_verify_context=$_nu_context
+    _native_gate_self || return 77
+    _nu_verify_pid=$_ng_self_pid; _nu_verify_start=$_ng_self_start
+    _native_gate_proc "$_nu_verify_pid" || return 77
+    [ "$_ng_parent" = "$_nu_wrapper_pid" ] || return 77
+    _native_gate_proc "$_nu_wrapper_pid" || return 77
+    [ "$_ng_proc_start" = "$_nu_wrapper_start" ] || return 77
+    if [ "$_nu_verify_phase" = pre ]; then
+        for _nu_verify_name in body staged exec.used exec.argv completed; do
+            [ ! -e "$_nu_call/$_nu_verify_name" ] && [ ! -L "$_nu_call/$_nu_verify_name" ] || return 77
+        done
+    else
+        _nu_read_record "$_nu_call/body" || return 77
+        _nu_verify_body=$_nu_record
+        set -- $_nu_verify_body
+        [ "$#" = 4 ] && [ "$1" = v1 ] && [ "$4" = "$_nu_nonce" ] || return 77
+        _native_gate_decimal "$2" && _native_gate_decimal "$3" || return 77
+        _nu_verify_body_pid=$2; _nu_verify_body_start=$3
+        [ "$_nu_verify_body" = "v1 $_nu_verify_body_pid $_nu_verify_body_start $_nu_nonce" ] || return 77
+        _nu_read_record "$_nu_call/staged" || return 77
+        _nu_verify_staged=$_nu_record
+        _nu_dispatcher_hash || return $?
+        _nu_verify_dispatcher=$_nu_hash
+        [ "$_nu_verify_staged" = "$_nu_verify_body $_nu_verify_dispatcher" ] || return 77
+        _native_gate_directory "$_nu_call/exec.used" 0700 || return 77
+        _na_small_file "$_nu_call/exec.argv" || return 77
+        _nu_verify_argv=$(sha256sum "$_nu_call/exec.argv" 2>/dev/null) || return 77
+        [ "${_nu_verify_argv%% *}" = f7549ee949d9d02fa5ba2e6586f286394c31c2243d32d7ed1b520aa37d5439fe ] || return 77
+        # The future fixed native body completion producer must publish this
+        # only after its reviewed successful terminal, before returning. Stage
+        # and exec consumption alone never establish updater completion.
+        _nu_read_record "$_nu_call/completed" || return 77
+        _nu_verify_completed=$_nu_record
+        [ "$_nu_verify_completed" = "$_nu_verify_body updated $_nu_verify_dispatcher" ] || return 77
+    fi
+    _nu_recheck_call || return 77
+    [ "$_nu_gate_record" = "$_nu_verify_gate" ] && [ "$_nu_context" = "$_nu_verify_context" ] || return 77
+    if [ "$_nu_verify_phase" = post ]; then
+        _nu_read_record "$_nu_call/body" || return 77
+        [ "$_nu_record" = "$_nu_verify_body" ] || return 77
+        _nu_read_record "$_nu_call/staged" || return 77
+        [ "$_nu_record" = "$_nu_verify_staged" ] || return 77
+        _nu_read_record "$_nu_call/completed" || return 77
+        [ "$_nu_record" = "$_nu_verify_completed" ] || return 77
+        _native_gate_directory "$_nu_call/exec.used" 0700 || return 77
+        _na_small_file "$_nu_call/exec.argv" || return 77
+        _nu_verify_argv_final=$(sha256sum "$_nu_call/exec.argv" 2>/dev/null) || return 77
+        [ "$_nu_verify_argv_final" = "$_nu_verify_argv" ] || return 77
+        _nu_dispatcher_hash || return 77
+        [ "$_nu_hash" = "$_nu_verify_dispatcher" ] || return 77
+    fi
+    _native_gate_proc "$_nu_verify_pid" || return 77
+    [ "$_ng_proc_start:$_ng_parent" = "$_nu_verify_start:$_nu_wrapper_pid" ] || return 77
+    _native_gate_proc "$_nu_wrapper_pid" || return 77
+    [ "$_ng_proc_start" = "$_nu_wrapper_start" ] || return 77
+    if [ "$_nu_verify_phase" = pre ]; then
+        for _nu_verify_name in body staged exec.used exec.argv completed; do
+            [ ! -e "$_nu_call/$_nu_verify_name" ] && [ ! -L "$_nu_call/$_nu_verify_name" ] || return 77
+        done
+    fi
+    return 0
+}
 native_update_bind_body() {
     # One exclusive RAM binding in the existing call scope, before body effects.
     # Obtain the actual process identity through /proc, never inherited shell $$.
