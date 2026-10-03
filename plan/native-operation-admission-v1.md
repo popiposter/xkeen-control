@@ -804,6 +804,24 @@ missing completion retains the baseline. Fixtures use actual admission/proof
 code with synthetic kernel views and synthetic phase receipts: no updater,
 timeout utility on hardware, packet traffic or live completion is qualified.
 
+The source-only update environment preflight now excludes legacy init/port/list
+migration and first-install/new-feature effects. It requires protected existing
+native configuration and ipset/crontab directories, valid native JSON and a
+successful size/time-bounded native package query proving either one installed
+cron package or its absence with the exact pinned native version0.6 cron init.
+Both make native cron-init registration a no-op. It refuses every crontab line matched by the pinned native removal
+expression and freezes safe remaining content or absence. Fixed inputs and
+capabilities are checked again after the query; ambiguous output, migration
+state, drift or existing query evidence retains admission. Pinned actual native
+feature/cron/migration/configuration functions on disposable files demonstrate
+that supported inputs skip feature installation/legacy migration/cron init
+replacement and preserve config/crontab content through their native operations.
+The native script's1711 bytes are derived from its pinned public echo-e literal;
+read-only installed-script hash comparison matches that generation on the target.
+No cron package installation or live native registration is performed or claimed.
+Main update wiring, complete prepared profile/package/kernel/config baselines
+and final native completion remain pending; all candidates stay fenced.
+
 Normal long-writer contention has a separate known-no-effect result. If an
 elected NDM invocation reaches its valid monotonic deadline after busy admission,
 and has **never acquired** operation admission, it may retire only its own live

@@ -5,7 +5,10 @@ PATH=/opt/bin:/opt/sbin:/usr/bin:/bin
 export PATH
 umask 077
 
-_nv_file_ok() {
+_nv_path_ok() {
+    [ "$#" = 2 ] || return 76
+    case "$2" in file|directory) ;; *) return 76;; esac
+    _nv_kind=$2
     _nv_file=$1
     _nv_walk=$1
     while :; do
@@ -16,7 +19,11 @@ _nv_file_ok() {
         case "$4" in ''|*[!0-9a-fA-F]*) return 76;; esac
         [ "$((0x$4 & 0022))" -eq 0 ] || return 76
         if [ "$_nv_walk" = "$_nv_file" ]; then
-            [ -f "$_nv_walk" ] && [ "$9" = 1 ] || return 76
+            if [ "$_nv_kind" = file ]; then
+                [ -f "$_nv_walk" ] && [ "$9" = 1 ] || return 76
+            else
+                [ -d "$_nv_walk" ] || return 76
+            fi
         else
             [ -d "$_nv_walk" ] || return 76
         fi
@@ -24,6 +31,8 @@ _nv_file_ok() {
         _nv_walk=${_nv_walk%/*}; [ -n "$_nv_walk" ] || _nv_walk=/
     done
 }
+_nv_file_ok() { _nv_path_ok "$1" file; }
+_nv_directory_ok() { _nv_path_ok "$1" directory; }
 _nv_hash() {
     _nv_line=$(sha256sum "$1" 2>/dev/null) || return 76
     _nv_digest=${_nv_line%% *}
@@ -193,6 +202,91 @@ _nv_update_init_identity() {
     [ "$_nu_gate_record" = "$_nv_update_gate" ] && [ "$_nu_context" = "$_nv_update_context" ] || return 77
 }
 # END UPDATE INIT IDENTITY
+# BEGIN UPDATE ENVIRONMENT
+_nv_update_environment_inputs() {
+    # This supported update path permits native regeneration/registration, not
+    # first-install/new-feature/legacy migration effects. Check before body.
+    for _nv_env_absent in /opt/etc/init.d/S99xkeen /opt/etc/init.d/S24xray /opt/etc/init.d/S99xkeenstart /opt/etc/xkeen_exclude.lst; do
+        [ ! -e "$_nv_env_absent" ] && [ ! -L "$_nv_env_absent" ] || return 76
+    done
+    _nv_directory_ok /opt/etc/xkeen/ipset && _nv_directory_ok /opt/var/spool/cron/crontabs || return 76
+    for _nv_env_path in /opt/etc/xkeen/xkeen.json /opt/etc/xkeen/port_proxying.lst /opt/etc/xkeen/port_exclude.lst /opt/etc/xkeen/ip_exclude.lst /opt/lib/opkg/status; do
+        _nv_file_ok "$_nv_env_path" || return 76
+        _native_gate_metadata "$_nv_env_path" || return 76
+        [ "$_ng_meta_size" -le 2097152 ] || return 76
+        _nv_hash "$_nv_env_path" || return 76
+        printf ' %s\n' "$_nv_env_path"
+    done
+    jq -e 'type == "object" and (.xkeen == null or (.xkeen | type) == "object")' /opt/etc/xkeen/xkeen.json >/dev/null 2>&1 || return 76
+    _nv_env_cron_init=/opt/etc/init.d/S05crond
+    if [ -e "$_nv_env_cron_init" ] || [ -L "$_nv_env_cron_init" ]; then
+        _nv_file_ok "$_nv_env_cron_init" || return 76
+        _native_gate_metadata "$_nv_env_cron_init" || return 76
+        [ "$_ng_meta_size" -le 65536 ] || return 76
+        _nv_hash "$_nv_env_cron_init" || return 76
+        printf ' cron-init\n'
+    else
+        printf 'absent cron-init\n'
+    fi
+    _nv_env_cron=/opt/var/spool/cron/crontabs/root
+    if [ -e "$_nv_env_cron" ] || [ -L "$_nv_env_cron" ]; then
+        _nv_file_ok "$_nv_env_cron" || return 76
+        _native_gate_metadata "$_nv_env_cron" || return 76
+        [ "$_ng_meta_size" -le 65536 ] || return 76
+        if [ "$_ng_meta_size" -gt 0 ]; then
+            _nv_update_init_file "$_nv_env_cron" || return 76
+        fi
+        # Match the actual pinned native removal expression, including comments
+        # and prefix matches; its grep-v rewrite must not remove any line.
+        grep -E '(/opt/sbin/xkeen[[:space:]]+-(ugi|ugs|ux|uk))' "$_nv_env_cron" >/dev/null
+        _nv_env_grep=$?
+        [ "$_nv_env_grep" = 1 ] || return 76
+        _nv_hash "$_nv_env_cron" || return 76
+        printf ' cron\n'
+    else
+        printf 'absent cron\n'
+    fi
+}
+_nv_update_environment_pre() {
+    [ "$#" = 0 ] || return 76
+    native_update_verifier_context pre || return $?
+    _nv_env_gate=$_nu_gate_record; _nv_env_context=$_nu_context
+    _nv_env_before=$(_nv_update_environment_inputs) || return 76
+    _nv_file_ok /opt/bin/opkg && _nv_file_ok /opt/libexec/timeout-coreutils || return 76
+    [ -x /opt/bin/opkg ] && [ -x /opt/libexec/timeout-coreutils ] || return 76
+    _nv_env_opkg_hash=$(_nv_hash /opt/bin/opkg) || return 76
+    _nv_env_timeout_hash=$(_nv_hash /opt/libexec/timeout-coreutils) || return 76
+    _nv_env_query=$_nu_call/environment.pre
+    (umask 077; mkdir "$_nv_env_query") 2>/dev/null || return 77
+    _native_gate_directory "$_nv_env_query" 0700 || return 77
+    (umask 077; set -C; ulimit -f 512 || exit 76
+        /opt/libexec/timeout-coreutils -s KILL 15 /opt/bin/opkg list-installed > "$_nv_env_query/packages" 2>/dev/null) || return 76
+    _nv_ram_file "$_nv_env_query/packages" 262144 || return 77
+    _nv_env_cron_count=$(LC_ALL=C awk '
+      /^[A-Za-z0-9][A-Za-z0-9+_.-]* - [A-Za-z0-9][A-Za-z0-9+_.:~()-]*$/ {if($1=="cron")cron++;next}
+      {bad=1} END {if(bad || cron>1)exit 76; print cron+0}' "$_nv_env_query/packages") || return 76
+    case "$_nv_env_cron_count" in
+        1) ;; # Native register_cron_initd returns before touching its script.
+        0)
+            # Native BusyBox crond profile: exact pinned script version0.6 makes
+            # registration skip replacement, without installing a cron package.
+            # The pinned public native echo-e payload is1711 bytes; its fixture
+            # derives these bytes and tests the actual registration function.
+            [ "$(_nv_hash /opt/etc/init.d/S05crond)" = 516226b527a140fc733d349c42dd8e92b3182dbc7ac3df38c78e75bbb7a713e2 ] || return 76
+            ;;
+        *) return 76;;
+    esac
+    _nv_env_after=$(_nv_update_environment_inputs) || return 77
+    [ "$_nv_env_before" = "$_nv_env_after" ] || return 77
+    _nv_file_ok /opt/bin/opkg && _nv_file_ok /opt/libexec/timeout-coreutils || return 77
+    [ "$(_nv_hash /opt/bin/opkg)" = "$_nv_env_opkg_hash" ] &&
+        [ "$(_nv_hash /opt/libexec/timeout-coreutils)" = "$_nv_env_timeout_hash" ] || return 77
+    native_update_verifier_context pre || return 77
+    [ "$_nu_gate_record" = "$_nv_env_gate" ] && [ "$_nu_context" = "$_nv_env_context" ] || return 77
+    _nv_env_digest=$(printf '%s\n' "$_nv_env_before" | sha256sum) || return 77
+    _nv_env_digest=${_nv_env_digest%% *}
+}
+# END UPDATE ENVIRONMENT
 _nv_main() {
     [ "$#" = 4 ] && [ "$(id -u)" = 0 ] || return 76
     _nv_phase=$1; _na_role=$2; _na_action=$3; _na_mode=$4
