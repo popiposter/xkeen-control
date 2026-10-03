@@ -242,3 +242,54 @@ native_update_exec_context() {
     _nu_dispatcher_hash || return $?
     [ "$_nu_hash" = "$_nu_expected_hash" ] || return 77
 }
+_nu_terminal_context() {
+    _nu_load_call || return $?
+    _native_gate_self || return 77
+    _nu_term_pid=$_ng_self_pid; _nu_term_start=$_ng_self_start
+    _nu_read_record "$_nu_call/body" || return 77
+    _nu_term_body=$_nu_record
+    [ "$_nu_term_body" = "v1 $_nu_term_pid $_nu_term_start $_nu_nonce" ] || return 77
+    _native_gate_proc "$_nu_term_pid" || return 77
+    [ "$_ng_parent" = "$_nu_wrapper_pid" ] || return 77
+    _native_gate_proc "$_nu_wrapper_pid" || return 77
+    [ "$_ng_proc_start" = "$_nu_wrapper_start" ] || return 77
+    _nu_read_record "$_nu_call/staged" || return 77
+    _nu_term_staged=$_nu_record
+    _nu_dispatcher_hash || return 77
+    _nu_term_hash=$_nu_hash
+    [ "$_nu_term_staged" = "$_nu_term_body $_nu_term_hash" ] || return 77
+    _native_gate_directory "$_nu_call/exec.used" 0700 || return 77
+    _na_small_file "$_nu_call/exec.argv" || return 77
+    _nu_term_argv=$(sha256sum "$_nu_call/exec.argv" 2>/dev/null) || return 77
+    [ "${_nu_term_argv%% *}" = f7549ee949d9d02fa5ba2e6586f286394c31c2243d32d7ed1b520aa37d5439fe ] || return 77
+}
+_nu_terminal_recheck() {
+    _nu_terminal_context || return 77
+    [ "$_nu_gate_record" = "$_nu_done_gate" ] && [ "$_nu_context" = "$_nu_done_context" ] &&
+        [ "$_nu_term_body" = "$_nu_done_body" ] && [ "$_nu_term_staged" = "$_nu_done_staged" ] &&
+        [ "$_nu_term_hash" = "$_nu_done_hash" ] || return 77
+    _na_small_file "$_nu_call/terminal.argv" || return 77
+    _nu_done_argv=$(sha256sum "$_nu_call/terminal.argv" 2>/dev/null) || return 77
+    [ "${_nu_done_argv%% *}" = f7549ee949d9d02fa5ba2e6586f286394c31c2243d32d7ed1b520aa37d5439fe ] || return 77
+}
+native_update_complete() {
+    # Future fixed native successful terminal only. This producer does not
+    # perform postconditions, release admission or authorize another writer.
+    # Wiring it before/after arbitrary statements is not updater acceptance.
+    [ "$#" = 1 ] && [ "$1" = 0 ] || return 77
+    _nu_terminal_context || return $?
+    _nu_done_gate=$_nu_gate_record; _nu_done_context=$_nu_context
+    _nu_done_body=$_nu_term_body; _nu_done_staged=$_nu_term_staged; _nu_done_hash=$_nu_term_hash
+    for _nu_done_name in completed terminal.argv; do
+        [ ! -e "$_nu_call/$_nu_done_name" ] && [ ! -L "$_nu_call/$_nu_done_name" ] || return 77
+    done
+    # Prove actual post-exec argv again, not merely the stored phase receipt.
+    (umask 077; set -C; dd if="/proc/$_nu_term_pid/cmdline" bs=128 count=1 > "$_nu_call/terminal.argv" 2>/dev/null) || return 77
+    _nu_terminal_recheck || return 77
+    _nu_done_record="$_nu_done_body updated $_nu_done_hash"
+    (umask 077; set -C; printf '%s\n' "$_nu_done_record" > "$_nu_call/completed") 2>/dev/null || return 77
+    # On late drift retain all evidence. Never replace a receipt or retry it.
+    _nu_terminal_recheck || return 77
+    _nu_read_record "$_nu_call/completed" || return 77
+    [ "$_nu_record" = "$_nu_done_record" ] || return 77
+}

@@ -804,6 +804,15 @@ missing completion retains the baseline. Fixtures use actual admission/proof
 code with synthetic kernel views and synthetic phase receipts: no updater,
 timeout utility on hardware, packet traffic or live completion is qualified.
 
+The source completion producer `native_update_complete 0` now requires the same
+live direct wrapper child, staged dispatcher identity and consumed exec proof.
+It independently copies the actual bounded post-exec argv, publishes completion
+exclusively, and rechecks the original owner/context/phase identity after writing.
+Failure/replay retains evidence and admission; the producer never releases them.
+Its fixtures use a real isolated shell exec chain, including spoofed stored argv
+and valid replacement-owner drift. It is not yet wired into the pinned native
+successful terminal; caller-point review and whole updater verification remain.
+
 The data-only opkg status projection requires exactly one supported XKeen stanza,
 rejects duplicate package records and names beginning `xkeen` other than `xkeen`
 itself (the pinned native deletion uses a prefix match). It preserves unrelated

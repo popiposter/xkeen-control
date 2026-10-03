@@ -69,7 +69,9 @@ native_gate_acquire '@ROOT@' '${action}' || exit 90
     return { ...result, bodyPresent: existsSync(join(root, 'operation.lock.d/call.update/body')),
       stagedPresent: existsSync(join(root, 'operation.lock.d/call.update/staged')),
       execUsed: existsSync(join(root, 'operation.lock.d/call.update/exec.used')),
-      execArgv: existsSync(join(root, 'operation.lock.d/call.update/exec.argv')) }
+      execArgv: existsSync(join(root, 'operation.lock.d/call.update/exec.argv')),
+      completed: existsSync(join(root, 'operation.lock.d/call.update/completed')),
+      terminalArgv: existsSync(join(root, 'operation.lock.d/call.update/terminal.argv')) }
   } finally { rmSync(root, { recursive: true, force: true }); rmSync(code, { recursive: true, force: true }) }
 }
 
@@ -78,6 +80,58 @@ native_gate_acquire '@ROOT@' '${action}' || exit 90
 const completedExec = `native_update_exec_context || exit $?
 (umask 077; set -C; printf '%s updated %s\\n' "$_nu_body" "$_nu_expected_hash" > '@ROOT@/operation.lock.d/call.update/completed')
 `
+test('real completion producer authenticates the same post-exec body and postflight reads it after exit', () => {
+  const r = fixture({ execFlow: true, verifyPhase: 'post', execProbe: 'native_update_exec_context || exit $?; native_update_complete 0' })
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.completed, true); assert.equal(r.terminalArgv, true)
+})
+test('completion refuses failure status, missing consumed exec and replay without settling owner', () => {
+  for (const execProbe of ['native_update_exec_context || exit $?; native_update_complete 1',
+    'native_update_complete 0', 'native_update_exec_context || exit $?; native_update_complete',
+  ]) {
+    const r = fixture({ execFlow: true, execProbe }); assert.equal(r.status, 77, r.stderr); assert.equal(r.completed, false)
+  }
+  const replay = fixture({ execFlow: true, execProbe: 'native_update_exec_context || exit $?; native_update_complete 0 || exit $?; native_update_complete 0' })
+  assert.equal(replay.status, 77); assert.equal(replay.completed && replay.terminalArgv, true)
+})
+test('a deeper child cannot publish completion from inherited post-exec credentials', () => {
+  const r = fixture({ execFlow: true, execProbe: `native_update_exec_context || exit $?
+/bin/sh -c '. "@ROOT@/native-operation-gate"; . "@ROOT@/native-admission-entry"; . "@ROOT@/native-update-context"; native_update_complete 0'` })
+  assert.equal(r.status, 77, r.stderr); assert.equal(r.completed, false)
+})
+test('stored consumed-exec records cannot substitute for actual terminal argv', () => {
+  const r = fixture({ execFlow: true, withoutExec: true, execProbe: `mkdir -m 700 '@ROOT@/operation.lock.d/call.update/exec.used'
+printf '/bin/sh\\000%s\\000-uk_post_update\\000' '@EXEC@' > '@ROOT@/operation.lock.d/call.update/exec.argv'
+chmod 600 '@ROOT@/operation.lock.d/call.update/exec.argv'
+native_update_complete 0` })
+  assert.equal(r.status, 77, r.stderr); assert.equal(r.completed, false); assert.equal(r.terminalArgv, true)
+})
+test('completion publication drift retains the receipt and refuses terminal success', () => {
+  const r = fixture({ execFlow: true, execProbe: `native_update_exec_context || exit $?
+eval "$(sed 's/^_nu_terminal_context()/original_terminal_context()/' '@ROOT@/native-update-context')"
+_nu_terminal_context() {
+  if [ -f '@ROOT@/operation.lock.d/call.update/completed' ]; then
+    printf 'v1 changed\\n' > '@ROOT@/operation.lock.d/owner'
+  fi
+  original_terminal_context
+}
+native_update_complete 0` })
+  assert.equal(r.status, 77, r.stderr); assert.equal(r.completed && r.terminalArgv, true)
+})
+test('a valid replacement owner generation after publication also refuses terminal success', () => {
+  const r = fixture({ execFlow: true, execProbe: `native_update_exec_context || exit $?
+eval "$(sed 's/^_nu_terminal_context()/original_terminal_context()/' '@ROOT@/native-update-context')"
+_nu_terminal_context() {
+  if [ -f '@ROOT@/operation.lock.d/call.update/completed' ]; then
+    _native_gate_proc "$_nu_wrapper_pid" || return 77
+    replacement=$_ng_parent
+    _native_gate_proc "$replacement" || return 77
+    printf 'v1 %s %s %s %s update-xkeen\\n' "$_ng_current_boot" "$replacement" "$_ng_proc_start" "$XKEEN_GATE_TOKEN" > '@ROOT@/operation.lock.d/owner'
+  fi
+  original_terminal_context
+}
+native_update_complete 0` })
+  assert.equal(r.status, 77, r.stderr); assert.equal(r.completed && r.terminalArgv, true)
+})
 test('preflight authenticates the immediate live wrapper before a body is bound', () => {
   for (const borrowed of [false, true]) {
     const r = fixture({ verifyPhase: 'pre', borrowed })
