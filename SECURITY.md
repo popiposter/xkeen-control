@@ -80,6 +80,16 @@ Never expose the panel directly to WAN or add a WAN firewall opening for conveni
 
 Authenticated node projections may include a display name and endpoint host/port for operator identification, but must never return UUIDs, REALITY key material, short IDs, subscription URLs, VLESS strings, raw secret registry/outbound JSON or raw upstream error payloads that can contain secrets.
 
+The active native contract additionally permits an explicit authenticated private
+console for one allowlisted XKeen job. It may show native output and accept native
+prompt answers; it is separate from sanitized status/node projections. Fixed
+executable/validated argv, job/session-bound access, origin/CSRF checks and bounded
+RAM buffers apply to output, input and resize. No arbitrary shell, file API,
+post-exit shell, automatic log/export to public artifacts or Telegram, or terminal
+clipboard/external-link controls. Logout removes access and clears browser output;
+closing the viewer does not repeat or cancel the native job. Treat all console
+contents as private, even when upstream masks some fields.
+
 Sessions, throttling and high-churn runtime state stay in RAM. Issue #99 B caps
 sessions at 32 and remote attempt entries at 256. Expired state is pruned before
 admission; sessions evict by oldest expiry with a stable token tie-break. Attempt

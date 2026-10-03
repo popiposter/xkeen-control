@@ -52,16 +52,19 @@
 |---|---|---|
 | Start / Stop / Restart | `-start`, `-stop`, `-restart` | Один bounded job; затем service/process readback |
 | Обновить XKeen / Xray / geodata | `-uk`, `-ux`, `-ug` | Штатная загрузка, backup и cron; панель не извлекает/устанавливает компоненты |
-| Расписание geodata | `-ugc`; `-dgc` | Штатный dialogue adapter; чтение итогового native cron, не свой scheduler |
+| Расписание geodata | `-ugc`; `-dgc` | Терминал выбранной native команды; чтение итогового native cron, не свой scheduler |
 | DNS interception / Entware proxy / PBR / killswitch | `-dns on/off`, `-pr on/off`, `-pbr on/off/status`, `-killswitch on/off/status` | Явные режимы и изменение native настройки, без собственного netfilter writer |
 | Native speed balancer | `-sb` и native settings | Проверить конкретные действия; не вызывать `-sbt` как обычный тест скорости |
 | Локальные backups | `-kb`, `-xb`, соответствующие restore | Штатный локальный механизм; portable export — отдельные конфиги/секреты |
 | Поля Xray / XKeen / списки | Редактор реально используемых конфигов | Сохранять неизвестное; validate complete candidate, scoped save |
 
 `-ugc` в проверенном старом profile интерактивен: действие, день, час, минута.
-Следовательно, передать только флаг недостаточно. Adapter имеет один фиксированный
-диалог данной команды, конечные ответы/лимиты и проверку итогового cron; он не
-становится терминалом, универсальным expect engine или переписанным cron writer.
+Следовательно, передать только флаг недостаточно. По дополнительному указанию
+оператора показываем терминал выбранной native команды: пользователь отвечает
+самому XKeen. Это заменяет первоначальное предложение фиксированного dialogue
+adapter, не создаёт generic shell/expect engine или свой cron writer. Полная
+[матрица команд](xkeen-command-inventory-v2.md) определяет console/button/form
+и проверку результата, включая фактический cron.
 Upstream сейчас также предоставляет `-i auto` и `-ux auto`; свежую установку
 проводить ими по отдельной задаче, не повторять уже выполненный installer.
 

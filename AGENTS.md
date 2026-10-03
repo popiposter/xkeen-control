@@ -46,6 +46,8 @@ If code, issue and an authority document conflict, stop broad implementation, de
 - After a successful typed D.1 `appliance adopt`, `/opt/etc/xkeen-control/config/appliance.json` is the local authority for supported non-secret appliance policy; deterministic managed `02_dns.json`, `05_routing.json` and `07_observatory.json` derive from it, while `04_outbounds.json` derives from `/opt/etc/xkeen-control/secrets/nodes.json`. Before adoption, an existing router retains the explicit repository-derived/legacy policy boundary; adoption must prove compatibility and fail closed on unknown/manual drift. Node-only mutations must not silently regenerate unrelated appliance policy.
 - High-churn/transient state belongs in RAM or `/tmp`; persistent router writes must be explicit and bounded.
 - No generic shell, PTY, command runner, file manager or arbitrary raw-config API.
+  The active native contract permits an authenticated command-bound console for
+  one allowlisted XKeen action, including answers to its native prompts.
 - The panel is loopback / exact trusted-LAN / management-VPN only. Never open a wildcard/public listener or WAN firewall rule for convenience.
 - Go/Node/build toolchains stay off Keenetic.
 - Production evidence in public GitHub must be sanitized: prefer versions, bounded counts, state transitions and hashes. Do not publish live infrastructure details unless they are intentionally public product information.

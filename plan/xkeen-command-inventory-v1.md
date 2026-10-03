@@ -1,5 +1,8 @@
 # Матрица команд XKeen: покрытие будущей оболочки
 
+> Historical snapshot. Superseded by the [v2 command matrix](xkeen-command-inventory-v2.md)
+> and the operator-authorized native command-bound terminal contract.
+
 Snapshot: `jameszeroX/XKeen@5aaece27a70d5bd002c615248614914ebbc4569d`, `scripts/xkeen`. Это инвентарь dispatcher и план UI-покрытия, не утверждение, что все действия уже безопасно автоматизируются. Вложенные параметры проверяются в TASK-006. Mihomo/Yq строки доступны только при отдельном tested capability profile.
 
 Найдено 69 верхнеуровневых ветвей команды (алиасы в одной строке).

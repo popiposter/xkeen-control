@@ -29,7 +29,10 @@ tags: [architecture, refactor, native-xkeen, simplification]
   native командой, а без такой команды поле read-only. Editable paths — только
   data-only JSON/JSONC/native list files, не sourced shell files.
 - **REQ-002**: Native command adapter использует fixed executable/argv, типизированные
-  поля и фиксированные диалоги. Нет shell string, произвольного executable/PTY/file API.
+  поля и [полную command matrix](xkeen-command-inventory-v2.md). Интерактивный native
+  процесс получает command-bound PTY: пользователь отвечает самому XKeen. Вопросы
+  не дублируются в React/expect; parameterized actions — формы/кнопки с output viewer.
+  Нет shell string, произвольного executable/generic PTY/file API.
 - **REQ-003**: Xray/XKeen active config — authority. Редактор сохраняет неизвестные
   поля и нетронутые области; `appliance.json` не обязательный двойник native config.
 - **REQ-004**: `nodes.json` остаётся authority только panel-managed profiles/subscriptions.
@@ -40,7 +43,9 @@ tags: [architecture, refactor, native-xkeen, simplification]
   а не собственные firewall/updater/cron engines. Telegram/portable transfer остаются
   функциональными этапами после работающей базовой оболочки.
 - **SEC-001**: Auth/CSRF/private management, SSRF, signed panel updater и root-only
-  secrets сохраняются. API и public evidence не выводят raw configs/native stdout/secrets.
+  secrets сохраняются. Status API и public evidence не выводят raw configs/native
+  stdout/secrets. Явная authenticated private console может показывать native output
+  и принимать ответы: bounded RAM, job/session ownership, no public log/export.
 - **CON-001**: Один обычный checkout, текущий Draft PR122; no worktrees/self-merge.
   Старые installer/attachment/import/recovery/unknown Apply не повторять.
 - **CON-002**: Нет compatibility с прежними панелями, общего native admission protocol,
@@ -79,9 +84,9 @@ tags: [architecture, refactor, native-xkeen, simplification]
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-004 | Добавить `internal/xkeen/commands.go`/`jobs.go`: allowlist operation→argv, один panel mutation job, bounded sanitized facts, timeout per action; query10s/service90s/update15min ceilings с measured refinement. Один private bounded RAM output256KiB/job; public output только структурные facts. Deadline/disconnect не запускает повтор; после crash last job unknown/readback. `XKEEN_FOREGROUND=1` использовать только документированным native способом, не патчем. | No | — |
-| TASK-005 | Первая command matrix: lifecycle, `-uk`, `-ux auto`, `-ug`, `-ugc`, `-dgc`, `-dns`, `-pr`, `-pbr`, `-killswitch`, `-sb`, `-kb`, `-xb`. Проверить installed arguments/choice closure в disposable native fixtures. Для cron `-ugc` реализовать конкретный stdin dialogue action/day/hour/minute с пределом answers/output; не универсальный expect. Проверить actual cron после выполнения; future unfamiliar dialogue отключает только это действие. | No | — |
-| TASK-006 | В `internal/httpapi/server.go` добавить typed native actions/jobs; `web/src/native-xkeen.jsx`/`components-updates.jsx` — version/channel/core, Start/Stop/Restart, update cards, geodata schedule. Native download/backup принадлежит XKeen. Unknown result показывать понятно; exit0 не означает туннель PASS. Отделить panel signed updater. | No | — |
+| TASK-004 | Добавить `internal/xkeen/commands.go`/`jobs.go`: allowlist operation→argv, один panel mutation job, bounded sanitized facts; query10s/service90s/update15min ceilings и interactive idle10min с measured refinement. Private RAM output256KiB/job, bounded input/resize, job/session ownership/auth/origin/CSRF; public output только facts. Interactive/conditional job запускает выбранный XKeen в PTY с начала; после exit shell не остаётся. Deadline/disconnect не запускает повтор; после crash/cancel unknown/readback. Проверить native foreground/TTY/service-children; native код не патчить. | No | — |
+| TASK-005 | Первая вертикаль по полной matrix: lifecycle, `-uk`, `-ux auto`, `-ug`, `-ugc`, `-dgc`, `-dns`, `-pr`, `-pbr`, `-killswitch`, `-sb`, `-kb`, `-xb`. Проверить installed argv/capabilities в focused native fixtures. Для cron `-ugc/-dgc` показывать native вопросы в терминале, оператор отвечает; не писать собственную prompt state machine/expect. Проверить actual cron после выполнения. `-sb on` может спросить prerequisites и запускает первый замер; учитывать traffic budget. Internal callbacks/`-sbt` не имеют прямого API. | No | — |
+| TASK-006 | Typed native actions/jobs в `internal/httpapi/server.go`; native cards + lazy `@xterm/xterm`/`@xterm/addon-fit` console, Go PTY adapter без Node на router. Noninteractive output read-only; interactive input связан с тем же job. Reconnect не respawn; закрытие вкладки detach, Ctrl-C explicit cancel. Disable OSC clipboard/external links/HTML, очистка UI при logout. Native download/backup принадлежит XKeen. Unknown result показывать понятно; exit0 не означает туннель PASS. Signed panel updater отдельно. | No | — |
 | TASK-007 | Удалить из `cmd/xkeen-control/main.go` factories `newXrayService/newGeodataService/newXKeenService/newSetupService` и obsolete component/Setup APIs/UI/tests/callers, когда native cards подключены. В `internal/components` оставить только реально нужные signed panel/bootstrap/read-only dependencies; не удалить весь пакет вслепую. Убрать old migration/recovery/appliance activation CLI, которые не нужны new-generation config edits. | No | — |
 
 ### Implementation Phase 3
@@ -159,7 +164,7 @@ tags: [architecture, refactor, native-xkeen, simplification]
 - **ALT-002**: Панель заменяет installer/cron/firewall. Отклонено: дублирование XKeen.
 - **ALT-003**: Удалить весь проект. Отклонено: полезные auth/nodes/UI/updater сохраняются.
 - **ALT-004**: Произвольный shell/raw editor как быстрый выход. Отклонено: нет понятной
-  модели, разрушает typed/security boundary. Specific native dialogues достаточны.
+  модели, разрушает typed/security boundary. Command-bound native console достаточна.
 
 ## 4. Dependencies
 
@@ -185,7 +190,8 @@ tags: [architecture, refactor, native-xkeen, simplification]
 ## 6. Testing
 
 - **TEST-001**: No native patch installation; native command exact argv/answers,
-  output limits, expected response/state, timeout/crash unknown without replay.
+  output/input limits, expected response/state, timeout/crash unknown without replay;
+  interactive input/reconnect/job ownership, read-only output and terminal controls.
 - **TEST-002**: JSONC/unknown fields, unsupported field read-only, complete candidate
   Xray validation, external drift refusal и bounded own-write rollback.
 - **TEST-003**: Реальные auth/SSRF/signatures/secretless projections, nodes/subscriptions
@@ -197,8 +203,9 @@ tags: [architecture, refactor, native-xkeen, simplification]
 
 ## 7. Risks & Assumptions
 
-- **RISK-001**: Native interactive prompts могут измениться; finite adapter отключает
-  только непроверенную операцию, не патчит upstream ради совместимости.
+- **RISK-001**: Native interactive prompts могут измениться; native console показывает
+  реальные вопросы вместо их копии. Неподдержанный argv отключает только операцию;
+  upstream не патчится ради совместимости.
 - **RISK-002**: External CLI/cron может менять те же файлы. Panel serialization не
   даёт global exclusion; отсутствие параллельных same-file writes — ограничение.
 - **RISK-003**: Нативная команда имеет side effects/самовосстановление; dashboard

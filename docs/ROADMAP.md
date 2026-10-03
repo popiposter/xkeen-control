@@ -11,6 +11,9 @@ the panel as a lightweight graphical shell over **unmodified XKeen code**.
 The [new contract](NATIVE-XKEEN.md), [source audit](../plan/audit-native-shell-2026-10-03.md)
 and [v2 plan](../plan/architecture-native-shell-v2.md) supersede v1 sequencing and
 shared-admission requirements below. Issue #121 / Draft PR122 remain active.
+The [complete native command matrix](../plan/xkeen-command-inventory-v2.md) maps
+69 dispatcher branches to panel workflows. Interactive actions use a native
+command-bound console; parameterized actions use forms/buttons with optional output.
 
 Next: remove undelivered native gates/patches/profile workers; add a thin native
 command/job adapter (including native geodata schedule commands); replace managed

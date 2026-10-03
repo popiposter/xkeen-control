@@ -31,8 +31,17 @@ native admission/update architecture. Old qualification records remain historica
 
 ## Native commands and configuration
 
-The adapter uses a fixed executable and validated argv, or a specific finite stdin
-dialogue for one native command. It is not a generic shell/PTY/expect/file manager.
+The adapter uses a fixed executable and validated argv. Interactive actions expose
+the selected XKeen process in a command-bound terminal: the operator answers native
+prompts directly. No arbitrary shell/executable, generic PTY or expect/file manager.
+Noninteractive actions use buttons/forms with expandable read-only native output.
+Conditional interactive jobs start with PTY support; opening the console never
+restarts a command. The [complete command matrix](../plan/xkeen-command-inventory-v2.md)
+defines relevance, parameters, input mode and workflows from pinned upstream source.
+The console is an explicit authenticated private surface, separate from sanitized
+status APIs: bounded RAM output/input, job/session ownership and origin/CSRF checks;
+no automatic public logging, GitHub/Telegram export or terminal clipboard controls.
+Closing the page detaches the viewer; it does not cancel or repeat the job.
 Geodata schedule creation/change/removal uses native `-ugc`/`-dgc`; no duplicate
 panel geodata scheduler. Script/core/geodata updates use native `-uk`/`-ux`/`-ug`.
 Native local backups use its commands. Portable transfer contains configuration
