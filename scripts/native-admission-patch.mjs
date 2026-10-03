@@ -72,6 +72,31 @@ XKEEN_FOREGROUND=1; export XKEEN_FOREGROUND
 }
 function addEntry(text, role) { return '#!/bin/sh\n' + entryPrelude(role) + text.slice('#!/bin/sh\n'.length) }
 
+function patchUpdaterFailures(text) {
+  // Patch only the pinned post-update branch. Do not reinterpret optional
+  // native probes/no-op return codes or claim to repair internal module errors.
+  const begin = text.indexOf('        -uk_post_update)\n')
+  const end = text.indexOf('        -ux)', begin)
+  if (begin < 0 || end < begin) throw new Error('native updater branch missing')
+  let post = text.slice(begin, end)
+  for (const command of ['register_xkeen_initd', 'create_xkeen_cfg',
+    'register_xkeen_list', 'register_xkeen_control', 'register_xkeen_status', 'fixed_register_packages']) {
+    post = replaceOnce(post, `            ${command}\n`, `            ${command} || exit 1\n`)
+  }
+  for (const command of ['chmod 700 "$xkeen_cfg" 2>/dev/null', 'chmod 600 "$xkeen_config" 2>/dev/null',
+    '"$initd_file" restart on >/dev/null 2>&1']) {
+    post = replaceOnce(post, command + '\n', command + ' || exit 1\n')
+  }
+  text = text.slice(0, begin) + post + text.slice(end)
+  return replaceOnce(text,
+    '            grep -E "^[[:space:]]*-uk_post_update[[:space:]]*\\)" "$0" > /dev/null && exec /opt/bin/sh /opt/sbin/xkeen -uk_post_update\n',
+    `            # A missing/failed handoff must not fall through to success.
+            grep -E "^[[:space:]]*-uk_post_update[[:space:]]*\\)" /opt/sbin/xkeen > /dev/null || exit 1
+            exec /opt/bin/sh /opt/sbin/xkeen -uk_post_update
+            exit 1
+`)
+}
+
 function patchForegroundHook(text) {
   text = replaceOnce(text,
     '# XKeen: Auto-generated file. DO NOT EDIT!\nPATH="/opt/bin:/opt/sbin:/sbin:/bin:/usr/sbin:/usr/bin"\n',
@@ -432,6 +457,7 @@ monitor_fd() {
   // The post-update proof pins the actual interpreter/path/argument vector;
   // PATH lookup and a caller-selected $0 must not alter that handoff.
   dispatcherText = replaceOnce(dispatcherText, 'exec sh "$0" -uk_post_update', 'exec /opt/bin/sh /opt/sbin/xkeen -uk_post_update')
+  dispatcherText = patchUpdaterFailures(dispatcherText)
   // Lifecycle is not installation. These exact classified actions must neither
   // rename an installation nor invoke the package manager under the gate.
   dispatcherText = replaceOnce(dispatcherText, '\ninstall_xkeen_rename\n', '\ncase "$1" in -start|-stop|-restart) ;; *) install_xkeen_rename;; esac\n')

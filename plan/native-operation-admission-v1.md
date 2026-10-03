@@ -704,6 +704,17 @@ results, not execution of the complete updater, update postconditions or router
 acceptance. Updater entry/finish, exec integration, registration/error propagation,
 all writer/cron coverage and target qualification still block activation.
 
+The disabled dispatcher now propagates reported failure from mandatory init,
+configuration creation, package registration/normalization and permission steps
+in the native post-update branch. Failed native restart exits before later
+cleanup/output can hide it. Missing/failed post-update discovery refuses rather
+than falling through after replacement; discovery and exec both use the fixed
+installed dispatcher path. Isolated actual-branch fixtures reproduce three
+upstream false-success cases and preserve successful running/stopped ordering.
+This guards reported return codes only: module-internal masked errors,
+new-feature/port/cron effects and independent update-specific postconditions
+still need qualification before update admission can be enabled.
+
 The disabled `native-admission-update-patch.mjs` experiment pins the actual
 native installer module by SHA-256 and inserts a fixed protected staging callback
 after native extraction/shape checks and before its first live rename. Native
