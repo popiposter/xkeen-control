@@ -780,6 +780,18 @@ native completion producer. Actual terminal publication, baseline/postcondition
 verification, already-current no-op handling and executor integration remain
 unimplemented and block enabling this candidate.
 
+The existing native verifier now contains a source-only init identity reader
+primitive. It authenticates the direct wrapper pre/post context itself, checks
+protected bounded init/template/parser files and their final LF, and performs
+the data projections under a file-size limit in exclusive RAM query storage.
+It checks prepared code equality, native Xray/autostart literals and unchanged
+input/parser hashes and call generation after projection. Only digests become
+result fields; raw settings never enter a diagnostic response. Unsafe input,
+existing query state, producer failure, code/setting or generation drift retains
+admission and any query evidence. The executable verifier still has no update
+branch: complete profile, config/core/kernel/package/cron baselines, native
+completion producer and final settlement remain required before wiring it.
+
 Normal long-writer contention has a separate known-no-effect result. If an
 elected NDM invocation reaches its valid monotonic deadline after busy admission,
 and has **never acquired** operation admission, it may retire only its own live

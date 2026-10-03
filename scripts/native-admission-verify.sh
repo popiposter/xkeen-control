@@ -130,6 +130,69 @@ _nv_core() {
     [ "$1" = "$_nv_start" ] || return 77
     printf '%s:%s:%s' "$_nv_pids" "$_nv_start" "$_nv_proc_hash"
 }
+# BEGIN UPDATE INIT IDENTITY
+_nv_update_init_file() {
+    _nv_file_ok "$1" || return 76
+    _native_gate_metadata "$1" || return 76
+    [ "$_ng_meta_size" -gt 0 ] && [ "$_ng_meta_size" -le 524288 ] || return 76
+    # awk reconstructs LF records: require the original final LF first.
+    _nv_update_last=$(tail -c 1 "$1" | od -v -b) || return 76
+    set -- $_nv_update_last
+    [ "$#" = 3 ] && [ "$1:$2:$3" = 0000000:012:0000001 ] || return 76
+}
+_nv_update_init_identity() {
+    # Read-only primitive for the future fixed update branch. It authenticates
+    # its wrapper context itself; successful projection is not update success.
+    [ "$#" = 1 ] || return 76
+    case "$1" in pre|post) ;; *) return 76;; esac
+    _nv_update_phase=$1
+    native_update_verifier_context "$_nv_update_phase" || return $?
+    _nv_update_gate=$_nu_gate_record; _nv_update_context=$_nu_context
+    _nv_update_query=$_nu_call/init-identity.$_nv_update_phase
+    _nv_update_live=/opt/etc/init.d/S05xkeen
+    _nv_update_template=/opt/lib/xkeen/native-profile-v1/overlay-1.disabled.sh
+    _nv_update_parser=/opt/lib/xkeen/native-update-init.awk
+    # The caller also verifies the complete supported prepared profile. This
+    # primitive refuses unsafe dependencies and never sources either init.
+    for _nv_update_path in "$_nv_update_live" "$_nv_update_template" "$_nv_update_parser"; do
+        _nv_update_init_file "$_nv_update_path" || return 76
+    done
+    _nv_update_live_hash=$(_nv_hash "$_nv_update_live") || return 76
+    _nv_update_template_hash=$(_nv_hash "$_nv_update_template") || return 76
+    _nv_update_parser_hash=$(_nv_hash "$_nv_update_parser") || return 76
+    (umask 077; mkdir "$_nv_update_query") 2>/dev/null || return 77
+    _native_gate_directory "$_nv_update_query" 0700 || return 77
+    # Bound producer output before reading/hashing it. No raw init/settings
+    # enters diagnostics or a public result. Failed queries remain for readback.
+    for _nv_update_kind in live template; do
+        case "$_nv_update_kind" in live) _nv_update_input=$_nv_update_live;; template) _nv_update_input=$_nv_update_template;; esac
+        for _nv_update_mode in code settings; do
+            _nv_update_output=$_nv_update_query/$_nv_update_kind-$_nv_update_mode
+            (umask 077; set -C; ulimit -f 1024 || exit 76
+                LC_ALL=C awk -v mode="$_nv_update_mode" -f "$_nv_update_parser" "$_nv_update_input" > "$_nv_update_output") || return 76
+            _nv_ram_file "$_nv_update_output" 1048576 || return 77
+        done
+    done
+    _nv_update_code=$(_nv_hash "$_nv_update_query/live-code") || return 77
+    [ "$_nv_update_code" = "$(_nv_hash "$_nv_update_query/template-code")" ] || return 76
+    # This supported lifecycle profile requires the native exact literals used
+    # by the existing kernel/core verifier, not just parser-safe scalar syntax.
+    [ "$(sed -n 's/^name_client="\([^"]*\)"$/\1/p' "$_nv_update_query/live-settings")" = xray ] || return 76
+    _nv_update_auto=$(sed -n 's/^start_auto="\([^"]*\)"$/\1/p' "$_nv_update_query/live-settings")
+    case "$_nv_update_auto" in on|off) ;; *) return 76;; esac
+    _nv_update_settings=$(_nv_hash "$_nv_update_query/live-settings") || return 77
+    # Content identity alone is insufficient: same-content links, changed
+    # ownership/modes or an unsafe ancestor must not qualify after the query.
+    for _nv_update_path in "$_nv_update_live" "$_nv_update_template" "$_nv_update_parser"; do
+        _nv_update_init_file "$_nv_update_path" || return 77
+    done
+    [ "$(_nv_hash "$_nv_update_live")" = "$_nv_update_live_hash" ] &&
+        [ "$(_nv_hash "$_nv_update_template")" = "$_nv_update_template_hash" ] &&
+        [ "$(_nv_hash "$_nv_update_parser")" = "$_nv_update_parser_hash" ] || return 77
+    native_update_verifier_context "$_nv_update_phase" || return 77
+    [ "$_nu_gate_record" = "$_nv_update_gate" ] && [ "$_nu_context" = "$_nv_update_context" ] || return 77
+}
+# END UPDATE INIT IDENTITY
 _nv_main() {
     [ "$#" = 4 ] && [ "$(id -u)" = 0 ] || return 76
     _nv_phase=$1; _na_role=$2; _na_action=$3; _na_mode=$4
