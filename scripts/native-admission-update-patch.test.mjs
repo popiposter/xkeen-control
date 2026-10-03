@@ -45,6 +45,19 @@ _na_file_ok() { [ '${mode}' != missing ]; }
 # This earlier fixture isolates stage callback ordering. Archive admission is
 # independently exercised with actual public bytes in stage-install fixtures.
 native_update_archive_ready() { return 0; }
+mkdir -p "$log_dir/xkeen"
+chmod() { [ '${mode}' != chmod-failure ] || return 1; command chmod "$@"; }
+mv() {
+    if [ '${mode}' = dispatcher-backup-failure ] && [ "$1" = "$install_dir/xkeen" ]; then return 1; fi
+    if [ '${mode}' = module-backup-failure ] && [ "$1" = "$install_dir/.xkeen" ]; then return 1; fi
+    command mv "$@"
+}
+rm() {
+    if [ '${mode}' = stage-cleanup-failure ] && [ "$#" = 3 ] && [ "$2" = "$install_dir/.xkeen.old" ]; then return 1; fi
+    if [ '${mode}' = dispatcher-cleanup-failure ] && [ "$2" = "$install_dir/xkeen.old" ] && [ -f "$install_dir/xkeen.old" ]; then return 1; fi
+    if [ '${mode}' = log-cleanup-failure ] && [ "$2" = "$log_dir/xkeen" ]; then return 1; fi
+    command rm "$@"
+}
 ${isolated}
 install_xkeen
 `
@@ -74,4 +87,24 @@ test('successful preservation precedes both native live replacements', () => {
   assert.equal(result.profile, 'decorated profile\n')
   assert.equal(result.calls.length, 1)
   assert.deepEqual(result.liveEntries, ['.xkeen', 'xkeen'])
+})
+
+test('native permission, backup and successful-path cleanup failures cannot return success', () => {
+  for (const mode of ['chmod-failure', 'dispatcher-backup-failure', 'module-backup-failure',
+    'dispatcher-cleanup-failure', 'stage-cleanup-failure', 'log-cleanup-failure']) {
+    const result = fixture(mode)
+    assert.equal(result.status, 1, mode)
+    assert.equal(result.calls.length, 1, mode)
+    assert.equal(result.archivePresent, true, mode)
+    if (mode === 'chmod-failure' || mode === 'dispatcher-backup-failure') {
+      assert.equal(result.dispatcher, 'old dispatcher\n', mode)
+      assert.equal(result.profile, 'old profile\n', mode)
+    } else if (mode === 'module-backup-failure') {
+      assert.equal(result.dispatcher, 'decorated dispatcher\n', mode)
+      assert.equal(result.profile, 'old profile\n', mode)
+    } else {
+      assert.equal(result.dispatcher, 'decorated dispatcher\n', mode)
+      assert.equal(result.profile, 'decorated profile\n', mode)
+    }
+  }
 })

@@ -1139,6 +1139,14 @@ does not implement cron task editing, change the existing preflight restriction
 on removed native update tasks, or qualify native cleanup/true terminal.
 All ten overlays remain fenced and uninstalled.
 
+The native installer now propagates permission, old-generation rename and
+successful-path cleanup errors. Its native promotion order is retained; a
+partial replacement remains a failure, with the updater admission unresolved.
+Actual disposable native-function fixtures inject failures before and after
+live replacement. This error-propagation step does not prove bounded cleanup
+destinations or runtime-directory ownership; those and true terminal integration
+still block activation. Failure-branch rollback remains the native implementation.
+
 Reproduce the disabled native-function fixtures after placing only the two
 hash-verified **public** inputs at the indicated ignored `dist` paths (never
 mount the operator credential/artifact directory):

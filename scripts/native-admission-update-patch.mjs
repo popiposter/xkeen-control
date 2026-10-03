@@ -31,10 +31,30 @@ export function buildUpdateCandidate(source) {
   // -o is supported by the actual Entware BusyBox tar: keep the extracting
   // root owner rather than restoring the public archive's CI runner UID.
   const extractedText = protectedText.replace(extractAnchor, 'tar -xozf "$xkeen_archive" -C "$stage_dir" xkeen _xkeen')
+  let checkedText = extractedText.replace(anchor, guard + anchor)
+  const check = (before, after) => {
+    if (checkedText.split('\n' + before).length !== 2) throw new Error('native promotion anchor is not unique')
+    checkedText = checkedText.replace('\n' + before, '\n' + after)
+  }
+  // Preserve the native promotion order. A partial replacement or failed
+  // retirement is an error; it must never become the updater's terminal zero.
+  check(anchor, '        chmod +x "$stage_dir/xkeen" || return 1\n')
+  check('        rm -rf "$stage_dir"\n', '        rm -rf "$stage_dir" || return 1\n')
+  check('        rm -f "$install_dir/xkeen.old"\n', '        rm -f "$install_dir/xkeen.old" || return 1\n')
+  check('        [ -f "$install_dir/xkeen" ] && mv "$install_dir/xkeen" "$install_dir/xkeen.old"\n',
+    '        if [ -f "$install_dir/xkeen" ]; then mv "$install_dir/xkeen" "$install_dir/xkeen.old" || return 1; fi\n')
+  check('        rm -rf "$install_dir/.xkeen.old"\n', '        rm -rf "$install_dir/.xkeen.old" || return 1\n')
+  check('        [ -d "$install_dir/.xkeen" ] && mv "$install_dir/.xkeen" "$install_dir/.xkeen.old"\n',
+    '        if [ -d "$install_dir/.xkeen" ]; then mv "$install_dir/.xkeen" "$install_dir/.xkeen.old" || return 1; fi\n')
+  check('            rm -f "$install_dir/xkeen.old"\n', '            rm -f "$install_dir/xkeen.old" || return 1\n')
+  check('            rm -rf "$install_dir/.xkeen.old" "$stage_dir"\n',
+    '            rm -rf "$install_dir/.xkeen.old" "$stage_dir" || return 1\n')
+  check('    [ -d "$log_dir/xkeen" ] && rm -rf "$log_dir/xkeen"\n',
+    '    if [ -d "$log_dir/xkeen" ]; then rm -rf "$log_dir/xkeen" || return 1; fi\n')
   const candidate = Buffer.from(`# SOURCE-ONLY FENCE: native update integration incomplete. Never install.
 return 76 2>/dev/null || exit 76
 # END SOURCE-ONLY FENCE
-` + extractedText.replace(anchor, guard + anchor))
+` + checkedText)
   return { candidate, manifest: {
     enabled: false, installed: false,
     sourceSHA256: installerSHA256,
