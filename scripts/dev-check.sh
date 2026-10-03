@@ -53,6 +53,8 @@ run_web_checks() {
 	echo "== Web checks =="
 	if [ "$mode" = --full ]; then
 		bash scripts/web-dependencies.sh --clean
+		# Reject dependency failures before production build and Chromium work.
+		bash scripts/npm-audit.sh
 	else
 		bash scripts/web-dependencies.sh --reuse
 	fi
@@ -68,7 +70,6 @@ run_web_checks() {
 			(cd web && npx playwright install --with-deps chromium)
 		fi
 		npm --prefix web run test:ui
-		bash scripts/npm-audit.sh
 	elif [ "${XKEEN_CHECK_UI-*}" = '*' ]; then
 		npm --prefix web run test:ui
 	elif [ -n "${XKEEN_CHECK_UI:-}" ]; then

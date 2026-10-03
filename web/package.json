@@ -33,7 +33,6 @@
     "@playwright/test": "1.63.0",
     "@tailwindcss/vite": "4.3.3",
     "@vitejs/plugin-react": "5.0.4",
-    "shadcn": "4.21.1",
     "tailwindcss": "4.3.3",
     "vite": "7.3.6"
   }

@@ -20,4 +20,19 @@ if PATH="$work/bin:$PATH" XKEEN_CHECK_GO=0 XKEEN_CHECK_HELPERS=1 XKEEN_CHECK_WEB
 	echo "syntax check missed a later file" >&2; exit 1
 fi
 grep -q 'zzz-invalid.sh' "$work/syntax.log"
+# Exercise the actual web dispatcher independently of unrelated Go/helper lanes.
+# A rejected advisory audit must prevent both build and browser work.
+awk '/^run_web_checks\(\) \{/ {capture=1} capture {print} capture && /^}/ {exit}' "$ROOT/scripts/dev-check.sh" > "$work/web-dispatch.sh"
+printf '#!/bin/sh\necho dependencies >> trace\n' > "$work/scripts/web-dependencies.sh"
+printf '#!/bin/sh\necho audit >> trace\nexit 42\n' > "$work/scripts/npm-audit.sh"
+for script in test-web-source-boundary verify-webassets; do
+	printf '#!/bin/sh\necho build >> trace\n' > "$work/scripts/$script.sh"
+done
+printf '#!/bin/sh\necho npm >> trace\n' > "$work/bin/npm"
+set +e
+(cd "$work"; PATH="$work/bin:$PATH" bash -e -c '. ./web-dispatch.sh; mode=--full; run_web_checks') > "$work/audit.log" 2>&1
+audit_status=$?
+set -e
+test "$audit_status" -eq 42
+test "$(cat "$work/trace")" = "$(printf 'dependencies\naudit')"
 echo "Development dispatch fixtures passed"

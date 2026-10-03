@@ -57,6 +57,8 @@ Test-only changes skip the production web build and embedded comparison; the pla
 reports `webBuild: 0`. The browser tests use the Vite development server.
 A deleted spec broadens browser selection instead of producing an empty pass.
 Race tests and dependency audit remain final/release checks.
+The FULL web lane audits dependencies immediately after its clean install, before
+the production build and browser suite, so a rejected audit fails without that wait.
 
 Native admission fixtures are listed in `scripts/test-native-admission.sh`.
 Adding a fixture there runs the helper lane without selecting Chromium. Selector,
