@@ -2,10 +2,14 @@ package xkeen
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
+
+	"github.com/popiposter/xkeen-control/internal/configjson"
 )
 
 // IDs are native data templates only. Generated outbounds use the node editor.
@@ -27,6 +31,14 @@ type EditorWorkspace struct {
 	Pending       *PendingConfiguration     `json:"pending,omitempty"`
 	HasPrevious   bool                      `json:"hasPrevious"`
 	PreviousDrift bool                      `json:"previousDrift"`
+	Targets       []ConfigTarget            `json:"targets,omitempty"`
+}
+
+// Explicit private editor metadata: tags only, never outbound credentials.
+type ConfigTarget struct {
+	Tag      string `json:"tag"`
+	Kind     string `json:"kind"`
+	Protocol string `json:"protocol,omitempty"`
 }
 
 // Workspace is PRIVATE and can contain native secrets. No status projection
@@ -37,6 +49,24 @@ func (e *ConfigEditor) Workspace(ctx context.Context) (EditorWorkspace, error) {
 		return EditorWorkspace{}, err
 	}
 	w := EditorWorkspace{Digest: snapshot.Digest, Documents: map[string]EditorDocument{}}
+	for _, data := range snapshot.files {
+		object, err := configjson.DecodeObject(data)
+		if err != nil {
+			return EditorWorkspace{}, ErrConfig
+		}
+		var outbounds []struct {
+			Tag      string `json:"tag"`
+			Protocol string `json:"protocol"`
+		}
+		if raw, ok := object["outbounds"]; ok && json.Unmarshal(raw, &outbounds) == nil {
+			for _, outbound := range outbounds {
+				if outbound.Tag != "" && len(outbound.Tag) <= 128 && len(outbound.Protocol) <= 32 && len(w.Targets) < 256 {
+					w.Targets = append(w.Targets, ConfigTarget{outbound.Tag, "outbound", outbound.Protocol})
+				}
+			}
+		}
+	}
+	sort.Slice(w.Targets, func(i, j int) bool { return w.Targets[i].Tag < w.Targets[j].Tag })
 	w.Pending, err = e.pendingStatus(ctx, snapshot)
 	if err != nil {
 		return EditorWorkspace{}, err

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { appendDocumentItem, documentField, editDocumentField, editDocumentPath, formatDocument, inspectDocument, moveDocumentItem } from '../src/native-config-document.js'
+import { appendDocumentItem, documentField, editDocumentField, editDocumentPath, formatDocument, inspectDocument, moveDocumentItem, prependDocumentItem } from '../src/native-config-document.js'
 
 test('form edits and formatting retain comments and exact unknown numeric tokens', () => {
   const original = '{/* keep */"dns":{"queryStrategy":"UseIP","opaque":9007199254740993},"future":true}'
@@ -31,4 +31,13 @@ test('invalid, duplicate, trailing-comma and nonobject drafts remain invalid', (
     assert.throws(() => formatDocument(input))
   }
   assert.throws(() => editDocumentField('{}', 'dns', 'queryStrategy', 'UseIP'))
+})
+
+test('prepend a routing rule preserves existing comments and opaque numeric tokens', () => {
+  const text = '{"routing":{"rules":[/* existing rule */{"type":"field","future":9007199254740993,"outboundTag":"direct"}]}}'
+  const changed = prependDocumentItem(text, ['routing', 'rules'], { type: 'field', domain: ['ext:geosite_vendor.dat:video'], balancerTag: 'vpn' })
+  assert.ok(!inspectDocument(changed).error)
+  assert.ok(changed.includes('/* existing rule */'))
+  assert.ok(changed.includes('9007199254740993'))
+  assert.ok(changed.indexOf('geosite_vendor.dat') < changed.indexOf('existing rule'))
 })

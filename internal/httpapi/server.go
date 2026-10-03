@@ -17,6 +17,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/backup"
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/components"
+	"github.com/popiposter/xkeen-control/internal/geodatareader"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	"github.com/popiposter/xkeen-control/internal/notifications"
 	"github.com/popiposter/xkeen-control/internal/panellistener"
@@ -114,6 +115,7 @@ type Server struct {
 	native             NativeDiscovery
 	nativeJobs         *xkeen.Jobs
 	nativeConfig       *xkeen.ConfigEditor
+	geodata            *geodatareader.Reader
 	updates            panelupdate.Service
 	notifications      *notifications.Service
 	backup             BackupService
@@ -146,6 +148,7 @@ type Config struct {
 	Native             NativeDiscovery
 	NativeJobs         *xkeen.Jobs
 	NativeConfig       *xkeen.ConfigEditor
+	Geodata            *geodatareader.Reader
 	Updates            panelupdate.Service
 	Notifications      *notifications.Service
 	Backup             BackupService
@@ -158,7 +161,7 @@ func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, native: config.Native, nativeJobs: config.NativeJobs, nativeConfig: config.NativeConfig, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, restore: config.Restore, performancePolicy: config.PerformancePolicy, listener: config.Listener, restorePreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, native: config.Native, nativeJobs: config.NativeJobs, nativeConfig: config.NativeConfig, geodata: config.Geodata, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, restore: config.Restore, performancePolicy: config.PerformancePolicy, listener: config.Listener, restorePreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -181,7 +184,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/v1/session/login", "/api/v1/session/logout", "/api/v1/session",
 		"/api/v1/xkeen",
 		"/api/v1/xkeen/commands", "/api/v1/xkeen/jobs/start", "/api/v1/xkeen/jobs/read", "/api/v1/xkeen/jobs/input", "/api/v1/xkeen/jobs/resize", "/api/v1/xkeen/jobs/cancel", "/api/v1/xkeen/jobs/resolve", "/api/v1/xkeen/config", "/api/v1/xkeen/config/save", "/api/v1/xkeen/config/workspace", "/api/v1/xkeen/config/text", "/api/v1/xkeen/config/draft", "/api/v1/xkeen/config/document", "/api/v1/xkeen/config/save-set", "/api/v1/xkeen/config/apply", "/api/v1/xkeen/config/inspect", "/api/v1/xkeen/config/restore-saved", "/api/v1/xkeen/config/restore-previous",
-		"/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary", "/api/v1/components", "/api/v1/components/check", "/api/v1/components/policy",
+		"/api/v1/geodata", "/api/v1/geodata/query", "/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary", "/api/v1/components", "/api/v1/components/check", "/api/v1/components/policy",
 		"/api/v1/components/preview", "/api/v1/components/apply", "/api/v1/components/rollback", "/api/v1/components/cancel",
 		"/api/v1/setup/preview", "/api/v1/setup/apply", "/api/v1/setup/cancel",
 		"/api/v1/performance/policy", "/api/v1/performance/policy/preview", "/api/v1/performance/policy/apply", "/api/v1/performance/policy/cancel",
@@ -226,6 +229,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/api/v1/geodata", "/api/v1/geodata/query":
+		s.handleGeodata(w, r)
 	case "/api/v1/xkeen/config", "/api/v1/xkeen/config/save", "/api/v1/xkeen/config/workspace", "/api/v1/xkeen/config/text", "/api/v1/xkeen/config/draft", "/api/v1/xkeen/config/document", "/api/v1/xkeen/config/save-set", "/api/v1/xkeen/config/apply", "/api/v1/xkeen/config/inspect", "/api/v1/xkeen/config/restore-saved", "/api/v1/xkeen/config/restore-previous":
 		s.handleNativeConfig(w, r)
 	case "/api/v1/xkeen/commands", "/api/v1/xkeen/jobs/start", "/api/v1/xkeen/jobs/read", "/api/v1/xkeen/jobs/input", "/api/v1/xkeen/jobs/resize", "/api/v1/xkeen/jobs/cancel", "/api/v1/xkeen/jobs/resolve":

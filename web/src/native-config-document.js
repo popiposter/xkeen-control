@@ -61,6 +61,15 @@ export function appendDocumentItem(text, path, value) {
   const at = array.offset + array.length - 1
   return text.slice(0, at) + `${array.children?.length ? ',' : ''}\n${JSON.stringify(value)}\n` + text.slice(at)
 }
+
+export function prependDocumentItem(text, path, value) {
+  const parsed = inspectDocument(text)
+  if (parsed.error) throw new Error(parsed.error)
+  const array = documentNode(parsed.tree, path)
+  if (!array || array.type !== 'array') throw new Error('This native array is absent; create it in Text mode.')
+  const at = array.offset + 1
+  return text.slice(0, at) + `\n${JSON.stringify(value)}${array.children?.length ? ',' : ''}\n` + text.slice(at)
+}
 export function moveDocumentItem(text, path, index, destination) {
   const parsed = inspectDocument(text)
   if (parsed.error) throw new Error(parsed.error)

@@ -5,7 +5,7 @@ async function mountEditor(page) {
   const model = await mountFeatureCompleteDashboard(page)
   const writes = []
   let reads = 0
-  const state = { digest: 'a'.repeat(64), pending: null, hasPrevious: false }
+  const state = { digest: 'a'.repeat(64), pending: null, hasPrevious: false, targets: [{ tag: 'direct', kind: 'outbound', protocol: 'freedom' }, { tag: 'vpn', kind: 'outbound', protocol: 'vless' }] }
   const original = '{/* keep DNS */"dns":{"queryStrategy":"UseIP","future":9007199254740993}}'
   const documents = { '02_dns.json': { text: original }, '05_routing.json': { text: '{"routing":{"domainStrategy":"AsIs","rules":[]}}' } }
   await page.route('**/api/v1/xkeen/config/workspace', (route) => {
@@ -183,5 +183,63 @@ test('invalid Text remains a savable private draft and cannot replace native fil
   await page.getByRole('button', { name: 'Save draft', exact: true }).click()
   await expect(page.getByRole('status').filter({ hasText: 'Draft saved' })).toBeVisible()
   expect(drafts).toEqual([{ file: '02_dns.json', text: '{ invalid' }])
+  expect(writes).toEqual([])
+})
+
+test('installed geodata adds an ordered category rule only to the shared draft', async ({ page }) => {
+  const { model, writes, state, documents } = await mountEditor(page)
+  state.targets = [{ tag: 'direct', kind: 'outbound', protocol: 'freedom' }, { tag: 'vpn', kind: 'outbound', protocol: 'vless' }]
+  documents['05_routing.json'].text = '{"routing":{"domainStrategy":"AsIs","rules":[/* keep catch-all */{"type":"field","future":9007199254740993,"outboundTag":"direct"}]}}'
+  let inventoryReads = 0
+  const queries = []
+  await page.route('**/api/v1/geodata', (route) => {
+    inventoryReads++
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify([{ name: 'geosite_vendor.dat', kind: 'geosite', size: 1024, available: true }]) })
+  })
+  await page.route('**/api/v1/geodata/query', (route) => {
+    const body = route.request().postDataJSON()
+    queries.push(body)
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ file: body.file, kind: 'geosite', snapshot: 'c'.repeat(64), offset: 0, total: 1, more: false, items: [{ category: 'video', type: 'category', value: 'video', count: 2 }] }) })
+  })
+  await page.getByLabel('Configuration file', { exact: true }).selectOption('05_routing.json')
+  expect(inventoryReads).toBe(0)
+  await page.getByRole('button', { name: 'Browse installed geodata', exact: true }).click()
+  await expect(page.getByLabel('Database file', { exact: true })).toHaveValue('geosite_vendor.dat')
+  await page.getByRole('button', { name: 'Search installed database', exact: true }).click()
+  await expect(page.getByText('video · category · 2 entries', { exact: true })).toBeVisible()
+  await page.getByLabel('Rule destination', { exact: true }).selectOption('outbound:vpn')
+  await page.getByRole('button', { name: 'Add category rule', exact: true }).click()
+  await expect(page.getByLabel('Rule 1 domains / geosite (one per line)', { exact: true })).toHaveValue('ext:geosite_vendor.dat:video')
+  await page.getByRole('button', { name: 'Text', exact: true }).click()
+  const editor = page.getByRole('textbox', { name: 'Configuration text' })
+  await expect(editor).toContainText('9007199254740993')
+  await expect(editor).toContainText('keep catch-all')
+  await page.getByRole('button', { name: 'Undo', exact: true }).click()
+  await expect(editor).not.toContainText('geosite_vendor.dat')
+  expect(queries).toHaveLength(1)
+  expect(writes).toEqual([])
+  expect(model.requests.filter((request) => request.path === '/api/v1/xkeen/jobs/start')).toEqual([])
+})
+
+test('native database replacement invalidates pagination without changing configuration', async ({ page }) => {
+  const { writes, state } = await mountEditor(page)
+  state.targets = [{ tag: 'direct', kind: 'outbound', protocol: 'freedom' }]
+  const queries = []
+  await page.route('**/api/v1/geodata', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify([{ name: 'geoip.dat', kind: 'geoip', size: 1024, available: true }]) }))
+  await page.route('**/api/v1/geodata/query', (route) => {
+    const body = route.request().postDataJSON(); queries.push(body)
+    if (body.offset) return route.fulfill({ status: 409, contentType: 'application/json', body: '{"error":"installed geodata changed; reload the file"}' })
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ file: body.file, kind: 'geoip', snapshot: 'd'.repeat(64), offset: 0, total: 100, more: true, items: Array.from({ length: 50 }, (_, index) => ({ category: 'region-'+index, type: 'category', value: 'region-'+index, count: 10 })) }) })
+  })
+  await page.getByLabel('Configuration file', { exact: true }).selectOption('05_routing.json')
+  await page.getByRole('button', { name: 'Browse installed geodata', exact: true }).click()
+  await expect(page.getByLabel('Database file', { exact: true })).toHaveValue('geoip.dat')
+  await page.getByRole('button', { name: 'Search installed database', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Next page', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'Next page', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'installed geodata changed' })).toBeVisible()
+  expect(queries[1]).toMatchObject({ snapshot: 'd'.repeat(64), offset: 50 })
+  await expect(page.getByRole('button', { name: 'Add category rule', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Add traffic rule', exact: true })).toBeEnabled()
   expect(writes).toEqual([])
 })

@@ -20,6 +20,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/components"
 	"github.com/popiposter/xkeen-control/internal/configview"
+	"github.com/popiposter/xkeen-control/internal/geodatareader"
 	"github.com/popiposter/xkeen-control/internal/httpapi"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	"github.com/popiposter/xkeen-control/internal/notifications"
@@ -214,6 +215,7 @@ func main() {
 	handler := httpapi.New(httpapi.Config{
 		Native:       xkeen.Discovery{},
 		NativeJobs:   nativeJobs,
+		Geodata:      &geodatareader.Reader{Dir: getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)},
 		NativeConfig: &xkeen.ConfigEditor{DraftDir: getenv("XKEEN_NATIVE_CONFIG_DRAFT_DIR", "/opt/etc/xkeen-control/secrets/config-drafts"), Dir: getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir), XrayBinary: getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary), Lease: authorityLease, PreviousDir: getenv("XKEEN_NATIVE_CONFIG_PREVIOUS_DIR", "/opt/etc/xkeen-control/previous/native-config"), AssetDir: getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)},
 		Collector:    collector,
 		Auth:         authManager,

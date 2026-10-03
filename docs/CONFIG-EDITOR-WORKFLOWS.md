@@ -81,6 +81,26 @@ working edits. View native console opens the existing job, never a new command.
 The former appliance-policy Preview/Apply endpoints and brokers are retired.
 No live editor qualification claimed.
 
+The routing form additionally opens a lazy installed-geodata browser. Opening
+the routing page alone does not read databases. It lists the regular native
+`geosite*.dat` and `geoip*.dat` files, pages categories and contents, and searches
+literal domain/IP membership using the encoded domain match types/CIDRs. Inverse
+IP categories are labelled explicitly. This is database membership, not a claim
+about the eventual first winning Xray rule or DNS resolution.
+
+Each page is bound to a fresh file SHA256; a changed database invalidates paging.
+Select an existing outbound or native balancer and place a category rule before
+or after the existing rules. The operation edits the common working document
+only, preserves its existing tokens/comments and can be undone. Save validates
+the whole set; Apply still requires the explicit native restart. Destination
+metadata projects outbound tags/protocols only, never node credentials.
+
+Read bounds: 64 MiB/file, 16 MiB/entry buffer reused during scanning, 32 files,
+8192 categories, 100 items/page, 256 KiB response and a 5-second HTTP deadline.
+No persistent whole-file index is generated. The six installed database
+snapshots passed local catalog/content/membership checks; router reader RSS and
+live editor acceptance remain separate qualification.
+
 Resource bounds: 2 MiB per text/draft, 8 MiB native candidate aggregate; one file
 is fetched at a time. Private document JSON responses have a separate 32 MiB cap
 to account for escaping; sanitized status responses retain their 512 KiB cap.

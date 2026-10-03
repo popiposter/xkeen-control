@@ -61,7 +61,8 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, fo
     const timer = setTimeout(() => controller.abort(), body ? 60_000 : 10_000)
     requests.current.add(controller)
     try {
-      const response = await fetch(`/api/v1/xkeen/${path.startsWith('jobs/') ? path : `config/${path}`}`, { method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal, headers: body === undefined ? {} : { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: body === undefined ? undefined : JSON.stringify(body) })
+      const endpoint = path === 'geodata' || path === 'geodata/query' ? `/api/v1/${path}` : `/api/v1/xkeen/${path.startsWith('jobs/') ? path : `config/${path}`}`
+      const response = await fetch(endpoint, { method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal, headers: body === undefined ? {} : { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: body === undefined ? undefined : JSON.stringify(body) })
       if (!current()) throw new Error('Session changed.')
       if (response.status === 401) { onUnauthorized?.(); throw new Error('Session ended.') }
       const value = await response.json()
@@ -226,7 +227,7 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, fo
         {parsed.error && <p role="alert">{parsed.error}</p>}
         {mode === 'text' ? <Suspense fallback={<p>Loading text editor…</p>}><TextEditor text={text} disabled={locked} onChange={edit} onUndo={() => step('undo')} onRedo={() => step('redo')} /></Suspense> : !parsed.error && <div className="space-y-3">
           {fields.filter((item) => item.file === file).map((item) => <NativeField key={item.field} item={item} current={documentField(parsed.tree, item.area, item.field)} disabled={locked} onChange={(value) => { try { edit(editDocumentField(text, item.area, item.field, value)) } catch (error) { setNotice(error.message) } }} />)}
-          <NativeConfigForm key={file} file={file} text={text} tree={parsed.tree} disabled={locked} onChange={edit} onError={setNotice} />
+          <NativeConfigForm key={file} file={file} text={text} tree={parsed.tree} disabled={locked} onChange={edit} onError={setNotice} request={request} targets={workspace.targets || []} />
           <p className="text-sm text-muted-foreground">Additional native properties are available in Text mode. Unknown fields and comments are preserved.</p>
         </div>}
         <div className="flex flex-wrap gap-2">

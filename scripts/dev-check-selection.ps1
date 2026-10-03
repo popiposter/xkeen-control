@@ -18,7 +18,7 @@ function Get-XKeenBrowserSpecs {
     $areas = @{
         'performance-policy' = 'performance-policy'; 'system-panel' = 'system-panel'
         'notifications' = 'system-panel'; 'native-xkeen' = 'native-xkeen'
-        'native-commands' = 'native-commands'; 'native-console' = 'native-commands'; 'native-config' = 'native-config'; 'native-config-form' = 'native-config'
+        'native-commands' = 'native-commands'; 'native-console' = 'native-commands'; 'native-config' = 'native-config'; 'native-config-form' = 'native-config'; 'native-geodata' = 'native-config'
     }
     foreach ($path in $Changed) {
         if ($path -match '^web/tests/[^/]+\.spec\.js$') { [void]$specs.Add($path.Substring(4)); continue }

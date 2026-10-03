@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { NativeSelect } from '@/components/ui/native-select'
-import { appendDocumentItem, documentNode, editDocumentPath, moveDocumentItem, nodeValue } from './native-config-document'
+import { appendDocumentItem, documentNode, editDocumentPath, moveDocumentItem, nodeValue, prependDocumentItem } from './native-config-document'
+
+const GeodataBrowser = lazy(() => import('./native-geodata.jsx'))
 
 function lines(value) { return Array.isArray(value) && value.every((item) => typeof item === 'string') ? value.join('\n') : '' }
 function list(value) {
@@ -28,8 +30,9 @@ function StringListField({ id, value, disabled, onChange, onError }) {
   }} />
 }
 
-export function NativeConfigForm({ file, text, tree, disabled, onChange, onError }) {
+export function NativeConfigForm({ file, text, tree, disabled, onChange, onError, request, targets = [] }) {
   const [shown, setShown] = useState(12)
+  const [browseGeodata, setBrowseGeodata] = useState(false)
   const value = (path) => nodeValue(tree, path)
   const node = (path) => documentNode(tree, path)
   const edit = (path, next) => { try { return onChange(editDocumentPath(text, path, next)) } catch (error) { onError(error.message); return false } }
@@ -61,6 +64,10 @@ export function NativeConfigForm({ file, text, tree, disabled, onChange, onError
     <Button variant="outline" disabled={disabled} onClick={() => add(['dns', 'servers'], { address: '', domains: [], skipFallback: false })}>Add resolver</Button>
   </div>
   if (file === '05_routing.json') return <div className="space-y-4">
+    <Button variant="outline" disabled={disabled} onClick={() => setBrowseGeodata(!browseGeodata)}>{browseGeodata ? 'Close geodata browser' : 'Browse installed geodata'}</Button>
+    {browseGeodata && <Suspense fallback={<p>Loading geodata browser…</p>}><GeodataBrowser request={request} disabled={disabled} targets={[...targets, ...array(['routing', 'balancers']).map((_, index) => ({ kind: 'balancer', tag: value(['routing', 'balancers', index, 'tag']) })).filter((target) => typeof target.tag === 'string')]} onAdd={(rule, position) => {
+      try { return onChange((position === 'first' ? prependDocumentItem : appendDocumentItem)(text, ['routing', 'rules'], rule)) } catch (error) { onError(error.message); return false }
+    }} /></Suspense>}
     <h3 className="font-semibold">Traffic rules</h3><p className="text-sm text-muted-foreground">Xray uses the first matching rule. A rule's conditions are combined; different rules provide alternatives.</p>
     {array(['routing', 'rules']).slice(0, shown).map((rule, index) => <fieldset key={index} className="space-y-3 rounded-lg border p-3"><legend>Rule {index + 1}</legend>
       {rule.type === 'object' && value(['routing', 'rules', index, 'type']) === 'field' ? <>

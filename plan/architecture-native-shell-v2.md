@@ -27,9 +27,15 @@ Apply/restore и формы DNS, ordered routing, balancers/observatory реал
 restore без автоматического rollback. Проверка качества DNS/VPN отдельная.
 Основные Routing/DNS страницы используют этот общий editor; старые brokers,
 appliance-policy APIs, страницы, стили и их тесты удалены. Browser inventory105
-вместо162. Geodata browser, portable transfer/Telegram и остальная очистка
-API/packages ещё впереди. Live приёмка
-команд и редакторов ещё не выполнена.
+вместо162. В исходниках добавлен installed-geodata browser: категории,
+содержимое и domain/IP membership по хешу файла, выбор существующего
+outbound/balancer и добавление category rule в общий черновик. Шесть реальных
+снимков баз прошли локальную проверку; live editor и ARM64 footprint ещё не
+квалифицированы. Штатный XKeen переустановлен официальным installer/native auto
+registration без патчей; stock init/module provenance, сохранность конфигов и
+native Start подтверждены независимо. Native startup через environment
+поддержан в source readback панели. Portable transfer/Telegram, DNS/outage
+приёмка на отдельном LAN-клиенте и остальная очистка API/packages ещё впереди.
 
 ## 1. Requirements & Constraints
 
