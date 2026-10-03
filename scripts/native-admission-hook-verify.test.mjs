@@ -127,15 +127,16 @@ test('TPROXY before mark restoration refuses', () => assert.notEqual(fixture(v =
   v['4-mangle'] = lines.join('\n')
 }).status, 0))
 
-function admitted({ expectation = 'running', change = '', alterHook = h => h, badCapability = false, startsStopped = false, nativeDNS = 'off', nativeKillswitch = 'off' } = {}) {
+function admitted({ expectation = 'running', change = '', alterHook = h => h, badCapability = false, startsStopped = false, nativeDNS = 'off', nativeKillswitch = 'off', nativeUpdate = false, missingCompletion = false, nativeAuto, changeDuringPre = '' } = {}) {
   const code = mkdtempSync('/opt/native-hook-proof-'), root = mkdtempSync(join(tmpdir(), 'hook-proof-gate-'))
   chmodSync(code, 0o700); chmodSync(root, 0o700)
   try {
-    const paths = { init: join(code, 'init'), hook: join(code, 'hook'), schedule: join(code, 'schedule'), configs: join(code, 'configs'), gate: join(code, 'gate'), entry: join(code, 'entry') }
+    const paths = { init: join(code, 'init'), hook: join(code, 'hook'), schedule: join(code, 'schedule'), configs: join(code, 'configs'), gate: join(code, 'gate'), entry: join(code, 'entry'), context: join(code, 'update-context'), dispatcher: join(code, 'dispatcher') }
     mkdirSync(paths.configs, { mode: 0o700 })
-    const action = expectation === 'stopped' ? 'stop' : expectation === 'unchanged' ? 'start' : 'restart'
-    const mode = expectation === 'unchanged' ? 'automatic' : 'forced'
-    const settings = { name_chain: 'xkeen', comment_tag: 'xkeen_rule', table_mark: '0x111', table_id: '111', name_ipset_deny_mac: 'xkeen_deny_mac', name_client: 'xray', proxy_router: 'off', proxy_dns: nativeDNS, aghfix: 'off', start_auto: expectation === 'unchanged' ? 'off' : 'on', dscp_force_proxy_tag: 'force-proxy' }
+    const action = nativeUpdate ? 'update-xkeen' : expectation === 'stopped' ? 'stop' : expectation === 'unchanged' ? 'start' : 'restart'
+    const mode = nativeUpdate ? 'forced' : expectation === 'unchanged' ? 'automatic' : 'forced'
+    const role = nativeUpdate ? 'update' : 'init'
+    const settings = { name_chain: 'xkeen', comment_tag: 'xkeen_rule', table_mark: '0x111', table_id: '111', name_ipset_deny_mac: 'xkeen_deny_mac', name_client: 'xray', proxy_router: 'off', proxy_dns: nativeDNS, aghfix: 'off', start_auto: nativeAuto ?? (expectation === 'unchanged' ? 'off' : 'on'), dscp_force_proxy_tag: 'force-proxy' }
     writeFileSync(paths.init, Object.entries(settings).map(([k, v]) => `${k}="${v}"`).join('\n') + '\n', { mode: 0o600 })
     const hook = { ...settings, file_dns: 'false', killswitch: nativeKillswitch, mode_proxy: 'Hybrid', table_redirect: 'nat', table_tproxy: 'mangle', iptables_supported: 'true', ip6tables_supported: 'true', policy_mark_full: '', port_redirect: '12345', port_tproxy: '12346', port_dscp_force_proxy_redirect: '12347', port_dscp_force_proxy_tproxy: '12348', dscp_force_proxy: '61', policy_mark: '', ipv4_proxy: '127.0.0.1', ipv6_proxy: '::1', network_dscp_force_proxy_redirect: 'tcp', network_dscp_force_proxy_tproxy: 'udp' }
     writeFileSync(join(code, 'native.json'), JSON.stringify({ xkeen: { killswitch: nativeKillswitch } }), { mode: 0o600 })
@@ -143,15 +144,22 @@ function admitted({ expectation = 'running', change = '', alterHook = h => h, ba
     writeFileSync(join(code, 'hook-next'), readFileSync(paths.hook), { mode: 0o600 })
     const inbounds = [12345, 12346, 12347, 12348].map((port, i) => ({ protocol: 'dokodemo-door', port, tag: ['main-redir', 'main-tproxy', 'force-proxy-redirect', 'force-proxy-tproxy'][i], settings: { followRedirect: true, network: i % 2 ? 'udp' : 'tcp' }, streamSettings: { sockopt: { tproxy: i % 2 ? 'tproxy' : 'redirect' } } }))
     writeFileSync(join(paths.configs, 'inbounds.json'), JSON.stringify({ inbounds }), { mode: 0o600 })
-    const rewrite = s => s.replaceAll('/tmp/.xkeen-admission', root).replaceAll('/opt/lib/xkeen/native-operation-gate.sh', paths.gate).replaceAll('/opt/lib/xkeen/native-admission-entry.sh', paths.entry).replaceAll('/opt/etc/init.d/S05xkeen', paths.init).replaceAll('/opt/etc/ndm/netfilter.d/proxy.sh', paths.hook).replaceAll('/opt/etc/ndm/schedule.d/00-xkeen-hotspot-sync.sh', paths.schedule).replaceAll('/opt/etc/xray/configs', paths.configs).replaceAll('/opt/etc/xkeen/xkeen.json', join(code, 'native.json'))
-    for (const [key, file] of [['gate', 'native-operation-gate.sh'], ['entry', 'native-admission-entry.sh']]) writeFileSync(paths[key], rewrite(readFileSync(`scripts/${file}`, 'utf8')), { mode: 0o600 })
+    const rewrite = s => s.replaceAll('/tmp/.xkeen-admission', root).replaceAll('/opt/lib/xkeen/native-operation-gate.sh', paths.gate).replaceAll('/opt/lib/xkeen/native-admission-entry.sh', paths.entry).replaceAll('/opt/lib/xkeen/native-update-context.sh', paths.context).replaceAll('/opt/sbin/xkeen', paths.dispatcher).replaceAll('/opt/etc/init.d/S05xkeen', paths.init).replaceAll('/opt/etc/ndm/netfilter.d/proxy.sh', paths.hook).replaceAll('/opt/etc/ndm/schedule.d/00-xkeen-hotspot-sync.sh', paths.schedule).replaceAll('/opt/etc/xray/configs', paths.configs).replaceAll('/opt/etc/xkeen/xkeen.json', join(code, 'native.json'))
+    for (const [key, file] of [['gate', 'native-operation-gate.sh'], ['entry', 'native-admission-entry.sh'], ['context', 'native-update-context.sh']]) writeFileSync(paths[key], rewrite(readFileSync(`scripts/${file}`, 'utf8')), { mode: 0o600 })
+    writeFileSync(paths.dispatcher, '#!/bin/sh\nexit 76\n', { mode: 0o600 })
     const views = makeViews()
     for (const [key, value] of Object.entries(views)) {
       writeFileSync(join(code, key), value, { mode: 0o600 }); writeFileSync(join(code, `${key}-next`), value, { mode: 0o600 })
     }
     const functions = rewrite(readFileSync('scripts/native-admission-hook-verify.sh', 'utf8').split('\n_hv_main "$@"')[0])
     writeFileSync(join(code, 'proof'), `${functions}
-_hv_read_table() { [ ! -f '${code}/read-failure' ] || return 3; ${badCapability ? 'return 1' : `cat '${code}/'"$1-$2"`}; }
+_hv_read_table() {
+  if [ "$_hv_phase" = pre ] && [ ! -e '${code}/query-change.used' ]; then
+    : > '${code}/query-change.used'
+    ${changeDuringPre.replaceAll('@CODE@', code).replaceAll('@RAM@', root)}
+  fi
+  [ ! -f '${code}/read-failure' ] || return 3; ${badCapability ? 'return 1' : `cat '${code}/'"$1-$2"`};
+}
 _hv_read_ipsets() { cat '${code}/ipsets'; }
 _hv_read_rules() { cat '${code}/'"$1-rules"; }
 _hv_read_routes() { if [ "$2" = 111 ]; then cat '${code}/'"$1-routes"; else cat '${code}/'"$1-source"; fi; }
@@ -168,23 +176,72 @@ done
     const r = spawnSync('/bin/sh', ['-c', `
 . '${paths.gate}'
 native_gate_acquire '${root}' ${action} || exit $?
-mkdir -m 700 '${root}/operation.lock.d/call.init'
+mkdir -m 700 '${root}/operation.lock.d/call.${role}'
 _native_gate_self || exit $?
-XKEEN_ADMISSION_CALL=0123456789abcdef0123456789abcdef; XKEEN_ADMISSION_ROLE=init; XKEEN_ADMISSION_ACTION=${action}
+XKEEN_ADMISSION_CALL=0123456789abcdef0123456789abcdef; XKEEN_ADMISSION_ROLE=${role}; XKEEN_ADMISSION_ACTION=${action}
 export XKEEN_ADMISSION_CALL XKEEN_ADMISSION_ROLE XKEEN_ADMISSION_ACTION
 umask 077
-printf 'v1 %s %s %s init ${action} ${mode} %s\\n' "$_ng_self_pid" "$_ng_self_start" "$XKEEN_ADMISSION_CALL" "$XKEEN_GATE_TOKEN" > '${root}/operation.lock.d/call.init/context'
+printf 'v1 %s %s %s ${role} ${action} ${mode} %s\\n' "$_ng_self_pid" "$_ng_self_start" "$XKEEN_ADMISSION_CALL" "$XKEEN_GATE_TOKEN" > '${root}/operation.lock.d/call.${role}/context'
 ${startsStopped ? stop : ''}
-/bin/sh '${code}/proof' pre init ${action} ${mode} ${expectation} || exit $?
+/bin/sh '${code}/proof' pre ${role} ${action} ${mode} ${expectation} || exit $?
 echo PREFLIGHT
-${startsStopped ? `for key in ${Object.keys(views).join(' ')} hook; do cp '${code}/'"$key-next" '${code}/'"$key"; done` : ''}
+${startsStopped && !nativeUpdate ? `for key in ${Object.keys(views).join(' ')} hook; do cp '${code}/'"$key-next" '${code}/'"$key"; done` : ''}
 ${expectation === 'stopped' ? stop : ''}
-${change.replaceAll('@CODE@', code)}
-/bin/sh '${code}/proof' post init ${action} ${mode} ${expectation}
+${change.replaceAll('@CODE@', code).replaceAll('@RAM@', root)}
+${nativeUpdate ? `# Synthetic protocol receipts only: no native updater body is executed.
+scope='${root}/operation.lock.d/call.update'
+printf 'v1 999 1 %s\\n' "$XKEEN_ADMISSION_CALL" > "$scope/body"
+dispatcher_hash=$(sha256sum '${paths.dispatcher}'); dispatcher_hash=\${dispatcher_hash%% *}
+printf 'v1 999 1 %s %s\\n' "$XKEEN_ADMISSION_CALL" "$dispatcher_hash" > "$scope/staged"
+mkdir -m 700 "$scope/exec.used"
+printf '/opt/bin/sh\\000/opt/sbin/xkeen\\000-uk_post_update\\000' > "$scope/exec.argv"
+${missingCompletion ? '' : `printf 'v1 999 1 %s updated %s\\n' "$XKEEN_ADMISSION_CALL" "$dispatcher_hash" > "$scope/completed"`}` : ''}
+/bin/sh '${code}/proof' post ${role} ${action} ${mode} ${expectation}
 `], { encoding: 'utf8' })
-    return { ...r, baseline: existsSync(join(root, 'operation.lock.d/call.init/hook-preflight')) }
+    return { ...r, baseline: existsSync(join(root, `operation.lock.d/call.${role}/hook-preflight`)) }
   } finally { rmSync(code, { recursive: true, force: true }); rmSync(root, { recursive: true, force: true }) }
 }
+
+test('native update kernel proof accepts intact running state including autostartoff', () => {
+  for (const nativeAuto of ['on', 'off']) {
+    const r = admitted({ nativeUpdate: true, nativeAuto }); assert.equal(r.status, 0, r.stderr); assert.equal(r.baseline, false)
+  }
+})
+test('native update preserves stopped kernel snapshot without recreating interception', () => {
+  const r = admitted({ nativeUpdate: true, expectation: 'unchanged', startsStopped: true })
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.baseline, false)
+})
+test('native update refuses unsupported initial kernel state before baseline', () => {
+  for (const options of [{ startsStopped: true }, { expectation: 'unchanged' }, { expectation: 'stopped' }]) {
+    const r = admitted({ nativeUpdate: true, ...options }); assert.notEqual(r.status, 0); assert.equal(r.baseline, false); assert.equal(r.stdout, '')
+  }
+})
+test('native update retains kernel baseline on missing completion or post-update drift', () => {
+  for (const options of [{ missingCompletion: true }, { change: "printf ':xkeen - [0:0]\\n' >> @CODE@/6-mangle", expectation: 'unchanged', startsStopped: true }, { change: "sed -i 's/--to-ports 12345/--to-ports 9999/g' @CODE@/4-nat" }]) {
+    const r = admitted({ nativeUpdate: true, ...options }); assert.notEqual(r.status, 0); assert.equal(r.baseline, true)
+  }
+})
+
+// The parent shell's live Node ancestor is a valid possible gate owner. Changing
+// to it with the same token/action must still refuse a new generation.
+const replaceOwner = `(wrapper=\${_nu_wrapper_pid:-$_ng_self_pid}
+meta=$(cat /proc/"$wrapper"/stat); rest=\${meta##*) }; set -- $rest
+ancestor=$2
+meta=$(cat /proc/"$ancestor"/stat); rest=\${meta##*) }; set -- $rest; shift 19
+ancestor_start=$1
+owner='@RAM@/operation.lock.d/owner'
+IFS= read -r line < "$owner"; set -- $line
+printf '%s %s %s %s %s %s\\n' "$1" "$2" "$ancestor" "$ancestor_start" "$5" "$6" > "$owner")`
+
+test('new valid ancestor owner during update kernel query refuses before publishing baseline', () => {
+  const r = admitted({ nativeUpdate: true, changeDuringPre: replaceOwner })
+  assert.equal(r.status, 77, r.stderr); assert.equal(r.baseline, false); assert.equal(r.stdout, '')
+})
+
+test('update kernel baseline binds the original owner generation across pre and post', () => {
+  const r = admitted({ nativeUpdate: true, change: replaceOwner })
+  assert.equal(r.status, 77, r.stderr); assert.equal(r.baseline, true)
+})
 test('real admission and protected forced Hybrid inputs settle readback baseline', () => {
   const r = admitted(); assert.equal(r.status, 0, r.stderr); assert.equal(r.baseline, false)
 })

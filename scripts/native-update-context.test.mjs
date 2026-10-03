@@ -8,7 +8,7 @@ import { test } from 'node:test'
 const hash = value => createHash('sha256').update(value).digest('hex')
 const argvHash = hash(Buffer.from('/opt/bin/sh\0/opt/sbin/xkeen\0-uk_post_update\0'))
 assert.ok(readFileSync('scripts/native-update-context.sh', 'utf8').includes(argvHash))
-function fixture({ action = 'update-xkeen', setup = '', child = 'native_update_stage_context "$stage"', body = '', borrowed = false, beforeBind = '', execFlow = false, stageFlow = false, execProbe = 'native_update_exec_context', stagedChange = '', execArgument = '-uk_post_update', withoutExec = false, verifyPhase = '', verifierSetup = '', wrapperSetup = '', nestedVerifier = false } = {}) {
+function fixture({ action = 'update-xkeen', setup = '', child = 'native_update_stage_context "$stage"', body = '', borrowed = false, beforeBind = '', execFlow = false, stageFlow = false, execProbe = 'native_update_exec_context', stagedChange = '', execArgument = '-uk_post_update', withoutExec = false, verifyPhase = '', verifierSetup = '', wrapperSetup = '', nestedVerifier = false, observer = false } = {}) {
   const root = mkdtempSync('/tmp/native-update-context-')
   const code = mkdtempSync('/root/native-update-exec-')
   chmodSync(code, 0o700)
@@ -22,7 +22,7 @@ function fixture({ action = 'update-xkeen', setup = '', child = 'native_update_s
   for (const name of ['native-operation-gate', 'native-admission-entry', 'native-update-context']) put(name, readFileSync(`scripts/${name}.sh`, 'utf8'))
   put('verifier', `. '@ROOT@/native-operation-gate'; . '@ROOT@/native-admission-entry'; . '@ROOT@/native-update-context'
 ${verifierSetup}
-native_update_verifier_context '${verifyPhase}'
+${observer ? 'native_update_observer_context' : 'native_update_verifier_context'} '${verifyPhase}'
 `)
   const verifyInvoke = nestedVerifier ? `/bin/sh -c '/bin/sh "@ROOT@/verifier"'` : `/bin/sh '@ROOT@/verifier'`
   put('child', `. '@ROOT@/native-operation-gate'; . '@ROOT@/native-admission-entry'; . '@ROOT@/native-update-context'
@@ -83,6 +83,35 @@ test('preflight authenticates the immediate live wrapper before a body is bound'
     const r = fixture({ verifyPhase: 'pre', borrowed })
     assert.equal(r.status, 0, r.stderr); assert.equal(r.bodyPresent, false)
   }
+})
+
+test('read-only observer may nest below the wrapper but cannot bind a native body', () => {
+  const pre = fixture({ verifyPhase: 'pre', nestedVerifier: true, observer: true })
+  assert.equal(pre.status, 0, pre.stderr); assert.equal(pre.bodyPresent, false)
+  const forbidden = fixture({ verifyPhase: 'pre', nestedVerifier: true, observer: true, verifierSetup: 'native_update_bind_body; exit $?' })
+  assert.equal(forbidden.status, 77, forbidden.stderr); assert.equal(forbidden.bodyPresent, false)
+  const post = fixture({ verifyPhase: 'post', nestedVerifier: true, observer: true, execFlow: true, execProbe: completedExec })
+  assert.equal(post.status, 0, post.stderr)
+})
+
+test('nested observers retain phase/nonce refusal and cannot exceed the ancestry bound', () => {
+  for (const options of [
+    { verifyPhase: 'post', execFlow: true },
+    { verifyPhase: 'pre', verifierSetup: 'XKEEN_ADMISSION_CALL=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' },
+    { verifyPhase: 'pre', action: 'restart' },
+  ]) assert.equal(fixture({ ...options, nestedVerifier: true, observer: true }).status, 77)
+  const verifierSetup = `original_script='@ROOT@/verifier'
+for depth in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17; do
+  next='@ROOT@/nested.'"$depth"
+  printf '/bin/sh "%s"; rc=$?; exit "$rc"\\n' "$original_script" > "$next"
+  original_script=$next
+done
+/bin/sh "$original_script"; exit $?`
+  // Prevent recursive fixture setup in the deepest verifier: the additional
+  // process chain ends at a separate minimal observer script.
+  const setup = verifierSetup.replace("original_script='@ROOT@/verifier'", `printf '. "@ROOT@/native-operation-gate"; . "@ROOT@/native-admission-entry"; . "@ROOT@/native-update-context"; native_update_observer_context pre\\n' > '@ROOT@/minimal-observer'
+original_script='@ROOT@/minimal-observer'`)
+  assert.equal(fixture({ verifyPhase: 'pre', observer: true, verifierSetup: setup }).status, 77)
 })
 
 test('preflight rejects existing body/phase evidence and inherited descendants', () => {

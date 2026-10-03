@@ -33,21 +33,35 @@ _nu_recheck_call() {
     _nu_read_record "$_nu_call/context" || return 77
     [ "$_nu_record" = "$_nu_context" ] || return 77
 }
-native_update_verifier_context() {
+_nu_observer_chain() {
+    _nu_chain_pid=$_nu_verify_pid; _nu_chain_depth=0; _nu_chain=
+    while [ "$_nu_chain_depth" -lt 16 ]; do
+        _native_gate_proc "$_nu_chain_pid" || return 77
+        _nu_chain="$_nu_chain $_nu_chain_pid:$_ng_proc_start"
+        if [ "$_nu_chain_pid" = "$_nu_wrapper_pid" ]; then
+            [ "$_nu_chain_depth" -gt 0 ] && [ "$_ng_proc_start" = "$_nu_wrapper_start" ] || return 77
+            [ "$_nu_verify_mode" != direct ] || [ "$_nu_chain_depth" = 1 ] || return 77
+            printf '%s' "$_nu_chain"
+            return 0
+        fi
+        [ "$_ng_parent" -gt 0 ] && [ "$_ng_parent" != "$_nu_chain_pid" ] || return 77
+        _nu_chain_pid=$_ng_parent; _nu_chain_depth=$((_nu_chain_depth + 1))
+    done
+    return 77
+}
+_nu_observation_context() {
     # Read-only verifier invocation, not body/stage/finish authority. Preflight
     # precedes body binding; postflight runs after that body has exited, so its
     # live parent is the wrapper. Never authenticate by requiring a live body.
-    [ "$#" = 1 ] || return 76
+    [ "$#" = 2 ] || return 76
     case "$1" in pre|post) ;; *) return 76;; esac
-    _nu_verify_phase=$1
+    case "$2" in direct|observer) ;; *) return 76;; esac
+    _nu_verify_phase=$1; _nu_verify_mode=$2
     _nu_load_call || return $?
     _nu_verify_gate=$_nu_gate_record; _nu_verify_context=$_nu_context
     _native_gate_self || return 77
     _nu_verify_pid=$_ng_self_pid; _nu_verify_start=$_ng_self_start
-    _native_gate_proc "$_nu_verify_pid" || return 77
-    [ "$_ng_parent" = "$_nu_wrapper_pid" ] || return 77
-    _native_gate_proc "$_nu_wrapper_pid" || return 77
-    [ "$_ng_proc_start" = "$_nu_wrapper_start" ] || return 77
+    _nu_verify_chain=$(_nu_observer_chain) || return 77
     if [ "$_nu_verify_phase" = pre ]; then
         for _nu_verify_name in body staged exec.used exec.argv completed; do
             [ ! -e "$_nu_call/$_nu_verify_name" ] && [ ! -L "$_nu_call/$_nu_verify_name" ] || return 77
@@ -93,15 +107,24 @@ native_update_verifier_context() {
         [ "$_nu_hash" = "$_nu_verify_dispatcher" ] || return 77
     fi
     _native_gate_proc "$_nu_verify_pid" || return 77
-    [ "$_ng_proc_start:$_ng_parent" = "$_nu_verify_start:$_nu_wrapper_pid" ] || return 77
-    _native_gate_proc "$_nu_wrapper_pid" || return 77
-    [ "$_ng_proc_start" = "$_nu_wrapper_start" ] || return 77
+    [ "$_ng_proc_start" = "$_nu_verify_start" ] || return 77
+    [ "$(_nu_observer_chain)" = "$_nu_verify_chain" ] || return 77
     if [ "$_nu_verify_phase" = pre ]; then
         for _nu_verify_name in body staged exec.used exec.argv completed; do
             [ ! -e "$_nu_call/$_nu_verify_name" ] && [ ! -L "$_nu_call/$_nu_verify_name" ] || return 77
         done
     fi
     return 0
+}
+native_update_verifier_context() {
+    [ "$#" = 1 ] || return 76
+    _nu_observation_context "$1" direct
+}
+native_update_observer_context() {
+    # Bounded nested read-only kernel queries may run below coreutils-timeout.
+    # This never grants the strict direct-child body/stage/finish privileges.
+    [ "$#" = 1 ] || return 76
+    _nu_observation_context "$1" observer
 }
 native_update_bind_body() {
     # One exclusive RAM binding in the existing call scope, before body effects.

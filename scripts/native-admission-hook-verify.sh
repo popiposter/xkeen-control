@@ -3,6 +3,16 @@
 PATH=/opt/bin:/opt/sbin:/usr/bin:/bin
 export PATH
 umask 077
+_hv_auth_context() {
+    if [ "$_na_role:$_na_action:$_na_mode" = update:update-xkeen:forced ]; then
+        native_update_observer_context "$_hv_phase" || return $?
+        [ "${_hv_update_bound-}" = 1 ] && [ "$_nu_gate_record" = "$_hv_update_gate" ] &&
+            [ "$_nu_context" = "$_hv_update_context" ] || return 77
+        _na_call_dir=$_nu_call
+        return 0
+    fi
+    _na_descendant_ok
+}
 _hv_file() {
     _hv_path=$1; _hv_walk=$1
     while :; do
@@ -110,7 +120,7 @@ _hv_inputs() {
 _hv_query() {
     # Finite read-only operations, one bounded RAM file in the current call.
     # Limit producer output BEFORE bringing any bytes into a shell variable.
-    _na_descendant_ok || return 77
+    _hv_auth_context || return 77
     _hv_qfile=$_na_call_dir/hook-query
     (set -C; : > "$_hv_qfile") 2>/dev/null || return 77
     (
@@ -127,7 +137,7 @@ _hv_query() {
         esac
     ) > "$_hv_qfile" 2>/dev/null
     _hv_qrc=$?
-    _na_descendant_ok || return 77
+    _hv_auth_context || return 77
     _native_gate_metadata "$_hv_qfile" || return 77
     [ ! -L "$_hv_qfile" ] && [ "$_ng_meta_mode:$_ng_meta_uid:$_ng_meta_links" = 8180:0:1 ] && [ "$_ng_meta_size" -le 131072 ] || return 77
     if [ "$_hv_qrc" != 0 ]; then rm "$_hv_qfile" || return 77; return 77; fi
@@ -335,18 +345,36 @@ _hv_main() {
     _hv_file /opt/lib/xkeen/native-operation-gate.sh && _hv_file /opt/lib/xkeen/native-admission-entry.sh || return 76
     . /opt/lib/xkeen/native-operation-gate.sh
     . /opt/lib/xkeen/native-admission-entry.sh
-    _na_descendant_ok || return 77
+    if [ "$_na_role:$_na_action:$_na_mode" = update:update-xkeen:forced ]; then
+        _hv_file /opt/lib/xkeen/native-update-context.sh || return 76
+        . /opt/lib/xkeen/native-update-context.sh
+        native_update_observer_context "$_hv_phase" || return 77
+        _hv_update_gate=$_nu_gate_record; _hv_update_context=$_nu_context; _hv_update_bound=1
+    fi
+    _hv_auth_context || return 77
     _hv_base || return $?
     _hv_auto=$(_hv_literal "$_hv_init" start_auto '"') || return 76
     case "$_hv_auto" in on|off) ;;*) return 76;;esac
     _hv_expected=running
     if [ "$_na_action" = stop ] || [ "$_na_mode:$_hv_auto:$_na_action" = automatic:off:restart ]; then _hv_expected=stopped; fi
     [ "$_na_mode:$_hv_auto:$_na_action" != automatic:off:start ] || _hv_expected=unchanged
-    [ "$_hv_expect" = "$_hv_expected" ] || return 76
-    _hv_context=$(sha256sum "$_na_call_dir/context") || return 77
+    if [ "$_na_role:$_na_action:$_na_mode" = update:update-xkeen:forced ]; then
+        case "$_hv_expect" in running|unchanged) ;; *) return 76;; esac
+    else
+        [ "$_hv_expect" = "$_hv_expected" ] || return 76
+    fi
+    if [ "${_hv_update_bound-}" = 1 ]; then
+        # One combined generation digest keeps the existing small RAM baseline
+        # bounded while binding both canonical owner and invocation context.
+        _hv_context=$(printf '%s\n%s\n' "$_hv_update_gate" "$_hv_update_context" | sha256sum) || return 77
+        _hv_schema=v2
+    else
+        _hv_context=$(sha256sum "$_na_call_dir/context") || return 77
+        _hv_schema=v1
+    fi
     _hv_context=${_hv_context%% *}
     _hv_baseline=$_na_call_dir/hook-preflight
-    _hv_saved="v1 $_hv_context $_hv_expect"
+    _hv_saved="$_hv_schema $_hv_context $_hv_expect"
     if [ "$_hv_phase" = pre ]; then
         # Capability queries permit absent running state, but never skip a family.
         for _hv_f in 4 6; do
@@ -366,7 +394,10 @@ _hv_main() {
             _hv_state=$(_hv_snapshot) || return 77
             _hv_prior=$(printf '%s\n' "$_hv_state" | sha256sum); _hv_prior=${_hv_prior%% *}
         fi
-        _na_descendant_ok || return 77
+        if [ "$_na_role:$_na_action:$_na_mode" = update:update-xkeen:forced ]; then
+            case "$_hv_expect" in running) _hv_profile && _hv_running || return 76;; unchanged) _hv_stopped || return 76;; esac
+        fi
+        _hv_auth_context || return 77
         (set -C; printf '%s %s\n' "$_hv_saved" "$_hv_prior" > "$_hv_baseline") || return 77
     else
         _na_small_file "$_hv_baseline" || return 77
@@ -382,7 +413,10 @@ _hv_main() {
                 _hv_now=$(printf '%s\n' "$_hv_state" | sha256sum); _hv_now=${_hv_now%% *}
                 [ "$_hv_now" = "$_hv_prior" ] || return 77;;
         esac
-        _na_descendant_ok || return 77
+        if [ "$_na_role:$_na_action:$_na_mode:$_hv_expect" = update:update-xkeen:forced:unchanged ]; then
+            _hv_stopped || return 77
+        fi
+        _hv_auth_context || return 77
         rm "$_hv_baseline" || return 77
     fi
 }

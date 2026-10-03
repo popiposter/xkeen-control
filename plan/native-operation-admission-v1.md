@@ -792,6 +792,18 @@ admission and any query evidence. The executable verifier still has no update
 branch: complete profile, config/core/kernel/package/cron baselines, native
 completion producer and final settlement remain required before wiring it.
 
+Update kernel readback now reuses the existing native Hybrid query/proof helper.
+A bounded read-only observer may descend below the live update wrapper (for the
+existing timeout/query processes); its full PID/start ancestry is frozen and
+rechecked. Direct verifier/body/stage privileges remain restricted separately.
+Preflight requires intact running interception, or genuinely stopped state for
+an unchanged stopped baseline. Postflight requires typed completion evidence
+and the same running profile or unchanged stopped snapshot. Autostartoff does
+not suppress explicit running-update proof. Unsupported state, kernel drift or
+missing completion retains the baseline. Fixtures use actual admission/proof
+code with synthetic kernel views and synthetic phase receipts: no updater,
+timeout utility on hardware, packet traffic or live completion is qualified.
+
 Normal long-writer contention has a separate known-no-effect result. If an
 elected NDM invocation reaches its valid monotonic deadline after busy admission,
 and has **never acquired** operation admission, it may retire only its own live
