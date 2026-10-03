@@ -8,6 +8,7 @@ import { buildCandidates } from './native-admission-patch.mjs'
 import { buildUpdateCandidate } from './native-admission-update-patch.mjs'
 import { buildRegistrationWrites } from './native-update-registration-patch.mjs'
 import { buildBackupWrites } from './native-update-backup-patch.mjs'
+import { buildCronRegistration, cronPath } from './native-update-cron-patch.mjs'
 
 const metadata = JSON.parse(readFileSync(new URL('./native-update-profile-v1.json', import.meta.url), 'utf8'))
 export const profile = Object.freeze({ ...metadata, files: Object.freeze(metadata.files.map(file => Object.freeze(file))) })
@@ -72,6 +73,7 @@ return 76 2>/dev/null || exit 76
     [packages, packageOverlay],
     ...buildRegistrationWrites(entries),
     ...buildBackupWrites(entries),
+    [cronPath, buildCronRegistration(entries)],
   ])
   const prepared = profile.files.map(file => {
     const bytes = overlays.get(file.path)

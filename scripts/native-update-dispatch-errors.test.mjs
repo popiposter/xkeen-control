@@ -51,7 +51,7 @@ test('failed native post-update restart cannot reach package cleanup or success'
   assert.equal(r.trace.includes('version_xkeen'), false)
 })
 test('reported registration and permissions failures cannot be hidden by later output', () => {
-  for (const failed of ['register_xkeen_initd', 'create_xkeen_cfg', 'delete_register_xkeen', 'register_xkeen_list', 'register_xkeen_control',
+  for (const failed of ['register_cron_initd', 'register_xkeen_initd', 'create_xkeen_cfg', 'delete_register_xkeen', 'register_xkeen_list', 'register_xkeen_control',
     'register_xkeen_status', 'fixed_register_packages', 'chmod-700', 'chmod-600']) {
     const r = post(failed); assert.equal(r.status, 1, `${failed}: ${r.stderr}`)
     assert.equal(r.trace.at(-1), failed)

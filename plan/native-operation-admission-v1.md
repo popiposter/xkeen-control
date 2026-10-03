@@ -1126,6 +1126,19 @@ qualify destination collision protection, bounded temporary cleanup or archive/
 backup resource limits. Cron-cache proof, native cleanup and actual updater
 terminal still block activation; all nine overlays remain fenced/uninstalled.
 
+Cron-init registration adds a tenth fenced overlay. Its admitted update branch
+uses the actual post-body package cache, without a third `opkg` query or any
+package install. The proof requires the same body/phase/generation and unchanged
+protected package query/status/config/tool inputs; cached text/hash and the
+protected cron-init identity are rechecked. A present native cron package permits
+the upstream no-op even when its init file is absent. Without that package, only
+the exact pinned protected version-0.6 init permits the no-op. Failed producers,
+changed cache/file/protection or malformed/non-direct/initial-phase calls refuse.
+The native post dispatcher checks this result before later registration. This
+does not implement cron task editing, change the existing preflight restriction
+on removed native update tasks, or qualify native cleanup/true terminal.
+All ten overlays remain fenced and uninstalled.
+
 Reproduce the disabled native-function fixtures after placing only the two
 hash-verified **public** inputs at the indicated ignored `dist` paths (never
 mount the operator credential/artifact directory):

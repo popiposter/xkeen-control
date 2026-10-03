@@ -20,8 +20,14 @@ const begin = dispatcher.indexOf('case "$1" in\n', dispatcher.indexOf('# Self-he
 const end = dispatcher.indexOf('\nesac\n', begin)
 assert.ok(begin > 0 && end > begin)
 const nativePrefix = dispatcher.slice(begin, end + '\nesac\n'.length)
+const cronModule = built.overlays.get('_xkeen/02_install/07_install_register/03_register_cron.sh').toString().split('# END SOURCE-ONLY FENCE\n')[1]
+const cronPayload = source.get('_xkeen/02_install/07_install_register/03_register_cron.sh').toString().match(/script_content='([\s\S]*?)'\n/)[1]
+assert.equal(cronPayload.replaceAll('\\\\', '').includes('\\'), false)
+const cronInit = cronPayload.replaceAll('\\\\', '\\') + '\n'
+assert.equal(sha(cronInit), '516226b527a140fc733d349c42dd8e92b3182dbc7ac3df38c78e75bbb7a713e2')
 
-function fixture({ output = `printf '${query}'`, before = '', initial = '', post = '', timeout = '' } = {}) {
+function fixture({ output = null, before = '', initial = '', post = '', timeout = '', cron = false, cronPackage = false, cronBefore = '' } = {}) {
+  output ??= `printf '${query}${cronPackage ? 'cron - 1.0\n' : ''}'`
   const code = mkdtempSync('/root/native-prefix-packages-'), ram = mkdtempSync('/tmp/native-prefix-packages-')
   chmodSync(code, 0o700); chmodSync(ram, 0o700)
   const path = name => join(code, name)
@@ -30,6 +36,7 @@ function fixture({ output = `printf '${query}'`, before = '', initial = '', post
     .replaceAll('/opt/lib/xkeen/native-admission-entry.sh', path('entry'))
     .replaceAll('/opt/lib/xkeen/native-update-context.sh', path('context'))
     .replaceAll('/opt/lib/opkg/status', path('status')).replaceAll('/opt/etc/opkg.conf', path('opkg.conf'))
+    .replaceAll('/opt/etc/init.d/S05crond', path('cron.init'))
     .replaceAll('/opt/libexec/timeout-coreutils', path('timeout')).replaceAll('/opt/bin/opkg', path('opkg'))
     .replaceAll('/opt/sbin/.xkeen.stage.', `${code}/.xkeen.stage.`).replaceAll('/opt/sbin/xkeen', path('xkeen'))
     .replaceAll('/opt/bin/sh', '/bin/sh')
@@ -38,7 +45,8 @@ function fixture({ output = `printf '${query}'`, before = '', initial = '', post
   const put = (name, text, mode = 0o600) => writeFileSync(path(name), rewrite(text), { mode })
   const libraries = ". '@CODE@/gate'; . '@CODE@/entry'; . '@CODE@/context'"
   for (const [name, file] of [['gate', 'native-operation-gate'], ['entry', 'native-admission-entry'], ['context', 'native-update-context']]) put(name, readFileSync(`scripts/${file}.sh`, 'utf8'))
-  put('status', status); put('opkg.conf', '# fixture config\n')
+  put('status', status + (cronPackage ? 'Package: cron\nVersion: 1.0\nStatus: install ok installed\n\n' : '')); put('opkg.conf', '# fixture config\n')
+  if (cron) { put('cron', cronModule); put('cron.init', cronInit) }
   put('packages', packageOverlay)
   put('install', source.get('_xkeen/02_install/01_install_packages.sh').toString('utf8'))
   put('opkg', `#!/bin/sh
@@ -60,6 +68,10 @@ echo ENSURED >> '@CODE@/effects'
 native_update_exec_context || exit $?
 ${post}
 ${prefix}
+${cron ? `. '@CODE@/cron'
+${cronBefore}
+register_cron_initd || exit $?
+echo CRON-NOOP >> '@CODE@/effects'` : ''}
 native_update_complete 0
 exit $?
 `)
@@ -69,6 +81,7 @@ native_update_bind_staged "$stage"
   put('deeper', `${libraries}
 native_update_packages_cache
 `)
+  put('deeper-cron', `${libraries}\nnative_update_cron_noop\n`)
   put('body', `${libraries}
 native_update_bind_body || exit $?
 ${initial}
@@ -191,4 +204,64 @@ esac
   assert.ok(r.stdout.includes('CONNECTION\nHEALTH\nGITHUB\n'))
   assert.ok(r.stdout.includes('BACKUP\nDOWNLOAD\nARCHIVE_INSTALL\n'))
   assert.equal(r.stdout.includes('FORBIDDEN'), false)
+})
+test('native cron registration reuses post-body cache without any third package query', () => {
+  for (const cronPackage of [false, true]) {
+    const r = fixture({ cron: true, cronPackage })
+    assert.equal(r.status, 0, JSON.stringify(r))
+    assert.equal(r.effects, 'QUERY\nENSURED\nQUERY\nENSURED\nCRON-NOOP\n')
+    assert.equal(r.held && r.completed, true)
+  }
+  const absent = fixture({ cron: true, cronPackage: true, cronBefore: "rm '@CODE@/cron.init'" })
+  assert.equal(absent.status, 0, JSON.stringify(absent))
+})
+test('missing or changed no-package cron script, body/cache/input drift cannot complete', () => {
+  for (const cronBefore of [
+    "rm '@CODE@/cron.init'", "printf '# version=0.6\\n' > '@CODE@/cron.init'", "chmod 666 '@CODE@/cron.init'",
+    "mv '@CODE@/cron.init' '@CODE@/cron.real'; ln -s cron.real '@CODE@/cron.init'",
+    "chmod 644 '@RAM@/operation.lock.d/call.update/packages.post/packages'",
+    "printf 'foreign - 1.0\\n' >> '@RAM@/operation.lock.d/call.update/packages.post/packages'",
+    "printf '# drift\\n' >> '@CODE@/opkg.conf'", 'unset _nu_pkg_query_hash',
+    'XKEEN_ADMISSION_ACTION=wrong; export XKEEN_ADMISSION_ACTION',
+    "printf 'v1 changed\\n' > '@RAM@/operation.lock.d/call.update/body'",
+    "/bin/sh '@CODE@/deeper-cron' || exit $?",
+  ]) {
+    const r = fixture({ cron: true, cronBefore })
+    assert.notEqual(r.status, 0, JSON.stringify(r))
+    assert.equal(r.effects, 'QUERY\nENSURED\nQUERY\nENSURED\n')
+    assert.equal(r.held && r.post, true); assert.equal(r.completed, false)
+  }
+})
+test('late cron count/hash reader failures and protection/content drift retain admission', () => {
+  for (const cronBefore of [
+    `awk() { case "$1" in *'count++'*) return 7;; esac; command awk "$@"; }`,
+    `awk() { command awk "$@" || return $?; case "$1" in *'count++'*) chmod 666 '@CODE@/cron.init';; esac; }`,
+    `awk() { command awk "$@" || return $?; case "$1" in *'count++'*) printf 'v1 changed\\n' > '@RAM@/operation.lock.d/call.update/body';; esac; }`,
+    `sha256sum() { command sha256sum "$@" || return $?; if [ "$1" = '@RAM@/operation.lock.d/call.update/packages.post/packages' ]; then
+      count=0; [ ! -f '@CODE@/cron-hash-count' ] || read -r count < '@CODE@/cron-hash-count'
+      count=$((count+1)); printf '%s\\n' "$count" > '@CODE@/cron-hash-count'
+      if [ "$count" = 2 ]; then chmod 644 "$1"; fi
+    fi; }`,
+    `sha256sum() { command sha256sum "$@" || return $?; if [ "$1" = '@RAM@/operation.lock.d/call.update/packages.post/packages' ]; then
+      count=0; [ ! -f '@CODE@/cron-hash-count' ] || read -r count < '@CODE@/cron-hash-count'
+      count=$((count+1)); printf '%s\\n' "$count" > '@CODE@/cron-hash-count'
+      if [ "$count" = 2 ]; then sed -i 's/curl - 1.0/curl - 2.0/' "$1"; fi
+    fi; }`,
+    `cat() { command cat "$@" || return $?; if [ "$1" = '@RAM@/operation.lock.d/call.update/packages.post/packages' ]; then
+      count=0; [ ! -f '@CODE@/cron-cat-count' ] || read -r count < '@CODE@/cron-cat-count'
+      count=$((count+1)); printf '%s\\n' "$count" > '@CODE@/cron-cat-count'
+      if [ "$count" = 2 ]; then sed -i 's/curl - 1.0/curl - 2.0/' "$1"; fi
+    fi; }`,
+  ]) {
+    const r = fixture({ cron: true, cronBefore })
+    assert.notEqual(r.status, 0, JSON.stringify(r))
+    assert.equal(r.effects.includes('CRON-NOOP') || r.completed, false)
+    assert.equal(r.held && r.post, true)
+  }
+})
+test('initial body cannot use post-phase cron no-op proof', () => {
+  const r = fixture({ cron: true, initial: 'native_update_cron_noop || exit $?' })
+  assert.notEqual(r.status, 0, JSON.stringify(r))
+  assert.equal(r.effects, '')
+  assert.equal(r.held, true); assert.equal(r.post || r.completed, false)
 })

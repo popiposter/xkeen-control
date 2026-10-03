@@ -349,6 +349,61 @@ native_update_packages_cache() {
     [ "$_nu_gate_record" = "$_nu_pkg_gate" ] && [ "$_nu_context" = "$_nu_pkg_context" ] &&
         [ "$_nu_pkg_body" = "$_nu_pkg_original_body" ] && [ "$_nu_pkg_phase" = "$_nu_pkg_original_phase" ] || return 77
 }
+_nu_cron_snapshot() {
+    _nu_installed_dependencies "$_nu_cron_query" || return 77
+    _nu_cron_inputs=
+    for _nu_cron_file in /opt/bin/opkg /opt/libexec/timeout-coreutils /opt/lib/opkg/status /opt/etc/opkg.conf; do
+        _nu_file_hash "$_nu_cron_file" || return 77
+        _na_file_ok "$_nu_cron_file" && _native_gate_metadata "$_nu_cron_file" || return 77
+        _nu_cron_inputs="$_nu_cron_inputs $_nu_hash:$_ng_meta_mode:$_ng_meta_uid:$_ng_meta_links"
+    done
+    _nu_cron_query_before=$(sha256sum "$_nu_cron_query" 2>/dev/null) || return 77
+    _nu_cron_cache=$(cat "$_nu_cron_query") || return 77
+    [ "$_nu_cron_cache" = "${_packages_cache-}" ] || return 77
+    _nu_cron_query_hash=$(sha256sum "$_nu_cron_query" 2>/dev/null) || return 77
+    [ "$_nu_cron_query_hash" = "$_nu_cron_query_before" ] || return 77
+    _nu_cron_init=absent
+    if [ -e /opt/etc/init.d/S05crond ] || [ -L /opt/etc/init.d/S05crond ]; then
+        _nu_file_hash /opt/etc/init.d/S05crond || return 77
+        _na_file_ok /opt/etc/init.d/S05crond && _native_gate_metadata /opt/etc/init.d/S05crond || return 77
+        [ "$_ng_meta_size" -le 65536 ] || return 77
+        _nu_cron_init="$_nu_hash:$_ng_meta_size:$_ng_meta_mode:$_ng_meta_uid:$_ng_meta_links"
+    fi
+    _native_gate_directory "${_nu_cron_query%/*}" 0700 || return 77
+    [ ! -L "$_nu_cron_query" ] && [ -f "$_nu_cron_query" ] && _native_gate_metadata "$_nu_cron_query" || return 77
+    [ "$_ng_meta_mode:$_ng_meta_uid:$_ng_meta_links" = 8180:0:1 ] && [ "$_ng_meta_size" -le 262144 ] || return 77
+}
+native_update_cron_noop() {
+    # The pinned native registration is a no-op for the admitted cron profile.
+    # Reuse the actual post-body's checked cache, never query/install again.
+    [ "$#" = 0 ] || return 76
+    _nu_package_body_context || return 77
+    [ "$_nu_pkg_phase" = post ] && [ "${_nu_pkg_original_phase-}" = post ] || return 77
+    [ "$_nu_gate_record" = "${_nu_pkg_gate-}" ] && [ "$_nu_context" = "${_nu_pkg_context-}" ] &&
+        [ "$_nu_pkg_body" = "${_nu_pkg_original_body-}" ] || return 77
+    _nu_cron_gate=$_nu_gate_record; _nu_cron_context=$_nu_context; _nu_cron_body=$_nu_pkg_body
+    _nu_cron_query=$_nu_call/packages.post/packages
+    _nu_cron_snapshot || return 77
+    [ "$_nu_cron_inputs" = "$_nu_pkg_inputs" ] && [ "$_nu_cron_query_hash" = "$_nu_pkg_query_hash" ] || return 77
+    _nu_cron_saved_init=$_nu_cron_init
+    _nu_cron_count=$(LC_ALL=C awk '$1=="cron" {count++} END {print count+0}' "$_nu_cron_query") || return 77
+    case "$_nu_cron_count" in
+        1) ;; # Native cron package branch skips script registration entirely.
+        0)
+            case "$_nu_cron_init" in
+                516226b527a140fc733d349c42dd8e92b3182dbc7ac3df38c78e75bbb7a713e2:1711:*) ;;
+                *) return 77;;
+            esac;;
+        *) return 77;;
+    esac
+    _nu_cron_snapshot || return 77
+    [ "$_nu_cron_inputs" = "$_nu_pkg_inputs" ] && [ "$_nu_cron_query_hash" = "$_nu_pkg_query_hash" ] &&
+        [ "$_nu_cron_init" = "$_nu_cron_saved_init" ] || return 77
+    _nu_package_body_context || return 77
+    [ "$_nu_pkg_phase" = post ] && [ "$_nu_gate_record" = "$_nu_cron_gate" ] &&
+        [ "$_nu_context" = "$_nu_cron_context" ] && [ "$_nu_pkg_body" = "$_nu_cron_body" ] || return 77
+    return 0
+}
 native_update_bind_staged() {
     # Publish only the actual fixed stage child's bounded prepared dispatcher.
     # The caller must first validate/decorate the complete supported profile;
