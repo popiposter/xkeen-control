@@ -324,3 +324,12 @@ requirements must be reconciled with the new native lifecycle before implementat
 ## Maintenance rule
 
 After every merge, update this file only when status/sequencing changed, refresh master issue #1 if stale, and remove contradictory planning evidence. Do not duplicate detailed active-issue architecture here.
+
+
+### Native cleanup delivery — 2026-10-03
+
+Development artifact from `0d6a0d6763947a21bc7804492e29d624fefe2dff` is installed. Panel-only replacement independently verified executable, health and preserved native process/configuration. Current 60 nodes, 53 enabled, two subscriptions, WL enabled zero, no pending config. Old component/Setup/appliance import routes return JSON404; native conditional updates expose a terminal from startup. XKeen code remains stock.
+
+Qualification is combined exact-source evidence: original FULL passed Go/race/helpers/frontend/embed/audit and 110/111 browser cases; the single login-heading timeout passed 5/5 unchanged isolated repetitions, then proportional artifact build passed. Cause remains unproven. Do not label this a single successful FULL invocation. Previous 6dba FULL remains bound to that source.
+
+Source/live implementation is delivered for native commands, editors, geodata, subscriptions, encrypted transfer and optional Telegram, with hardware boundaries explicit: unproxied LAN DNS/DIRECT/proxy/outage and client policy, second-router Stage/Apply, real configured bot and native quality comparison remain NOT RUN. Adaptive override remains disabled; native selection is current. No new install feature or native repair protocol is required to run those acceptance checks.
