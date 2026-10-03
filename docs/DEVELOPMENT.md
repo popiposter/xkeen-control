@@ -80,6 +80,11 @@ The profile directory contains all regular files from the pinned public beta
 archive; `scripts/native-update-profile-v1.json` records its archive identity and
 complete path/size/hash inventory. Inspect bounded archive entries before
 extraction; reject links, special files, duplicate/absolute/traversing names.
+The native stage-install fixture also requires the original byte-exact archive
+at `dist/native-update-contract/xkeen-pinned.tar.gz` alongside the profile
+directory. It verifies the recorded archive size/hash before using it. Repacking
+the files is insufficient: real archive ownership and pre-extraction refusal
+are part of that fixture. No router credentials enter these containers.
 This opt-in result is separate from the self-contained helper lane and FULL gate;
 their scope does not depend on cache presence. To reproduce an upstream
 counterexample, invoke its individual fixture with `XKEEN_ADMISSION_UPSTREAM=1`;

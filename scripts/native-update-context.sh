@@ -246,6 +246,55 @@ _nu_package_body_context() {
         _nu_pkg_phase=initial
     fi
 }
+_nu_archive_shape() {
+    # Native tar/mv use predictable names below this fixed install directory.
+    # Recheck its entire protected ancestry at body time, after downloading.
+    _na_file_ok /opt/sbin/xkeen || return 77
+    _native_gate_directory /tmp/.xkeen 0700 || return 77
+    [ ! -L "$_nu_archive_work" ] && [ -d "$_nu_archive_work" ] || return 77
+    _native_gate_metadata "$_nu_archive_work" || return 77
+    case "$_ng_meta_mode:$_ng_meta_uid" in 41c0:0|41ed:0) ;; *) return 77;; esac
+    for _nu_archive_item in "$_nu_archive_work"/* "$_nu_archive_work"/.[!.]* "$_nu_archive_work"/..?*; do
+        [ -e "$_nu_archive_item" ] || [ -L "$_nu_archive_item" ] || continue
+        [ "$_nu_archive_item" = "$_nu_archive_path" ] || return 77
+    done
+    [ ! -L "$_nu_archive_path" ] && [ -f "$_nu_archive_path" ] || return 77
+    _native_gate_metadata "$_nu_archive_path" || return 77
+    case "$_ng_meta_mode:$_ng_meta_uid:$_ng_meta_links:$_ng_meta_size" in
+        8180:0:1:125747|81a4:0:1:125747) ;;
+        *) return 77;;
+    esac
+    for _nu_archive_absent in "/opt/sbin/.xkeen.stage.$_nu_archive_pid" /opt/sbin/xkeen.new /opt/sbin/xkeen.old /opt/sbin/.xkeen.old; do
+        [ ! -e "$_nu_archive_absent" ] && [ ! -L "$_nu_archive_absent" ] || return 77
+    done
+}
+native_update_archive_ready() {
+    # Called by the pinned native installer BEFORE its first tar operation.
+    # Exact reviewed archive bytes prove the extraction inventory/link safety;
+    # validation after extraction alone cannot undo unsafe tar side effects.
+    [ "$#" = 1 ] || return 76
+    _nu_archive_request=$1
+    _nu_package_body_context || return 77
+    [ "$_nu_pkg_phase" = initial ] || return 77
+    _nu_archive_gate=$_nu_gate_record; _nu_archive_context=$_nu_context
+    _nu_archive_body=$_nu_pkg_body; _nu_archive_pid=$_nu_pkg_self
+    _nu_archive_work=/tmp/.xkeen/work.$_nu_archive_pid
+    _nu_archive_path=$_nu_archive_work/xkeen.tar.gz
+    [ "$_nu_archive_request" = "$_nu_archive_path" ] || return 77
+    _nu_archive_shape || return 77
+    _nu_archive_sha=$(sha256sum "$_nu_archive_path" 2>/dev/null) || return 77
+    [ "${_nu_archive_sha%% *}" = 1d246871d8fc9df2e68e80cef18562e6222661e40eaea1b6853cf8e0e6348b5f ] || return 77
+    _nu_package_body_context || return 77
+    [ "$_nu_gate_record" = "$_nu_archive_gate" ] && [ "$_nu_context" = "$_nu_archive_context" ] &&
+        [ "$_nu_pkg_body" = "$_nu_archive_body" ] && [ "$_nu_pkg_self" = "$_nu_archive_pid" ] && [ "$_nu_pkg_phase" = initial ] || return 77
+    _nu_archive_shape || return 77
+    _nu_archive_after=$(sha256sum "$_nu_archive_path" 2>/dev/null) || return 77
+    [ "$_nu_archive_after" = "$_nu_archive_sha" ] || return 77
+    _nu_archive_shape || return 77
+    _nu_package_body_context || return 77
+    [ "$_nu_gate_record" = "$_nu_archive_gate" ] && [ "$_nu_context" = "$_nu_archive_context" ] &&
+        [ "$_nu_pkg_body" = "$_nu_archive_body" ] && [ "$_nu_pkg_self" = "$_nu_archive_pid" ] && [ "$_nu_pkg_phase" = initial ] || return 77
+}
 native_update_packages_cache() {
     # Feed the actual native info_packages classifier; never run an installer.
     # One bounded query per actual bound body phase in the existing RAM scope.

@@ -42,6 +42,9 @@ printf '%s\\n' 'decorated profile' > "$1/_xkeen/profile"
 tmp_ram='${path('ram')}'; install_dir='${path('live')}'; log_dir='${path('log')}'
 tar -czf "$tmp_ram/xkeen.tar.gz" -C '${path('archive')}' xkeen _xkeen || exit 90
 _na_file_ok() { [ '${mode}' != missing ]; }
+# This earlier fixture isolates stage callback ordering. Archive admission is
+# independently exercised with actual public bytes in stage-install fixtures.
+native_update_archive_ready() { return 0; }
 ${isolated}
 install_xkeen
 `

@@ -20,10 +20,21 @@ export function buildUpdateCandidate(source) {
   }
   const text = source.toString('utf8')
   if (text.split(anchor).length !== 2) throw new Error('native staging anchor is not unique')
+  const archiveAnchor = '    xkeen_archive="$tmp_ram/xkeen.tar.gz"\n'
+  if (text.split(archiveAnchor).length !== 2) throw new Error('native archive anchor is not unique')
+  const protectedText = text.replace(archiveAnchor, archiveAnchor + `
+    # Refuse unsupported bytes/destinations before ANY archive operation.
+    native_update_archive_ready "$xkeen_archive" || return 1
+`)
+  const extractAnchor = 'tar -xzf "$xkeen_archive" -C "$stage_dir" xkeen _xkeen'
+  if (protectedText.split(extractAnchor).length !== 2) throw new Error('native extraction anchor is not unique')
+  // -o is supported by the actual Entware BusyBox tar: keep the extracting
+  // root owner rather than restoring the public archive's CI runner UID.
+  const extractedText = protectedText.replace(extractAnchor, 'tar -xozf "$xkeen_archive" -C "$stage_dir" xkeen _xkeen')
   const candidate = Buffer.from(`# SOURCE-ONLY FENCE: native update integration incomplete. Never install.
 return 76 2>/dev/null || exit 76
 # END SOURCE-ONLY FENCE
-` + text.replace(anchor, guard + anchor))
+` + extractedText.replace(anchor, guard + anchor))
   return { candidate, manifest: {
     enabled: false, installed: false,
     sourceSHA256: installerSHA256,

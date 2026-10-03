@@ -1000,6 +1000,25 @@ and update persistence remain fenced prerequisites before installation.
 
 ### Fenced fixed updater caller (2026-10-03)
 
+The next archive guard authenticates the actual initial update body and original
+wrapper/gate/context before the native installer's first tar operation. It
+accepts only the reviewed 125747-byte archive with SHA256
+`1d246871d8fc9df2e68e80cef18562e6222661e40eaea1b6853cf8e0e6348b5f`
+at the exact native `/tmp/.xkeen/work.<bodyPID>/xkeen.tar.gz`. Protected RAM
+parents, single regular archive, complete work shape, protected installation
+ancestry and absent own stage/new/old destinations are rechecked at body time.
+Original body/initial phase is checked again after both archive reads. Refusal
+retains the archive and occurs before even tar listing; native later stage
+validation remains separately required before live replacement.
+
+The real public archive records a CI runner UID. The exact extraction anchor
+therefore adds native tar `-o`, preserving the extracting root ownership instead
+of restoring archive user/group. A bounded read-only appliance `tar --help`
+confirmed this option; no extraction or mutation ran there. Real public-byte
+fixtures exposed the ownership issue which earlier recompressed fixtures missed.
+Only this source cohort is qualified; mandatory native inner writers and the
+successful terminal remain pending and all output fences remain unconditional.
+
 The dispatcher candidate now classifies exactly one `-uk` or
 `-uk_post_update` argument before its native prefix. It loads only the protected
 fixed context library. Initial entry acquires/borrows `update-xkeen`, creates one
