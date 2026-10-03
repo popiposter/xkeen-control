@@ -59,3 +59,34 @@ readback of unchanged config digest, no pending/no override, completed manual
 state and no temporary diagnostic rules. Down/up Mbps respectively: current
 150.62/49.20, lowest-RTT alternative136.27/51.49, exploration27.51/27.41.
 Total transferred116MiB, within144MiB; no global ranking/LAN/failover-time claim.
+
+
+## Installed acceptance: immutable source61f4946
+
+Exact61f49469627de85375a1b4cbb37e7f23b9ded2ac FULL PASS Go/vet/race,
+helpers,101browser/frontend/embed/audit0. ARM64 artifact15,663,264bytes SHA256
+`d4fc147c5d12a9dbe852bc3b602ae60316d1593c8b580eae3599a59d03191521`.
+ONE panel-only delivery independently PASS, preserving native process/files.
+Development identity by tested artifact hash, not a signed release.
+
+ONE NEW bounded comparison completed,5valid of6sampled; download Mbps
+100.19,74.25,45.32,failed,5.64,53.35. ONE recommendation Stage and ONE typed
+native Apply completed. Independent fresh API/SSH/fullXrayvalidation PASS:
+only bal-proxystrategy changed to native leastLoad(expected1,maxRTT750ms),
+53exact costs1.295..100, selectors/rules/blackholefallback preserved, no override
+or temporary diagnostic rule, native PID/executable/hash and unaffected
+core/init/registry/auth/configs verified;60nodes53enabled2subscriptionsWL0,
+pendingabsent. Observatory30s. This enables native automatic health/RTT-weighted
+selection from the measured costs. Repeated throughput comparisons are explicit
+GUI actions; no automatic speed-test schedule or panel override loop is started.
+
+Isolated actual installed stock-core fixture: two synthetic loopback outbounds,
+leastLoad(cost1/100),2sObservatory; successful SOCKS flow, preferredfailure ->
+healthybackup with successful flow, bothdead -> blocked flow, recovery -> successful
+flow, no override. Remote fixture execution PASS; localwrapper postcheck reused
+launch free-memory threshold and failed before identity output. Separate fresh
+cleanup/process/file readback PASS without replay, proving no fixture processes
+and unchanged production PID/files. Owned temporary helper binary removed.
+Synthetic switch956ms is ONLY the2s loopback fixture, not production30s or LAN
+failover timing. Independent LAN/Karing-free client DNS/routing/outage acceptance
+remains NOTRUN. Stock XKeen code unchanged.
