@@ -1,84 +1,106 @@
-# Native XKeen implementation contract
+# Native XKeen contract — graphical shell
 
-Issue #121 implements the [ordered plan](../plan/architecture-xkeen-foundation-v1.md).
-On 2026-10-02 the operator authorized implementation and qualification on a clean
-Entware router, including installation, configuration, service restarts and local
-SSH key setup. Password rotation and router reboot are not part of this work.
-Credentials remain outside Git, build containers and public evidence.
-
-This contract supersedes historical D.1/D.2 installation and compatibility rules
-for the new clean-install generation. The old release records remain historical
-evidence; they do not qualify the new implementation.
+Active Issue #121 contract, revised by the operator on 2026-10-03.
+The [v2 implementation plan](../plan/architecture-native-shell-v2.md) and
+[source audit](../plan/audit-native-shell-2026-10-03.md) replace the earlier
+native admission/update architecture. Old qualification records remain historical.
 
 ## Ownership
 
-- Native XKeen owns installation, dependencies, core/geodata updates, its init
-  scripts, netfilter hooks, configuration and cron jobs. Invoke its supported
-  commands; do not copy their implementation into the panel.
-- The panel owns authentication, subscriptions and managed nodes, typed editors,
-  status, optional selection supervision and its own signed updater.
-- Native configuration is the source for editing. Preserve unknown/unmodified
-  fields. A changed candidate must pass full Xray validation before activation.
-- The protected node registry owns panel-managed VPN profiles; preserve unrelated
-  native outbounds. Generated runtime files are not a second secret authority.
-- Use one native-operation admission path and one selection writer. A Go mutex
-  alone does not serialize external XKeen/cron activity.
-- Discovery does not execute XKeen commands with hidden self-heal side effects.
-  Missing capabilities disable the relevant action, not the entire panel.
+- **XKeen code is never modified by this project.** No local dispatcher, init,
+  netfilter hook or module patches; no decorated archive/profile or replacement
+  updater. A reproducible upstream defect is reported upstream, not fixed by
+  patching the router's XKeen. Native commands may perform their own normal changes.
+  Embedded setting assignments inside scripts (including `S05xkeen`) are code,
+  not editable config: use a supported native command or show them read-only.
+- Native XKeen owns installation, dependencies, component downloads/updates,
+  service/interception and its cron jobs. The panel invokes supported commands.
+- The panel is a lightweight graphical shell: fixed typed native actions and
+  convenient editors for the native configuration those actions/data plane use.
+- Native configuration is the executable policy. Editors preserve unknown fields
+  and untouched regions. No mandatory appliance twin, ProductDefault equivalence,
+  layout adoption or native-profile integrity gate for normal GUI use.
+- The private node registry owns only panel-managed profiles/subscriptions.
+  Unmanaged native outbounds remain intact. Viewing a page does not add routing,
+  balancers/API or alter the selected native operating mode.
+- Native leastPing/SB/manual selection remains the default/current owner.
+  Optional panel quality selection must demonstrate benefit and safe override
+  expiry before it is enabled; it does not block commands or configuration editors.
+- Auth/private management, subscriptions, bounded observations/probes, portable
+  config export and the signed updater **for this panel only** remain panel functions.
 
-## Clean-install scope
+## Native commands and configuration
 
-No migration from older panel generations, old Setup journal recovery, historical
-layout detection or backwards-compatible panel APIs are required. Remove obsolete
-writers/readers and their callers as the native replacement becomes usable. Keep
-current-operation rollback and signed panel artifact verification. Do not preserve
-legacy complexity merely to support installations the operator has discarded.
+The adapter uses a fixed executable and validated argv, or a specific finite stdin
+dialogue for one native command. It is not a generic shell/PTY/expect/file manager.
+Geodata schedule creation/change/removal uses native `-ugc`/`-dgc`; no duplicate
+panel geodata scheduler. Script/core/geodata updates use native `-uk`/`-ux`/`-ug`.
+Native local backups use its commands. Portable transfer contains configuration
+and private managed data, not executables or blind restoration of router state.
 
-Native XKeen is installed first using its upstream installer. The panel must not
-replace its service, hooks or cron during attachment, and stopping/removing the
-panel must leave the native data plane functional. A basic native installation
-without imported VPN profiles is not claimed to provide working VPN traffic.
+Read-only dashboard discovery reads bounded files/process observations; it does
+not secretly execute a command that may self-heal packages or change the system.
+Capabilities are feature-specific. Unfamiliar arguments/dialogue disable only that
+action. No requirement to patch XKeen or freeze its full source tree to use the GUI.
 
-## Lifecycle and configuration recovery boundary
+Config editors operate on fixed config paths, not arbitrary files. Supported
+paths are data-only JSON/JSONC and native list files; no sourced shell files.
+fields/rules/lists have typed validation; full Xray candidate validation precedes
+activation. Save uses the existing small transaction/backup for its own changes,
+not a journal covering native install/update internals. Changed baseline prompts
+reload/diff. Never overwrite external drift while attempting rollback.
 
-The shared RAM admission gate must serialize native and panel writers. Ordinary
-Start/Stop/Restart remains native service control, with foreground completion
-and independent native postconditions; it must not implicitly rename an
-installation or repair/install packages. Use native init for panel lifecycle
-calls and classify CLI lifecycle before installer/package side effects.
+## Jobs, concurrency and outcomes
 
-Keep durable `.pending` and coherent rollback with the existing authoritative
-configuration transaction. Its lifecycle children borrow that operation and
-cannot settle it. Do not turn standalone service control into a generalized
-snapshot journal, add another persistent operation owner, or require the panel
-binary/service for native verification. Native generated hooks/runtime files
-need interruption-safe regeneration and cleanup, not configuration snapshots
-merely because some generated files persist on disk.
+One ordinary panel operation owner serializes panel commands/config writes/refresh.
+**It does not serialize external native CLI or cron.** Shared native admission,
+ancestry/exec receipts, byte-exact profile compilers and NDM event workers are not
+requirements and must be removed from the undelivered implementation.
 
-An unknown same-boot operation retains RAM admission for explicit readback; do
-not replay it. A later native boot is a new operation, subject to native config
-validation and any retained configuration `.pending`; boot must not clear or
-ignore an interrupted configuration transaction. No reboot is required for
-qualification here. Earlier plan language requiring a durable standalone
-lifecycle journal before every persistent native write is superseded by this
-boundary. Hook convergence, safe native regeneration and boot checks still need
-implementation and evidence before shared admission is enabled.
+Normal use performs changes sequentially through the panel. Do not simultaneously
+edit the same files via external commands while saving in the GUI. Baseline and
+result checks detect visible drift; they do not prove global race exclusion.
+This is an explicit operating limitation, not a new Setup or repeated approval
+ritual. Guaranteed simultaneous external writers would need a supported upstream
+mechanism and a separate decision, never invasive panel-owned script patches.
 
-## Qualification and delivery
+Jobs have bounded output/time and survive closing the browser. One small last-job
+receipt may identify an interrupted mutation; no per-native-stage journal. Exit
+zero or HTTP202 alone is not a verified service/tunnel result. Independent state
+readback determines observed/failed/unknown. Unknown results are inspected, not
+automatically replayed or repaired. Read-only UI remains available.
 
-Implementation uses one normal checkout and a Draft PR. Review exact code and
-callers, run focused fixtures, then the full local Linux gate on the final clean
-commit. Independent review remains separate from author checks. This instruction
-does not authorize self-approval or invent a successful hardware test.
+## DNS, routing and availability
 
-Router qualification may use source-built development artifacts explicitly
-identified as development builds; they are not signed public releases. Before a
-configuration change retain a bounded coherent local snapshot. Native operation
-exit status must be followed by independent readback; interrupted/unknown writes
-are inspected rather than replayed. Service restarts are authorized. No blanket
-opkg upgrade, sustained benchmark or router reboot is needed for this scope.
+The GUI edits native/Xray DNS/routing/balancing settings; XKeen applies its native
+interception policy. The panel never writes firewall/kernel rules itself.
+Client policy, DNS interception, direct/proxy resolvers, PBR and killswitch are
+visible explicit settings. An access policy specifically named XKeen is not a
+universal panel installation prerequisite; use the configured native mode.
 
-Subscriptions, routing, quality selection, geodata browsing, backup and Telegram
-follow the ordered plan. A second physical router, bot token and optional fleet
-controller may be needed for their respective live acceptance; synthetic tests
-must never be represented as those live results.
+Domain/geosite split DNS is supported by Xray configuration. IP-only routing
+cannot automatically specify DNS routing before resolving a name. Preserve the
+ordinary direct Internet/DNS path as a design goal, and test stopped XKeen,
+failed proxy nodes and recovery separately. Do not promise failover from source
+inspection or from a PC whose traffic uses Karing. A separate LAN client is
+required for those live acceptance claims.
+
+## Delivery boundary
+
+No old-panel migration/backwards compatibility is required. Remove old component
+writers/Setup/readers as the native command/editor replacement becomes usable.
+Preserve useful auth, nodes, Xray validation, current-config rollback, signed panel
+updater, encrypted export and standard shadcn UI/build/test improvements.
+
+Use one normal checkout and the existing Draft PR; no worktrees/self-merge.
+Iterate with focused tests, one final exact-HEAD FULL per finished code milestone
+and independent review. Docs-only contract/audit changes need content/link/diff
+checks, not application/browser runs. Publish usable milestones without waiting
+for optional adaptive/fleet features.
+
+This contract revision does not execute deletion, reinstall or router mutation.
+Earlier installer/attachment/import/recovery/unknown operations are never replayed.
+Future live work needs bounded relevant snapshots/readback; service restarts are
+authorized under the active implementation scope. No router reboot, blanket opkg
+upgrade, credential rotation or sustained benchmark is planned. Credentials and
+raw infrastructure/subscription material stay outside Git/containers/public logs.

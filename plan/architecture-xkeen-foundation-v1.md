@@ -4,13 +4,18 @@ version: "1.0"
 date_created: "2026-10-02"
 last_updated: "2026-10-02"
 owner: "popiposter/xkeen-control"
-status: "In progress"
+status: "Deprecated"
 tags: [architecture, refactor, xkeen, routing, reliability]
 ---
 
 # Introduction
 
-![Status: In progress](https://img.shields.io/badge/status-In_progress-blue)
+> **Deprecated 2026-10-03:** operator revised the contract to an unmodified native
+> XKeen graphical shell. Use [v2](architecture-native-shell-v2.md) and
+> [NATIVE-XKEEN](../docs/NATIVE-XKEEN.md). Shared native admission, patch/profile
+> construction and their completion stages below are historical, not requirements.
+
+![Status: Deprecated](https://img.shields.io/badge/status-Deprecated-red)
 
 План основан на [аудите beta.5](audit-xkeen-foundation-2026-10-02.md). Оператор поручил полную последовательную реализацию и подтвердил чистый Entware. Доступ, установка и перезапуски сервисов разрешены; поддержка старых версий панели и миграция исключены. [Обновлённый контракт](../docs/NATIVE-XKEEN.md) имеет приоритет над историческими правилами D.1/D.2. Один обычный checkout, без worktrees.
 

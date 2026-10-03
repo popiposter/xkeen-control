@@ -4,6 +4,28 @@ This is the sequencing/status authority. The active GitHub issue is the detailed
 
 ## Current direction — native XKeen implementation
 
+### Active revision — 2026-10-03
+
+The operator stopped the invasive native admission implementation and redefined
+the panel as a lightweight graphical shell over **unmodified XKeen code**.
+The [new contract](NATIVE-XKEEN.md), [source audit](../plan/audit-native-shell-2026-10-03.md)
+and [v2 plan](../plan/architecture-native-shell-v2.md) supersede v1 sequencing and
+shared-admission requirements below. Issue #121 / Draft PR122 remain active.
+
+Next: remove undelivered native gates/patches/profile workers; add a thin native
+command/job adapter (including native geodata schedule commands); replace managed
+appliance-only editors with native config editors; qualify DNS/direct availability;
+then geodata UX, optional quality selection, portable backup and Telegram.
+Keenetic policy/firewall/service/update/cron ownership stays native. The panel lock
+serializes panel operations only; external CLI/cron exclusion is not claimed.
+
+No source deletion or live mutation was performed by this contract audit. The
+45-line uncommitted runtime draft is frozen for removal at implementation Phase1.
+Native candidates remain uninstalled; prior development installation and FULL
+checkpoints below are historical evidence, not acceptance of this revised plan.
+
+### Historical 2026-10-02 direction and checkpoints
+
 After the 2026-10-02 audit the operator authorized full ordered implementation and qualification on clean Entware. The [native implementation contract](NATIVE-XKEEN.md) governs this work: native XKeen first, panel alongside it, no compatibility with older panel installations. Service restarts and local SSH key setup are authorized; no router reboot is planned.
 
 The [audit](../plan/audit-xkeen-foundation-2026-10-02.md) binds findings to source `8adff1e00e89515b37aac1d7d6e7e1df924a9143`. [Issue #121](https://github.com/popiposter/xkeen-control/issues/121) and the [implementation plan](../plan/architecture-xkeen-foundation-v1.md) return install/update/cron/lifecycle/interception ownership to native XKeen, retain the panel updater and node management, and schedule config/geodata UX, reliability, portable backup and Telegram work in separate slices. Implementation is in progress. Independent plan review reproduced the audit counterexamples and required minimal config onboarding before subscription Apply, plus a real shared lock for any CLI/cron concurrency claim. These corrections are incorporated in the plan; runtime acceptance is pending.

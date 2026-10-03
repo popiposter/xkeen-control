@@ -1,5 +1,10 @@
 # Native operation admission v1 — isolated protocol
 
+> **Deprecated 2026-10-03:** the operator forbids modifying XKeen code. Do not
+> finish or install this gate/patch/profile/update protocol. Use the
+> [graphical shell v2 plan](architecture-native-shell-v2.md). Existing tests and
+> review records are historical source evidence, not architectural acceptance.
+
 Issue #121, TASK-008/012/013. This source-only phase adds an opt-in Linux Go
 package and a sourced POSIX-shell library. No production caller, installer,
 updater, cron entry or default path uses it. It does not qualify CLI/cron/panel

@@ -2,6 +2,13 @@
 
 > **Active implementation:** [Native XKeen contract](docs/NATIVE-XKEEN.md) governs Issue #121 on clean Entware. Older panel migration/recovery compatibility is not required. Historical behavior below is not the new installation authority.
 
+> **2026-10-03 operator revision:** XKeen code stays unmodified. Use its supported
+> commands and edit native configuration only. No dispatcher/init/hook/module
+> patches, native admission/profile workers or second component updater. Follow
+> [v2 plan](plan/architecture-native-shell-v2.md); the panel lease serializes only
+> panel operations, not external CLI/cron. Historical D.1 appliance authority below
+> does not govern the new native config editors.
+
 This is the mandatory entry point for coding/review agents in this repository.
 
 The goal is **high signal with minimal context**. Do not preload every document “just in case”. Read the active issue, inspect the affected code, then open only the authorities required by the task.
