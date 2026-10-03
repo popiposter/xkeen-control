@@ -53,6 +53,22 @@ test('Form/Text share edits, formatting and undo without saving or restarting', 
   expect(model.issues).toEqual([])
 })
 
+test('DNS and Routing navigation use one native workspace and retain edits across pages and console navigation', async ({ page }) => {
+  const { model, writes } = await mountEditor(page)
+  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await page.getByLabel('DNS address family', { exact: true }).selectOption('UseIPv6')
+  await page.getByRole('button', { name: 'Routing', exact: true }).click()
+  await expect(page.getByLabel('Configuration file', { exact: true })).toHaveValue('05_routing.json')
+  await page.getByLabel('Routing domain resolution', { exact: true }).selectOption('IPIfNonMatch')
+  await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await expect(page.getByLabel('DNS address family', { exact: true })).toHaveValue('UseIPv6')
+  await page.getByRole('button', { name: 'Routing', exact: true }).click()
+  await expect(page.getByLabel('Routing domain resolution', { exact: true })).toHaveValue('IPIfNonMatch')
+  expect(writes).toEqual([])
+  expect(model.requests.filter(({ path }) => /^\/api\/v1\/appliance\/(policy|dns-observatory)/.test(path))).toEqual([])
+})
+
 test('two configs save as one set, Apply is one native job, and previous restore awaits another explicit Apply', async ({ page }) => {
   const { state, documents, original } = await mountEditor(page)
   const originalRouting = documents['05_routing.json'].text

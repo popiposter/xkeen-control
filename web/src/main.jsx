@@ -17,9 +17,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Disclosure, MobileNavigationDrawer, Modal } from './ui.jsx'
 import { IconHome, IconServer, IconSitemap, IconWorld, IconChartBar, IconCube, IconHistory, IconSettings, IconLogout, IconMenu2 } from '@tabler/icons-react'
 import { IconPlus, IconLink, IconRefresh, IconPencil, IconPower, IconTrash, IconX, IconChevronLeft, IconChevronRight, IconSearch, IconGauge, IconFocus2, IconArrowUp, IconArrowDown, IconArrowsSort, IconSquareCheck, IconPlayerPlay, IconPlayerPause } from '@tabler/icons-react'
-import { DNSLifecycleNotice, DNSObservatorySection, useDNSObservatoryController } from './dns-observatory.jsx'
 import { PerformancePolicySection, usePerformancePolicyController } from './performance-policy.jsx'
-import { RoutingLifecycleNotice, RoutingPolicySection, useRoutingController } from './routing-policy.jsx'
 import { NativeXkeenStatus, NativeXkeenSection } from './native-xkeen.jsx'
 import { NativeConfigSection } from './native-config.jsx'
 import { SystemPanelSection, useSystemPanelController } from './system-panel.jsx'
@@ -442,10 +440,10 @@ function Login({ error, password, setPassword, onSubmit }) {
 function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh, onLogout, onUnauthorized }) {
   const { status, nodes, performance } = dashboard
   const [section, setSection] = useState('overview')
-  const [componentsVisited, setComponentsVisited] = useState(false)
+  const [configVisited, setConfigVisited] = useState(false)
   const [nativeConfigJob, setNativeConfigJob] = useState(null)
   useEffect(() => setNativeConfigJob(null), [session.csrfToken])
-  useEffect(() => { if (section === 'components') setComponentsVisited(true) }, [section])
+  useEffect(() => { if (['components', 'routing', 'dns'].includes(section)) setConfigVisited(true) }, [section])
   const [navigationOpen, setNavigationOpen] = useState(false)
   const navigationTrigger = useRef(null)
   const closeNavigation = useCallback(() => setNavigationOpen(false), [])
@@ -453,31 +451,9 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const [restoreState, setRestoreState] = useState({ preview: null })
   const registryNodes = nodes.nodes || []
   const nodesByTag = useMemo(() => new Map(registryNodes.map((node) => [node.outboundTag || node.tag, node])), [registryNodes])
-  const routingControllerRef = useRef(null)
-  const dnsControllerRef = useRef(null)
-  const [unprovenPolicyReads, setUnprovenPolicyReads] = useState({ routing: false, dns: false })
-  const invalidateRoutingPreview = useCallback(() => routingControllerRef.current?.invalidateLivePreview(), [])
-  const invalidateDNSPreview = useCallback(() => dnsControllerRef.current?.invalidateLivePreview(), [])
-  const refreshRoutingPeer = useCallback(() => { void routingControllerRef.current?.refreshPeerProjection() }, [])
-  const refreshDNSPeer = useCallback(() => { void dnsControllerRef.current?.refreshPeerProjection() }, [])
-  const markRoutingApplyUnproven = useCallback(() => {
-    setUnprovenPolicyReads((current) => ({ ...current, routing: true }))
-    invalidateDNSPreview()
-  }, [invalidateDNSPreview])
-  const markDNSApplyUnproven = useCallback(() => {
-    setUnprovenPolicyReads((current) => ({ ...current, dns: true }))
-    invalidateRoutingPreview()
-  }, [invalidateRoutingPreview])
-  const clearRoutingApplyUnproven = useCallback(() => setUnprovenPolicyReads((current) => current.routing ? { ...current, routing: false } : current), [])
-  const clearDNSApplyUnproven = useCallback(() => setUnprovenPolicyReads((current) => current.dns ? { ...current, dns: false } : current), [])
-  const appliancePolicyUncertain = unprovenPolicyReads.routing || unprovenPolicyReads.dns
-  const routingController = useRoutingController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'routing', appliancePolicyUncertain, onBeforeApply: invalidateDNSPreview, onApplied: refreshDNSPeer, onUnprovenApply: markRoutingApplyUnproven, onFreshReadAfterUnprovenApply: clearRoutingApplyUnproven })
-  const dnsController = useDNSObservatoryController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'dns', appliancePolicyUncertain, onBeforeApply: invalidateRoutingPreview, onApplied: refreshRoutingPeer, onUnprovenApply: markDNSApplyUnproven, onFreshReadAfterUnprovenApply: clearDNSApplyUnproven })
   const performanceOwnerBusy = Boolean(status.benchmark?.controlPlane?.running || performance?.manual?.state === 'running' || performance?.adaptive?.state === 'running')
   const performancePolicyController = usePerformancePolicyController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, performanceBusy: performanceOwnerBusy, onUnauthorized, active: section === 'performance' })
   const systemPanelController = useSystemPanelController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'system' })
-  routingControllerRef.current = routingController
-  dnsControllerRef.current = dnsController
   const openComponents = useCallback(() => setSection('components'), [])
   const openRouting = useCallback(() => setSection('routing'), [])
   const openDNS = useCallback(() => setSection('dns'), [])
@@ -489,10 +465,6 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const performancePolling = (section === 'overview' && adaptiveRunning)
     || (section === 'nodes' && (manualRunning || adaptiveRunning))
   const performancePollInFlight = useRef(false)
-
-  useEffect(() => {
-    setUnprovenPolicyReads({ routing: false, dns: false })
-  }, [session.csrfToken])
 
   useEffect(() => {
     if (!performancePolling || !onPerformanceRefresh) return undefined
@@ -531,16 +503,12 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     <MobileNavigationDrawer returnFocus={navigationTrigger} open={navigationOpen} onClose={closeNavigation}><div className="flex min-h-full flex-col gap-4"><NavigationContent mobile sections={sections} section={section} total={nodes.total || 0} version={status.controlPlane?.version || 'dev'} onSelect={closeNavigation} onLogout={onLogout} /></div></MobileNavigationDrawer>
     <div id="workspace" className="min-w-0 min-[761px]:ml-60" tabIndex="-1"><div className="legacy-workspace"><div className="workspace">
     {section !== 'nodes' && <header className="page-heading"><h1>{pageTitle}</h1>{section === 'overview' && <button className="ghost" type="button" onClick={onRefresh}><Icon name="refresh" />Refresh</button>}</header>}
-    <RoutingLifecycleNotice controller={routingController} active={section === 'routing'} onOpenRouting={openRouting} />
-    <DNSLifecycleNotice controller={dnsController} active={section === 'dns'} onOpenDNS={openDNS} />
     {error && <Notice message={error} />}
     {section === 'overview' && <Overview status={status} performance={performance} nodeTotal={nodes.total || 0} nodesByTag={nodesByTag} csrfToken={session.csrfToken} onRefresh={onRefresh} onUnauthorized={onUnauthorized} onOpenNodes={() => setSection('nodes')} />}
     {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} performance={performance} manualOverride={status.selection?.manualOverride || ''} benchmarkRunning={Boolean(status.benchmark?.controlPlane?.running)} csrf={session.csrfToken} onRefresh={onRefresh} onPerformanceRefresh={onPerformanceRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} manualLifecycleBlocked={manualLifecycleBlocked} selectionAvailable={false} />}
-    {section === 'routing' && <RoutingPolicySection controller={routingController} lifecycle={status.lifecycle} />}
-    {section === 'dns' && <DNSObservatorySection controller={dnsController} />}
     {section === 'performance' && <PerformancePolicySection controller={performancePolicyController} />}
     {section === 'components' && <NativeXkeenSection facts={status.native} onRefresh={onRefresh} onOpenSystem={() => setSection('system')} csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} jobNotification={nativeConfigJob?.csrfToken === session.csrfToken ? nativeConfigJob.job : null} />}
-    {(section === 'components' || componentsVisited) && <div hidden={section !== 'components'}><NativeConfigSection csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} onNativeJob={(job) => setNativeConfigJob({ job, csrfToken: session.csrfToken })} /></div>}
+    {(['components', 'routing', 'dns'].includes(section) || configVisited) && <div hidden={!['components', 'routing', 'dns'].includes(section)}><NativeConfigSection csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} focusFile={section === 'dns' ? '02_dns.json' : section === 'routing' ? '05_routing.json' : ''} onOpenConsole={openComponents} onNativeJob={(job) => setNativeConfigJob({ job, csrfToken: session.csrfToken })} /></div>}
     {section === 'backup' && <BackupRestoreSection csrf={session.csrfToken} restoreState={restoreState} setRestoreState={setRestoreState} onRefresh={onRefresh} onUnauthorized={onUnauthorized} lifecycleBlocked={lifecycleBlocked} />}
     {section === 'system' && <SystemPanelSection controller={systemPanelController} status={status} onOpenComponents={openComponents} onOpenBackup={openBackup} />}
     </div></div></div>

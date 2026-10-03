@@ -17,7 +17,7 @@ const fields = [
   { file: '07_observatory.json', area: 'observatory', field: 'enableConcurrency', label: 'Concurrent node probes', boolean: true },
 ]
 
-export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob }) {
+export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, focusFile = '', onOpenConsole }) {
   const [open, setOpen] = useState(false)
   const [workspace, setWorkspace] = useState(null)
   const [drafts, setDrafts] = useState({})
@@ -33,6 +33,8 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob }) 
   owner.current = csrfToken
   const requests = useRef(new Set())
   const history = useRef({})
+  const lastFocus = useRef('')
+  const wantedFile = useRef('')
   const current = () => alive.current && owner.current === csrfToken
   useEffect(() => {
     alive.current = true
@@ -83,7 +85,7 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob }) 
   async function reload() {
     const value = await request('workspace')
     if (!/^[a-f0-9]{64}$/.test(value.digest) || !value.documents || typeof value.documents !== 'object') throw new Error('Configuration response could not be confirmed.')
-    const id = Object.keys(value.documents)[0] || ''
+    const id = Object.hasOwn(value.documents, focusFile) ? focusFile : Object.keys(value.documents)[0] || ''
     const loaded = id ? await request('document', { file: id }) : null
     if (loaded && (loaded.digest !== value.digest || typeof loaded.document?.text !== 'string')) throw new Error('Configuration changed. Reload before editing.')
     if (loaded) value.documents[id] = loaded.document
@@ -100,6 +102,13 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob }) 
     setDrafts((previous) => ({ ...previous, [id]: loaded.document.text }))
     setFile(id)
   }
+  useEffect(() => {
+    if (lastFocus.current !== focusFile) { lastFocus.current = focusFile; wantedFile.current = focusFile }
+    if (!open || !workspace || locked || !wantedFile.current) return
+    const id = wantedFile.current
+    wantedFile.current = ''
+    if (id !== file && Object.hasOwn(workspace.documents, id)) void run(() => selectFile(id))
+  }, [focusFile, open, locked, workspace?.digest, csrfToken])
   async function syncWorkspace() {
     const next = await request('workspace')
     if (!/^[a-f0-9]{64}$/.test(next.digest) || !next.documents) throw new Error('Configuration response could not be confirmed.')
@@ -200,6 +209,7 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob }) 
             setNotice('Existing Apply inspected without restarting. Check its configuration or inspect console output.')
           })}>Inspect existing Apply</Button>}
           <Button disabled={locked || !pending || !!pending.drift || pending.applyState === 'unknown'} onClick={() => void run(applySaved)}>Apply saved configurations</Button>
+          {onOpenConsole && (applyJob || pending?.applyId || pending?.applyState === 'unknown') && <Button variant="outline" onClick={onOpenConsole}>View native console</Button>}
           {pending && <Button variant="outline" disabled={locked || !!pending.drift} onClick={() => void run(async () => { await request('restore-saved', { digest: workspace.digest }); await syncWorkspace(); setNotice(restoreNeedsRestart ? 'Pre-apply files restored. Use Apply to restart with this restored set.' : 'Saved changes discarded. The running service was not restarted.') })}>{restoreNeedsRestart ? 'Restore pre-apply configurations' : 'Discard saved changes'}</Button>}
           {pending?.applyId && pending.applyState !== 'running' && <Button variant="outline" disabled={locked} onClick={() => void run(async () => { await request('inspect', { id: pending.applyId }); await syncWorkspace(); setNotice('Saved configuration and a new running process were independently confirmed. No Restart was repeated.') })}>Check applied configuration</Button>}
           {workspace.hasPrevious && <Button variant="outline" disabled={locked || !!pending || workspace.previousDrift} onClick={() => void run(async () => { await request('restore-previous', { digest: workspace.digest }); await syncWorkspace(); setNotice('Previous configuration saved. Apply it when ready; the running service is unchanged.') })}>Restore previous configuration</Button>}

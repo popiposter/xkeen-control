@@ -148,7 +148,7 @@ test('System starts with access, reveals optional forms and never fetches on dis
 test('policy pages put editable work before protected context and expose the review sequence', async ({ page }) => {
   page.__workspaceModel = await mountFeatureCompleteDashboard(page)
   await page.goto('/')
-  for (const [name, editor, details] of [['Routing', '.routing-editor', 'Protected routing policy'], ['DNS', '.dns-editor', 'Protected DNS and Observatory'], ['Performance', '.performance-policy-editor', 'Fixed traffic and time limits']]) {
+  for (const [name, editor, details] of [['Performance', '.performance-policy-editor', 'Fixed traffic and time limits']]) {
     await openTask(page, name)
     await expect(page.locator(editor)).toBeVisible()
     await expect(page.getByRole('list', { name: 'Operation steps' })).toBeVisible()

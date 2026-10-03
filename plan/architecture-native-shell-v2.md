@@ -25,8 +25,10 @@ installed command discovery и явное завершение инспекци�
 Apply/restore и формы DNS, ordered routing, balancers/observatory реализованы в
 исходниках: один штатный restart, независимое наблюдение process/config, optional
 restore без автоматического rollback. Проверка качества DNS/VPN отдельная.
-Перевод основных Routing/DNS страниц на этот editor, geodata browser, portable
-transfer/Telegram и остальная очистка API/packages ещё впереди. Live приёмка
+Основные Routing/DNS страницы используют этот общий editor; старые brokers,
+appliance-policy APIs, страницы, стили и их тесты удалены. Browser inventory105
+вместо162. Geodata browser, portable transfer/Telegram и остальная очистка
+API/packages ещё впереди. Live приёмка
 команд и редакторов ещё не выполнена.
 
 ## 1. Requirements & Constraints

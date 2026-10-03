@@ -16,7 +16,7 @@ foreach ($case in @(
 }
 foreach ($case in @(
     @{ Paths = @('web/tests/nodes.spec.js'); Expected = @('tests/nodes.spec.js') },
-    @{ Paths = @('web/src/dns-observatory.jsx'); Expected = @('tests/dns-observatory.spec.js','tests/feature-complete.spec.js','tests/task-workspace.spec.js') },
+    @{ Paths = @('web/src/native-config-form.jsx'); Expected = @('tests/feature-complete.spec.js','tests/native-commands.spec.js','tests/native-config.spec.js','tests/native-xkeen.spec.js','tests/task-workspace.spec.js') },
     @{ Paths = @('web/src/main.jsx'); Expected = @('*') },
     @{ Paths = @('internal/httpapi/server.go'); Expected = @('*') },
     @{ Paths = @('internal/nodes/transaction.go'); Expected = @() },

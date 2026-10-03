@@ -72,7 +72,11 @@ Process/config readback checks a new Xray PID/start identity, executable, sole
 config directory and saved digest; this observation does not prove sustained
 VPN/DNS health. Previous means pre-edit saved files, not a forensic copy of the
 old process's loaded memory. Native start/restart cards use the same bookkeeping
-when an editor set is pending. No live editor qualification claimed.
+when an editor set is pending. Routing, DNS and Components use one retained
+workspace: navigation selects the relevant native file without discarding
+working edits. View native console opens the existing job, never a new command.
+The former appliance-policy Preview/Apply endpoints and brokers are retired.
+No live editor qualification claimed.
 
 Resource bounds: 2 MiB per text/draft, 8 MiB native candidate aggregate; one file
 is fetched at a time. Private document JSON responses have a separate 32 MiB cap

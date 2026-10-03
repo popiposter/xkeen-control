@@ -3,8 +3,6 @@ import { expect, test } from '@playwright/test'
 import { featureCompleteRequests, mountFeatureCompleteDashboard, PRIVATE_SENTINELS } from './fixtures/feature-complete-model.js'
 
 const lazySettingsPaths = [
-  '/api/v1/appliance/policy',
-  '/api/v1/appliance/dns-observatory',
   '/api/v1/performance/policy',
   '/api/v1/notifications',
   '/api/v1/panel/listener',
@@ -14,8 +12,6 @@ const lazySettingsPaths = [
 const openSection = async (page, name) => {
   await (await revealNavigation(page)).getByRole('button').filter({ hasText: name }).click()
   if (name === 'System / Panel') await revealSystemSettings(page)
-  if (name === 'Routing') await revealDetails(page, 'Protected routing policy')
-  if (name === 'DNS') await revealDetails(page, 'Protected DNS and Observatory')
   if (name === 'Performance') await revealDetails(page, 'Fixed traffic and time limits')
 }
 
@@ -48,8 +44,8 @@ test('composes the final navigation lazily and leaves settings out of the dashbo
 
   const openedPaths = new Set()
   for (const [section, path] of [
-    ['Routing', '/api/v1/appliance/policy'],
-    ['DNS', '/api/v1/appliance/dns-observatory'],
+    ['Routing', null],
+    ['DNS', null],
     ['Performance', '/api/v1/performance/policy'],
     ['Components / Updates', null],
     ['System / Panel', '/api/v1/panel/listener'],
@@ -81,94 +77,6 @@ test('composes the final navigation lazily and leaves settings out of the dashbo
   expect(model.requests.filter(({ path }) => /^\/api\/v1\/(components|setup)(\/|$)/.test(path))).toEqual([])
 })
 
-test('keeps Routing, DNS and Performance semantic Preview and one-shot Apply paths separate', async ({ page }) => {
-  const model = await mountFeatureCompleteDashboard(page)
-  page.__featureCompleteModel = model
-  await page.goto('/')
-
-  await openSection(page, 'Routing')
-  await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'No effective changes', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Apply routing changes' })).toHaveCount(0)
-  await page.getByRole('button', { name: 'Cancel Preview' }).click()
-  expect(model.writes).toHaveLength(0)
-
-  await page.getByRole('button', { name: 'Add rule', exact: true }).click()
-  await page.getByLabel('Rule 1 display name').fill('Feature route')
-  await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Review routing changes', exact: true })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toContainText('Feature route')
-  await page.getByRole('button', { name: 'Apply routing changes', exact: true }).click()
-  await expect(page.getByTestId('routing-result')).toContainText('Routing changes applied')
-
-  await openSection(page, 'DNS')
-  await page.getByLabel('Parallel queries').uncheck()
-  await page.getByRole('button', { name: 'Preview DNS changes' }).click()
-  await expect(page.getByRole('heading', { name: 'Review DNS and Observatory changes', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'Apply DNS changes', exact: true }).click()
-  await expect(page.getByTestId('dns-result')).toContainText('changes applied')
-
-  await openSection(page, 'Performance')
-  await page.getByLabel('Active probe interval').fill('120')
-  await page.getByRole('button', { name: 'Preview performance changes' }).click()
-  await expect(page.getByRole('heading', { name: 'Review performance policy changes', exact: true })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Performance policy Preview' })).toContainText('60 → 120')
-  await page.getByRole('button', { name: 'Apply performance policy', exact: true }).click()
-  await expect(page.getByTestId('performance-policy-result')).toContainText('Performance policy applied')
-
-  const applies = model.requests.filter((request) => request.method === 'POST' && /\/api\/v1\/(appliance\/policy|appliance\/dns-observatory|performance\/policy)\/apply$/.test(request.path))
-  expect(applies.map(({ path, body }) => [path, Object.keys(body).sort()])).toEqual([
-    ['/api/v1/appliance/policy/apply', ['previewToken']],
-    ['/api/v1/appliance/dns-observatory/apply', ['previewToken']],
-    ['/api/v1/performance/policy/apply', ['previewToken']],
-  ])
-  expect(model.writes.map(({ owner }) => owner)).toEqual(['routing', 'dns', 'performance'])
-  expect(featureCompleteRequests(model, '/api/v1/appliance/policy/apply', 'POST')).toHaveLength(1)
-})
-
-for (const owner of ['routing', 'dns']) {
-  test(`keeps the ${owner === 'routing' ? 'Routing' : 'DNS'} unknown-outcome gate shared only with its appliance-policy peer`, async ({ page }) => {
-    const model = await mountFeatureCompleteDashboard(page)
-    page.__featureCompleteModel = model
-    await page.goto('/')
-
-    const ownerPath = owner === 'routing' ? '/api/v1/appliance/policy' : '/api/v1/appliance/dns-observatory'
-    const ownerApplyPath = `${ownerPath}/apply`
-    await openSection(page, owner === 'routing' ? 'Routing' : 'DNS')
-    if (owner === 'routing') {
-      await page.getByRole('button', { name: 'Add rule', exact: true }).click()
-      await page.getByLabel('Rule 1 display name').fill('Unknown route')
-      await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
-    } else {
-      await page.getByLabel('Parallel queries').uncheck()
-      await page.getByRole('button', { name: 'Preview DNS changes' }).click()
-    }
-
-    model.failNextApply.add(owner)
-    model.failReadCounts.set(ownerPath, 5)
-    await page.getByRole('button', { name: owner === 'routing' ? 'Apply routing changes' : 'Apply DNS changes', exact: true }).click()
-    await expect(page.getByTestId(owner === 'routing' ? 'routing-result' : 'dns-result')).toContainText('outcome is unknown')
-    await expect.poll(() => featureCompleteRequests(model, ownerApplyPath, 'POST').length).toBe(1)
-    await expect.poll(() => featureCompleteRequests(model, ownerPath, 'GET').length).toBeGreaterThanOrEqual(2)
-
-    const peer = owner === 'routing' ? 'DNS' : 'Routing'
-    await openSection(page, peer)
-    await expect(page.getByRole('button', { name: owner === 'routing' ? 'Preview DNS changes' : 'Preview changes', exact: true })).toBeDisabled()
-
-    await openSection(page, 'Performance')
-    await expect(page.getByRole('button', { name: 'Preview performance changes' })).toBeEnabled()
-
-    const readsBeforeRecovery = featureCompleteRequests(model, ownerPath, 'GET').length
-    model.failReadCounts.delete(ownerPath)
-    await openSection(page, owner === 'routing' ? 'Routing' : 'DNS')
-    await expect.poll(() => featureCompleteRequests(model, ownerPath, 'GET').length).toBeGreaterThan(readsBeforeRecovery)
-    await expect(page.getByRole('button', { name: owner === 'routing' ? 'Preview changes' : 'Preview DNS changes', exact: true })).toBeEnabled()
-    await openSection(page, peer)
-    await expect(page.getByRole('button', { name: owner === 'routing' ? 'Preview DNS changes' : 'Preview changes', exact: true })).toBeEnabled()
-    expect(featureCompleteRequests(model, ownerApplyPath, 'POST')).toHaveLength(1)
-  })
-}
-
 test('preserves dirty drafts through unrelated reads, navigation and dashboard telemetry refresh', async ({ page }) => {
   test.setTimeout(35_000)
   await page.clock.install()
@@ -176,11 +84,6 @@ test('preserves dirty drafts through unrelated reads, navigation and dashboard t
   page.__featureCompleteModel = model
   await page.goto('/')
 
-  await openSection(page, 'Routing')
-  await page.getByRole('button', { name: 'Add rule', exact: true }).click()
-  await page.getByLabel('Rule 1 display name').fill('Preserved routing draft')
-  await openSection(page, 'DNS')
-  await page.getByLabel('Parallel queries').uncheck()
   await openSection(page, 'Performance')
   await page.getByLabel('Active probe interval').fill('120')
   await openSection(page, 'Components / Updates')
@@ -195,12 +98,6 @@ test('preserves dirty drafts through unrelated reads, navigation and dashboard t
   await expect.poll(() => featureCompleteRequests(model, '/api/v1/performance', 'GET').length).toBeGreaterThan(telemetryBefore)
   expect(Object.fromEntries(lazySettingsPaths.slice(0, 3).map((path) => [path, featureCompleteRequests(model, path, 'GET').length]))).toEqual(readsBefore)
 
-  await openSection(page, 'Routing')
-  await expect(page.getByLabel('Rule 1 display name')).toHaveValue('Preserved routing draft')
-  await expect(page.getByText('Unsaved', { exact: true })).toBeVisible()
-  await openSection(page, 'DNS')
-  await expect(page.getByLabel('Parallel queries')).not.toBeChecked()
-  await expect(page.getByText('Unsaved', { exact: true })).toBeVisible()
   await openSection(page, 'Performance')
   await expect(page.getByLabel('Active probe interval')).toHaveValue('120')
   await expect(page.getByText('Unsaved', { exact: true })).toBeVisible()
@@ -221,10 +118,6 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
   await openSection(page, 'Nodes')
   await page.getByRole('checkbox', { name: 'Select Feature test node', exact: true }).check()
   await expect(page.getByRole('button', { name: 'Enable', exact: true })).toBeEnabled()
-  await openSection(page, 'Routing')
-  await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toBeEnabled()
-  await openSection(page, 'DNS')
-  await expect(page.getByRole('button', { name: 'Preview DNS changes' })).toBeEnabled()
   await openSection(page, 'Performance')
   await expect(page.getByRole('button', { name: 'Preview performance changes' })).toBeEnabled()
   await openSection(page, 'Components / Updates')
@@ -249,12 +142,6 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
     await page.getByRole('checkbox', { name: 'Select Feature test node', exact: true }).check()
     await expect(page.getByRole('button', { name: 'Enable', exact: true })).toBeDisabled()
     await expect(page.getByText('Feature test node', { exact: true })).toBeVisible()
-    await openSection(page, 'Routing')
-    await expect(page.getByRole('button', { name: 'Preview changes', exact: true })).toBeDisabled()
-    await expect(page.getByLabel('Routing source-owned facts')).toBeVisible()
-    await openSection(page, 'DNS')
-    await expect(page.getByRole('button', { name: 'Preview DNS changes' })).toBeDisabled()
-    await expect(page.getByText('Proxy resolver 1', { exact: true })).toBeVisible()
     await openSection(page, 'Performance')
     await expect(page.getByRole('button', { name: 'Preview performance changes' })).toBeDisabled()
     await expect(page.getByLabel('Source-owned performance ceilings')).toBeVisible()
@@ -313,29 +200,10 @@ test('clears cross-domain previews on session turnover and rejects old tokens af
   page.__featureCompleteModel = model
   await page.goto('/')
   const applyPathByOwner = {
-    routing: '/api/v1/appliance/policy/apply',
-    dns: '/api/v1/appliance/dns-observatory/apply',
     performance: '/api/v1/performance/policy/apply',
     listener: '/api/v1/panel/listener/apply',
   }
   const scenarios = [
-    { owner: 'routing', section: 'Routing', preview: async () => {
-      await page.getByRole('button', { name: 'Add rule', exact: true }).click()
-      await page.getByLabel('Rule 1 display name').fill('Old session draft')
-      await page.getByRole('button', { name: 'Preview changes', exact: true }).click()
-      await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toBeVisible()
-    }, cleared: async () => {
-      await expect(page.getByRole('region', { name: 'Routing Preview confirmation' })).toHaveCount(0)
-      await expect(page.getByLabel('Rule 1 display name')).toHaveCount(0)
-    } },
-    { owner: 'dns', section: 'DNS', preview: async () => {
-      await page.getByLabel('Parallel queries').uncheck()
-      await page.getByRole('button', { name: 'Preview DNS changes' }).click()
-      await expect(page.getByRole('heading', { name: 'Review DNS and Observatory changes', exact: true })).toBeVisible()
-    }, cleared: async () => {
-      await expect(page.getByRole('heading', { name: 'Review DNS and Observatory changes', exact: true })).toHaveCount(0)
-      await expect(page.getByLabel('Parallel queries')).toBeChecked()
-    } },
     { owner: 'performance', section: 'Performance', preview: async () => {
       await page.getByLabel('Active probe interval').fill('120')
       await page.getByRole('button', { name: 'Preview performance changes' }).click()
@@ -445,8 +313,8 @@ test('keeps safe projections secretless, browser storage empty, and the Dashboar
   const renderedSections = [await page.locator('body').innerText(), await page.locator('body').evaluate((body) => body.outerHTML)]
   for (const [section, ready] of [
     ['Nodes', page.getByText('Feature test node', { exact: true })],
-    ['Routing', page.getByLabel('Routing source-owned facts')],
-    ['DNS', page.getByText('Proxy resolver 1', { exact: true })],
+    ['Routing', page.getByText('Native configuration', { exact: true })],
+    ['DNS', page.getByText('Native configuration', { exact: true })],
     ['Performance', page.getByLabel('Source-owned performance ceilings')],
     ['Components / Updates', page.getByRole('heading', { name: 'XKeen and components', exact: true })],
     ['Backup & Restore', page.getByLabel('Backup bundle')],
