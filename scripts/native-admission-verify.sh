@@ -287,6 +287,41 @@ _nv_update_environment_pre() {
     _nv_env_digest=${_nv_env_digest%% *}
 }
 # END UPDATE ENVIRONMENT
+# BEGIN UPDATE PACKAGE IDENTITY
+_nv_update_package_identity() {
+    [ "$#" = 1 ] || return 76
+    case "$1" in pre|post) _nv_pkg_phase=$1;; *) return 76;; esac
+    native_update_verifier_context "$_nv_pkg_phase" || return $?
+    _nv_pkg_gate=$_nu_gate_record; _nv_pkg_context=$_nu_context
+    _nv_pending || return $?
+    _nv_pkg_status=/opt/lib/opkg/status
+    _nv_pkg_parser=/opt/lib/xkeen/native-update-packages.awk
+    _nv_update_init_file "$_nv_pkg_status" && _nv_file_ok "$_nv_pkg_parser" || return 76
+    _native_gate_metadata "$_nv_pkg_parser" || return 76
+    [ "$_ng_meta_size" -gt 0 ] && [ "$_ng_meta_size" -le 65536 ] || return 76
+    _nv_pkg_status_hash=$(_nv_hash "$_nv_pkg_status") || return 76
+    _nv_pkg_parser_hash=$(_nv_hash "$_nv_pkg_parser") || return 76
+    _nv_pkg_query=$_nu_call/package-identity.$_nv_pkg_phase
+    (umask 077; mkdir "$_nv_pkg_query") 2>/dev/null || return 77
+    _native_gate_directory "$_nv_pkg_query" 0700 || return 77
+    for _nv_pkg_projection in other identity; do
+        (umask 077; set -C; ulimit -f 1024 || exit 76
+            LC_ALL=C awk -v mode="$_nv_pkg_projection" -v version=2.0.1 -f "$_nv_pkg_parser" "$_nv_pkg_status" > "$_nv_pkg_query/$_nv_pkg_projection") || return 76
+        _nv_ram_file "$_nv_pkg_query/$_nv_pkg_projection" 524288 || return 77
+    done
+    _nv_pkg_other_hash=$(_nv_hash "$_nv_pkg_query/other") || return 77
+    _nv_pkg_identity_hash=$(_nv_hash "$_nv_pkg_query/identity") || return 77
+    # Repeat metadata/protection checks even if file contents remain identical.
+    _nv_update_init_file "$_nv_pkg_status" && _nv_file_ok "$_nv_pkg_parser" || return 77
+    _native_gate_metadata "$_nv_pkg_parser" || return 77
+    [ "$_ng_meta_size" -gt 0 ] && [ "$_ng_meta_size" -le 65536 ] || return 77
+    [ "$(_nv_hash "$_nv_pkg_status")" = "$_nv_pkg_status_hash" ] &&
+        [ "$(_nv_hash "$_nv_pkg_parser")" = "$_nv_pkg_parser_hash" ] || return 77
+    _nv_pending || return $?
+    native_update_verifier_context "$_nv_pkg_phase" || return 77
+    [ "$_nu_gate_record" = "$_nv_pkg_gate" ] && [ "$_nu_context" = "$_nv_pkg_context" ] || return 77
+}
+# END UPDATE PACKAGE IDENTITY
 _nv_main() {
     [ "$#" = 4 ] && [ "$(id -u)" = 0 ] || return 76
     _nv_phase=$1; _na_role=$2; _na_action=$3; _na_mode=$4

@@ -812,6 +812,12 @@ only native `Installed-Time` changes in the own identity projection. Native
 registration architecture must match the first status architecture that upstream
 uses. Caller protection, size/LF limits and authenticated pre/post integration
 are still required; the pure parser does not grant updater authority.
+The source-only package identity reader authenticates the direct wrapper child,
+refuses configuration pending state, protects/rechecks the fixed status and
+parser, and produces two bounded projections in an exclusive RAM query directory.
+It returns only hashes; failure retains admission/query evidence. Its post phase
+requires typed completion proof, but the real producer and update-main integration
+remain absent. No native commands are executed by this reader.
 
 The profile compiler also emits an unconditionally fenced installed-profile
 checker. It checks the 72 prepared file hashes/sizes at fixed native locations
