@@ -17,7 +17,7 @@ const fields = [
   { file: '07_observatory.json', area: 'observatory', field: 'enableConcurrency', label: 'Concurrent node probes', boolean: true },
 ]
 
-export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, focusFile = '', onOpenConsole }) {
+export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, focusFile = '', onOpenConsole, readbackKey = 0 }) {
   const [open, setOpen] = useState(false)
   const [workspace, setWorkspace] = useState(null)
   const [drafts, setDrafts] = useState({})
@@ -35,6 +35,7 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, fo
   const history = useRef({})
   const lastFocus = useRef('')
   const wantedFile = useRef('')
+	const lastReadback = useRef(readbackKey)
   const current = () => alive.current && owner.current === csrfToken
   useEffect(() => {
     alive.current = true
@@ -125,6 +126,11 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, fo
     }
     setWorkspace(next); setDrafts(newDrafts)
   }
+  useEffect(() => {
+    if (!open || !workspace || locked || lastReadback.current === readbackKey) return
+    lastReadback.current = readbackKey
+    void run(syncWorkspace)
+  }, [readbackKey, open, locked, workspace?.digest, csrfToken])
   function edit(next) {
     if (locked) return false
     if (next === text) return true

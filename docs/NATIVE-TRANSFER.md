@@ -10,9 +10,9 @@ The source implementation exports one encrypted archive through the existing
 authenticated, CSRF-protected, current-password-confirmed secret download.
 The native service is connected in the main program. It is not yet installed
 on the router. The native import backend now has read-only destination validation,
-socket-interface mapping and session-bound Preview/Stage. Its HTTP integration
-and the replacement transfer screen remain incomplete; the historical restore
-service remains unwired.
+socket-interface mapping and session-bound Preview/Stage. The private HTTP preview/stage/cancel routes and replacement shadcn transfer
+screen are now connected to the same service as export. The historical restore
+service remains unwired; its obsolete browser scenarios were removed.
 Opening a native archive is read-only and cannot apply it through the historical
 appliance importer.
 
@@ -51,7 +51,7 @@ passed to Xray or exposed as a raw editor document. Discard restores original
 file absence as well as original bytes. The native mode, client policy and
 schedules remain destination-native and require an explicit operator check.
 
-## Operator workflow (HTTP/UI integration pending)
+## Operator workflow
 
 1. Install unmodified XKeen on the destination using its native installer.
 2. Open the encrypted archive privately and preview config IDs, node/subscription
@@ -67,3 +67,13 @@ schedules remain destination-native and require an explicit operator check.
    outcomes are inspected rather than replayed.
 
 Second-router hardware acceptance is separate from encrypted-format fixtures.
+
+Private preview uses a bounded multipart upload with encrypted bundle, passphrase
+and optional interface mapping. Uploads never spool to disk. Session retirement
+purges retained previews; late preview responses are canceled. A ready browser
+preview clears upload/passphrase and consumes its token before Stage. A missing
+interface keeps the local file only until the operator finishes mapping. Lost
+Stage responses show the existing editor for inspection, without repeating Stage.
+The same editor supplies explicit Apply, pre-apply discard and previous restore.
+Native schedules and client policies are checked on the destination using native
+commands; this transfer does not clone cron or a sourced native script.

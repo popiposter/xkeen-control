@@ -282,8 +282,12 @@ is not silently marked complete.
   remain incomplete; see [native transfer](../docs/NATIVE-TRANSFER.md). The next
   backend cohort adds read-only import validation/interface mapping and one
   session-bound Preview/Stage using the existing config pending owner, including
-  registry/outbounds and restoration of original file absence. HTTP/UI integration
-  and live delivery are still pending.
+  registry/outbounds and restoration of original file absence. HTTP/UI integration is now implemented: private encrypted upload, interface
+  mapping, same-session preview, token consumption before Stage and the retained
+  editor pending/discard/Apply owner. Old appliance restore UI/browser fixtures
+  were retired. Native schedules/client policies remain destination-native;
+  native commands configure them explicitly. Live delivery and second-router
+  acceptance remain pending.
 - TASK-013 independent LAN DNS/DIRECT/proxy failure acceptance is NOT RUN: this
   workstation uses Karing. Router process/API/config observations do not replace
   an independent LAN client. Source work continues without claiming that result.

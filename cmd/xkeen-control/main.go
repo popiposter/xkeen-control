@@ -215,16 +215,18 @@ func main() {
 			return state.Lifecycle.Maintenance, state.Lifecycle.Applying, true
 		},
 	})
+	nativeTransfer := &nativebackup.Service{Editor: nativeConfig, Nodes: nodeManager, Lease: authorityLease}
 	handler := httpapi.New(httpapi.Config{
-		Native:       xkeen.Discovery{},
-		NativeJobs:   nativeJobs,
-		Geodata:      &geodatareader.Reader{Dir: getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)},
-		NativeConfig: nativeConfig,
-		Collector:    collector,
-		Auth:         authManager,
-		Nodes:        nodeManager,
-		Backup:       &nativebackup.Service{Editor: nativeConfig, Nodes: nodeManager, Lease: authorityLease},
-		Benchmark:    coordinator,
+		Native:         xkeen.Discovery{},
+		NativeJobs:     nativeJobs,
+		Geodata:        &geodatareader.Reader{Dir: getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)},
+		NativeConfig:   nativeConfig,
+		Collector:      collector,
+		Auth:           authManager,
+		Nodes:          nodeManager,
+		Backup:         nativeTransfer,
+		NativeTransfer: nativeTransfer,
+		Benchmark:      coordinator,
 		// Selection writes stay unavailable until native ownership and independent
 		// override expiry are qualified. Not starting the loop alone is insufficient.
 		Assets:            webassets.Handler(),

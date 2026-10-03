@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "test:ui": "playwright test",
-    "test:backup-restore-ui": "playwright test tests/backup-restore.spec.js",
+    "test:backup-restore-ui": "playwright test tests/native-transfer.spec.js",
     "test:dns-ui": "playwright test tests/native-config.spec.js",
     "test:nodes-ui": "playwright test tests/nodes.spec.js",
     "test:performance-ui": "playwright test tests/performance-ui.spec.js",

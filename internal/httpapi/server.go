@@ -18,6 +18,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/components"
 	"github.com/popiposter/xkeen-control/internal/geodatareader"
+	"github.com/popiposter/xkeen-control/internal/nativebackup"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	"github.com/popiposter/xkeen-control/internal/notifications"
 	"github.com/popiposter/xkeen-control/internal/panellistener"
@@ -46,6 +47,14 @@ const (
 type BackupService interface {
 	Export(context.Context) ([]byte, error)
 	ExportSecret(context.Context, string) ([]byte, error)
+}
+
+type NativeTransferService interface {
+	Preview(context.Context, string, []byte, string, map[string]string) (nativebackup.TransferPreview, error)
+	Stage(context.Context, string, string, bool) (string, error)
+	Cancel(string, string)
+	Invalidate(string)
+	InvalidateAll()
 }
 
 type NativeDiscovery interface {
@@ -119,6 +128,7 @@ type Server struct {
 	updates            panelupdate.Service
 	notifications      *notifications.Service
 	backup             BackupService
+	nativeTransfer     NativeTransferService
 	restore            RestoreService
 	performancePolicy  PerformancePolicyService
 	listener           PanelListenerService
@@ -152,6 +162,7 @@ type Config struct {
 	Updates            panelupdate.Service
 	Notifications      *notifications.Service
 	Backup             BackupService
+	NativeTransfer     NativeTransferService
 	Restore            RestoreService
 	PerformancePolicy  PerformancePolicyService
 	Listener           PanelListenerService
@@ -161,7 +172,7 @@ func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, native: config.Native, nativeJobs: config.NativeJobs, nativeConfig: config.NativeConfig, geodata: config.Geodata, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, restore: config.Restore, performancePolicy: config.PerformancePolicy, listener: config.Listener, restorePreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, components: config.Components, componentChecks: config.ComponentChecks, componentMutations: config.ComponentMutations, componentPolicy: config.ComponentPolicy, setup: config.Setup, native: config.Native, nativeJobs: config.NativeJobs, nativeConfig: config.NativeConfig, geodata: config.Geodata, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, nativeTransfer: config.NativeTransfer, restore: config.Restore, performancePolicy: config.PerformancePolicy, listener: config.Listener, restorePreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -194,6 +205,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/session/password",
 		"/api/v1/benchmark/run", "/api/v1/performance/manual-node",
 		"/api/v1/backup/export", "/api/v1/backup/export-secret",
+		"/api/v1/xkeen/transfer/preview", "/api/v1/xkeen/transfer/stage", "/api/v1/xkeen/transfer/cancel",
 		"/api/v1/backup/import/preview", "/api/v1/backup/import/apply", "/api/v1/backup/import/cancel",
 		"/api/v1/nodes/import/preview", "/api/v1/nodes/replace/preview",
 		"/api/v1/nodes/batch/state/preview", "/api/v1/nodes/batch/remove/preview",
@@ -229,6 +241,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/api/v1/xkeen/transfer/preview", "/api/v1/xkeen/transfer/stage", "/api/v1/xkeen/transfer/cancel":
+		s.handleNativeTransfer(w, r)
 	case "/api/v1/geodata", "/api/v1/geodata/query":
 		s.handleGeodata(w, r)
 	case "/api/v1/xkeen/config", "/api/v1/xkeen/config/save", "/api/v1/xkeen/config/workspace", "/api/v1/xkeen/config/text", "/api/v1/xkeen/config/draft", "/api/v1/xkeen/config/document", "/api/v1/xkeen/config/example", "/api/v1/xkeen/config/save-set", "/api/v1/xkeen/config/apply", "/api/v1/xkeen/config/inspect", "/api/v1/xkeen/config/restore-saved", "/api/v1/xkeen/config/restore-previous":
@@ -764,6 +778,9 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	// admitted before logout fail that check even if it completes while the
 	// synchronous restore purge is still running.
 	s.auth.Logout(r)
+	if s.nativeTransfer != nil {
+		s.nativeTransfer.Invalidate(session.CSRFToken)
+	}
 	if s.restore != nil {
 		s.restore.Invalidate(session.CSRFToken)
 	}
@@ -815,6 +832,9 @@ func (s *Server) replacePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.restore != nil {
 		s.restore.InvalidateAll()
+	}
+	if s.nativeTransfer != nil {
+		s.nativeTransfer.InvalidateAll()
 	}
 	if s.componentMutations != nil {
 		s.componentMutations.InvalidateAll()

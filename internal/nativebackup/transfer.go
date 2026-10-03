@@ -205,6 +205,26 @@ func (s *Service) Cancel(binding, token string) {
 	}
 }
 
+func (s *Service) Invalidate(binding string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.preview != nil && s.preview.binding == binding {
+		s.dropPreviewLocked()
+	}
+}
+
+func (s *Service) InvalidateAll() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dropPreviewLocked()
+}
+
 func (s *Service) availableInterfaces() ([]string, error) {
 	if s.Interfaces != nil {
 		return s.Interfaces()

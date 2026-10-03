@@ -124,7 +124,8 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
   await expect(page.getByRole('heading', { name: 'XKeen and components' })).toBeVisible()
   await openSection(page, 'Backup & Restore')
   await setBackupBundle(page)
-  await expect(page.getByRole('button', { name: 'Preview restore' })).toBeEnabled()
+  await page.getByLabel('Backup passphrase', { exact: true }).fill('synthetic transfer passphrase')
+  await expect(page.getByRole('button', { name: 'Preview transfer' })).toBeEnabled()
 
   for (const [label, lifecycle] of [
     ['maintenance', { maintenance: true, applying: false }],
@@ -148,8 +149,8 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
     await openSection(page, 'Components / Updates')
     await expect(page.getByRole('heading', { name: 'XKeen and components' })).toBeVisible()
     await openSection(page, 'Backup & Restore')
-    await expect(page.getByRole('button', { name: 'Preview restore' })).toBeDisabled()
-    await expect(page.getByRole('button', { name: 'Download safe backup' })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Preview transfer' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Download encrypted backup' })).toBeEnabled()
     await openSection(page, 'System / Panel')
     await expect(page.getByRole('button', { name: 'Preview rebind' })).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Apply checked release' })).toBeDisabled()
