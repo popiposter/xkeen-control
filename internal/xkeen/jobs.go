@@ -42,15 +42,19 @@ type nativeJob struct {
 	terminal                 *os.File
 	command                  *exec.Cmd
 	cancel                   context.CancelFunc
+	lastActivity             time.Time
 }
 
 // Jobs retains just one bounded job. Closing a browser never cancels its process.
 // Lease is shared with config/node actions; it excludes panel actions only.
 type Jobs struct {
-	Binary string
-	Lease  *authority.Lease
-	mu     sync.Mutex
-	job    *nativeJob
+	Binary        string
+	Lease         *authority.Lease
+	mu            sync.Mutex
+	job           *nativeJob
+	idleTimeout   time.Duration
+	receiptPath   string
+	startTerminal func(*exec.Cmd, bool) (*os.File, error)
 }
 
 func NewJobs(binary string, lease *authority.Lease) *Jobs {
@@ -60,7 +64,7 @@ func NewJobs(binary string, lease *authority.Lease) *Jobs {
 	if lease == nil {
 		lease = authority.NewLease()
 	}
-	return &Jobs{Binary: binary, Lease: lease}
+	return &Jobs{Binary: binary, Lease: lease, idleTimeout: 10 * time.Minute, startTerminal: startNativeTerminal}
 }
 
 func (m *Jobs) Start(owner string, r CommandRequest) (JobView, error) {
@@ -85,6 +89,12 @@ func (m *Jobs) Start(owner string, r CommandRequest) (JobView, error) {
 		release()
 		return JobView{}, ErrJob
 	}
+	j := &nativeJob{id: hex.EncodeToString(id), owner: owner, action: r.Action, state: "running", interactive: spec.Interactive, lastActivity: time.Now()}
+	if m.saveReceipt(j) != nil {
+		m.Lease.Block()
+		release()
+		return JobView{}, ErrJob
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), spec.limit)
 	command := exec.Command(m.Binary, args...)
 	for _, e := range os.Environ() {
@@ -93,16 +103,47 @@ func (m *Jobs) Start(owner string, r CommandRequest) (JobView, error) {
 		}
 	}
 	command.Env = append(command.Env, "XKEEN_FOREGROUND=1", "TERM=xterm-256color")
-	terminal, err := startNativeTerminal(command, spec.Interactive)
+	terminal, err := m.startTerminal(command, spec.Interactive)
 	if err != nil {
 		cancel()
+		// Terminal setup can fail after exec has already started native work.
+		// Never turn that into a safely replayable startup refusal.
+		j.state = "unknown"
+		m.job = j
+		_ = m.saveReceipt(j)
+		m.Lease.Block()
 		release()
 		return JobView{}, ErrJob
 	}
-	j := &nativeJob{id: hex.EncodeToString(id), owner: owner, action: r.Action, state: "running", interactive: spec.Interactive, terminal: terminal, command: command, cancel: cancel}
+	j.terminal, j.command, j.cancel = terminal, command, cancel
 	m.job = j
+	if j.interactive {
+		go m.watchIdle(ctx, j)
+	}
 	go m.run(ctx, j, release)
 	return m.view(j, 0), nil
+}
+
+// Viewing or polling the console does not keep an unanswered native prompt alive.
+// Only actual process output or successfully delivered input counts as activity.
+func (m *Jobs) watchIdle(ctx context.Context, j *nativeJob) {
+	timer := time.NewTimer(m.idleTimeout)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			m.mu.Lock()
+			remaining := m.idleTimeout - time.Since(j.lastActivity)
+			m.mu.Unlock()
+			if remaining <= 0 {
+				j.cancel()
+				return
+			}
+			timer.Reset(remaining)
+		}
+	}
 }
 
 func (m *Jobs) run(ctx context.Context, j *nativeJob, release func()) {
@@ -116,6 +157,7 @@ func (m *Jobs) run(ctx context.Context, j *nativeJob, release func()) {
 			n, err := j.terminal.Read(buf)
 			if n > 0 {
 				m.mu.Lock()
+				j.lastActivity = time.Now()
 				j.output = append(j.output, buf[:n]...)
 				if len(j.output) > maxJobOutput {
 					drop := len(j.output) - maxJobOutput
@@ -162,6 +204,11 @@ func (m *Jobs) run(ctx context.Context, j *nativeJob, release func()) {
 	}
 	m.mu.Lock()
 	j.state = state
+	if m.saveReceipt(j) != nil {
+		j.state = "unknown"
+		state = "unknown"
+		m.Lease.Block()
+	}
 	if state != "unknown" {
 		code := 0
 		if err != nil {
@@ -195,7 +242,7 @@ func (m *Jobs) view(j *nativeJob, cursor int64) JobView {
 func (m *Jobs) Read(owner, id string, cursor int64) (JobView, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.job == nil || m.job.owner != owner || id != "" && m.job.id != id || cursor < 0 {
+	if owner == "" || m.job == nil || m.job.owner != "" && m.job.owner != owner || id != "" && m.job.id != id || cursor < 0 {
 		return JobView{}, ErrJob
 	}
 	return m.view(m.job, cursor), nil
@@ -219,6 +266,9 @@ func (m *Jobs) Input(owner, id, data string) error {
 	if err != nil {
 		return ErrJob
 	}
+	m.mu.Lock()
+	j.lastActivity = time.Now()
+	m.mu.Unlock()
 	return nil
 }
 func (m *Jobs) Resize(owner, id string, cols, rows uint16) error {

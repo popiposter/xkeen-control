@@ -67,6 +67,23 @@ func TestNativeTerminalOwnsOneProcessAndSession(t *testing.T) {
 		t.Fatal("post-exit input accepted")
 	}
 }
+
+func TestNativeIdlePromptBecomesUnknownWithoutReplay(t *testing.T) {
+	m := testNativeJobs(t, "printf 'Answer: '\nread -r answer\n")
+	m.idleTimeout = 80 * time.Millisecond
+	v, err := m.Start("owner", CommandRequest{Action: "geodata-schedule"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Console inspection is not native activity and cannot extend the prompt.
+	final := waitNativeJob(t, m, v.ID)
+	if final.State != "unknown" {
+		t.Fatalf("idle result=%+v", final)
+	}
+	if _, err := m.Start("owner", CommandRequest{Action: "status"}); !errors.Is(err, authority.ErrBusy) {
+		t.Fatal("idle command was replayable", err)
+	}
+}
 func TestNativeCommandRejectsShellAndInvalidParameters(t *testing.T) {
 	if _, _, err := commandArguments(CommandRequest{Action: "ports-add", Parameter: "+80"}); err == nil {
 		t.Fatal("accepted signed port absent in native grammar")
