@@ -63,12 +63,16 @@ XKeen shell. XKeen code remains unchanged; the panel edits fixed data configs.
 - External drift blocks overwrite; logout/session replacement removes access to
   private buffers; interrupted Apply is inspected without replay.
 
-Implementation status: source now includes shared Form/Text documents, lazy
-highlighted text editing, comment-preserving formatting, undo/redo, private draft
-storage, full candidate validation/diagnostics and durable pending file tracking
-with first-save originals. Group Apply, pre-apply discard and post-apply previous
-generation restore remain in progress before editor delivery. No live editor
-qualification claimed.
+Implementation status: source includes shared Form/Text documents, lazy
+highlighted text editing, comment-preserving formatting, undo/redo, private drafts,
+DNS resolvers, ordered routing rules, balancers and observatory forms. Saving a
+set validates all native JSON/JSONC files together. Group Apply calls the fixed
+native Restart once; discard and previous-generation restoration are explicit.
+Process/config readback checks a new Xray PID/start identity, executable, sole
+config directory and saved digest; this observation does not prove sustained
+VPN/DNS health. Previous means pre-edit saved files, not a forensic copy of the
+old process's loaded memory. Native start/restart cards use the same bookkeeping
+when an editor set is pending. No live editor qualification claimed.
 
 Resource bounds: 2 MiB per text/draft, 8 MiB native candidate aggregate; one file
 is fetched at a time. Private document JSON responses have a separate 32 MiB cap

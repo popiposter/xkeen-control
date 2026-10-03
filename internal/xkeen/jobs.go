@@ -23,14 +23,15 @@ var ErrJob = errors.New("native job unavailable")
 // JobView is a PRIVATE session-bound console response, not a status projection.
 // Completed means process exit, never verified tunnel health.
 type JobView struct {
-	ID          string `json:"id"`
-	Action      string `json:"action"`
-	State       string `json:"state"`
-	Interactive bool   `json:"interactive"`
-	ExitCode    *int   `json:"exitCode,omitempty"`
-	Output      string `json:"output"` // base64 preserves partial UTF-8/ANSI bytes
-	Cursor      int64  `json:"cursor"`
-	Truncated   bool   `json:"truncated"`
+	ID                 string `json:"id"`
+	Action             string `json:"action"`
+	State              string `json:"state"`
+	Interactive        bool   `json:"interactive"`
+	ExitCode           *int   `json:"exitCode,omitempty"`
+	Output             string `json:"output"` // base64 preserves partial UTF-8/ANSI bytes
+	Cursor             int64  `json:"cursor"`
+	Truncated          bool   `json:"truncated"`
+	ConfigurationState string `json:"configurationState,omitempty"`
 }
 
 type nativeJob struct {
@@ -43,6 +44,8 @@ type nativeJob struct {
 	command                  *exec.Cmd
 	cancel                   context.CancelFunc
 	lastActivity             time.Time
+	configEditor             *ConfigEditor
+	configurationState       string
 }
 
 // Jobs retains just one bounded job. Closing a browser never cancels its process.
@@ -70,6 +73,26 @@ func NewJobs(binary string, lease *authority.Lease) *Jobs {
 }
 
 func (m *Jobs) Start(owner string, r CommandRequest) (JobView, error) {
+	return m.start(owner, r, nil, "")
+}
+
+// ApplyConfigs invokes exactly the same native Restart as the command card.
+// Only config bookkeeping/readback is added; native scripts stay unmodified.
+func (m *Jobs) ApplyConfigs(owner string, editor *ConfigEditor, baseline string) (JobView, error) {
+	if editor == nil || editor.Lease != m.Lease {
+		return JobView{}, ErrConfig
+	}
+	return m.start(owner, CommandRequest{Action: "restart"}, editor, baseline)
+}
+
+func (m *Jobs) StartConfigured(owner string, request CommandRequest, editor *ConfigEditor, baseline string) (JobView, error) {
+	if editor == nil || editor.Lease != m.Lease || request.Action != "start" && request.Action != "restart" {
+		return JobView{}, ErrConfig
+	}
+	return m.start(owner, request, editor, baseline)
+}
+
+func (m *Jobs) start(owner string, r CommandRequest, editor *ConfigEditor, baseline string) (JobView, error) {
 	if owner == "" {
 		return JobView{}, ErrJob
 	}
@@ -95,10 +118,28 @@ func (m *Jobs) Start(owner string, r CommandRequest) (JobView, error) {
 		return JobView{}, ErrJob
 	}
 	j := &nativeJob{id: hex.EncodeToString(id), owner: owner, action: r.Action, state: "running", interactive: spec.Interactive, lastActivity: time.Now()}
+	j.configEditor = editor
 	if m.saveReceipt(j) != nil {
+		j.state = "unknown"
+		m.job = j
 		m.Lease.Block()
 		release()
 		return JobView{}, ErrJob
+	}
+	if editor != nil {
+		prepareCtx, prepareCancel := context.WithTimeout(context.Background(), 50*time.Second)
+		err := editor.beginApply(prepareCtx, baseline, j.id)
+		prepareCancel()
+		if err != nil {
+			j.state = "failed"
+			m.job = j
+			if m.saveReceipt(j) != nil {
+				j.state = "unknown"
+				m.Lease.Block()
+			}
+			release()
+			return JobView{}, err
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), spec.limit)
 	command := exec.Command(m.Binary, args...)
@@ -114,6 +155,11 @@ func (m *Jobs) Start(owner string, r CommandRequest) (JobView, error) {
 		// Terminal setup can fail after exec has already started native work.
 		// Never turn that into a safely replayable startup refusal.
 		j.state = "unknown"
+		if editor != nil {
+			readCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
+			j.configurationState = editor.finishApply(readCtx, j.id, "unknown")
+			done()
+		}
 		m.job = j
 		_ = m.saveReceipt(j)
 		m.Lease.Block()
@@ -202,6 +248,12 @@ func (m *Jobs) run(ctx context.Context, j *nativeJob, release func()) {
 	case <-time.After(100 * time.Millisecond):
 	}
 	_ = j.terminal.Close()
+	configurationState := ""
+	if j.configEditor != nil {
+		readCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
+		configurationState = j.configEditor.finishApply(readCtx, j.id, state)
+		done()
+	}
 	if state == "unknown" {
 		// Preserve the same shared panel fence as an unknown node activation.
 		// Only independent recovery/readback may reopen panel mutations.
@@ -209,6 +261,7 @@ func (m *Jobs) run(ctx context.Context, j *nativeJob, release func()) {
 	}
 	m.mu.Lock()
 	j.state = state
+	j.configurationState = configurationState
 	if m.saveReceipt(j) != nil {
 		j.state = "unknown"
 		state = "unknown"
@@ -242,7 +295,7 @@ func (m *Jobs) view(j *nativeJob, cursor int64) JobView {
 		n = 32768
 	}
 	start := cursor - j.base
-	return JobView{ID: j.id, Action: j.action, State: j.state, Interactive: j.interactive, ExitCode: j.exit, Output: base64.StdEncoding.EncodeToString(j.output[start : start+n]), Cursor: cursor + n, Truncated: truncated}
+	return JobView{ID: j.id, Action: j.action, State: j.state, Interactive: j.interactive, ExitCode: j.exit, Output: base64.StdEncoding.EncodeToString(j.output[start : start+n]), Cursor: cursor + n, Truncated: truncated, ConfigurationState: j.configurationState}
 }
 func (m *Jobs) Read(owner, id string, cursor int64) (JobView, error) {
 	m.mu.Lock()

@@ -72,7 +72,17 @@ func (s *Server) handleNativeJobs(w http.ResponseWriter, r *http.Request) {
 		if !decode(&request) {
 			return
 		}
-		result, err := s.nativeJobs.Start(owner, request)
+		var result xkeen.JobView
+		var err error
+		if s.nativeConfig != nil && (request.Action == "restart" || request.Action == "start") {
+			if digest, exists := s.nativeConfig.PendingDigest(); exists {
+				result, err = s.nativeJobs.StartConfigured(owner, request, s.nativeConfig, digest)
+			} else {
+				result, err = s.nativeJobs.Start(owner, request)
+			}
+		} else {
+			result, err = s.nativeJobs.Start(owner, request)
+		}
 		if err != nil {
 			fail(err)
 			return

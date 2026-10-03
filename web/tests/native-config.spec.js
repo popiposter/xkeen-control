@@ -5,23 +5,28 @@ async function mountEditor(page) {
   const model = await mountFeatureCompleteDashboard(page)
   const writes = []
   let reads = 0
+  const state = { digest: 'a'.repeat(64), pending: null, hasPrevious: false }
   const original = '{/* keep DNS */"dns":{"queryStrategy":"UseIP","future":9007199254740993}}'
   const documents = { '02_dns.json': { text: original }, '05_routing.json': { text: '{"routing":{"domainStrategy":"AsIs","rules":[]}}' } }
   await page.route('**/api/v1/xkeen/config/workspace', (route) => {
     reads++
-    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ digest: 'a'.repeat(64), documents: Object.fromEntries(Object.keys(documents).map((id) => [id, {}])) }) })
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ...state, documents: Object.fromEntries(Object.keys(documents).map((id) => [id, {}])) }) })
   })
-  await page.route('**/api/v1/xkeen/config/document', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ digest: 'a'.repeat(64), document: documents[route.request().postDataJSON().file] }) }))
+  await page.route('**/api/v1/xkeen/config/document', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ digest: state.digest, document: documents[route.request().postDataJSON().file] }) }))
   await page.route('**/api/v1/xkeen/config/text', (route) => {
     writes.push(route.request().postDataJSON())
-    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ digest: 'b'.repeat(64), saved: true, restartRequired: true }) })
+    state.digest = 'b'.repeat(64)
+    const body = route.request().postDataJSON()
+    documents[body.file].text = body.text
+    state.pending = { files: [body.file], restartRequired: true }
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ digest: state.digest, saved: true, restartRequired: true }) })
   })
   await page.goto('/')
   await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
   expect(reads).toBe(0)
   await page.getByRole('button', { name: 'Edit native configuration', exact: true }).click()
   await expect(page.getByLabel('DNS address family', { exact: true })).toHaveValue('UseIP')
-  return { model, writes, original }
+  return { model, writes, original, state, documents }
 }
 
 test('Form/Text share edits, formatting and undo without saving or restarting', async ({ page }) => {
@@ -46,6 +51,102 @@ test('Form/Text share edits, formatting and undo without saving or restarting', 
   expect(writes[0].text).toContain('9007199254740993')
   expect(model.requests.filter((request) => request.path === '/api/v1/xkeen/jobs/start')).toEqual([])
   expect(model.issues).toEqual([])
+})
+
+test('two configs save as one set, Apply is one native job, and previous restore awaits another explicit Apply', async ({ page }) => {
+  const { state, documents, original } = await mountEditor(page)
+  const originalRouting = documents['05_routing.json'].text
+  const saves = [], applies = []
+  let job = null
+  await page.route('**/api/v1/xkeen/config/save-set', (route) => {
+    const body = route.request().postDataJSON(); saves.push(body)
+    for (const [id, text] of Object.entries(body.documents)) documents[id].text = text
+    state.digest = 'b'.repeat(64); state.pending = { files: Object.keys(body.documents), restartRequired: true }
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ digest: state.digest, saved: true }) })
+  })
+  await page.route('**/api/v1/xkeen/config/apply', (route) => {
+    applies.push(route.request().postDataJSON())
+    job = { id: '1'.repeat(32), action: 'restart', state: 'running', interactive: false, output: '', cursor: 0, truncated: false }
+    state.pending.applyId = job.id; state.pending.applyState = 'running'
+    return route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify(job) })
+  })
+  await page.route('**/api/v1/xkeen/jobs/read', (route) => {
+    if (!job) return route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"no job"}' })
+    job = { ...job, state: 'completed', exitCode: 0, configurationState: 'applied' }
+    state.pending = null; state.hasPrevious = true
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify(job) })
+  })
+  await page.route('**/api/v1/xkeen/config/restore-previous', (route) => {
+    documents['02_dns.json'].text = original; documents['05_routing.json'].text = originalRouting
+    state.digest = 'c'.repeat(64); state.pending = { files: ['02_dns.json', '05_routing.json'], restartRequired: true }
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ digest: state.digest, saved: true }) })
+  })
+  await page.getByLabel('DNS address family', { exact: true }).selectOption('UseIPv4')
+  await page.getByLabel('Configuration file', { exact: true }).selectOption('05_routing.json')
+  await expect(page.getByLabel('Routing domain resolution', { exact: true })).toHaveValue('AsIs')
+  await page.getByLabel('Routing domain resolution', { exact: true }).selectOption('IPOnDemand')
+  await page.getByRole('button', { name: 'Save all configurations', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'All working changes saved' })).toBeVisible()
+  expect(saves).toHaveLength(1); expect(Object.keys(saves[0].documents)).toHaveLength(2)
+  await page.getByRole('button', { name: 'Apply saved configurations', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'new running Xray process' })).toBeVisible()
+  expect(applies).toEqual([{ digest: 'b'.repeat(64) }])
+  await page.getByRole('button', { name: 'Restore previous configuration', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Previous configuration saved' })).toBeVisible()
+  await expect(page.getByLabel('Routing domain resolution', { exact: true })).toHaveValue('AsIs')
+  await expect(page.getByRole('button', { name: 'Apply saved configurations', exact: true })).toBeEnabled()
+  expect(applies).toHaveLength(1)
+})
+
+test('discarding saved files preserves a different unfinished working document', async ({ page }) => {
+  const { state, documents, original } = await mountEditor(page)
+  await page.route('**/api/v1/xkeen/config/restore-saved', (route) => {
+    documents['02_dns.json'].text = original; state.pending = null; state.digest = 'c'.repeat(64)
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ digest: state.digest, saved: true }) })
+  })
+  await page.getByLabel('DNS address family', { exact: true }).selectOption('UseIPv4')
+  await page.getByRole('button', { name: 'Save configuration', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Saved and validated' })).toBeVisible()
+  await page.getByLabel('Configuration file', { exact: true }).selectOption('05_routing.json')
+  await page.getByLabel('Routing domain resolution', { exact: true }).selectOption('IPOnDemand')
+  await page.getByRole('button', { name: 'Discard saved changes', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Saved changes discarded' })).toBeVisible()
+  await expect(page.getByLabel('Routing domain resolution', { exact: true })).toHaveValue('IPOnDemand')
+  await expect(page.getByRole('button', { name: 'Save configuration', exact: true })).toBeEnabled()
+})
+
+for (const failure of ['lost', 'malformed']) test(`${failure} Apply acceptance prevents replay and leaves explicit inspection available`, async ({ page }) => {
+  const { state } = await mountEditor(page)
+  let calls = 0
+  await page.route('**/api/v1/xkeen/config/apply', (route) => { calls++; state.pending.applyState = 'unknown'; return failure === 'lost' ? route.abort() : route.fulfill({ status: 202, contentType: 'application/json', body: '{"state":"completed"}' }) })
+  await page.getByLabel('DNS address family', { exact: true }).selectOption('UseIPv4')
+  await page.getByRole('button', { name: 'Save configuration', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Saved and validated' })).toBeVisible()
+  await page.getByRole('button', { name: 'Apply saved configurations', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Apply saved configurations', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Inspect existing Apply', exact: true })).toBeVisible()
+  expect(calls).toBe(1)
+})
+
+test('graphical routing lists retain typed newlines and opaque fields through Text and undo', async ({ page }) => {
+  const { documents, writes } = await mountEditor(page)
+  documents['05_routing.json'].text = '{"routing":{"rules":[{"type":"field","domain":["example.test"],"outboundTag":"direct","opaque":9007199254740993}]}}'
+  await page.getByLabel('Configuration file', { exact: true }).selectOption('05_routing.json')
+  const domains = page.getByLabel('Rule 1 domains / geosite (one per line)', { exact: true })
+  await domains.fill('example.test\n')
+  await expect(domains).toHaveValue('example.test\n')
+  await domains.pressSequentially('geosite:synthetic')
+  await expect(domains).toHaveValue('example.test\ngeosite:synthetic')
+  await page.getByRole('button', { name: 'Text', exact: true }).click()
+  const editor = page.getByRole('textbox', { name: 'Configuration text' })
+  await expect(editor).toContainText('9007199254740993')
+  await expect(editor).toContainText('geosite:synthetic')
+  await page.getByRole('button', { name: 'Form', exact: true }).click()
+  await page.getByRole('button', { name: 'Add traffic rule', exact: true }).click()
+  await expect(page.getByLabel('Rule 2 outbound tag (VPN / direct / block)', { exact: true })).toHaveValue('direct')
+  await page.getByRole('button', { name: 'Undo', exact: true }).click()
+  await expect(page.getByLabel('Rule 2 outbound tag (VPN / direct / block)', { exact: true })).toHaveCount(0)
+  expect(writes).toEqual([])
 })
 
 test('invalid Text remains a savable private draft and cannot replace native files', async ({ page }) => {

@@ -443,6 +443,8 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const { status, nodes, performance } = dashboard
   const [section, setSection] = useState('overview')
   const [componentsVisited, setComponentsVisited] = useState(false)
+  const [nativeConfigJob, setNativeConfigJob] = useState(null)
+  useEffect(() => setNativeConfigJob(null), [session.csrfToken])
   useEffect(() => { if (section === 'components') setComponentsVisited(true) }, [section])
   const [navigationOpen, setNavigationOpen] = useState(false)
   const navigationTrigger = useRef(null)
@@ -537,8 +539,8 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     {section === 'routing' && <RoutingPolicySection controller={routingController} lifecycle={status.lifecycle} />}
     {section === 'dns' && <DNSObservatorySection controller={dnsController} />}
     {section === 'performance' && <PerformancePolicySection controller={performancePolicyController} />}
-    {section === 'components' && <NativeXkeenSection facts={status.native} onRefresh={onRefresh} onOpenSystem={() => setSection('system')} csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} />}
-    {(section === 'components' || componentsVisited) && <div hidden={section !== 'components'}><NativeConfigSection csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} /></div>}
+    {section === 'components' && <NativeXkeenSection facts={status.native} onRefresh={onRefresh} onOpenSystem={() => setSection('system')} csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} jobNotification={nativeConfigJob?.csrfToken === session.csrfToken ? nativeConfigJob.job : null} />}
+    {(section === 'components' || componentsVisited) && <div hidden={section !== 'components'}><NativeConfigSection csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} onNativeJob={(job) => setNativeConfigJob({ job, csrfToken: session.csrfToken })} /></div>}
     {section === 'backup' && <BackupRestoreSection csrf={session.csrfToken} restoreState={restoreState} setRestoreState={setRestoreState} onRefresh={onRefresh} onUnauthorized={onUnauthorized} lifecycleBlocked={lifecycleBlocked} />}
     {section === 'system' && <SystemPanelSection controller={systemPanelController} status={status} onOpenComponents={openComponents} onOpenBackup={openBackup} />}
     </div></div></div>

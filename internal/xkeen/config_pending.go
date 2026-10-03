@@ -15,12 +15,19 @@ import (
 // One explicitly saved config set, not a native command journal. Original
 // bytes survive repeated Save until the set is applied/discarded.
 type pendingConfig struct {
-	Expected string            `json:"expected"`
-	Original map[string][]byte `json:"original"` // JSON base64 is lossless and bounded
+	Expected        string            `json:"expected"`
+	Original        map[string][]byte `json:"original"` // JSON base64 is lossless and bounded
+	ApplyID         string            `json:"applyId,omitempty"`
+	ApplyState      string            `json:"applyState,omitempty"`
+	BeforeProcess   string            `json:"beforeProcess,omitempty"`
+	RestartRequired bool              `json:"restartRequired,omitempty"`
 }
 type PendingConfiguration struct {
-	Files []string `json:"files"`
-	Drift bool     `json:"drift"`
+	Files           []string `json:"files"`
+	Drift           bool     `json:"drift"`
+	ApplyState      string   `json:"applyState,omitempty"`
+	ApplyID         string   `json:"applyId,omitempty"`
+	RestartRequired bool     `json:"restartRequired"`
 }
 
 func configDigest(files map[string][]byte) string {
@@ -39,10 +46,24 @@ func configDigest(files map[string][]byte) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 func (e *ConfigEditor) readPending() (*pendingConfig, error) {
+	return e.readGeneration("pending.json")
+}
+
+// PendingDigest is non-secret bookkeeping for native Start/Restart cards.
+// An unavailable editor history does not prevent ordinary native command use.
+func (e *ConfigEditor) PendingDigest() (string, bool) {
+	pending, err := e.readPending()
+	if err != nil || pending == nil {
+		return "", false
+	}
+	return pending.Expected, true
+}
+
+func (e *ConfigEditor) readGeneration(name string) (*pendingConfig, error) {
 	if e.PreviousDir == "" {
 		return nil, ErrConfig
 	}
-	path := filepath.Join(e.PreviousDir, "pending.json")
+	path := filepath.Join(e.PreviousDir, name)
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -51,7 +72,7 @@ func (e *ConfigEditor) readPending() (*pendingConfig, error) {
 	if err != nil || parentErr != nil || !parent.IsDir() || parent.Mode().Perm() != 0700 || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
 		return nil, ErrConfig
 	}
-	data, state := (Discovery{Root: e.PreviousDir}).read("pending.json", 16<<20)
+	data, state := (Discovery{Root: e.PreviousDir}).read(name, 16<<20)
 	if state != CapabilityAvailable {
 		return nil, ErrConfig
 	}
@@ -62,6 +83,18 @@ func (e *ConfigEditor) readPending() (*pendingConfig, error) {
 		return nil, ErrConfig
 	}
 	if _, err := hex.DecodeString(pending.Expected); err != nil {
+		return nil, ErrConfig
+	}
+	if pending.ApplyID != "" {
+		id, err := hex.DecodeString(pending.ApplyID)
+		if err != nil || len(id) != 16 {
+			return nil, ErrConfig
+		}
+	}
+	if pending.ApplyState != "" && pending.ApplyState != "running" && pending.ApplyState != "failed" && pending.ApplyState != "unknown" && pending.ApplyState != "restored" {
+		return nil, ErrConfig
+	}
+	if len(pending.BeforeProcess) > 256 {
 		return nil, ErrConfig
 	}
 	total := 0
@@ -76,7 +109,7 @@ func (e *ConfigEditor) readPending() (*pendingConfig, error) {
 	}
 	return &pending, nil
 }
-func (e *ConfigEditor) stagePending(before ConfigSnapshot, file string, candidate []byte) error {
+func (e *ConfigEditor) stagePendingSet(before ConfigSnapshot, changes map[string][]byte) error {
 	pending, err := e.readPending()
 	if err != nil {
 		return err
@@ -86,15 +119,28 @@ func (e *ConfigEditor) stagePending(before ConfigSnapshot, file string, candidat
 	} else if pending.Expected != before.Digest {
 		return ErrConfig
 	}
-	if _, exists := pending.Original[file]; !exists {
-		pending.Original[file] = before.files[file]
+	if pending.ApplyState == "running" || pending.ApplyState == "unknown" {
+		return ErrConfig
+	}
+	for file, candidate := range changes {
+		if bytes.Equal(candidate, before.files[file]) {
+			continue
+		}
+		if _, exists := pending.Original[file]; !exists {
+			pending.Original[file] = before.files[file]
+		}
 	}
 	files := make(map[string][]byte, len(before.files))
 	for name, data := range before.files {
 		files[name] = data
 	}
-	files[file] = candidate
+	for file, candidate := range changes {
+		files[file] = candidate
+	}
 	pending.Expected = configDigest(files)
+	return e.writeGeneration("pending.json", pending)
+}
+func (e *ConfigEditor) writeGeneration(name string, pending *pendingConfig) error {
 	if os.MkdirAll(e.PreviousDir, 0700) != nil {
 		return ErrConfig
 	}
@@ -118,7 +164,7 @@ func (e *ConfigEditor) stagePending(before ConfigSnapshot, file string, candidat
 	_, writeErr := f.Write(data)
 	syncErr := f.Sync()
 	closeErr := f.Close()
-	if writeErr != nil || syncErr != nil || closeErr != nil || os.Rename(f.Name(), filepath.Join(e.PreviousDir, "pending.json")) != nil {
+	if writeErr != nil || syncErr != nil || closeErr != nil || os.Rename(f.Name(), filepath.Join(e.PreviousDir, name)) != nil {
 		return ErrConfig
 	}
 	dir, err := os.Open(e.PreviousDir)
@@ -139,12 +185,13 @@ func (e *ConfigEditor) pendingStatus(ctx context.Context, snapshot ConfigSnapsho
 	if err != nil || pending == nil {
 		return nil, err
 	}
-	status := &PendingConfiguration{Files: []string{}, Drift: pending.Expected != snapshot.Digest}
+	status := &PendingConfiguration{Files: []string{}, Drift: pending.Expected != snapshot.Digest, ApplyID: pending.ApplyID, ApplyState: pending.ApplyState, RestartRequired: pending.RestartRequired}
 	for name, original := range pending.Original {
 		if !bytes.Equal(snapshot.files[name], original) {
 			status.Files = append(status.Files, name)
 		}
 	}
 	sort.Strings(status.Files)
+	status.RestartRequired = status.RestartRequired || len(status.Files) > 0
 	return status, nil
 }

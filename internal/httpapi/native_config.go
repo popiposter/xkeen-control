@@ -60,6 +60,11 @@ func (s *Server) handleNativeConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnsupportedMediaType, "unsupported media type")
 		return
 	}
+	switch r.URL.Path {
+	case "/api/v1/xkeen/config/save-set", "/api/v1/xkeen/config/apply", "/api/v1/xkeen/config/inspect", "/api/v1/xkeen/config/restore-saved", "/api/v1/xkeen/config/restore-previous":
+		s.handleNativeConfigSet(w, r, session.CSRFToken)
+		return
+	}
 	if r.URL.Path == "/api/v1/xkeen/config/text" || r.URL.Path == "/api/v1/xkeen/config/draft" || r.URL.Path == "/api/v1/xkeen/config/document" {
 		s.handleNativeDocument(w, r)
 		return
@@ -89,6 +94,78 @@ func (s *Server) handleNativeConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"digest": digest, "saved": true, "restartRequired": digest != request.Digest})
+}
+
+func (s *Server) handleNativeConfigSet(w http.ResponseWriter, r *http.Request, owner string) {
+	limit := int64(4096)
+	if r.URL.Path == "/api/v1/xkeen/config/save-set" {
+		limit = 64 << 20
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	var request struct {
+		Digest    string            `json:"digest"`
+		ID        string            `json:"id"`
+		Documents map[string]string `json:"documents"`
+	}
+	if decoder.Decode(&request) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid config set request")
+		return
+	}
+	var digest string
+	var err error
+	switch r.URL.Path {
+	case "/api/v1/xkeen/config/save-set":
+		digest, err = s.nativeConfig.SaveTexts(r.Context(), request.Digest, request.Documents)
+	case "/api/v1/xkeen/config/restore-saved":
+		digest, err = s.nativeConfig.RestoreSaved(r.Context(), request.Digest)
+	case "/api/v1/xkeen/config/restore-previous":
+		digest, err = s.nativeConfig.RestorePrevious(r.Context(), request.Digest)
+	case "/api/v1/xkeen/config/apply":
+		if s.nativeJobs == nil {
+			writeError(w, http.StatusServiceUnavailable, "native commands unavailable")
+			return
+		}
+		job, startErr := s.nativeJobs.ApplyConfigs(owner, s.nativeConfig, request.Digest)
+		if startErr == nil {
+			writeJSON(w, http.StatusAccepted, job)
+			return
+		}
+		err = startErr
+	case "/api/v1/xkeen/config/inspect":
+		if s.nativeJobs == nil {
+			writeError(w, http.StatusServiceUnavailable, "native commands unavailable")
+			return
+		}
+		job, readErr := s.nativeJobs.Read(owner, request.ID, 0)
+		if readErr != nil || job.State == "running" {
+			writeError(w, http.StatusConflict, "native job unavailable or still running")
+			return
+		}
+		if job.State == "unknown" {
+			if _, err := s.nativeJobs.ResolveInspection(r.Context(), owner, request.ID); err != nil {
+				writeError(w, http.StatusConflict, "native outcome still requires inspection")
+				return
+			}
+		}
+		err = s.nativeConfig.InspectApplied(r.Context(), request.ID)
+		if err == nil {
+			writeJSON(w, http.StatusOK, map[string]any{"observed": "applied", "vpnHealth": "not-tested"})
+			return
+		}
+	}
+	if err != nil {
+		var detail *xkeen.ValidationError
+		if errors.As(err, &detail) {
+			writePrivateConfigJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": "Xray validation failed", "diagnostic": detail})
+		} else {
+			writeError(w, http.StatusConflict, "configuration result not confirmed; inspect and reload before another action")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"digest": digest, "saved": true})
 }
 
 func (s *Server) handleNativeDocument(w http.ResponseWriter, r *http.Request) {

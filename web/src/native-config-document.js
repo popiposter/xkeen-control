@@ -41,3 +41,33 @@ export function formatDocument(text) {
   if (parsed.error) throw new Error(parsed.error)
   return applyEdits(text, format(text, undefined, { insertSpaces: true, tabSize: 2, eol: '\n' }))
 }
+
+export function documentNode(tree, path) { return findNodeAtLocation(tree, path) }
+export function nodeValue(tree, path) {
+  const node = documentNode(tree, path)
+  return node ? getNodeValue(node) : undefined
+}
+export function editDocumentPath(text, path, value) {
+  const parsed = inspectDocument(text)
+  if (parsed.error) throw new Error(parsed.error)
+  return applyEdits(text, modify(text, path, value, { formattingOptions: { insertSpaces: true, tabSize: 2 } }))
+}
+export function appendDocumentItem(text, path, value) {
+  const parsed = inspectDocument(text)
+  if (parsed.error) throw new Error(parsed.error)
+  const array = documentNode(parsed.tree, path)
+  if (!array) return editDocumentPath(text, path, [value])
+  if (array.type !== 'array') throw new Error('This native value is not an array. Edit it in Text mode.')
+  const at = array.offset + array.length - 1
+  return text.slice(0, at) + `${array.children?.length ? ',' : ''}\n${JSON.stringify(value)}\n` + text.slice(at)
+}
+export function moveDocumentItem(text, path, index, destination) {
+  const parsed = inspectDocument(text)
+  if (parsed.error) throw new Error(parsed.error)
+  const children = documentNode(parsed.tree, path)?.children || []
+  if (Math.abs(destination - index) !== 1 || !children[index] || !children[destination]) return text
+  const a = children[index], b = children[destination]
+  const first = a.offset < b.offset ? a : b, second = a.offset < b.offset ? b : a
+  // Swap raw node tokens. No parse/stringify of opaque rule fields/numbers.
+  return text.slice(0, first.offset) + text.slice(second.offset, second.offset + second.length) + text.slice(first.offset + first.length, second.offset) + text.slice(first.offset, first.offset + first.length) + text.slice(second.offset + second.length)
+}

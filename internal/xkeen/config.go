@@ -1,17 +1,14 @@
 package xkeen
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/popiposter/xkeen-control/internal/authority"
@@ -29,6 +26,7 @@ type ConfigEditor struct {
 	PreviousDir string
 	AssetDir    string
 	DraftDir    string
+	ProcRoot    string
 }
 
 type ConfigSnapshot struct {
@@ -143,93 +141,24 @@ func (e *ConfigEditor) saveDocument(ctx context.Context, baseline, file string, 
 	if err != nil {
 		return "", ErrConfig
 	}
-	if string(candidate) == string(original) {
-		return before.Digest, nil
-	}
-	tmp, err := os.MkdirTemp("", "xkeen-native-config-*")
+	return e.saveCandidate(ctx, before, map[string][]byte{file: candidate})
+}
+
+// SaveTexts validates the complete set once, then saves the selected fixed data
+// files together. It never restarts XKeen or silently includes unfinished drafts.
+func (e *ConfigEditor) SaveTexts(ctx context.Context, baseline string, texts map[string]string) (string, error) {
+	release, err := e.Lease.Acquire(ctx, time.Second)
 	if err != nil {
+		return "", err
+	}
+	defer release()
+	before, err := e.Snapshot(ctx)
+	if err != nil || before.Digest != baseline || len(texts) == 0 || len(texts) > 7 {
 		return "", ErrConfig
 	}
-	defer os.RemoveAll(tmp)
-	for name, data := range before.files {
-		if name == file {
-			data = candidate
-		}
-		if os.WriteFile(filepath.Join(tmp, name), data, 0600) != nil {
-			return "", ErrConfig
-		}
+	changes := map[string][]byte{}
+	for name, text := range texts {
+		changes[name] = []byte(text)
 	}
-	validateCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel()
-	command := exec.CommandContext(validateCtx, e.XrayBinary, "run", "-test", "-confdir", tmp)
-	for _, entry := range os.Environ() {
-		if !strings.HasPrefix(entry, "XRAY_LOCATION_ASSET=") {
-			command.Env = append(command.Env, entry)
-		}
-	}
-	if e.AssetDir != "" {
-		command.Env = append(command.Env, "XRAY_LOCATION_ASSET="+e.AssetDir)
-	}
-	// Returned only by the authenticated private editor, never public logging.
-	output := &validationOutput{}
-	command.Stdout, command.Stderr = output, output
-	if command.Run() != nil {
-		return "", &ValidationError{File: file, Output: string(output.data), Truncated: output.truncated}
-	}
-	current, err := e.Snapshot(ctx)
-	if err != nil || current.Digest != baseline {
-		return "", ErrConfig
-	}
-	if e.stagePending(before, file, candidate) != nil {
-		return "", ErrConfig
-	}
-	path := filepath.Join(e.Dir, file)
-	f, err := os.CreateTemp(e.Dir, ".panel-config-*")
-	if err != nil {
-		return "", ErrConfig
-	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(candidate); err == nil {
-		err = f.Sync()
-	}
-	closeErr := f.Close()
-	if err != nil || closeErr != nil {
-		return "", ErrConfig
-	}
-	// Final baseline check immediately precedes promotion. External CLI/cron
-	// concurrency is not serialized by the panel lease.
-	current, err = e.Snapshot(ctx)
-	if err != nil || current.Digest != baseline {
-		return "", ErrConfig
-	}
-	if os.Rename(f.Name(), path) != nil {
-		return "", ErrConfig
-	}
-	d, err := os.Open(e.Dir)
-	if err != nil {
-		return "", ErrConfig
-	}
-	err = d.Sync()
-	d.Close()
-	if err != nil {
-		return "", ErrConfig
-	}
-	readbackCtx, readbackCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer readbackCancel()
-	after, err := e.Snapshot(readbackCtx)
-	if err != nil {
-		return "", ErrConfig
-	}
-	if len(after.files) != len(before.files) {
-		return "", ErrConfig
-	}
-	for name, data := range before.files {
-		if name == file {
-			data = candidate
-		}
-		if !bytes.Equal(data, after.files[name]) {
-			return "", ErrConfig
-		}
-	}
-	return after.Digest, nil
+	return e.saveCandidate(ctx, before, changes)
 }

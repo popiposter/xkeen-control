@@ -7,7 +7,7 @@ import { Field, FieldLabel } from '@/components/ui/field'
 const NativeConsole = lazy(() => import('./native-console.jsx'))
 const primaryActions = new Set(['start', 'stop', 'restart', 'status', 'update-xkeen', 'update-xray', 'update-geodata', 'geodata-schedule', 'geodata-schedule-remove', 'test-xray'])
 
-export function NativeCommands({ csrfToken, onUnauthorized, onRefresh }) {
+export function NativeCommands({ csrfToken, onUnauthorized, onRefresh, jobNotification }) {
   const [catalog, setCatalog] = useState([])
   const [selected, setSelected] = useState(null)
   const [parameter, setParameter] = useState('')
@@ -64,6 +64,15 @@ export function NativeCommands({ csrfToken, onUnauthorized, onRefresh }) {
     request('jobs/read', { id: '', cursor: 0 }).then((value) => { if (active && current()) { setJob(value); setUnknown(value.state === 'unknown') } }).catch(() => {}).finally(() => { if (active && current()) setInitializing(false) })
     return () => { active = false; alive.current = false; generation.current += 1; queuedInput.current = { bytes: 0, count: 0, epoch: queuedInput.current.epoch + 1 }; requests.current.forEach((controller) => controller.abort()); consumed.current?.(); consumed.current = null }
   }, [request])
+
+  useEffect(() => {
+    if (!jobNotification?.id || !current()) return
+    cursor.current = 0
+    queuedInput.current = { bytes: 0, count: 0, epoch: queuedInput.current.epoch + 1 }
+    consumed.current?.(); consumed.current = null
+    setJob(jobNotification); setSelected(null); setUnknown(jobNotification.state === 'unknown')
+    setConsoleReady(false); setConsoleOpen(true); setChunk(null); setInputFault(false)
+  }, [jobNotification?.id])
 
   useEffect(() => {
     if (!job?.id || job.state !== 'running' && !(consoleOpen && consoleReady)) return

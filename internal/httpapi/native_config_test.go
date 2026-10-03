@@ -33,6 +33,13 @@ func TestNativeConfigRequiresSessionCSRFAndTypedFields(t *testing.T) {
 	server := httptest.NewServer(New(Config{Auth: auth.NewManager(auth.Config{HashPath: passwordPath}), NativeConfig: &xkeen.ConfigEditor{}}))
 	defer server.Close()
 	client := &http.Client{Jar: mustCookieJar(t)}
+	for _, action := range []string{"save-set", "apply", "inspect", "restore-saved", "restore-previous"} {
+		response := postJSON(t, client, server.URL+"/api/v1/xkeen/config/"+action, map[string]any{}, "")
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatal(action, response.StatusCode)
+		}
+		response.Body.Close()
+	}
 	response := postJSON(t, client, server.URL+"/api/v1/xkeen/config/save", map[string]any{}, "")
 	if response.StatusCode != http.StatusUnauthorized {
 		t.Fatal(response.StatusCode)
@@ -43,6 +50,13 @@ func TestNativeConfigRequiresSessionCSRFAndTypedFields(t *testing.T) {
 		CSRFToken string `json:"csrfToken"`
 	}
 	decodeResponse(t, response, &login)
+	for _, action := range []string{"save-set", "apply", "inspect", "restore-saved", "restore-previous"} {
+		response := postJSON(t, client, server.URL+"/api/v1/xkeen/config/"+action, map[string]any{}, "")
+		if response.StatusCode != http.StatusForbidden {
+			t.Fatal(action, response.StatusCode)
+		}
+		response.Body.Close()
+	}
 	request := map[string]any{"digest": "a", "area": "dns", "field": "disableCache", "value": true}
 	response = postJSON(t, client, server.URL+"/api/v1/xkeen/config/save", request, "")
 	if response.StatusCode != http.StatusForbidden {

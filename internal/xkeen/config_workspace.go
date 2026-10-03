@@ -18,13 +18,15 @@ func editableConfig(id string) bool {
 }
 
 type EditorDocument struct {
-	Text  string  `json:"text"`
+	Text  string  `json:"text,omitempty"`
 	Draft *string `json:"draft,omitempty"`
 }
 type EditorWorkspace struct {
-	Digest    string                    `json:"digest"`
-	Documents map[string]EditorDocument `json:"documents"`
-	Pending   *PendingConfiguration     `json:"pending,omitempty"`
+	Digest        string                    `json:"digest"`
+	Documents     map[string]EditorDocument `json:"documents"`
+	Pending       *PendingConfiguration     `json:"pending,omitempty"`
+	HasPrevious   bool                      `json:"hasPrevious"`
+	PreviousDrift bool                      `json:"previousDrift"`
 }
 
 // Workspace is PRIVATE and can contain native secrets. No status projection
@@ -39,6 +41,12 @@ func (e *ConfigEditor) Workspace(ctx context.Context) (EditorWorkspace, error) {
 	if err != nil {
 		return EditorWorkspace{}, err
 	}
+	previous, err := e.readGeneration("previous.json")
+	if err != nil {
+		return EditorWorkspace{}, err
+	}
+	w.HasPrevious = previous != nil
+	w.PreviousDrift = previous != nil && previous.Expected != snapshot.Digest && w.Pending == nil
 	if e.DraftDir != "" {
 		info, err := os.Lstat(e.DraftDir)
 		if err != nil && !errors.Is(err, os.ErrNotExist) || err == nil && (!info.IsDir() || info.Mode().Perm() != 0700) {

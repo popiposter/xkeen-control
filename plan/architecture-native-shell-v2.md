@@ -21,7 +21,12 @@ tags: [architecture, refactor, native-xkeen, simplification]
 installed command discovery и явное завершение инспекции unknown без replay.
 Штатное состояние читается независимо через discovery; это не доказательство
 качества туннеля. Старые неиспользуемые component/Setup factories удалены;
-добавлены общий Form/Text editor, private drafts и pending-file tracking. Group Apply/restore, полные графические формы и остальная очистка API/packages ещё впереди. Live приёмка
+добавлены общий Form/Text editor, private drafts и pending-file tracking. Group
+Apply/restore и формы DNS, ordered routing, balancers/observatory реализованы в
+исходниках: один штатный restart, независимое наблюдение process/config, optional
+restore без автоматического rollback. Проверка качества DNS/VPN отдельная.
+Перевод основных Routing/DNS страниц на этот editor, geodata browser, portable
+transfer/Telegram и остальная очистка API/packages ещё впереди. Live приёмка
 команд и редакторов ещё не выполнена.
 
 ## 1. Requirements & Constraints
