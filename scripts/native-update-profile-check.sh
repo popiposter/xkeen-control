@@ -40,15 +40,27 @@ _np_shape() {
 _np_files() {
     return 76 # COMPILE INSTALLED PROFILE INVENTORY
 }
+_np_list() {
+    _np_list_path=/opt/lib/opkg/info/xkeen.list
+    _nu_file_hash "$_np_list_path" || return 76
+    [ "$_ng_meta_size" -le 32768 ] || return 76
+    _np_list_hash=$_nu_hash
+    _np_last=$(tail -c 1 "$_np_list_path" | od -v -b) || return 76
+    set -- $_np_last
+    [ "$#" = 3 ] && [ "$1:$2:$3" = 0000000:012:0000001 ] || return 76
+    return 76 # COMPILE INSTALLED PACKAGE LIST
+    _nu_file_hash "$_np_list_path" || return 76
+    [ "$_nu_hash" = "$_np_list_hash" ] || return 76
+}
 _np_main() {
     native_update_observer_context "$_np_phase" || return $?
     _np_gate=$_nu_gate_record; _np_context=$_nu_context
-    _np_shape && _np_files || return 76
+    _np_shape && _np_files && _np_list || return 76
     native_update_observer_context "$_np_phase" || return 77
     [ "$_nu_gate_record" = "$_np_gate" ] && [ "$_nu_context" = "$_np_context" ] || return 77
     # Catch changes to early files/directories during the first inventory pass.
     # Re-authenticate again after the final bounded readback, never settle here.
-    _np_shape && _np_files || return 77
+    _np_shape && _np_files && _np_list || return 77
     native_update_observer_context "$_np_phase" || return 77
     [ "$_nu_gate_record" = "$_np_gate" ] && [ "$_nu_context" = "$_np_context" ] || return 77
 }

@@ -1,4 +1,5 @@
-// Fixed installed inventory in disposable paths; no native code or router calls.
+// Fixed installed inventory and pinned native list fragment in disposable paths.
+// No complete native scripts, service commands or router calls.
 import assert from 'node:assert/strict'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -10,6 +11,9 @@ assert.ok(process.env.XKEEN_ADMISSION_PROFILE_ROOT, 'complete pinned public inpu
 const source = readProfileDirectory(process.env.XKEEN_ADMISSION_PROFILE_ROOT)
 const built = buildUpdateProfile(source)
 const check = buildInstalledProfileCheck(built).toString('utf8')
+const register = source.get('_xkeen/02_install/07_install_register/02_register_xkeen.sh').toString('utf8')
+const nativeList = register.slice(register.indexOf('register_xkeen_list() {\n'), register.indexOf('register_xkeen_status() {\n'))
+assert.ok(nativeList.startsWith('register_xkeen_list() {\n'))
 const block = check.slice(check.indexOf('# BEGIN INSTALLED PROFILE FUNCTIONS\n'), check.indexOf('# END INSTALLED PROFILE FUNCTIONS\n'))
 assert.ok(block.startsWith('# BEGIN INSTALLED PROFILE FUNCTIONS\n'))
 
@@ -21,6 +25,7 @@ function fixture({ before = '', setup = '', nested = false, bootstrap = false, p
     .replaceAll('/opt/lib/xkeen/native-admission-entry.sh', `${code}/entry`)
     .replaceAll('/opt/lib/xkeen/native-operation-gate.sh', `${code}/gate`)
     .replaceAll('/opt/lib/xkeen/native-update-context.sh', `${code}/context`)
+    .replaceAll('/opt/lib/opkg/info/xkeen.list', `${code}/xkeen.list`)
     .replaceAll('@CODE@', code).replaceAll('@ROOT@', root)
   const put = (name, text) => writeFileSync(join(code, name), rewrite(text), { mode: 0o600 })
   for (const [name, file] of [['entry', 'native-admission-entry'], ['gate', 'native-operation-gate'], ['context', 'native-update-context']]) put(name, readFileSync(`scripts/${file}.sh`, 'utf8'))
@@ -39,6 +44,10 @@ export XKEEN_ADMISSION_ROLE XKEEN_ADMISSION_ACTION XKEEN_ADMISSION_CALL
 mkdir -m 700 '@ROOT@/operation.lock.d/call.update' || exit 91
 printf 'v1 %s %s %s update update-xkeen forced %s\\n' "$_ng_self_pid" "$_ng_self_start" "$XKEEN_ADMISSION_CALL" "$XKEEN_GATE_TOKEN" > '@ROOT@/operation.lock.d/call.update/context'
 chmod 600 '@ROOT@/operation.lock.d/call.update/context'
+register_dir='@CODE@'; xkeen_dir='@CODE@/modules'; install_dir='@CODE@'
+initd_file=/opt/etc/init.d/S05xkeen; log_dir=/opt/var/log
+${nativeList}
+register_xkeen_list || exit 92
 ${phase === 'post' ? `# Synthetic completion evidence, not actual updater execution.
 body='v1 999999 1 0123456789abcdef0123456789abcdef'
 hash=$(sha256sum '@CODE@/xkeen'); hash=\${hash%% *}
@@ -128,4 +137,26 @@ test('source and compiled checker fences precede all native inventory reads', ()
     const r = spawnSync('/bin/sh', [join(temporary, 'check'), 'pre'], { encoding: 'utf8', timeout: 1000 })
     assert.ifError(r.error); assert.equal(r.status, 76)
   } } finally { rmSync(temporary, { recursive: true, force: true }) }
+})
+test('native-generated package list rejects missing, duplicate, unknown, unsafe and nonterminated records', () => {
+  for (const before of [
+    "rm '@CODE@/xkeen.list'", "chmod 666 '@CODE@/xkeen.list'", "truncate -s 32769 '@CODE@/xkeen.list'",
+    "printf '/unknown/path\\n' >> '@CODE@/xkeen.list'",
+    "printf '%s\\n' '@CODE@/xkeen' >> '@CODE@/xkeen.list'",
+    "sed -i '\\|^/opt/etc/init.d/S05xkeen$|d' '@CODE@/xkeen.list'",
+    "truncate -s -1 '@CODE@/xkeen.list'",
+    "mv '@CODE@/xkeen.list' '@CODE@/saved'; ln -s '@CODE@/saved' '@CODE@/xkeen.list'",
+  ]) { const r = fixture({ before }); assert.equal(r.status, 76, r.stderr) }
+})
+test('package list drift after the initial inventory cannot return final success', () => {
+  for (const change of ["printf '/unknown/path\\n' >> '@CODE@/xkeen.list'", "chmod 666 '@CODE@/xkeen.list'"]) {
+    const r = fixture({ setup: `eval "$(sed 's/^native_update_observer_context()/original_observer_context()/' '@CODE@/context')"
+_np_reads=0
+native_update_observer_context() {
+  original_observer_context "$@" || return $?
+  _np_reads=$((_np_reads + 1))
+  if [ "$_np_reads" = 2 ]; then ${change}; fi
+}` })
+    assert.equal(r.status, 77, r.stderr)
+  }
 })

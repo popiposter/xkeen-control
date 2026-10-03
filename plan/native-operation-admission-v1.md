@@ -826,6 +826,11 @@ remain absent. No native commands are executed by this reader.
 The profile compiler also emits an unconditionally fenced installed-profile
 checker. It checks the 72 prepared file hashes/sizes at fixed native locations
 and rejects unknown files/directories or unsafe links in the owned module tree.
+It also validates the protected native `xkeen.list` against literal compiled
+module/file/init/log paths, with a 32 KiB bound and final-LF requirement. Missing,
+duplicate or unknown entries refuse; order is left to native `find`. The checker
+executes no native registration, and its fixtures use only the pinned list-writing
+fragment on disposable metadata. The final readback repeats this list proof.
 It leaves unrelated `/opt/sbin` programs outside its inventory. Protected library
 bootstrap precedes authenticated read-only observer context; the original owner
 generation is rechecked after the inventory. No native code is executed, no

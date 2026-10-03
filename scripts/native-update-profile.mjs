@@ -112,8 +112,19 @@ export function buildInstalledProfileCheck(built) {
     done`
   }).join('\n') + '\n    return 0'
   const checks = built.manifest.prepared.map(file => `    _np_file ${live(file.path)} ${file.sha256} ${file.size} || return 76`).join('\n') + '\n    return 0'
+  const listPaths = [...built.manifest.prepared.map(file => live(file.path)),
+    ...[...directories].filter(path => path.startsWith('_xkeen')).map(path => path === '_xkeen' ? '/opt/sbin/.xkeen' : live(path)),
+    '/opt/etc/init.d/S05xkeen', '/opt/var/log/xkeen-detached.log']
+  if (new Set(listPaths).size !== listPaths.length) throw new Error('duplicate installed registration path')
+  const listCheck = `LC_ALL=C awk '
+      BEGIN {
+${listPaths.map(path => `        expected["${path}"] = 1`).join('\n')}
+      }
+      { if (!($0 in expected) || ++seen[$0] != 1) bad=1; count++ }
+      END { if (bad || count != ${listPaths.length}) exit 76 }
+    ' "$_np_list_path" || return 76`
   let text = readFileSync(new URL('./native-update-profile-check.sh', import.meta.url), 'utf8')
-  for (const [anchor, value] of [['return 76 # COMPILE INSTALLED PROFILE SHAPE', shape], ['return 76 # COMPILE INSTALLED PROFILE INVENTORY', checks]]) {
+  for (const [anchor, value] of [['return 76 # COMPILE INSTALLED PROFILE SHAPE', shape], ['return 76 # COMPILE INSTALLED PROFILE INVENTORY', checks], ['return 76 # COMPILE INSTALLED PACKAGE LIST', listCheck]]) {
     if (text.split(anchor).length !== 2) throw new Error('installed profile anchor changed')
     text = text.replace(anchor, value)
   }
