@@ -49,3 +49,9 @@
   code, pre { overflow-wrap: anywhere; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+@layer utilities {
+  @media (max-width: 760px) {
+    .workspace button[data-slot="toggle-group-item"] { min-height: 44px; min-width: 44px; }
+  }
+}

@@ -252,6 +252,20 @@ export class FeatureCompleteModel {
         return this.recordProjection(route, { nodes: this.performance.nodes.map(nodeProjection), manual: allowlist(this.performance.manual, ['state', 'phase']), adaptive: allowlist(this.performance.adaptive, ['state']) })
       case '/api/v1/config-summary':
         return this.recordProjection(route, { routing: {}, dns: {}, observatory: {} })
+      case '/api/v1/xkeen/config/workspace':
+        if (entry.method !== 'GET') this.issues.push('Native workspace must be read-only')
+        return json(route, { digest: 'a'.repeat(64), documents: { '02_dns.json': {}, '05_routing.json': {} }, pending: null, targets: [{ tag: 'direct', kind: 'outbound' }] })
+      case '/api/v1/xkeen/config/document': {
+        const documents = {
+          '02_dns.json': '{"dns":{"servers":["localhost"]}}',
+          '05_routing.json': '{"routing":{"rules":[]}}',
+        }
+        if (entry.method !== 'POST' || entry.csrf !== this.csrfToken || !Object.hasOwn(documents, body?.file)) {
+          this.issues.push('Invalid fixed native document inspection')
+          return json(route, { error: 'invalid document request' }, 400)
+        }
+        return json(route, { digest: 'a'.repeat(64), document: { text: documents[body.file] } })
+      }
       case '/api/v1/xkeen/commands':
       case '/api/v1/xkeen/jobs/read':
         // This broader workspace model represents commands not wired in main.

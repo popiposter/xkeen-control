@@ -65,3 +65,10 @@ Private current-run before screenshots and synthetic after screenshots inspected
 
 Status: source cohort complete; exact-HEAD FULL and NEW live panel delivery
 remain pending. No native configuration or XKeen code changed live.
+
+Final-gate correction: b3fba27 reached93/98 browser PASS; five failures
+shared a missing native workspace read in the integration fixture. The fixture
+now checks lazy fixed-file inspection with CSRF and rejects mutations. Loaded
+mobile editors exposed short Form/Text targets; those are now44px. The17
+focused integration/responsive cases passed after that correction. The password
+reset scenario explicitly awaits Preview before entering its next form.

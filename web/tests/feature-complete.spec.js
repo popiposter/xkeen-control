@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test'
 import { featureCompleteRequests, mountFeatureCompleteDashboard, PRIVATE_SENTINELS } from './fixtures/feature-complete-model.js'
 
 const lazySettingsPaths = [
+  '/api/v1/xkeen/config/workspace',
   '/api/v1/performance/quality',
   '/api/v1/notifications',
   '/api/v1/panel/listener',
@@ -43,7 +44,7 @@ test('composes the final navigation lazily and leaves settings out of the dashbo
 
   const openedPaths = new Set()
   for (const [section, path] of [
-    ['Routing', null],
+    ['Routing', '/api/v1/xkeen/config/workspace'],
     ['DNS', null],
     ['Performance', '/api/v1/performance/quality'],
     ['Components / Updates', null],
@@ -217,6 +218,7 @@ test('clears cross-domain previews on session turnover and rejects old tokens af
   await openSection(page, 'System / Panel')
   await page.getByLabel('New management host').selectOption('10.0.0.4')
   await page.getByRole('button', { name: 'Preview rebind' }).click()
+  await expect(page.getByRole('region', { name: 'Listener rebind Preview', exact: true })).toBeVisible()
   const passwordResetToken = [...model.previewTokens.keys()][0]
   await page.getByLabel('New panel password').fill('synthetic-new-password')
   await page.getByLabel('Confirm new password').fill('synthetic-new-password')
