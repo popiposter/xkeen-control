@@ -70,7 +70,10 @@ set validates all native JSON/JSONC files together. Group Apply calls the fixed
 native Restart once; discard and previous-generation restoration are explicit.
 Process/config readback checks a new Xray PID/start identity, executable, sole
 config directory and saved digest; this observation does not prove sustained
-VPN/DNS health. Previous means pre-edit saved files, not a forensic copy of the
+VPN/DNS health. The directory may come from an explicit `-confdir` argument or,
+as stock XKeen launches Xray, `XRAY_LOCATION_CONFDIR` in the process environment.
+Environment contents remain private; missing, duplicate or mismatched directory
+values do not confirm Apply. Previous means pre-edit saved files, not a forensic copy of the
 old process's loaded memory. Native start/restart cards use the same bookkeeping
 when an editor set is pending. Routing, DNS and Components use one retained
 workspace: navigation selects the relevant native file without discarding

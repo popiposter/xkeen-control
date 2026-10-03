@@ -73,24 +73,47 @@ func (e *ConfigEditor) configProcess(ctx context.Context) (string, error) {
 			if strings.HasPrefix(arg, "-") && (flag == "test" || flag == "dump" || flag == "version" || flag == "help" || flag == "h") {
 				return "", ErrConfig
 			}
-			if arg == "-config" || arg == "-c" || strings.HasPrefix(arg, "-config=") || strings.HasPrefix(arg, "-c=") {
+			if strings.HasPrefix(arg, "-") && (flag == "config" || flag == "c") {
 				return "", ErrConfig
 			}
+			if !strings.HasPrefix(arg, "-") || flag != "confdir" {
+				continue
+			}
 			value := ""
-			if arg == "-confdir" && index+1 < len(args) {
+			if !strings.Contains(arg, "=") && index+1 < len(args) {
 				value = args[index+1]
 			}
-			if strings.HasPrefix(arg, "-confdir=") {
-				value = strings.TrimPrefix(arg, "-confdir=")
+			if _, after, found := strings.Cut(arg, "="); found {
+				value = after
 			}
 			if value == "" {
-				continue
+				return "", ErrConfig
 			}
 			actual, err := filepath.EvalSymlinks(value)
 			if err != nil || filepath.Clean(actual) != filepath.Clean(configDir) {
 				return "", ErrConfig
 			}
 			confdirs++
+		}
+		// Stock XKeen starts `xray run` and exports the config directory instead
+		// of passing -confdir. Inspect only this bounded process environment;
+		// never project its private contents into status or diagnostics.
+		if confdirs == 0 {
+			environment, state := d.read(name+"/environ", 64<<10)
+			if state != CapabilityAvailable {
+				return "", ErrConfig
+			}
+			for _, assignment := range strings.Split(string(environment), "\x00") {
+				value, found := strings.CutPrefix(assignment, "XRAY_LOCATION_CONFDIR=")
+				if !found {
+					continue
+				}
+				actual, err := filepath.EvalSymlinks(value)
+				if err != nil || filepath.Clean(actual) != filepath.Clean(configDir) {
+					return "", ErrConfig
+				}
+				confdirs++
+			}
 		}
 		if confdirs != 1 {
 			return "", ErrConfig

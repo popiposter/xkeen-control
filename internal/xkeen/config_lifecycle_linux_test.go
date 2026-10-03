@@ -69,6 +69,7 @@ func TestNativeConfigApplyExecutesOnceVerifiesFreshProcessAndOffersPreviousResto
 	e.ProcRoot = t.TempDir()
 	e.Lease = authority.NewLease()
 	configProcessFixture(t, e, "101", "500")
+	stockConfigProcessEnvironment(t, e, "101", "XRAY_LOCATION_CONFDIR="+e.Dir+"\x00")
 	before, _ := e.Snapshot(context.Background())
 	digest, err := e.SaveTexts(context.Background(), before.Digest, map[string]string{"02_dns.json": `{"dns":{"queryStrategy":"UseIPv4"}}`, "05_routing.json": `{"routing":{"domainStrategy":"IPOnDemand"}}`})
 	if err != nil {
@@ -85,6 +86,7 @@ func TestNativeConfigApplyExecutesOnceVerifiesFreshProcessAndOffersPreviousResto
 				t.Fatal("old proc")
 			}
 			configProcessFixture(t, e, "102", "600")
+			stockConfigProcessEnvironment(t, e, "102", "XRAY_LOCATION_CONFDIR="+e.Dir+"\x00")
 		}
 		return terminal, err
 	}
@@ -228,5 +230,56 @@ func TestConfigApplyRefusesDriftDuringValidationBeforeNativeExec(t *testing.T) {
 	pending, err := e.readPending()
 	if err != nil || pending == nil || pending.ApplyID != "" {
 		t.Fatal("drift published Apply intent", err)
+	}
+}
+
+func stockConfigProcessEnvironment(t *testing.T, e *ConfigEditor, pid, environment string) {
+	t.Helper()
+	for name, text := range map[string]string{
+		"cmdline": e.XrayBinary + "\x00run\x00",
+		"environ": environment,
+	} {
+		if err := os.WriteFile(filepath.Join(e.ProcRoot, pid, name), []byte(text), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestConfigProcessStockEnvironmentRequiresExactUnambiguousDirectory(t *testing.T) {
+	for _, mode := range []string{"valid", "missing", "wrong", "duplicate", "oversized", "alternate-cli", "empty-cli"} {
+		t.Run(mode, func(t *testing.T) {
+			e := editorFixture(t, "exit 0\n")
+			e.ProcRoot = t.TempDir()
+			configProcessFixture(t, e, "101", "500")
+			environment := "XRAY_LOCATION_CONFDIR=" + e.Dir + "\x00"
+			switch mode {
+			case "missing":
+				environment = "OTHER=ignored\x00"
+			case "wrong":
+				environment = "XRAY_LOCATION_CONFDIR=" + t.TempDir() + "\x00"
+			case "duplicate":
+				environment += environment
+			case "oversized":
+				environment += strings.Repeat("x", 64<<10)
+			}
+			stockConfigProcessEnvironment(t, e, "101", environment)
+			if mode == "alternate-cli" || mode == "empty-cli" {
+				flag := "--config=" + filepath.Join(e.Dir, "02_dns.json")
+				if mode == "empty-cli" {
+					flag = "--confdir="
+				}
+				if err := os.WriteFile(filepath.Join(e.ProcRoot, "101", "cmdline"), []byte(e.XrayBinary+"\x00run\x00"+flag+"\x00"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			process, err := e.configProcess(context.Background())
+			if mode == "valid" {
+				if err != nil || process != "101:500" {
+					t.Fatal("stock native startup not observed", process, err)
+				}
+			} else if err == nil {
+				t.Fatal("ambiguous config source accepted", mode, process)
+			}
+		})
 	}
 }
