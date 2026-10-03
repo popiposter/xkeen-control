@@ -20,6 +20,7 @@ foreach ($case in @(
     @{ Paths = @('web/src/main.jsx'); Expected = @('*') },
     @{ Paths = @('internal/httpapi/server.go'); Expected = @('*') },
     @{ Paths = @('internal/nodes/transaction.go'); Expected = @() },
+    @{ Paths = @('web/src/native-console.jsx'); Expected = @('tests/feature-complete.spec.js','tests/native-commands.spec.js','tests/native-xkeen.spec.js','tests/task-workspace.spec.js') },
     @{ Paths = @('scripts/test-xkeen-foreground.sh'); Expected = @() },
     @{ Paths = @('scripts/run-xkeen-foreground.sh'); Expected = @() },
     @{ Paths = @('scripts/dev-check-selection.ps1','scripts/dev-check-git.ps1','scripts/dev-check-go.mjs'); Expected = @() },

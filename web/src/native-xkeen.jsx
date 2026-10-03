@@ -13,13 +13,15 @@ export function NativeXkeenStatus({ facts, onOpenNodes }) {
   </section>
 }
 
-export function NativeXkeenSection({ facts, onRefresh, onOpenSystem }) {
+export function NativeXkeenSection({ facts, onRefresh, onOpenSystem, csrfToken, onUnauthorized }) {
   return <div className="section-stack">
     <NativeXkeenStatus facts={facts} />
     <section className="panel"><div className="workspace-heading"><h2>XKeen and components</h2><button type="button" onClick={onRefresh}>Refresh status</button></div>
       <dl><dt>Core</dt><dd>{facts?.core || 'Not detected'}</dd><dt>Geodata files</dt><dd>{facts?.geodataFiles ?? 'Unknown'}</dd><dt>Native geodata schedule</dt><dd>{facts?.geodataCron === 'available' ? 'Configured in XKeen' : facts?.geodataCron === 'missing' ? 'Not configured' : 'Unknown'}</dd></dl>
       <p>XKeen owns updates for its script, the core and geodata.</p>
     </section>
+    {csrfToken && <NativeCommands csrfToken={csrfToken} onUnauthorized={onUnauthorized} onRefresh={onRefresh} />}
     <section className="panel"><h2>Panel updates</h2><p>Update XKeen Control from the panel settings.</p><button type="button" onClick={onOpenSystem}>Open panel settings</button></section>
   </div>
 }
+import { NativeCommands } from './native-commands'

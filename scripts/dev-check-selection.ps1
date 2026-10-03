@@ -19,11 +19,16 @@ function Get-XKeenBrowserSpecs {
         'dns-observatory' = 'dns-observatory'; 'routing-policy' = 'routing-policy'
         'performance-policy' = 'performance-policy'; 'system-panel' = 'system-panel'
         'notifications' = 'system-panel'; 'native-xkeen' = 'native-xkeen'
+        'native-commands' = 'native-commands'; 'native-console' = 'native-commands'
     }
     foreach ($path in $Changed) {
         if ($path -match '^web/tests/[^/]+\.spec\.js$') { [void]$specs.Add($path.Substring(4)); continue }
         if ($path -match '^web/src/([^/]+)\.jsx$' -and $areas.ContainsKey($Matches[1])) {
             [void]$specs.Add("tests/$($areas[$Matches[1]]).spec.js")
+            if ($Matches[1] -like 'native-*') {
+                [void]$specs.Add('tests/native-xkeen.spec.js')
+                [void]$specs.Add('tests/native-commands.spec.js')
+            }
             [void]$specs.Add('tests/feature-complete.spec.js')
             [void]$specs.Add('tests/task-workspace.spec.js')
             continue

@@ -340,6 +340,14 @@ export class FeatureCompleteModel {
         return this.recordProjection(route, { nodes: this.performance.nodes.map(nodeProjection), manual: allowlist(this.performance.manual, ['state', 'phase']), adaptive: allowlist(this.performance.adaptive, ['state']) })
       case '/api/v1/config-summary':
         return this.recordProjection(route, { routing: {}, dns: {}, observatory: {} })
+      case '/api/v1/xkeen/commands':
+      case '/api/v1/xkeen/jobs/read':
+        // This broader workspace model represents commands not wired in main.
+        // Mutating native routes deliberately remain unexpected.
+        if (entry.method !== (path.endsWith('/commands') ? 'GET' : 'POST')) {
+          this.issues.push(`unexpected native inspection method: ${entry.method}`)
+        }
+        return json(route, { error: 'native commands unavailable' }, 503)
       case '/api/v1/panel/listener':
         return this.recordProjection(route, listenerProjection(this.listener))
       case '/api/v1/panel/listener/preview': {

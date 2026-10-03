@@ -4,19 +4,22 @@ version: 2
 date_created: 2026-10-03
 last_updated: 2026-10-03
 owner: popiposter/xkeen-control
-status: Planned
+status: In progress
 tags: [architecture, refactor, native-xkeen, simplification]
 ---
 
 # Introduction
 
-![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
+![Status: In progress](https://img.shields.io/badge/status-In%20progress-blue)
 
 Заменяет `architecture-xkeen-foundation-v1.md` и native admission plan.
 Основание — [source audit](audit-native-shell-2026-10-03.md) exact5fa / main8ad.
 Цель: штатный XKeen работает самостоятельно; панель быстро вызывает его команды
-и помогает редактировать его конфигурацию. Этот запрос разрешает аудит/план и
-изменение документации, не запускает удаление кода или новую установку.
+и помогает редактировать его конфигурацию. Оператор разрешил реализацию v2 после
+аудита. Phase1 удалена в исходниках; typed jobs/API и лениво загружаемая консоль
+реализованы, но пока не подключены в main. Перед включением остаются interrupted-job
+receipt, idle timeout, installed capabilities и independent readback. Live приёмка
+команд и редакторов ещё не выполнена.
 
 ## 1. Requirements & Constraints
 

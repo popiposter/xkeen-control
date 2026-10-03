@@ -32,7 +32,7 @@ for (const width of [375, 1440]) {
     await expect(page.getByText('Configured in XKeen', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Open panel settings' })).toBeVisible()
     expect(requests.filter(({ path }) => path.startsWith('/api/v1/components') || path.startsWith('/api/v1/setup'))).toEqual([])
-    expect(requests.filter(({ method }) => method !== 'GET')).toEqual([])
+    expect(requests.filter(({ path, method }) => method !== 'GET' && path !== '/api/v1/xkeen/jobs/read')).toEqual([])
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   })
 }
