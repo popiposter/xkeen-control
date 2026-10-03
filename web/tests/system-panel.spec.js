@@ -248,7 +248,7 @@ test('sends only the server-listed host and presents rebind 202 as a handoff', a
   await expect(page.getByText('Listener rebind handoff started', { exact: true })).toBeVisible()
   expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener/apply')).toHaveLength(1)
   expect(state.requests.find(({ path }) => path === '/api/v1/panel/listener/apply').body).toEqual({ previewToken: 'listener-preview-1' })
-  await expect(page.locator('div.notice.warning').filter({ hasText: /reconnect and verify/i })).toBeVisible()
+  await expect(page.getByRole('alert').filter({ hasText: /reconnect and verify/i })).toBeVisible()
   await expect(page.locator('p.system-blocked').filter({ hasText: /same-session Refresh cannot prove completion/i })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Preview rebind' })).toBeDisabled()
   await expect(page.getByLabel('New management host')).toBeDisabled()

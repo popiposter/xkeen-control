@@ -441,7 +441,7 @@ test('stops manual performance polling when the Nodes workspace unmounts', async
 
   await page.getByRole('button', { name: 'Overview', exact: true }).click()
   await revealDetails(page, 'Selection details')
-  await expect(page.getByText('Panel readiness')).toBeVisible()
+  await expect(page.getByText('Native selection', { exact: true })).toBeVisible()
   await page.waitForTimeout(1200)
   expect(prepared.state.requests.filter((request) => request.path === '/api/v1/performance')).toHaveLength(performanceRequestsBeforeUnmount)
 })

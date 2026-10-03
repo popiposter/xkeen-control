@@ -87,7 +87,7 @@ test('failed Stage is consumed locally and requires inspection, with no automati
 test('transfer readback uses the retained editor and preserves unfinished drafts through navigation', async ({ page }) => {
   const state = await prepare(page)
   await page.getByRole('button', { name: 'Routing', exact: true }).click()
-  await page.getByRole('button', { name: 'Edit native configuration' }).click()
+  await expect(page.getByLabel('Configuration file', { exact: true })).toBeVisible()
   await page.getByLabel('Routing domain resolution', { exact: true }).selectOption('IPIfNonMatch')
   await page.getByRole('button', { name: 'Backup & Restore', exact: true }).click()
   await upload(page)

@@ -3,7 +3,8 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightSpecialC
 import { Annotation, Compartment, EditorState } from '@codemirror/state'
 import { defaultKeymap, indentWithTab } from '@codemirror/commands'
 import { json } from '@codemirror/lang-json'
-import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
+import { syntaxHighlighting, HighlightStyle } from '@codemirror/language'
+import { tags } from '@lezer/highlight'
 
 export default function NativeConfigText({ text, onChange, disabled, onUndo, onRedo }) {
   const element = useRef(null)
@@ -13,7 +14,7 @@ export default function NativeConfigText({ text, onChange, disabled, onUndo, onR
   callbacks.current = { onChange, onUndo, onRedo, disabled }
   useEffect(() => {
     const view = new EditorView({ parent: element.current, state: EditorState.create({ doc: text, extensions: [
-      lineNumbers(), highlightActiveLine(), highlightSpecialChars(), drawSelection(), json(), syntaxHighlighting(defaultHighlightStyle),
+      lineNumbers(), highlightActiveLine(), highlightSpecialChars(), drawSelection(), json(), syntaxHighlighting(HighlightStyle.define([{ tag: [tags.string, tags.number, tags.bool, tags.null], color: 'var(--foreground)' }, { tag: [tags.propertyName, tags.punctuation], color: 'var(--muted-foreground)' }, { tag: tags.comment, color: 'var(--muted-foreground)', fontStyle: 'italic' }])),
       EditorView.lineWrapping,
       readOnly.current.of([EditorState.readOnly.of(disabled), EditorView.editable.of(!disabled)]),
       EditorState.transactionFilter.of((transaction) => {
@@ -22,7 +23,7 @@ export default function NativeConfigText({ text, onChange, disabled, onUndo, onR
         return transaction
       }),
       EditorView.contentAttributes.of({ 'aria-label': 'Configuration text', spellcheck: 'false', autocapitalize: 'off' }),
-      EditorView.theme({ '&': { minHeight: '18rem', maxHeight: '36rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }, '.cm-scroller': { overflow: 'auto', fontFamily: 'monospace' }, '.cm-gutters': { backgroundColor: 'var(--muted)', color: 'var(--muted-foreground)', border: 'none' } }),
+      EditorView.theme({ '&': { color: 'var(--foreground)', backgroundColor: 'var(--background)', minHeight: '18rem', maxHeight: '36rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }, '.cm-cursor': { borderLeftColor: 'var(--foreground)' }, '.cm-activeLine': { backgroundColor: 'var(--muted)' }, '.cm-activeLineGutter': { backgroundColor: 'var(--accent)' }, '.cm-selectionBackground': { backgroundColor: 'var(--accent) !important' }, '.cm-scroller': { overflow: 'auto', fontFamily: 'monospace' }, '.cm-gutters': { backgroundColor: 'var(--muted)', color: 'var(--muted-foreground)', border: 'none' } }),
       keymap.of([{ key: 'Mod-z', run: () => { callbacks.current.onUndo(); return true } }, { key: 'Mod-Shift-z', run: () => { callbacks.current.onRedo(); return true } }, ...defaultKeymap, indentWithTab]),
       EditorView.updateListener.of((update) => { if (update.docChanged && !update.transactions.some((t) => t.annotation(external))) callbacks.current.onChange(update.state.doc.toString()) }),
     ] }) })

@@ -1,3 +1,4 @@
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
@@ -96,6 +97,12 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, fo
     setFile(id)
     history.current = {}
   }
+  useEffect(() => {
+    if (!focusFile || open) return
+    let cancelled = false
+    Promise.resolve().then(() => { if (!cancelled) { setOpen(true); void run(reload) } })
+    return () => { cancelled = true }
+  }, [focusFile, open, csrfToken])
   async function selectFile(id) {
     if (Object.hasOwn(drafts, id)) { setFile(id); return }
     const loaded = await request('document', { file: id })
@@ -199,14 +206,14 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, fo
   const storedDraft = workspace?.documents[file]?.draft
   return <Card>
     <CardHeader><CardTitle>Native configuration</CardTitle><CardDescription>Form and Text share one document. Save validates files; native Restart applies them together.</CardDescription></CardHeader>
-    <CardContent className="space-y-4">
-      {!open ? <Button variant="outline" onClick={() => { setOpen(true); void run(reload) }}>Edit native configuration</Button> : <Button variant="outline" disabled={locked || !!changed} onClick={() => void run(reload)}>Reload current configuration</Button>}
+    <CardContent className="flex flex-col gap-4">
+      {!open ? <Button className="self-start" variant="outline" onClick={() => { setOpen(true); void run(reload) }}>Edit native configuration</Button> : <Button className="self-start" variant="outline" disabled={locked || !!changed} onClick={() => void run(reload)}>Reload current configuration</Button>}
       {notice && <p role="status">{notice}</p>}
       {open && workspace && <>
         {(pending?.files?.length > 0 || pending?.restartRequired) && <p role="status">Saved configurations: {pending.files.join(', ') || 'Restored pre-apply set'} — {pending.applyState === 'running' ? 'Restart in progress' : pending.applyState === 'unknown' ? 'Application needs inspection' : 'Awaiting native restart'}</p>}
         {workspace.pending?.drift && <p role="alert">Saved configuration changed externally. Inspect and reload; pending files will not be overwritten.</p>}
         <div className="flex flex-wrap gap-2">
-          {(pending?.applyState === 'running' && !applying || pending?.applyState === 'unknown') && <Button variant="outline" disabled={busy} onClick={() => void run(async () => {
+          {(pending?.applyState === 'running' && !applying || pending?.applyState === 'unknown') && <Button className="self-start" variant="outline" disabled={busy} onClick={() => void run(async () => {
             const job = await request('jobs/read', { id: pending.applyId || '', cursor: Number.MAX_SAFE_INTEGER })
             if (!/^[a-f0-9]{32}$/.test(job.id) || job.action !== 'restart') throw new Error('Apply job could not be identified. Inspect the native command console.')
             setApplyJob(job); onNativeJob?.(job)
@@ -216,22 +223,21 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, fo
             setNotice('Existing Apply inspected without restarting. Check its configuration or inspect console output.')
           })}>Inspect existing Apply</Button>}
           <Button disabled={locked || !pending || !!pending.drift || pending.applyState === 'unknown'} onClick={() => void run(applySaved)}>Apply saved configurations</Button>
-          {onOpenConsole && (applyJob || pending?.applyId || pending?.applyState === 'unknown') && <Button variant="outline" onClick={onOpenConsole}>View native console</Button>}
-          {pending && <Button variant="outline" disabled={locked || !!pending.drift} onClick={() => void run(async () => { await request('restore-saved', { digest: workspace.digest }); await syncWorkspace(); setNotice(restoreNeedsRestart ? 'Pre-apply files restored. Use Apply to restart with this restored set.' : 'Saved changes discarded. The running service was not restarted.') })}>{restoreNeedsRestart ? 'Restore pre-apply configurations' : 'Discard saved changes'}</Button>}
-          {pending?.applyId && pending.applyState !== 'running' && <Button variant="outline" disabled={locked} onClick={() => void run(async () => { await request('inspect', { id: pending.applyId }); await syncWorkspace(); setNotice('Saved configuration and a new running process were independently confirmed. No Restart was repeated.') })}>Check applied configuration</Button>}
-          {workspace.hasPrevious && <Button variant="outline" disabled={locked || !!pending || workspace.previousDrift} onClick={() => void run(async () => { await request('restore-previous', { digest: workspace.digest }); await syncWorkspace(); setNotice('Previous configuration saved. Apply it when ready; the running service is unchanged.') })}>Restore previous configuration</Button>}
+          {onOpenConsole && (applyJob || pending?.applyId || pending?.applyState === 'unknown') && <Button className="self-start" variant="outline" onClick={onOpenConsole}>View native console</Button>}
+          {pending && <Button className="self-start" variant="outline" disabled={locked || !!pending.drift} onClick={() => void run(async () => { await request('restore-saved', { digest: workspace.digest }); await syncWorkspace(); setNotice(restoreNeedsRestart ? 'Pre-apply files restored. Use Apply to restart with this restored set.' : 'Saved changes discarded. The running service was not restarted.') })}>{restoreNeedsRestart ? 'Restore pre-apply configurations' : 'Discard saved changes'}</Button>}
+          {pending?.applyId && pending.applyState !== 'running' && <Button className="self-start" variant="outline" disabled={locked} onClick={() => void run(async () => { await request('inspect', { id: pending.applyId }); await syncWorkspace(); setNotice('Saved configuration and a new running process were independently confirmed. No Restart was repeated.') })}>Check applied configuration</Button>}
+          {workspace.hasPrevious && <Button className="self-start" variant="outline" disabled={locked || !!pending || workspace.previousDrift} onClick={() => void run(async () => { await request('restore-previous', { digest: workspace.digest }); await syncWorkspace(); setNotice('Previous configuration saved. Apply it when ready; the running service is unchanged.') })}>Restore previous configuration</Button>}
         </div>
-        <Field><FieldLabel htmlFor="native-config-file">Configuration file</FieldLabel><NativeSelect id="native-config-file" value={file} disabled={locked} onChange={(event) => void run(() => selectFile(event.target.value))}>{Object.keys(workspace.documents).map((id) => <option key={id}>{id}</option>)}</NativeSelect></Field>
+        <Field><FieldLabel htmlFor="native-config-file">Configuration file</FieldLabel><NativeSelect id="native-config-file" value={file} disabled={locked} onChange={(event) => void run(() => selectFile(event.target.value))}>{Object.keys(workspace.documents).map((id) => <option key={id} value={id}>{({ '01_log.json': 'Logging', '02_dns.json': 'DNS', '03_inbounds.json': 'Traffic listeners', '05_routing.json': 'Routing & balancing', '06_policy.json': 'Connection policy', '07_observatory.json': 'Node health', '08_api.json': 'Local API & probes' })[id] || id} - {id}</option>)}</NativeSelect></Field>
         <div className="flex flex-wrap gap-2">
-          <Button variant={mode === 'form' ? 'default' : 'outline'} onClick={() => setMode('form')}>Form</Button>
-          <Button variant={mode === 'text' ? 'default' : 'outline'} onClick={() => setMode('text')}>Text</Button>
-          <Button variant="outline" disabled={locked || !!parsed.error} onClick={() => { try { edit(formatDocument(text)) } catch (error) { setNotice(error.message) } }}>Format JSON</Button>
-          <Button variant="outline" disabled={locked || !history.current[file]?.undo.length} onClick={() => step('undo')}>Undo</Button>
-          <Button variant="outline" disabled={locked || !history.current[file]?.redo.length} onClick={() => step('redo')}>Redo</Button>
+          <ToggleGroup variant="outline" aria-label="Editor mode" value={[mode]} onValueChange={(values) => { if (values.length) setMode(values[0]) }}><ToggleGroupItem value="form">Form</ToggleGroupItem><ToggleGroupItem value="text">Text</ToggleGroupItem></ToggleGroup>
+          <Button className="self-start" variant="outline" disabled={locked || !!parsed.error} onClick={() => { try { edit(formatDocument(text)) } catch (error) { setNotice(error.message) } }}>Format JSON</Button>
+          <Button className="self-start" variant="outline" disabled={locked || !history.current[file]?.undo.length} onClick={() => step('undo')}>Undo</Button>
+          <Button className="self-start" variant="outline" disabled={locked || !history.current[file]?.redo.length} onClick={() => step('redo')}>Redo</Button>
         </div>
-        {storedDraft !== undefined && <div className="flex flex-wrap items-center gap-2"><span>A saved draft is available.</span><Button variant="outline" disabled={locked} onClick={() => edit(storedDraft)}>Resume draft</Button><Button variant="outline" disabled={locked} onClick={() => void run(async () => { await request('draft', { file, discard: true }); setWorkspace((previous) => ({ ...previous, documents: { ...previous.documents, [file]: { text: previous.documents[file].text } } })) })}>Discard saved draft</Button></div>}
+        {storedDraft !== undefined && <div className="flex flex-wrap items-center gap-2"><span>A saved draft is available.</span><Button className="self-start" variant="outline" disabled={locked} onClick={() => edit(storedDraft)}>Resume draft</Button><Button className="self-start" variant="outline" disabled={locked} onClick={() => void run(async () => { await request('draft', { file, discard: true }); setWorkspace((previous) => ({ ...previous, documents: { ...previous.documents, [file]: { text: previous.documents[file].text } } })) })}>Discard saved draft</Button></div>}
         {parsed.error && <p role="alert">{parsed.error}</p>}
-        {mode === 'text' ? <Suspense fallback={<p>Loading text editor…</p>}><TextEditor text={text} disabled={locked} onChange={edit} onUndo={() => step('undo')} onRedo={() => step('redo')} /></Suspense> : !parsed.error && <div className="space-y-3">
+        {mode === 'text' ? <Suspense fallback={<p>Loading text editor…</p>}><TextEditor text={text} disabled={locked} onChange={edit} onUndo={() => step('undo')} onRedo={() => step('redo')} /></Suspense> : !parsed.error && <div className="flex flex-col gap-3">
           {fields.filter((item) => item.file === file).map((item) => <NativeField key={item.field} item={item} current={documentField(parsed.tree, item.area, item.field)} disabled={locked} onChange={(value) => { try { edit(editDocumentField(text, item.area, item.field, value)) } catch (error) { setNotice(error.message) } }} />)}
           <NativeConfigForm key={file} file={file} text={text} tree={parsed.tree} disabled={locked} onChange={edit} onError={setNotice} request={request} targets={workspace.targets || []} />
           <p className="text-sm text-muted-foreground">Additional native properties are available in Text mode. Unknown fields and comments are preserved.</p>
@@ -239,9 +245,9 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, fo
         <div className="flex flex-wrap gap-2">
           {changed && <p className="w-full text-sm text-muted-foreground">Unfinished working edits are excluded from Apply until you save them.</p>}
           <Button disabled={locked || !!parsed.error || !!pending?.drift || pending?.applyState === 'unknown' || text === workspace.documents[file]?.text} onClick={() => void run(save)}>Save configuration</Button>
-          <Button variant="outline" disabled={locked || !changed || invalidChanged || !!pending?.drift || pending?.applyState === 'unknown'} onClick={() => void run(saveAll)}>Save all configurations</Button>
-          <Button variant="outline" disabled={locked} onClick={() => void run(async () => { await request('draft', { file, text }); setWorkspace((previous) => ({ ...previous, documents: { ...previous.documents, [file]: { ...previous.documents[file], draft: text } } })); setNotice('Draft saved. Native files and the running service are unchanged.') })}>Save draft</Button>
-          <Button variant="outline" disabled={locked || text === workspace.documents[file]?.text} onClick={() => edit(workspace.documents[file].text)}>Discard working edits</Button>
+          <Button className="self-start" variant="outline" disabled={locked || !changed || invalidChanged || !!pending?.drift || pending?.applyState === 'unknown'} onClick={() => void run(saveAll)}>Save all configurations</Button>
+          <Button className="self-start" variant="outline" disabled={locked} onClick={() => void run(async () => { await request('draft', { file, text }); setWorkspace((previous) => ({ ...previous, documents: { ...previous.documents, [file]: { ...previous.documents[file], draft: text } } })); setNotice('Draft saved. Native files and the running service are unchanged.') })}>Save draft</Button>
+          <Button className="self-start" variant="outline" disabled={locked || text === workspace.documents[file]?.text} onClick={() => edit(workspace.documents[file].text)}>Discard working edits</Button>
         </div>
         {diagnostic && <details open><summary>Xray validation — {diagnostic.file}</summary><pre className="max-h-96 overflow-auto whitespace-pre-wrap">{diagnostic.output}</pre>{diagnostic.truncated && <p role="alert">Output exceeded 256 KiB; the captured output is incomplete.</p>}</details>}
       </>}
@@ -252,6 +258,6 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, fo
 function NativeField({ item, current, disabled, onChange }) {
   const id = `native-config-${item.area}-${item.field}`
   return <Field><FieldLabel htmlFor={id}>{item.label}</FieldLabel>
-    {item.options || item.boolean ? <NativeSelect id={id} value={String(current ?? '')} disabled={disabled} onChange={(event) => onChange(item.boolean ? event.target.value === 'true' : event.target.value)}><option value="" disabled>Native default / unspecified</option>{(item.options || ['false', 'true']).map((option) => <option key={option} value={option}>{item.boolean ? option === 'true' ? 'Yes' : 'No' : option}</option>)}</NativeSelect> : <Input id={id} value={current ?? ''} maxLength={32} disabled={disabled} onChange={(event) => onChange(event.target.value)} />}
+    {item.options || item.boolean ? <NativeSelect id={id} value={String(current ?? '')} disabled={disabled} onChange={(event) => onChange(event.target.value === '' ? undefined : item.boolean ? event.target.value === 'true' : event.target.value)}><option value="">Native default / unspecified</option>{(item.options || ['false', 'true']).map((option) => <option key={option} value={option}>{item.boolean ? option === 'true' ? 'Yes' : 'No' : option}</option>)}</NativeSelect> : <Input id={id} value={current ?? ''} maxLength={32} disabled={disabled} onChange={(event) => onChange(event.target.value)} />}
   </Field>
 }

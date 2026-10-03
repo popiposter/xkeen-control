@@ -1,3 +1,5 @@
+import { ThemeControl } from './theme-control'
+import './theme-init'
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createDashboardReader } from './dashboard-reader.js'
@@ -192,89 +194,14 @@ const formatManualRate = (value) => {
   return value == null || !Number.isFinite(numeric) || numeric < 0 ? '—' : `${((numeric * 8) / 1000000).toFixed(1)} Mbps`
 }
 
-const SAFE_CANONICAL_TAG = /^proxy-[A-Za-z0-9._-]{1,122}$/
-const safeCanonicalTag = (value) => {
-  const tag = String(value || '')
-  return SAFE_CANONICAL_TAG.test(tag) ? tag : ''
-}
-const safeCount = (value, maximum = Number.MAX_SAFE_INTEGER) => {
-  const numeric = Number(value)
-  return Number.isFinite(numeric) && numeric >= 0 ? Math.min(Math.floor(numeric), maximum) : 0
-}
 const formatAdaptiveLatency = (value) => {
   const numeric = Number(value)
-  return value == null || !Number.isFinite(numeric) || numeric <= 0 ? '—' : `${Math.round(numeric)} ms`
+  return value == null || !Number.isFinite(numeric) || numeric <= 0 || numeric >= 99999999 ? '—' : `${Math.round(numeric)} ms`
 }
 const formatAdaptiveRate = (value) => {
   const numeric = Number(value)
-  return value == null || !Number.isFinite(numeric) || numeric <= 0 ? '—' : `${((numeric * 8) / 1000000).toFixed(1)} Mbps`
+  return value == null || !Number.isFinite(numeric) || numeric <= 0 || numeric >= 99999999 ? '—' : `${((numeric * 8) / 1000000).toFixed(1)} Mbps`
 }
-const formatAdaptiveScore = (value, valid) => {
-  const numeric = Number(value)
-  if (!valid || value == null || !Number.isFinite(numeric) || numeric < 0) return '—'
-  return `${(Math.min(1, Math.max(0, numeric)) * 100).toFixed(1)}%`
-}
-
-const adaptiveStateLabels = {
-  waiting: 'Waiting for next check',
-  running: 'Measuring adaptive quality',
-  skipped: 'Skipped',
-  completed: 'Completed',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-  'cleanup-pending': 'Cleanup pending',
-}
-const adaptiveReasonLabels = {
-  'manual-override': 'Manual override is active',
-  busy: 'The runtime was busy',
-  unavailable: 'Adaptive quality is unavailable',
-  'no-current-target': 'No current target was available',
-  'current-ineligible': 'The current target was not eligible',
-  'insufficient-candidates': 'There were not enough candidates',
-  'generation-budget': 'The adaptive budget was exhausted',
-  cancelled: 'The generation was cancelled',
-  'cleanup-pending': 'Probe cleanup is pending',
-  'stale-generation': 'The generation became stale',
-  'current-invalid': 'The current target did not produce valid evidence',
-  'no-challenger': 'No eligible challenger beat the current target',
-  'minimum-dwell': 'The current target minimum dwell has not elapsed',
-  hysteresis: 'The quality margin was not large enough to switch',
-  'no-switch': 'No target switch was needed',
-  'adaptive-quality': 'Adaptive quality applied a target switch',
-}
-const selectionStateLabels = {
-  stable: 'Automatic stable selection',
-  manual: 'Explicit manual override',
-  'manual-fallback': 'Manual override with native fallback',
-  'fallback-leastping': 'Native fallback selection',
-  starting: 'Selection starting',
-  unavailable: 'Selection unavailable',
-}
-const selectionReasonLabels = {
-  startup: 'Startup selection',
-  'health-failover': 'Health failover',
-  'latency-quality': 'Latency evidence',
-  'throughput-benchmark': 'Legacy compatibility diagnostic',
-  'adaptive-quality': 'Adaptive quality applied a target switch',
-  'fallback-leastping': 'Native fallback',
-  'reapply-after-restart': 'Runtime re-apply',
-  'manual-override': 'Manual override',
-  'manual-unavailable': 'Manual target unavailable',
-  'manual-cleared': 'Manual override cleared',
-}
-const adaptiveState = (status) => adaptiveStateLabels[status?.state] ? status.state : 'unavailable'
-const adaptiveStateLabel = (status) => adaptiveStateLabels[adaptiveState(status)] || 'Adaptive state unavailable'
-const adaptiveReasonLabel = (reason) => adaptiveReasonLabels[reason] || 'Adaptive result unavailable'
-const selectionStateLabel = (state) => selectionStateLabels[state] || 'Selection state unavailable'
-const selectionReasonLabel = (reason) => selectionReasonLabels[reason] || 'Selection reason unavailable'
-const safeAdaptiveCandidates = (status) => (Array.isArray(status?.candidates) ? status.candidates : [])
-  .map((candidate) => ({ ...candidate, tag: safeCanonicalTag(candidate?.tag) }))
-  .filter((candidate) => candidate.tag)
-  .slice(0, 6)
-const hasAdaptiveGeneration = (status, candidates) => candidates.length > 0
-  || safeCount(status?.shortlistCount, 6) > 0
-  || safeCount(status?.validCount, 6) > 0
-
 const sortNodes = (nodes, key, direction) => {
   const multiplier = direction === 'desc' ? -1 : 1
   const stringValue = (value) => String(value || '').toLocaleLowerCase()
@@ -425,7 +352,7 @@ function App() {
 function Login({ error, password, setPassword, onSubmit }) {
   return <main className="flex min-h-svh items-center justify-center p-6">
     <Card className="w-full max-w-sm">
-      <CardHeader><CardTitle><h1>XKeen Control</h1></CardTitle><CardDescription>Sign in to manage your VPN.</CardDescription></CardHeader>
+      <CardHeader><div className="flex flex-wrap items-center justify-between gap-4"><CardTitle><h1>XKeen Control</h1></CardTitle><ThemeControl /></div><CardDescription>Sign in to manage your VPN.</CardDescription></CardHeader>
       <CardContent><form onSubmit={onSubmit}><FieldGroup>
         <Field><FieldLabel htmlFor="password">Panel password</FieldLabel>
           <Input id="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} autoFocus /></Field>
@@ -499,14 +426,14 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     <header className="flex items-center gap-3 border-b p-3 min-[761px]:hidden"><Button ref={navigationTrigger} type="button" variant="ghost" size="icon-lg" className="min-h-11 min-w-11" aria-label="Toggle navigation" aria-expanded={navigationOpen} aria-controls="mobile-dashboard-navigation" aria-haspopup="dialog" onClick={() => setNavigationOpen(!navigationOpen)}><IconMenu2 /></Button><strong>XKeen Control</strong></header>
     <aside className="fixed inset-y-0 left-0 hidden w-60 flex-col gap-4 border-r bg-sidebar p-4 min-[761px]:flex"><NavigationContent sections={sections} section={section} total={nodes.total || 0} version={status.controlPlane?.version || 'dev'} onSelect={closeNavigation} onLogout={onLogout} /></aside>
     <MobileNavigationDrawer returnFocus={navigationTrigger} open={navigationOpen} onClose={closeNavigation}><div className="flex min-h-full flex-col gap-4"><NavigationContent mobile sections={sections} section={section} total={nodes.total || 0} version={status.controlPlane?.version || 'dev'} onSelect={closeNavigation} onLogout={onLogout} /></div></MobileNavigationDrawer>
-    <div id="workspace" className="min-w-0 min-[761px]:ml-60" tabIndex="-1"><div className="legacy-workspace"><div className="workspace">
-    {section !== 'nodes' && <header className="page-heading"><h1>{pageTitle}</h1>{section === 'overview' && <button className="ghost" type="button" onClick={onRefresh}><Icon name="refresh" />Refresh</button>}</header>}
+    <div id="workspace" className="min-h-svh min-w-0 min-[761px]:ml-60" tabIndex="-1"><div className="app-content"><div className="workspace">
+    {section !== 'nodes' && <header className="page-heading"><h1>{pageTitle}</h1>{section === 'overview' && <Button variant="outline" type="button" onClick={onRefresh}><Icon name="refresh" />Refresh</Button>}</header>}
     {error && <Notice message={error} />}
     {section === 'overview' && <Overview status={status} performance={performance} nodeTotal={nodes.total || 0} nodesByTag={nodesByTag} csrfToken={session.csrfToken} onRefresh={onRefresh} onUnauthorized={onUnauthorized} onOpenNodes={() => setSection('nodes')} />}
     {section === 'nodes' && <NodeWorkspace nodes={registryNodes} subscriptions={nodes.subscriptions || []} performance={performance} manualOverride={status.selection?.manualOverride || ''} benchmarkRunning={Boolean(status.benchmark?.controlPlane?.running)} csrf={session.csrfToken} onRefresh={onRefresh} onPerformanceRefresh={onPerformanceRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} manualLifecycleBlocked={manualLifecycleBlocked} selectionAvailable={false} />}
     {section === 'performance' && <NativeQualitySection csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} busy={performanceOwnerBusy || lifecycleBlocked} nodesByTag={nodesByTag} onStaged={() => { setConfigReadback((key) => key + 1); openRouting() }} />}
     {section === 'components' && <NativeXkeenSection facts={status.native} onRefresh={onRefresh} onOpenSystem={() => setSection('system')} csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} jobNotification={nativeConfigJob?.csrfToken === session.csrfToken ? nativeConfigJob.job : null} />}
-    {(['components', 'routing', 'dns'].includes(section) || configVisited) && <div hidden={!['components', 'routing', 'dns'].includes(section)}><NativeConfigSection csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} readbackKey={configReadback} focusFile={section === 'dns' ? '02_dns.json' : section === 'routing' ? '05_routing.json' : ''} onOpenConsole={openComponents} onNativeJob={(job) => setNativeConfigJob({ job, csrfToken: session.csrfToken })} /></div>}
+    {(['components', 'routing', 'dns'].includes(section) || configVisited) && <div hidden={!['routing', 'dns'].includes(section)}><NativeConfigSection csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} readbackKey={configReadback} focusFile={section === 'dns' ? '02_dns.json' : section === 'routing' ? '05_routing.json' : ''} onOpenConsole={openComponents} onNativeJob={(job) => setNativeConfigJob({ job, csrfToken: session.csrfToken })} /></div>}
     {section === 'backup' && <NativeTransferSection csrfToken={session.csrfToken} api={api} download={download} onRefresh={onRefresh} onUnauthorized={onUnauthorized} onStaged={() => setConfigReadback((key) => key + 1)} onInspectConfigs={openRouting} />}
     {section === 'system' && <SystemPanelSection controller={systemPanelController} status={status} onOpenComponents={openComponents} onOpenBackup={openBackup} />}
     </div></div></div>
@@ -520,90 +447,33 @@ function NavigationContent({ mobile = false, sections, section, total, version, 
     <nav id={mobile ? 'mobile-dashboard-navigation' : 'dashboard-navigation'} className="flex flex-col gap-1" aria-label="Dashboard sections">
       {sections.map(([key, label, NavigationIcon, open]) => <Button key={key} type="button" variant={section === key ? 'secondary' : 'ghost'} size="lg" className="min-h-11 w-full justify-start" aria-label={key === 'nodes' ? `Nodes ${total}` : label} aria-current={section === key ? 'page' : undefined} onClick={() => { open(); onSelect() }}><NavigationIcon data-icon="inline-start" /><span className="truncate">{label}</span>{key === 'nodes' && <Badge variant="secondary" className="ml-auto">{total}</Badge>}</Button>)}
     </nav>
-    <div className="mt-auto flex flex-col gap-3"><Separator /><small className="text-muted-foreground">{version}</small><Button variant="ghost" size="lg" className="min-h-11 justify-start" type="button" onClick={onLogout}><IconLogout data-icon="inline-start" />Sign out</Button></div>
+    <div className="mt-auto flex flex-col gap-3"><Separator /><ThemeControl /><small className="text-muted-foreground">{version}</small><Button variant="ghost" size="lg" className="min-h-11 justify-start" type="button" onClick={onLogout}><IconLogout data-icon="inline-start" />Sign out</Button></div>
   </>
 }
 
-function Overview({ status, performance, nodeTotal, nodesByTag, csrfToken, onRefresh, onUnauthorized, onOpenNodes }) {
-  const healthy = status.observatory?.healthy || 0
-  const total = status.observatory?.total || nodeTotal
-  const healthText = total ? `${healthy}/${total} healthy` : 'No node data'
+function Overview({ status, nodeTotal, nodesByTag, onOpenNodes }) {
   const effective = nodesByTag.get(status.balancer?.effective)
   const ready = status.xray?.running && status.xray?.apiReachable && status.xkeen?.running
+  const enabled = Array.from(nodesByTag.values()).filter((node) => node.enabled).length
   return <div className="section-stack">
-    <section className="active-node-strip" aria-label="Active node"><span className={ready ? 'good-text' : 'warning'}><span className={`status-dot ${ready ? 'up' : 'down'}`}></span>{ready ? 'Runtime ready' : 'Runtime unavailable'}</span>{effective ? <NodeName node={effective} /> : <strong>No current target</strong>}<span>{status.selection?.manualOverride ? 'Manual override' : 'Automatic selection'}</span><span>{formatAdaptiveLatency(effective?.latencyMs)}</span><span>{Array.from(nodesByTag.values()).filter((node) => node.enabled).length} enabled</span><button type="button" onClick={onOpenNodes}>Manage nodes</button></section>
-    <NativeXkeenStatus facts={status.native} onOpenNodes={onOpenNodes} />
-    <section className="hero-grid">
-      <HealthCard label="Xray" ok={status.xray?.running && status.xray?.apiReachable} detail={status.xray?.apiReachable ? 'API reachable' : 'Degraded'} />
-      <HealthCard label="Probe" ok={status.xray?.probeReachable} detail={status.xray?.probeReachable ? '127.0.0.1:10808' : 'Unavailable'} />
-      <HealthCard label="Observatory" ok={status.observatory?.apiReachable} detail={healthText} />
+    <Card role="region" aria-label="Active node"><CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle>{effective ? <NodeName node={effective} /> : 'No current target'}</CardTitle><Badge variant={ready ? 'secondary' : 'destructive'}>{ready ? 'Runtime ready' : 'Runtime unavailable'}</Badge></div><CardDescription>{status.selection?.manualOverride ? 'Manual override' : 'Native automatic selection'} - {formatAdaptiveLatency(effective?.latencyMs)} - {enabled} enabled</CardDescription></CardHeader><CardContent><Button variant="outline" onClick={onOpenNodes}>Manage nodes</Button></CardContent></Card>
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <HealthCard label="Xray" ok={status.xray?.running && status.xray?.apiReachable} detail={status.xray?.apiReachable ? 'API reachable' : 'Unavailable'} />
+      <HealthCard label="Probe" ok={status.xray?.probeReachable} detail={status.xray?.probeReachable ? 'Probe reachable' : 'Unavailable'} />
+      <HealthCard label="Observatory" ok={status.observatory?.apiReachable} detail={`${status.observatory?.healthy || 0}/${status.observatory?.total || nodeTotal} healthy`} />
       <HealthCard label="XKeen" ok={status.xkeen?.running} detail={status.xkeen?.running ? 'Running' : 'Not detected'} />
-    </section>
-    <section className="selection-summary-strip" aria-label="Selection status"><div><small>Mode</small><strong>{status.selection?.manualOverride ? 'Manual override' : 'Automatic'}</strong></div><div><small>State</small><strong>{selectionStateLabel(status.selection?.state)}</strong></div><div><small>Adaptive check</small><strong>{adaptiveStateLabel(performance?.adaptive)}</strong></div></section>
-    <Disclosure title="Selection details" attention={performance?.adaptive?.state === 'running' || performance?.adaptive?.state === 'cleanup-pending'}>
-    <section className="selection-grid">
-      <SelectionCard label="Native leastPing" node={nodesByTag.get(status.balancer?.nativeSelected)} tone="blue" />
-      <SelectionCard label="Manual override" node={nodesByTag.get(status.selection?.manualOverride)} tone="amber" emptyText="Automatic selection" />
-      <SelectionCard label="Effective" node={nodesByTag.get(status.balancer?.effective)} tone="green" />
-    </section>
-    <AutomaticQualityOverview status={status} performance={performance} nodesByTag={nodesByTag} />
-    <section className="panel setup-banner"><div><span className="panel-label">Panel readiness</span><strong>{status.setup?.runtime || 'setup'} · credential {status.setup?.credential || 'unknown'}</strong><small>XKeen {status.setup?.xkeen || 'missing'} · Xray {status.setup?.xray || 'missing'} · configuration {status.setup?.configuration || 'missing'}</small></div></section>
-    </Disclosure>
-    <section className="overview-node-list"><div className="workspace-heading"><h2>Available nodes <span className="count">{nodeTotal}</span></h2><button type="button" className="inline-link" onClick={onOpenNodes}>Open all nodes</button></div><div className="table-wrap"><table><thead><tr><th>Node</th><th>Address</th><th>Health</th><th>Latency</th><th>Role</th></tr></thead><tbody>{Array.from(nodesByTag.values()).slice(0, 5).map((node) => <tr key={node.id || node.tag}><td><NodeName node={node} /></td><td><code className="address">{node.address || '—'}</code></td><td>{node.alive ? 'Alive' : node.enabled ? 'No data' : 'Disabled'}</td><td>{formatAdaptiveLatency(node.latencyMs)}</td><td><NodeBadges node={node} /></td></tr>)}</tbody></table></div></section>
-  </div>
-}
-
-function targetPresentation(tag, nodesByTag) {
-  const safeTag = safeCanonicalTag(tag)
-  const node = safeTag ? nodesByTag.get(safeTag) : null
-  return { tag: safeTag, node, label: node ? visibleNodeName(node) : safeTag || 'Unavailable' }
-}
-
-function adaptiveOutcomeLabel(status, nodesByTag) {
-  const state = adaptiveState(status)
-  if (state === 'waiting') return 'No adaptive generation has completed yet.'
-  if (state === 'running') return 'The current shortlist is being measured.'
-  if (status?.switchApplied === true) {
-    const target = targetPresentation(status.selectedTarget, nodesByTag)
-    return target.tag ? `Actual switch applied to ${target.label}.` : 'Actual switch applied; the safe target identity is unavailable.'
-  }
-  const reason = adaptiveReasonLabel(status?.reasonCode)
-  if (state === 'skipped') return `Adaptive generation skipped: ${reason}.`
-  if (state === 'completed') return `No target switch: ${reason}.`
-  return `${adaptiveStateLabel(status)}: ${reason}.`
-}
-
-function AdaptiveGenerationFacts({ status, candidates }) {
-  const nextRunAt = formatTime(status?.nextRunAt)
-  const completedAt = formatTime(status?.completedAt)
-  const hasGeneration = hasAdaptiveGeneration(status, candidates)
-  return <>
-    {hasGeneration && <div><span>Generation evidence</span><strong>{safeCount(status?.shortlistCount, 6)} shortlisted · {safeCount(status?.validCount, 6)} valid</strong></div>}
-    {nextRunAt !== '—' && <div><span>Next adaptive check</span><strong>{nextRunAt}</strong></div>}
-    {completedAt !== '—' && <div><span>Last completion</span><strong>{completedAt}</strong></div>}
-  </>
-}
-
-function AutomaticQualityOverview({ status, performance, nodesByTag }) {
-  const selection = status.selection || {}
-  const adaptive = performance?.adaptive || { state: 'waiting' }
-  const candidates = safeAdaptiveCandidates(adaptive)
-  const effective = targetPresentation(selection.effectiveTarget || status.balancer?.effective, nodesByTag)
-  const manual = targetPresentation(selection.manualOverride, nodesByTag)
-  const selectionState = selectionStateLabel(selection.state || 'starting')
-  const selectionReason = selection.lastSwitchReason ? selectionReasonLabel(selection.lastSwitchReason) : 'No selection change recorded'
-  const switchedTarget = targetPresentation(adaptive.selectedTarget, nodesByTag)
-  return <section className={`panel automatic-quality-overview adaptive-${adaptiveState(adaptive)}`} data-testid="automatic-quality-overview">
-    <div className="automatic-quality-heading"><div><span className="panel-label">Automatic quality</span><h2>{selectionState}</h2><p>{selectionReason}</p></div><span className="chip neutral">{adaptiveStateLabel(adaptive)}</span></div>
-    <div className="automatic-quality-grid">
-      <div><span>Effective target</span><strong>{effective.label}</strong>{effective.tag && <code>{effective.tag}</code>}</div>
-      <div><span>Manual override</span><strong>{manual.tag ? manual.label : 'Not active'}</strong>{manual.tag && <code>{manual.tag}</code>}</div>
-      <div><span>Adaptive state</span><strong>{adaptiveStateLabel(adaptive)}</strong><small>{adaptiveOutcomeLabel(adaptive, nodesByTag)}</small></div>
-      <AdaptiveGenerationFacts status={adaptive} candidates={candidates} />
-      {adaptive.switchApplied === true && <div><span>Actual switched target</span><strong>{switchedTarget.label}</strong>{switchedTarget.tag && <code>{switchedTarget.tag}</code>}</div>}
     </div>
-    {manual.tag && <p className="automatic-quality-note">Automatic quality is paused by the explicit manual override.</p>}
-  </section>
+    <Disclosure title="Selection details"><div className="grid gap-4 sm:grid-cols-3">
+      <SelectionCard label="Native selection" node={nodesByTag.get(status.balancer?.nativeSelected)} />
+      <SelectionCard label="Manual override" node={nodesByTag.get(status.selection?.manualOverride)} emptyText="Automatic selection" />
+      <SelectionCard label="Effective" node={effective} />
+    </div><p className="mt-4 text-sm text-muted-foreground">Xray selects a healthy node using the configured strategy. Compare throughput in Performance; saved recommendations apply through Routing.</p></Disclosure>
+    {(!nodeTotal || status.native?.installation !== 'available' || status.native?.panelIntegration !== 'available') && <NativeXkeenStatus facts={status.native} onOpenNodes={onOpenNodes} />}
+    <Card><CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle>Available nodes <Badge variant="secondary">{nodeTotal}</Badge></CardTitle><Button variant="ghost" onClick={onOpenNodes}>Open all nodes</Button></div></CardHeader><CardContent>
+      <Table><TableHeader><TableRow><TableHead>Node</TableHead><TableHead>Health</TableHead><TableHead>Latency</TableHead><TableHead>Role</TableHead></TableRow></TableHeader><TableBody>{Array.from(nodesByTag.values()).filter((node) => node.enabled).slice(0, 5).map((node) => <TableRow key={node.id || node.tag}><TableCell><NodeName node={node} /></TableCell><TableCell><Badge variant={node.alive ? 'secondary' : 'outline'}>{node.alive ? 'Alive' : 'Unavailable'}</Badge></TableCell><TableCell>{node.alive ? formatAdaptiveLatency(node.latencyMs) : '-'}</TableCell><TableCell><NodeBadges node={node} /></TableCell></TableRow>)}</TableBody></Table>
+      {!nodeTotal && <p className="py-6 text-center text-muted-foreground">Add a subscription or VPN profile to get started.</p>}
+    </CardContent></Card>
+  </div>
 }
 
 function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benchmarkRunning, csrf, onRefresh, onPerformanceRefresh, viewState, onViewStateChange, lifecycleBlocked, manualLifecycleBlocked, selectionAvailable }) {
@@ -897,7 +767,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
       </div>
     </div>
 
-    {manualStatus.state !== 'idle' && <div className="legacy-workspace"><ManualPerformanceCard status={manualStatus} node={nodes.find((node) => node.id === manualStatus.targetNodeId)} /></div>}
+    {manualStatus.state !== 'idle' && <div className="app-content"><ManualPerformanceCard status={manualStatus} node={nodes.find((node) => node.id === manualStatus.targetNodeId)} /></div>}
 
     {selectedNode && editingID === selectedNode.id && <Card className="selection-editor"><CardHeader><CardTitle>Replace profile</CardTitle><CardDescription><NodeName node={selectedNode} /><span className="block">Stable tag: <code>{selectedNode.outboundTag || selectedNode.tag}</code></span></CardDescription></CardHeader><CardContent><FieldGroup><Field>
       <FieldLabel htmlFor="replacement-profile">Replacement VLESS profile</FieldLabel><Input id="replacement-profile" aria-label="Replacement VLESS profile" value={replacement} onChange={(event) => setReplacement(event.target.value)} placeholder="Replacement vless:// profile" type="password" autoComplete="off" autoFocus /></Field>
@@ -922,35 +792,7 @@ function NodeWorkspace({ nodes, subscriptions, performance, manualOverride, benc
       </CardContent></Card> })}
     </div></Disclosure>}
 
-    <Disclosure title={`Automatic quality · ${adaptiveStateLabel(adaptiveStatus)}`} attention={['running', 'failed', 'cleanup-pending'].includes(adaptiveStatus.state)}><div className="legacy-workspace"><AdaptiveQualityCard status={adaptiveStatus} nodes={nodes} /></div></Disclosure>
     {preview && <PreviewDialog preview={preview} nodes={nodes} manualOverride={manualOverride} busy={busy || lifecycleBlocked} onCancel={cancelPreview} onApply={applyPreview} returnFocus={previewTrigger} />}
-  </section>
-}
-
-function AdaptiveQualityCard({ status, nodes }) {
-  const nodesByTag = new Map(nodes.map((node) => [safeCanonicalTag(node.outboundTag || node.tag), node]))
-  const candidates = safeAdaptiveCandidates(status)
-  const current = targetPresentation(status?.currentTarget, nodesByTag)
-  const switchedTag = status?.switchApplied === true ? safeCanonicalTag(status.selectedTarget) : ''
-  const nextRunAt = formatTime(status?.nextRunAt)
-  const completedAt = formatTime(status?.completedAt)
-  const state = adaptiveState(status)
-  return <section className={`adaptive-performance ${state}`} data-testid="adaptive-performance" aria-live="polite">
-    <div className="adaptive-performance-heading"><div><span className="panel-label">Automatic quality</span><h3>{adaptiveStateLabel(status)}</h3></div><span className="chip neutral">{state === 'unavailable' ? 'Unavailable' : adaptiveStateLabel(status)}</span></div>
-    <div className="adaptive-performance-target"><span>Current target</span><strong>{current.label}</strong>{current.tag && <code>{current.tag}</code>}</div>
-    <div className="adaptive-facts"><div><span>Result</span><strong>{adaptiveOutcomeLabel(status, nodesByTag)}</strong></div>{nextRunAt !== '—' && <div><span>Next adaptive check</span><strong>{nextRunAt}</strong></div>}{completedAt !== '—' && <div><span>Last completion</span><strong>{completedAt}</strong></div>}{hasAdaptiveGeneration(status, candidates) && <div><span>Generation evidence</span><strong>{safeCount(status?.shortlistCount, 6)} shortlisted · {safeCount(status?.validCount, 6)} valid</strong></div>}</div>
-    {candidates.length > 0 ? <div className="adaptive-candidates" aria-label="Adaptive candidates">
-      {candidates.map((candidate, index) => {
-        const target = targetPresentation(candidate.tag, nodesByTag)
-        const valid = candidate.valid === true
-        const isCurrent = candidate.tag === current.tag
-        const isSwitched = Boolean(switchedTag) && candidate.tag === switchedTag
-        return <article className={`adaptive-candidate ${valid ? 'valid' : 'invalid'}`} data-testid="adaptive-candidate" key={`${candidate.tag}-${index}`}>
-          <div className="adaptive-candidate-heading"><div><strong>{target.label}</strong><code>{target.tag}</code></div><div className="adaptive-candidate-badges">{isCurrent && <span className="chip blue">Current target</span>}{isSwitched && <span className="chip green">Switched target</span>}<span className={`chip ${valid ? 'green' : 'amber'}`}>{valid ? 'Valid' : 'Invalid'}</span></div></div>
-          <div className="adaptive-metric-grid"><div><span>RTT</span><strong>{formatAdaptiveLatency(candidate.rttMs)}</strong></div><div><span>Download</span><strong>{formatAdaptiveRate(candidate.downloadBps)}</strong></div><div><span>Upload</span><strong>{formatAdaptiveRate(candidate.uploadBps)}</strong></div><div><span>Quality</span><strong>{formatAdaptiveScore(candidate.score, valid)}</strong></div></div>
-        </article>
-      })}
-    </div> : <p className="adaptive-empty">{state === 'waiting' ? 'Waiting for the next scheduled adaptive check.' : adaptiveOutcomeLabel(status, nodesByTag)}</p>}
   </section>
 }
 
@@ -982,7 +824,7 @@ function NodeRows({ node, selected, onToggle }) {
       <TableCell><NodeName node={node} />{node.stale && <Badge variant="secondary">stale</Badge>}</TableCell>
       <TableCell data-label="Address"><code className="address">{node.address || '—'}</code></TableCell>
       <TableCell data-label="Health"><Badge variant={node.alive ? 'secondary' : 'outline'}>{health}</Badge></TableCell>
-      <TableCell data-label="Latency">{formatAdaptiveLatency(node.latencyMs)}</TableCell>
+      <TableCell data-label="Latency">{node.alive ? formatAdaptiveLatency(node.latencyMs) : '-'}</TableCell>
       <TableCell data-label="Role"><NodeBadges node={node} /></TableCell>
       <TableCell data-label="Source"><span>{node.sourceType || 'legacy'}</span></TableCell>
       <TableCell data-label="Subscription">{node.sourceType === 'subscription' ? node.subscriptionName || 'Unnamed subscription' : '—'}</TableCell>
@@ -1050,10 +892,6 @@ function NodeName({ node }) {
   return <strong className="display-name">{flag && <img className="country-flag" src={flag} alt="" aria-hidden="true" />}<span>{visibleNodeName(node)}</span></strong>
 }
 
-function IconButton({ icon, label, tone = '', active = false, ...props }) {
-  return <button type="button" className={`icon-button ${tone} ${active ? 'active' : ''}`} aria-label={label} title={label} data-tooltip={label} {...props}><Icon name={icon} /></button>
-}
-
 function Icon({ name }) {
   const icons = { select: IconSquareCheck, enable: IconPlayerPlay, disable: IconPlayerPause, plus: IconPlus, link: IconLink, refresh: IconRefresh, edit: IconPencil, power: IconPower, trash: IconTrash, close: IconX, left: IconChevronLeft, right: IconChevronRight, search: IconSearch, gauge: IconGauge, target: IconFocus2 }
   const Component = icons[name]
@@ -1061,10 +899,10 @@ function Icon({ name }) {
 }
 
 function Shell({ children }) { return <main className="min-h-svh min-w-80 bg-background text-foreground">{children}</main> }
-function Notice({ message, tone = 'error' }) { return <div className={`notice ${tone}`} role="status">{message}</div> }
-function HealthCard({ label, ok, detail }) { return <div className="health-card"><div className={`health-icon ${ok ? 'ok' : 'bad'}`}>{ok ? '✓' : '!'}</div><div><span className="panel-label">{label}</span><strong>{ok ? 'Healthy' : 'Degraded'}</strong><small>{detail}</small></div></div> }
-function SelectionCard({ label, node, tone, emptyText = 'No current target' }) { return <div className={`panel selection-card ${tone}`}><span className="panel-label">{label}</span>{node ? <NodeName node={node} /> : <strong>{emptyText}</strong>}<small>{node?.address || (node ? 'No address' : '')}</small></div> }
-function NodeBadges({ node }) { return <div className="badges">{node.isNativeSelected && <span className="chip blue">native</span>}{node.isOverride && <span className="chip amber">override</span>}{node.isEffective && <span className="chip green">effective</span>}</div> }
+function Notice({ message, tone = 'error' }) { return <Alert variant={tone === 'error' ? 'destructive' : 'default'} role="status"><AlertDescription>{message}</AlertDescription></Alert> }
+function HealthCard({ label, ok, detail }) { return <Card><CardHeader><CardTitle>{label}</CardTitle><CardDescription>{detail}</CardDescription></CardHeader><CardContent><Badge variant={ok ? 'secondary' : 'destructive'}>{ok ? 'Healthy' : 'Degraded'}</Badge></CardContent></Card> }
+function SelectionCard({ label, node, emptyText = 'No current target' }) { return <Card size="sm"><CardHeader><CardDescription>{label}</CardDescription><CardTitle>{node ? <NodeName node={node} /> : emptyText}</CardTitle></CardHeader></Card> }
+function NodeBadges({ node }) { return <div className="badges">{node.isNativeSelected && <Badge variant="secondary">native</Badge>}{node.isOverride && <Badge variant="outline">override</Badge>}{node.isEffective && <Badge variant="secondary">effective</Badge>}</div> }
 function formatUptime(seconds) { if (!seconds) return '—'; const hours = Math.floor(seconds / 3600); const minutes = Math.floor((seconds % 3600) / 60); return `${hours}h ${minutes}m` }
 
 createRoot(document.getElementById('root')).render(<StrictMode><App /></StrictMode>)

@@ -24,7 +24,7 @@ async function mountEditor(page) {
   await page.goto('/')
   await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
   expect(reads).toBe(0)
-  await page.getByRole('button', { name: 'Edit native configuration', exact: true }).click()
+  await page.getByRole('button', { name: 'DNS', exact: true }).click()
   await expect(page.getByLabel('DNS address family', { exact: true })).toHaveValue('UseIP')
   return { model, writes, original, state, documents }
 }
@@ -42,7 +42,7 @@ test('Form/Text share edits, formatting and undo without saving or restarting', 
   await page.getByRole('button', { name: 'Form', exact: true }).click()
   await expect(page.getByLabel('DNS address family', { exact: true })).toHaveValue('UseIPv4')
   await page.getByRole('button', { name: 'Overview', exact: true }).click()
-  await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+  await page.getByRole('button', { name: 'DNS', exact: true }).click()
   await expect(page.getByLabel('DNS address family', { exact: true })).toHaveValue('UseIPv4')
   await page.getByRole('button', { name: 'Save configuration', exact: true }).click()
   await expect(page.getByRole('status').filter({ hasText: 'Saved and validated' })).toBeVisible()
@@ -269,4 +269,42 @@ test('routing examples use the current draft and clear stale results without sav
   expect(queries[1].text).toContain('"routing"')
   expect(writes).toEqual([])
   expect(model.requests.filter((request) => request.path === '/api/v1/xkeen/jobs/start')).toEqual([])
+})
+
+
+test('purposeful native forms retain unknown fields, numeric types and exact probe spelling', async ({ page }) => {
+  const { documents, writes } = await mountEditor(page)
+  Object.assign(documents, {
+    '01_log.json': { text: '{"log":{"loglevel":"warning","future":9007199254740993}}' },
+    '03_inbounds.json': { text: '{"inbounds":[{"tag":"local","protocol":"socks","listen":"127.0.0.1","port":1080,"future":9007199254740993}]}' },
+    '06_policy.json': { text: '{"policy":{"levels":{"0":{"connIdle":300,"future":9007199254740993}}}}' },
+    '07_observatory.json': { text: '{"observatory":{"subjectSelector":["proxy-"],"probeUrl":"https://example.test/204","probeInterval":"30s"}}' },
+    '08_api.json': { text: '{"api":{"tag":"api","services":["RoutingService"]},"inbounds":[]}' },
+  })
+  await page.getByRole('button', { name: 'Reload current configuration', exact: true }).click()
+  await page.getByLabel('Configuration file', { exact: true }).selectOption('01_log.json')
+  await page.getByLabel('Log detail', { exact: true }).selectOption('info')
+  await page.getByRole('button', { name: 'Text', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: 'Configuration text' })).toContainText('9007199254740993')
+  await page.getByRole('button', { name: 'Form', exact: true }).click()
+  await page.getByLabel('Configuration file', { exact: true }).selectOption('03_inbounds.json')
+  await page.getByLabel('Listener 1 port', { exact: true }).fill('1081')
+  await page.getByRole('button', { name: 'Text', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: 'Configuration text' })).toContainText('1081')
+  await expect(page.getByRole('textbox', { name: 'Configuration text' })).toContainText('9007199254740993')
+  await page.getByRole('button', { name: 'Form', exact: true }).click()
+  await page.getByLabel('Configuration file', { exact: true }).selectOption('06_policy.json')
+  await page.getByLabel('connIdle (seconds) - level 0', { exact: true }).fill('120')
+  await page.getByRole('button', { name: 'Text', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: 'Configuration text' })).toContainText('9007199254740993')
+  await page.getByRole('button', { name: 'Form', exact: true }).click()
+  await page.getByLabel('Configuration file', { exact: true }).selectOption('07_observatory.json')
+  await page.getByLabel('Probe URL', { exact: true }).fill('https://example.test/check')
+  await page.getByRole('button', { name: 'Text', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: 'Configuration text' })).toContainText('"probeUrl"')
+  await expect(page.getByRole('textbox', { name: 'Configuration text' })).not.toContainText('"probeURL"')
+  await page.getByRole('button', { name: 'Form', exact: true }).click()
+  await page.getByLabel('Configuration file', { exact: true }).selectOption('08_api.json')
+  await expect(page.getByLabel('Enabled API services (one per line)', { exact: true })).toHaveValue('RoutingService')
+  expect(writes).toEqual([])
 })
