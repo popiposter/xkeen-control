@@ -495,3 +495,30 @@ func TestSubscriptionRefreshJitterUsesOnlyStableID(t *testing.T) {
 		t.Fatalf("stable ID jitter did not distribute synthetic IDs: %v", seen)
 	}
 }
+
+func TestRequestedSubscriptionRefreshUsesOneQueueAndEnabledEntries(t *testing.T) {
+	registry := refresherRegistry(t, true)
+	manager, store, _ := testManager(t, &registry, &countingSubscriptionFetcher{body: []byte(syntheticProfile)})
+	now := time.Now().UTC()
+	r := newSubscriptionRefresher(manager, func() time.Time { return now })
+	if r.RequestRefresh() {
+		t.Fatal("accepted before start")
+	}
+	r.started = true
+	if !r.RequestRefresh() || r.RequestRefresh() {
+		t.Fatal("unbounded request queue")
+	}
+	<-r.requested
+	r.requestDue()
+	if !r.entries["sub-12345678"].nextRunAt.Equal(normalizeAutoRefreshTime(now)) {
+		t.Fatal("refresh not scheduled")
+	}
+	registry.Subscriptions[0].Enabled = false
+	if err := store.Save(registry); err != nil {
+		t.Fatal(err)
+	}
+	r.requestDue()
+	if !r.entries["sub-12345678"].nextRunAt.IsZero() {
+		t.Fatal("disabled subscription fetched")
+	}
+}

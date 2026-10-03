@@ -73,7 +73,7 @@ func NewJobs(binary string, lease *authority.Lease) *Jobs {
 }
 
 func (m *Jobs) Start(owner string, r CommandRequest) (JobView, error) {
-	return m.start(owner, r, nil, "")
+	return m.start(owner, r, nil, "", nil)
 }
 
 // ApplyConfigs invokes exactly the same native Restart as the command card.
@@ -82,17 +82,37 @@ func (m *Jobs) ApplyConfigs(owner string, editor *ConfigEditor, baseline string)
 	if editor == nil || editor.Lease != m.Lease {
 		return JobView{}, ErrConfig
 	}
-	return m.start(owner, CommandRequest{Action: "restart"}, editor, baseline)
+	return m.start(owner, CommandRequest{Action: "restart"}, editor, baseline, nil)
 }
 
 func (m *Jobs) StartConfigured(owner string, request CommandRequest, editor *ConfigEditor, baseline string) (JobView, error) {
 	if editor == nil || editor.Lease != m.Lease || request.Action != "start" && request.Action != "restart" {
 		return JobView{}, ErrConfig
 	}
-	return m.start(owner, request, editor, baseline)
+	return m.start(owner, request, editor, baseline, nil)
 }
 
-func (m *Jobs) start(owner string, r CommandRequest, editor *ConfigEditor, baseline string) (JobView, error) {
+// Remote jobs have a fixed owner so authenticated local operators can inspect
+// their private console. Telegram itself never reads or answers native output.
+const remoteJobOwner = "telegram-control"
+
+func (m *Jobs) StartRemote(action string, editor *ConfigEditor) (JobView, error) {
+	if editor == nil || editor.Lease != m.Lease {
+		return JobView{}, ErrConfig
+	}
+	switch action {
+	case "start", "stop", "restart", "update-xkeen", "update-xray", "update-geodata":
+	default:
+		return JobView{}, ErrCommand
+	}
+	return m.start(remoteJobOwner, CommandRequest{Action: action}, nil, "", editor)
+}
+
+func jobOwnerAllowed(job *nativeJob, owner string) bool {
+	return owner != "" && (job.owner == "" || job.owner == owner || job.owner == remoteJobOwner)
+}
+
+func (m *Jobs) start(owner string, r CommandRequest, editor *ConfigEditor, baseline string, unchanged *ConfigEditor) (JobView, error) {
 	if owner == "" {
 		return JobView{}, ErrJob
 	}
@@ -111,6 +131,18 @@ func (m *Jobs) start(owner string, r CommandRequest, editor *ConfigEditor, basel
 	release, err := m.Lease.TryAcquire()
 	if err != nil {
 		return JobView{}, err
+	}
+	if unchanged != nil {
+		if r.Action == "update-xkeen" || r.Action == "update-xray" || r.Action == "update-geodata" {
+			spec.Interactive = true
+		}
+		ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
+		workspace, readErr := unchanged.Workspace(ctx)
+		done()
+		if readErr != nil || workspace.Pending != nil {
+			release()
+			return JobView{}, ErrConfig
+		}
 	}
 	id := make([]byte, 16)
 	if _, err = rand.Read(id); err != nil {
@@ -300,7 +332,7 @@ func (m *Jobs) view(j *nativeJob, cursor int64) JobView {
 func (m *Jobs) Read(owner, id string, cursor int64) (JobView, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if owner == "" || m.job == nil || m.job.owner != "" && m.job.owner != owner || id != "" && m.job.id != id || cursor < 0 {
+	if m.job == nil || !jobOwnerAllowed(m.job, owner) || id != "" && m.job.id != id || cursor < 0 {
 		return JobView{}, ErrJob
 	}
 	return m.view(m.job, cursor), nil
@@ -311,7 +343,7 @@ func (m *Jobs) Input(owner, id, data string) error {
 	}
 	m.mu.Lock()
 	j := m.job
-	if j == nil || j.owner != owner || j.id != id || j.state != "running" || !j.interactive {
+	if j == nil || !jobOwnerAllowed(j, owner) || j.id != id || j.state != "running" || !j.interactive {
 		m.mu.Unlock()
 		return ErrJob
 	}
@@ -336,7 +368,7 @@ func (m *Jobs) Resize(owner, id string, cols, rows uint16) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	j := m.job
-	if j == nil || j.owner != owner || j.id != id || j.state != "running" || !j.interactive {
+	if j == nil || !jobOwnerAllowed(j, owner) || j.id != id || j.state != "running" || !j.interactive {
 		return ErrJob
 	}
 	return resizeNativeTerminal(j.terminal, cols, rows)
@@ -345,7 +377,7 @@ func (m *Jobs) Cancel(owner, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	j := m.job
-	if j == nil || j.owner != owner || j.id != id || j.state != "running" {
+	if j == nil || !jobOwnerAllowed(j, owner) || j.id != id || j.state != "running" {
 		return ErrJob
 	}
 	j.cancel()
@@ -358,7 +390,7 @@ func (m *Jobs) ResolveInspection(ctx context.Context, owner, id string) (JobView
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	j := m.job
-	if owner == "" || j == nil || j.id != id || j.state != "unknown" || j.owner != "" && j.owner != owner || m.inspectRecovery == nil {
+	if j == nil || !jobOwnerAllowed(j, owner) || j.id != id || j.state != "unknown" || m.inspectRecovery == nil {
 		return JobView{}, ErrJob
 	}
 	release, err := m.Lease.AcquireForRecovery(ctx, time.Second)

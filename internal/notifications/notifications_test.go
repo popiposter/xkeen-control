@@ -101,7 +101,7 @@ func TestAuthorityRoundtripAndDisabledExplicitTest(t *testing.T) {
 }
 
 func TestAuthorityMalformedAndUnsafeFailClosedWithoutRewriteOrNetwork(t *testing.T) {
-	good, _ := json.Marshal(authority{1, "telegram", true, fixtureToken, fixtureChat})
+	good, _ := json.Marshal(authority{SchemaVersion: 1, Provider: "telegram", Enabled: true, BotToken: fixtureToken, ChatID: fixtureChat})
 	fixtures := map[string][]byte{
 		"malformed":      []byte(`{"botToken":"` + fixtureToken + `"`),
 		"duplicate":      []byte(strings.Replace(string(good), `"enabled":true`, `"enabled":false,"enabled":true`, 1)),

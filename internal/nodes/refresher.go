@@ -119,6 +119,7 @@ type SubscriptionRefresher struct {
 	started     bool
 	stop        context.CancelFunc
 	wait        sync.WaitGroup
+	requested   chan struct{}
 }
 
 func NewSubscriptionRefresher(manager *Manager) *SubscriptionRefresher {
@@ -131,7 +132,39 @@ func newSubscriptionRefresher(manager *Manager, now func() time.Time) *Subscript
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &SubscriptionRefresher{manager: manager, now: now, entries: make(map[string]*subscriptionRefreshEntry)}
+	return &SubscriptionRefresher{manager: manager, now: now, entries: make(map[string]*subscriptionRefreshEntry), requested: make(chan struct{}, 1)}
+}
+
+// RequestRefresh queues one bounded refresh through the existing scheduler.
+func (r *SubscriptionRefresher) RequestRefresh() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	started := r.started
+	r.mu.Unlock()
+	if !started {
+		return false
+	}
+	select {
+	case r.requested <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+func (r *SubscriptionRefresher) requestDue() {
+	now := r.clock()
+	if r.reconcile(now) != nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, entry := range r.entries {
+		if entry.status.state != autoRefreshDisabled {
+			entry.nextRunAt = now
+		}
+	}
 }
 
 // Start performs only the initial bounded registry rescan. It does not fetch
@@ -173,6 +206,9 @@ func (r *SubscriptionRefresher) Stop() {
 		stop()
 	}
 	r.wait.Wait()
+	r.mu.Lock()
+	r.started = false
+	r.mu.Unlock()
 }
 
 // AutoRefreshStatuses returns a copy of the safe RAM-only status map for the
@@ -193,6 +229,14 @@ func (r *SubscriptionRefresher) AutoRefreshStatuses() map[string]AutoRefreshStat
 func (r *SubscriptionRefresher) loop(ctx context.Context) {
 	_ = r.reconcile(r.clock())
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+		select {
+		case <-r.requested:
+			r.requestDue()
+		default:
+		}
 		now := r.clock()
 		r.mu.Lock()
 		scanDue := r.rescanAt.IsZero() || !now.Before(r.rescanAt)
@@ -231,6 +275,9 @@ func (r *SubscriptionRefresher) loop(ctx context.Context) {
 			}
 			return
 		case <-timer.C:
+		case <-r.requested:
+			timer.Stop()
+			r.requestDue()
 		}
 	}
 }

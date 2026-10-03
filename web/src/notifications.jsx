@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 
 const authorityStates = ['unconfigured', 'configured', 'unavailable']
 const deliveryStates = ['idle', 'delivered', 'failed']
@@ -9,6 +13,8 @@ const safeStatus = (value) => {
     || !authorityStates.includes(value.authorityState) || !deliveryStates.includes(value.deliveryState)) throw new Error('unavailable')
   return {
     configured: value.configured, enabled: value.enabled, authorityState: value.authorityState, deliveryState: value.deliveryState,
+    controlConfigured: value.controlConfigured === true, controlEnabled: value.controlEnabled === true,
+    controlState: ['disabled', 'listening', 'failed'].includes(value.controlState) ? value.controlState : 'disabled',
     lastAttemptAt: Number.isFinite(Date.parse(value.lastAttemptAt)) ? new Date(value.lastAttemptAt).toLocaleString() : '—',
     lastDeliveredAt: Number.isFinite(Date.parse(value.lastDeliveredAt)) ? new Date(value.lastDeliveredAt).toLocaleString() : '—',
     errorCode: safeCodes.includes(value.errorCode) ? value.errorCode : '',
@@ -61,7 +67,8 @@ export function useNotifications({ active, csrfToken, onUnauthorized }) {
 export function NotificationsCard({ controller, sessionKey }) {
   const [token, setToken] = useState('')
   const [chat, setChat] = useState('')
-  useEffect(() => { setToken(''); setChat('') }, [sessionKey])
+  const [user, setUser] = useState('')
+  useEffect(() => { setToken(''); setChat(''); setUser('') }, [sessionKey])
   const { status, pending, message, run } = controller
   const configure = (event) => {
     event.preventDefault()
@@ -69,8 +76,9 @@ export function NotificationsCard({ controller, sessionKey }) {
     setToken(''); setChat('') // Clear on submission, including rejected/lost responses.
     void run('/configure', credentials)
   }
-  return <section className="panel system-panel-card" aria-label="Notifications">
-    <div><h2>Telegram</h2></div>
+  return <Card role="region" aria-label="Notifications">
+    <CardHeader><CardTitle>Telegram</CardTitle><CardDescription>Notifications and native commands from one authorized user and chat.</CardDescription></CardHeader>
+    <CardContent className="flex flex-col gap-4">
     {status && <div className="system-facts-grid">
       <div><span>Authority</span><strong>{status.authorityState}</strong></div>
       <div><span>Delivery</span><strong>{status.enabled ? 'Enabled' : 'Disabled'}</strong></div>
@@ -78,19 +86,27 @@ export function NotificationsCard({ controller, sessionKey }) {
       <div><span>Last attempt</span><strong>{status.lastAttemptAt}</strong></div>
       <div><span>Delivered at</span><strong>{status.lastDeliveredAt}</strong></div>
       {status.errorCode && <div><span>Delivery error</span><strong>{status.errorCode}</strong></div>}
+      <div><span>Bot control</span><strong>{status.controlEnabled ? status.controlState : 'Disabled'}</strong></div>
     </div>}
-    <form className="system-password-form" onSubmit={configure} autoComplete="off">
-      <label>Telegram bot token<input type="password" autoComplete="off" maxLength="150" value={token} onChange={(event) => setToken(event.target.value)} disabled={pending} /></label>
-      <label>Telegram chat ID<input type="password" autoComplete="off" maxLength="21" value={chat} onChange={(event) => setChat(event.target.value)} disabled={pending} /></label>
-      <button type="submit" disabled={pending || !token || !chat}>Configure notifications</button>
+    <form onSubmit={configure} autoComplete="off"><FieldGroup>
+      <Field><FieldLabel htmlFor="telegram-token">Telegram bot token</FieldLabel><Input id="telegram-token" type="password" autoComplete="off" maxLength={150} value={token} onChange={(event) => setToken(event.target.value)} disabled={pending} /></Field>
+      <Field><FieldLabel htmlFor="telegram-chat">Telegram chat ID</FieldLabel><Input id="telegram-chat" type="text" autoComplete="off" maxLength={21} value={chat} onChange={(event) => setChat(event.target.value)} disabled={pending} /></Field>
+      <Button type="submit" disabled={pending || !token || !chat}>Configure notifications</Button>
+      </FieldGroup>
     </form>
     <div className="system-card-actions">
-      <button type="button" onClick={() => void run('/test', {})} disabled={pending || !status?.configured}>Send test notification</button>
-      <button type="button" onClick={() => void run('/enabled', { enabled: !status?.enabled })} disabled={pending || !status?.configured}>{status?.enabled ? 'Disable notifications' : 'Enable notifications'}</button>
-      <button type="button" className="ghost" onClick={() => void run('/clear', {})} disabled={pending || status?.authorityState === 'unconfigured'}>Clear notifications</button>
-      <button type="button" className="ghost" onClick={() => void run()} disabled={pending}>Refresh notifications</button>
+      <Button type="button" variant="outline" onClick={() => void run('/test', {})} disabled={pending || !status?.configured}>Send test notification</Button>
+      <Button type="button" variant="outline" onClick={() => void run('/enabled', { enabled: !status?.enabled })} disabled={pending || !status?.configured}>{status?.enabled ? 'Disable notifications' : 'Enable notifications'}</Button>
+      <Button type="button" variant="ghost" onClick={() => void run('/clear', {})} disabled={pending || status?.authorityState === 'unconfigured'}>Clear notifications</Button>
+      <Button type="button" variant="ghost" onClick={() => void run()} disabled={pending}>Refresh notifications</Button>
     </div>
+    <form onSubmit={(event) => { event.preventDefault(); const id = user; setUser(''); void run('/control', { enabled: true, allowedUserId: id }) }} autoComplete="off"><FieldGroup>
+      <Field><FieldLabel htmlFor="telegram-user">Allowed Telegram user ID</FieldLabel><Input id="telegram-user" inputMode="numeric" autoComplete="off" maxLength={19} value={user} onChange={(event) => setUser(event.target.value)} disabled={pending} /></Field>
+      <div className="flex flex-wrap gap-2"><Button type="submit" disabled={pending || !status?.configured || !/^[1-9][0-9]{0,18}$/.test(user)}>Enable bot control</Button><Button type="button" variant="outline" disabled={pending || !status?.controlEnabled} onClick={() => void run('/control', { enabled: false, allowedUserId: '' })}>Disable bot control</Button></div>
+    </FieldGroup></form>
+    <p className="text-muted-foreground">Commands: /status, /start, /stop, /restart, /update_xkeen, /update_xray, /update_geodata, /refresh. Command acceptance is not a verified result. Inspect the native console in the panel for prompts and final state. Pending configurations must be applied in the editor first.</p>
     {message && <p role="status">{message}</p>}
-    <p className="muted">Not included in backups.</p>
-  </section>
+    <p className="text-muted-foreground">Not included in backups. Reconfiguring credentials disables bot control.</p>
+    </CardContent>
+  </Card>
 }

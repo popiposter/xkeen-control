@@ -201,7 +201,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/performance/policy", "/api/v1/performance/policy/preview", "/api/v1/performance/policy/apply", "/api/v1/performance/policy/cancel",
 		"/api/v1/panel/listener", "/api/v1/panel/listener/preview", "/api/v1/panel/listener/apply", "/api/v1/panel/listener/cancel",
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
-		"/api/v1/notifications", "/api/v1/notifications/configure", "/api/v1/notifications/enabled", "/api/v1/notifications/test", "/api/v1/notifications/clear",
+		"/api/v1/notifications", "/api/v1/notifications/configure", "/api/v1/notifications/enabled", "/api/v1/notifications/control", "/api/v1/notifications/test", "/api/v1/notifications/clear",
 		"/api/v1/session/password",
 		"/api/v1/benchmark/run", "/api/v1/performance/manual-node",
 		"/api/v1/backup/export", "/api/v1/backup/export-secret",
@@ -266,7 +266,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, s.native.Inspect(r.Context()))
-	case "/api/v1/notifications", "/api/v1/notifications/configure", "/api/v1/notifications/enabled", "/api/v1/notifications/test", "/api/v1/notifications/clear":
+	case "/api/v1/notifications", "/api/v1/notifications/configure", "/api/v1/notifications/enabled", "/api/v1/notifications/control", "/api/v1/notifications/test", "/api/v1/notifications/clear":
 		s.handleNotifications(w, r)
 	case "/api/v1/session/login":
 		if r.Method != http.MethodPost {

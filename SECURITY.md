@@ -138,7 +138,11 @@ The separate panel-local notification authority is
 secrets directory. Telegram token/chat ID never appear in safe responses or
 logs; this authority is excluded from safe export and encrypted node backup.
 It is separately reconfigurable after reinstall; older binaries ignore it.
-No inbound command, generic webhook or VPN/firewall/DDNS automation is added.
+Inbound Telegram control is disabled by default and restricted to one explicit
+user and chat, fresh exact commands, a persisted before-dispatch update watermark
+and the existing native jobs/lease. No generic webhook, shell, prompt input,
+config or private console output is forwarded. Authenticated local operators may
+inspect the bot job in the panel. See docs/TELEGRAM-CONTROL.md.
 
 ## Backup / restore
 

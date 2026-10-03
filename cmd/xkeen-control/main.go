@@ -265,6 +265,30 @@ func main() {
 	// Automatic subscription refresh is enabled separately from native commands.
 	subscriptionRefresher.Start(runtimeContext)
 	panelNotifyScheduler.Start(runtimeContext)
+	go notificationService.RunControl(runtimeContext, func(ctx context.Context, command notifications.Command) notifications.ControlResult {
+		if command == notifications.RefreshSubscriptions {
+			if ctx.Err() == nil && subscriptionRefresher.RequestRefresh() {
+				return notifications.Accepted
+			}
+			return notifications.Refused
+		}
+		if command == notifications.StatusCommand {
+			facts := (xkeen.Discovery{}).Inspect(ctx)
+			if facts.XrayRunning {
+				return notifications.Running
+			}
+			return notifications.Unknown
+		}
+		actions := map[notifications.Command]string{notifications.StartCommand: "start", notifications.StopCommand: "stop", notifications.RestartCommand: "restart", notifications.UpdateXkeen: "update-xkeen", notifications.UpdateXray: "update-xray", notifications.UpdateGeodata: "update-geodata"}
+		action, ok := actions[command]
+		if !ok || nativeJobs == nil || ctx.Err() != nil {
+			return notifications.Refused
+		}
+		if _, err := nativeJobs.StartRemote(action, nativeConfig); err != nil {
+			return notifications.Refused
+		}
+		return notifications.Accepted
+	})
 
 	log.Printf("xkeen-control %s listening on %s", buildinfo.Current().Version, listenAddress)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

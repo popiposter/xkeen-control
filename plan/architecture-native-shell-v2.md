@@ -295,3 +295,25 @@ is not silently marked complete.
   cover iteration. A missing embedded-output refresh caused one rejected gate
   before delivery; generated assets were explicitly corrected, then the final
   exact-source gate passed.
+
+
+## Current native-shell completion checkpoint
+
+- Installed development source `2fdbfc4`: exact FULL qualification passed (110
+  browser cases, Go/race/helpers/frontend/embed, dependency audit and ARM64).
+  Independent panel replacement preserved native configs/process and auth.
+- Same-router encrypted export → fully validated private transfer preview →
+  Cancel passed without Stage, Restart or config/registry mutation. Hardware
+  transfer A→B remains separate and unqualified.
+- Enabled provider refresh is running. Fresh independent readback after both
+  provider updates retained 15 selective-routing rules, pending absent and WL
+  disabled. Node counts follow provider changes; do not freeze their old counts.
+- Telegram source cohort implements TASK-019 for one router: fixed user/chat,
+  fresh commands, before-effect watermark, native jobs/shared lease, local-only
+  console and existing subscription refresh queue. See
+  [Telegram control](../docs/TELEGRAM-CONTROL.md). Source qualification/delivery
+  and real private-token acceptance must be recorded independently.
+- Independent unproxied LAN DNS/DIRECT/VPN/stopped-engine/failure acceptance
+  remains NOT RUN while the development PC uses Karing. Native leastPing remains
+  the active selection owner; panel adaptive selection stays disabled without
+  demonstrated benefit. No fleet controller or invasive native gate is required.
