@@ -21,4 +21,5 @@ node --test \
     scripts/native-update-profile.test.mjs \
     scripts/native-update-stage.test.mjs \
     scripts/native-update-stage-install.test.mjs \
-    scripts/native-update-dispatch-errors.test.mjs
+    scripts/native-update-dispatch-errors.test.mjs \
+    scripts/native-update-init.test.mjs

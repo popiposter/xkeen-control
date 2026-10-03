@@ -753,6 +753,20 @@ of downloading/installing components and cron remains unchanged. Long update vs
 NDM deadline/notification settlement also needs explicit qualification before the
 shared native backend is enabled.
 
+The source-only `native-update-init.awk` primitive separates exactly the pinned
+native registration's declared assignments plus `start_auto` and `start_delay`
+from init code. It preserves their exact assignment bytes, requires each key
+once and refuses expansions, escapes, compound assignments and unsupported
+numeric literals without emitting partial output. Other lines remain visible
+in the normalized code projection; comparing that projection to the prepared
+template detects manual code drift. Actual native regeneration fixtures prove
+preservation of policy labels, descriptor limits, init delay and autostart.
+This pure data parser executes no native code. Its future fixed verifier caller
+must first authenticate admission, protect/bound the input and require a final
+LF, then compare both code and settings digests. That caller, update baseline,
+package/kernel postconditions and executor integration are not implemented by
+the primitive and still block activation. It is not installed on the router.
+
 Normal long-writer contention has a separate known-no-effect result. If an
 elected NDM invocation reaches its valid monotonic deadline after busy admission,
 and has **never acquired** operation admission, it may retire only its own live
