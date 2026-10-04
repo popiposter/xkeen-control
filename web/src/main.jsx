@@ -112,9 +112,9 @@ const download = async (path, options = {}, filename) => {
 }
 
 const formatTime = (value) => {
-  if (!value) return '—'
+  if (!value) return 'â€”'
   const date = new Date(value)
-  return Number.isFinite(date.getTime()) && date.getTime() > 0 ? date.toLocaleString() : '—'
+  return Number.isFinite(date.getTime()) && date.getTime() > 0 ? date.toLocaleString() : 'â€”'
 }
 
 const visibleNodeName = (node) => String(node?.displayName || node?.name || '').replace(FLAG_PREFIX, '').trim() || 'Unnamed node'
@@ -128,7 +128,7 @@ const healthRank = (node) => node.alive ? 0 : node.enabled ? 1 : 2
 const roleRank = (node) => ({ effective: 0, override: 1, native: 2, none: 3 })[nodeRole(node)]
 const autoRefreshStateLabels = {
   waiting: 'Refresh scheduled',
-  running: 'Refreshing saved snapshot…',
+  running: 'Refreshing saved snapshotâ€¦',
   deferred: 'Refresh deferred',
   failed: 'Refresh failed',
   disabled: 'Automatic refresh disabled',
@@ -158,7 +158,7 @@ const autoRefreshSummary = (status) => {
   if (status.lastResult && autoRefreshResultLabels[status.lastResult]) parts.push(`Last: ${autoRefreshResultLabels[status.lastResult]}`)
   if (status.lastSuccessAt) parts.push(`Success: ${formatTime(status.lastSuccessAt)}`)
   if (status.nextRunAt) parts.push(`Next: ${formatTime(status.nextRunAt)}`)
-  return parts.join(' · ') || 'No attempt yet'
+  return parts.join(' Â· ') || 'No attempt yet'
 }
 
 const manualStateLabels = {
@@ -192,20 +192,20 @@ const manualStatusLabel = (state) => manualStateLabels[state] || 'Unavailable'
 const manualPhaseLabel = (phase) => manualPhaseLabels[phase] || 'Unavailable'
 const formatManualBytes = (value) => {
   const numeric = Number(value)
-  return value == null || !Number.isFinite(numeric) || numeric < 0 ? '—' : `${(numeric / (1024 * 1024)).toFixed(2)} MiB`
+  return value == null || !Number.isFinite(numeric) || numeric < 0 ? 'â€”' : `${(numeric / (1024 * 1024)).toFixed(2)} MiB`
 }
 const formatManualRate = (value) => {
   const numeric = Number(value)
-  return value == null || !Number.isFinite(numeric) || numeric < 0 ? '—' : `${((numeric * 8) / 1000000).toFixed(1)} Mbps`
+  return value == null || !Number.isFinite(numeric) || numeric < 0 ? 'â€”' : `${((numeric * 8) / 1000000).toFixed(1)} Mbps`
 }
 
 const formatAdaptiveLatency = (value) => {
   const numeric = Number(value)
-  return value == null || !Number.isFinite(numeric) || numeric <= 0 || numeric >= 99999999 ? '—' : `${Math.round(numeric)} ms`
+  return value == null || !Number.isFinite(numeric) || numeric <= 0 || numeric >= 99999999 ? 'â€”' : `${Math.round(numeric)} ms`
 }
 const formatAdaptiveRate = (value) => {
   const numeric = Number(value)
-  return value == null || !Number.isFinite(numeric) || numeric <= 0 || numeric >= 99999999 ? '—' : `${((numeric * 8) / 1000000).toFixed(1)} Mbps`
+  return value == null || !Number.isFinite(numeric) || numeric <= 0 || numeric >= 99999999 ? 'â€”' : `${((numeric * 8) / 1000000).toFixed(1)} Mbps`
 }
 const sortNodes = (nodes, key, direction) => {
   const multiplier = direction === 'desc' ? -1 : 1
@@ -348,7 +348,7 @@ function App() {
   }, [])
 
   if (!session) return <Login error={error} password={password} setPassword={setPassword} onSubmit={login} />
-  if (loading && !dashboard) return <Shell><div className="loading">Reading current router state…</div></Shell>
+  if (loading && !dashboard) return <Shell><div className="loading">Reading current router stateâ€¦</div></Shell>
   if (!dashboard) return <Shell><Notice message={error || 'Runtime state is unavailable.'} /></Shell>
 
   return <Dashboard dashboard={dashboard} session={session} error={error} onRefresh={loadDashboard} onPerformanceRefresh={loadPerformance} onLogout={logout} onUnauthorized={invalidateSession} />
@@ -480,7 +480,7 @@ function Overview({ quality, measurements, status, nodeTotal, nodesByTag, onOpen
     </div><p className="mt-4 text-sm text-muted-foreground">Xray selects a healthy node using the configured strategy. Compare throughput in Performance; saved recommendations apply through Routing.</p></Disclosure>
     {(!nodeTotal || status.native?.installation !== 'available' || status.native?.panelIntegration !== 'available') && <NativeXkeenStatus facts={status.native} onOpenNodes={onOpenNodes} />}
     <Card><CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle>{applied ? 'Active pool leaders' : 'Measured candidates'}</CardTitle><Button variant="ghost" onClick={onOpenNodes}>Open all nodes</Button></div><CardDescription>{applied ? 'Highest preference in saved native throughput/health weights. Xray also considers latency and keeps other enabled nodes as backups.' : 'Latest measured candidates; these recommendations have not been confirmed as applied weights.'} Speeds describe the latest comparison in this panel session.</CardDescription></CardHeader><CardContent>
-      {!leaders.length ? <p className="py-4 text-muted-foreground">{quality?.state === 'running' ? 'Comparing the current pool…' : 'No completed comparison in this panel session. Run a comparison in Performance.'}</p> : <Table><TableHeader><TableRow><TableHead>{applied ? 'Pool preference' : 'Measured rank'}</TableHead><TableHead>Node</TableHead><TableHead>Health</TableHead><TableHead>Download</TableHead><TableHead>Upload</TableHead><TableHead>Role</TableHead></TableRow></TableHeader><TableBody>{leaders.filter((item) => nodesByTag.get(item.tag)?.enabled).map((item) => { const node = nodesByTag.get(item.tag); const sample = measurements.get(item.tag); return <TableRow key={item.tag}><TableCell><StatusBadge>#{item.rank}</StatusBadge></TableCell><TableCell><NodeName node={node} /></TableCell><TableCell><StatusBadge tone={node.alive ? 'success' : 'warning'}>{node.alive ? 'Alive' : 'Unavailable'}</StatusBadge></TableCell><TableCell>{formatRate(sample?.downloadBps)}</TableCell><TableCell>{formatRate(sample?.uploadBps)}</TableCell><TableCell><NodeBadges node={node} /></TableCell></TableRow> })}</TableBody></Table>}
+      {!leaders.length ? <p className="py-4 text-muted-foreground">{quality?.state === 'running' ? 'Comparing the current poolâ€¦' : 'No completed comparison in this panel session. Run a comparison in Performance.'}</p> : <Table><TableHeader><TableRow><TableHead>{applied ? 'Pool preference' : 'Measured rank'}</TableHead><TableHead>Node</TableHead><TableHead>Health</TableHead><TableHead>Download</TableHead><TableHead>Upload</TableHead><TableHead>Role</TableHead></TableRow></TableHeader><TableBody>{leaders.filter((item) => nodesByTag.get(item.tag)?.enabled).map((item) => { const node = nodesByTag.get(item.tag); const sample = measurements.get(item.tag); return <TableRow key={item.tag}><TableCell><StatusBadge>#{item.rank}</StatusBadge></TableCell><TableCell><NodeName node={node} /></TableCell><TableCell><StatusBadge tone={node.alive ? 'success' : 'warning'}>{node.alive ? 'Alive' : 'Unavailable'}</StatusBadge></TableCell><TableCell>{formatRate(sample?.downloadBps)}</TableCell><TableCell>{formatRate(sample?.uploadBps)}</TableCell><TableCell><NodeBadges node={node} /></TableCell></TableRow> })}</TableBody></Table>}
     </CardContent></Card>
   </div>
 }
@@ -744,14 +744,14 @@ function NodeWorkspace({ measurements, nodes, subscriptions, performance, manual
       <Field><FieldLabel htmlFor="subscription-name">Display name</FieldLabel>
       <Input id="subscription-name" value={subscriptionName} onChange={(event) => setSubscriptionName(event.target.value)} placeholder="Home provider" /></Field>
       <Field><FieldLabel htmlFor="subscription-url">Subscription URL</FieldLabel>
-      <Input id="subscription-url" type="url" value={subscriptionUrl} onChange={(event) => setSubscriptionUrl(event.target.value)} placeholder={subscriptionID ? 'Leave blank to keep the saved URL' : 'https://…'} autoComplete="off" spellCheck={false} /></Field>
+      <Input id="subscription-url" type="url" value={subscriptionUrl} onChange={(event) => setSubscriptionUrl(event.target.value)} placeholder={subscriptionID ? 'Leave blank to keep the saved URL' : 'https://â€¦'} autoComplete="off" spellCheck={false} /></Field>
       <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" type="button" onClick={closeComposer}>Cancel</Button><Button type="submit" disabled={busy || lifecycleBlocked || (!subscriptionID && !subscriptionUrl.trim())}>{subscriptionID ? 'Preview update' : 'Preview subscription'}</Button></div>
     </FieldGroup></form></CardContent></Card>}
 
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Field className="max-w-md"><FieldLabel htmlFor="node-search" className="sr-only">Search nodes</FieldLabel><Input id="node-search" value={query} onChange={(event) => onViewStateChange((current) => ({ ...current, query: event.target.value, page: 1 }))} placeholder="Search name, address, or source" aria-label="Search nodes" /></Field>
-        <span className="text-sm text-muted-foreground">{filtered.length} / {nodes.length} · <span data-testid="selected-count" aria-live="polite">{selectedIDs.size} selected</span></span>
+        <span className="text-sm text-muted-foreground">{filtered.length} / {nodes.length} Â· <span data-testid="selected-count" aria-live="polite">{selectedIDs.size} selected</span></span>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <ToggleGroup variant="outline" className="flex-wrap" aria-label="Health filters" value={[statusFilter]} onValueChange={(values) => { if (values.length) chooseFilter('statusFilter', values[0]) }}>
@@ -772,7 +772,7 @@ function NodeWorkspace({ measurements, nodes, subscriptions, performance, manual
       <div className="flex items-center gap-1"><NodeActionButton icon="select" label={`Select all ${filtered.length} filtered`} onClick={toggleAllFiltered} disabled={busy || lifecycleBlocked || !filtered.length || allFilteredSelected} /><NodeActionButton icon="close" label="Clear selection" onClick={clearSelection} disabled={busy || lifecycleBlocked || !selectedIDs.size} /></div>
       <Separator orientation="vertical" className="h-6" /><div className="flex flex-wrap items-center gap-1">
         <NodeActionButton icon="target" description={!selectedNode ? 'Select one enabled node first. A manual pin bypasses automatic failover until cleared or Xray restarts.' : 'Native Xray pin. Clear it to resume automatic selection and failover.'} label={selectedManual ? 'Clear manual override' : 'Set manual override'} active={Boolean(selectedManual)} onClick={() => setManualOverride(selectedManual ? '' : (selectedNode.outboundTag || selectedNode.tag))} disabled={busy || lifecycleBlocked || !selectionAvailable || !selectedNode || (!selectedManual && !selectedNode.enabled)} />
-        <NodeActionButton icon="gauge" label={manualRequestBusy ? 'Starting speed test…' : 'Full speed test'} onClick={runManualNode} disabled={busy || manualRequestBusy || manualLifecycleBlocked || benchmarkRunning || manualRunning || adaptiveRunning || selectedNodes.length !== 1 || !selectedNode?.enabled} />
+        <NodeActionButton icon="gauge" label={manualRequestBusy ? 'Starting speed testâ€¦' : 'Full speed test'} onClick={runManualNode} disabled={busy || manualRequestBusy || manualLifecycleBlocked || benchmarkRunning || manualRunning || adaptiveRunning || selectedNodes.length !== 1 || !selectedNode?.enabled} />
         <NodeActionButton icon="edit" label="Edit / replace profile" onClick={() => openEditor()} disabled={busy || lifecycleBlocked || selectedNodes.length !== 1} />
         <NodeActionButton icon="enable" label="Enable" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: true })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => node.enabled)} />
         <NodeActionButton icon="disable" label="Disable" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: false })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => !node.enabled)} />
@@ -793,9 +793,9 @@ function NodeWorkspace({ measurements, nodes, subscriptions, performance, manual
     </TableBody></Table>
 
     <Pagination page={page} totalPages={totalPages} onPage={(value) => onViewStateChange((current) => ({ ...current, page: value }))} />
-    {!!subscriptions.length && <Disclosure title={`Subscriptions · ${subscriptions.length}`} className="subscriptions-disclosure"><div className="grid gap-3 md:grid-cols-2">
+    {!!subscriptions.length && <Disclosure title={`Subscriptions Â· ${subscriptions.length}`} className="subscriptions-disclosure"><div className="grid gap-3 md:grid-cols-2">
       {subscriptions.map((subscription) => { const enabled = subscription.enabled !== false; const name = subscription.name || 'Unnamed subscription'; const autoStatus = subscription.autoRefresh; const autoState = autoRefreshState(autoStatus); return <Card size="sm" key={subscription.id} data-testid={`subscription-card-${subscription.id}`} data-enabled={enabled}><CardContent className="flex flex-wrap items-center justify-between gap-3">
-        <div><strong>{name}</strong><small>{enabled ? 'Enabled' : 'Disabled'} · {subscription.nodeCount} nodes{subscription.staleCount ? ` · ${subscription.staleCount} stale` : ''}</small>{autoStatus && <div className={`subscription-auto-refresh ${autoState}`} data-testid={`subscription-auto-refresh-${subscription.id}`}><span>{autoRefreshStateLabels[autoState]}</span><small>{autoRefreshSummary(autoStatus)}</small></div>}</div>
+        <div><strong>{name}</strong><small>{enabled ? 'Enabled' : 'Disabled'} Â· {subscription.nodeCount} nodes{subscription.staleCount ? ` Â· ${subscription.staleCount} stale` : ''}</small>{autoStatus && <div className={`subscription-auto-refresh ${autoState}`} data-testid={`subscription-auto-refresh-${subscription.id}`}><span>{autoRefreshStateLabels[autoState]}</span><small>{autoRefreshSummary(autoStatus)}</small></div>}</div>
         <div className="flex flex-wrap gap-1">
           <NodeActionButton icon="refresh" label={`Refresh ${name}`} disabled={busy || lifecycleBlocked} onClick={() => requestPreview('/api/v1/subscriptions/refresh/preview', { subscriptionId: subscription.id })} />
           <NodeActionButton icon="edit" label={`Edit ${name}`} disabled={busy} onClick={() => openSubscriptionEditor(subscription)} />
@@ -813,7 +813,7 @@ function ManualPerformanceCard({ status, node }) {
   const error = status.errorCode ? manualErrorLabels[status.errorCode] || 'The diagnostic ended with a safe error.' : ''
   return <section className={`manual-performance ${status.state}`} data-testid="manual-performance" aria-live="polite">
     <div className="manual-performance-heading">
-      <div><span className="panel-label">Full speed test</span><h3>{manualStatusLabel(status.state)} · {manualPhaseLabel(status.phase)}</h3></div>
+      <div><span className="panel-label">Full speed test</span><h3>{manualStatusLabel(status.state)} Â· {manualPhaseLabel(status.phase)}</h3></div>
       {status.elapsedMs != null && <span className="chip neutral">{(Number(status.elapsedMs || 0) / 1000).toFixed(1)}s</span>}
     </div>
     <div className="manual-performance-target"><span>Target</span><strong>{visibleNodeName(node) || 'Unavailable'}</strong>{status.targetNodeId && <code>{status.targetNodeId}</code>}{status.targetTag && <code>{status.targetTag}</code>}</div>
@@ -835,15 +835,15 @@ function NodeRows({ showColumn, measurement, node, selected, onToggle }) {
     <TableRow data-state={selected ? 'selected' : undefined} tabIndex={0} aria-selected={selected} onClick={(event) => { if (!event.target.closest('input, label, button, a, [role=checkbox]')) onToggle() }} onKeyDown={(event) => { if (event.target === event.currentTarget && [' ', 'Enter'].includes(event.key)) { event.preventDefault(); onToggle() } }}>
       <TableCell className="selection-column"><SelectionCheckbox label={`Select ${visibleNodeName(node)}`} checked={selected} onChange={onToggle} /></TableCell>
       <TableCell><NodeName node={node} />{node.stale && <Badge variant="secondary">stale</Badge>}</TableCell>
-      {showColumn('address') && <TableCell data-label="Address"><code className="address">{node.address || '—'}</code></TableCell>}
+      {showColumn('address') && <TableCell data-label="Address"><code className="address">{node.address || 'â€”'}</code></TableCell>}
       {showColumn('health') && <TableCell data-label="Health"><StatusBadge tone={node.alive ? 'success' : node.enabled ? 'warning' : 'muted'}>{health}</StatusBadge></TableCell>}
       {showColumn('latency') && <TableCell data-label="Latency">{node.alive ? formatAdaptiveLatency(node.latencyMs) : '-'}</TableCell>}
-      {showColumn('rank') && <TableCell data-label="Quality rank">{measurement?.rank ? <StatusBadge>#{measurement.rank}</StatusBadge> : '—'}</TableCell>}
-      {showColumn('download') && <TableCell data-label="Download">{measurement?.valid ? formatRate(measurement.downloadBps) : '—'}</TableCell>}
-      {showColumn('upload') && <TableCell data-label="Upload">{measurement?.valid ? formatRate(measurement.uploadBps) : '—'}</TableCell>}
+      {showColumn('rank') && <TableCell data-label="Quality rank">{measurement?.rank ? <StatusBadge>#{measurement.rank}</StatusBadge> : 'â€”'}</TableCell>}
+      {showColumn('download') && <TableCell data-label="Download">{measurement?.valid ? formatRate(measurement.downloadBps) : 'â€”'}</TableCell>}
+      {showColumn('upload') && <TableCell data-label="Upload">{measurement?.valid ? formatRate(measurement.uploadBps) : 'â€”'}</TableCell>}
       {showColumn('role') && <TableCell data-label="Role"><NodeBadges node={node} /></TableCell>}
       {showColumn('source') && <TableCell data-label="Source"><span>{node.sourceType || 'legacy'}</span></TableCell>}
-      {showColumn('subscription') && <TableCell data-label="Subscription">{node.sourceType === 'subscription' ? node.subscriptionName || 'Unnamed subscription' : '—'}</TableCell>}
+      {showColumn('subscription') && <TableCell data-label="Subscription">{node.sourceType === 'subscription' ? node.subscriptionName || 'Unnamed subscription' : 'â€”'}</TableCell>}
     </TableRow>
   </>
 }
@@ -862,9 +862,9 @@ function PreviewDialog({ preview, nodes, manualOverride, busy, onCancel, onApply
   const manualSubscriptionRemovals = ['remove', 'batch-remove'].includes(preview.operation)
     && changes.some((change) => change.after === 'removed' && change.sourceType === 'subscription')
   return <Modal label="Preview node change" busy={busy} onCancel={onCancel} returnFocus={returnFocus}>
-      <div className="flex items-start justify-between gap-4"><div><span className="text-sm text-muted-foreground">Preview · {preview.operation}</span><h3>{preview.noop ? 'No persistent change' : `${preview.changes?.length || 0} node changes`}</h3></div><Button variant="ghost" size="icon" aria-label="Close preview" onClick={onCancel} disabled={busy}><IconX /></Button></div>
+      <div className="flex items-start justify-between gap-4"><div><span className="text-sm text-muted-foreground">Preview Â· {preview.operation}</span><h3>{preview.noop ? 'No persistent change' : `${preview.changes?.length || 0} node changes`}</h3></div><Button variant="ghost" size="icon" aria-label="Close preview" onClick={onCancel} disabled={busy}><IconX /></Button></div>
       <ul aria-label="Node changes" className="flex max-h-72 flex-col overflow-y-auto">
-        {changes.map((change) => <li className="flex flex-wrap justify-between gap-2 border-b py-2" key={`${change.action}-${change.id}`}><strong>{change.name}</strong><span>{change.before} Ð²â€ â€™ {change.after}</span></li>)}
+        {changes.map((change) => <li className="flex flex-wrap justify-between gap-2 border-b py-2" key={`${change.action}-${change.id}`}><strong>{change.name}</strong><span>{change.before} Ð Ð†Ð²Ð‚Â Ð²Ð‚â„¢ {change.after}</span></li>)}
       </ul>
       {preview.noop && <p className="text-sm text-muted-foreground">The fetched or requested state matches the current registry.</p>}
       {subscriptionRemovalCount > 0 && <Alert><AlertDescription>Provider snapshot removes {subscriptionRemovalCount} {subscriptionRemovalCount === 1 ? 'node that is' : 'nodes that are'} no longer present upstream.</AlertDescription></Alert>}
@@ -872,7 +872,7 @@ function PreviewDialog({ preview, nodes, manualOverride, busy, onCancel, onApply
       {manualChanged && <Alert><AlertDescription>The current manual-override node changes in this preview. The supervisor owns subsequent reconciliation; this batch mutation does not write override state.</AlertDescription></Alert>}
       {manualSubscriptionRemovals && <Alert><AlertDescription>A removed subscription-owned node may return on a later subscription refresh while it remains upstream.</AlertDescription></Alert>}
       {preview.effectiveImpact && !effectiveChanged && <Alert><AlertDescription>This operation will {preview.effectiveImpact} the currently effective node. Active proxy traffic will be reselected after Apply.</AlertDescription></Alert>}
-      <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" type="button" onClick={onCancel} disabled={busy}>Cancel</Button><Button type="button" onClick={onApply} disabled={busy}>{busy ? 'Applying…' : (preview.noop ? 'Confirm no-op' : 'Apply and validate')}</Button></div>
+      <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" type="button" onClick={onCancel} disabled={busy}>Cancel</Button><Button type="button" onClick={onApply} disabled={busy}>{busy ? 'Applyingâ€¦' : (preview.noop ? 'Confirm no-op' : 'Apply and validate')}</Button></div>
   </Modal>
 }
 
@@ -882,7 +882,7 @@ function Pagination({ page, totalPages, onPage }) {
   return <nav className="flex flex-wrap items-center justify-end gap-1" aria-label="Node pages">
     <span className="mr-auto text-sm text-muted-foreground">Page {page} of {totalPages}</span>
     <NodeActionButton icon="left" label="Previous page" disabled={page <= 1} onClick={() => onPage(page - 1)} />
-    <div className="flex flex-wrap gap-1">{pages.map((value, index) => <span key={value}>{index > 0 && value - pages[index - 1] > 1 && <span className="pagination-gap" aria-hidden="true">…</span>}<Button type="button" size="icon" variant={value === page ? 'secondary' : 'ghost'} aria-current={value === page ? 'page' : undefined} onClick={() => onPage(value)}>{value}</Button></span>)}</div>
+    <div className="flex flex-wrap gap-1">{pages.map((value, index) => <span key={value}>{index > 0 && value - pages[index - 1] > 1 && <span className="pagination-gap" aria-hidden="true">â€¦</span>}<Button type="button" size="icon" variant={value === page ? 'secondary' : 'ghost'} aria-current={value === page ? 'page' : undefined} onClick={() => onPage(value)}>{value}</Button></span>)}</div>
     <NodeActionButton icon="right" label="Next page" disabled={page >= totalPages} onClick={() => onPage(page + 1)} />
   </nav>
 }
@@ -919,6 +919,6 @@ function Notice({ message, tone = 'error' }) { return <Alert variant={tone === '
 function HealthCard({ label, ok, detail }) { return <Card><CardHeader><CardTitle>{label}</CardTitle><CardDescription>{detail}</CardDescription></CardHeader><CardContent><StatusBadge tone={ok ? 'success' : 'warning'}>{ok ? 'Healthy' : 'Degraded'}</StatusBadge></CardContent></Card> }
 function SelectionCard({ label, node, emptyText = 'No current target' }) { return <Card size="sm"><CardHeader><CardDescription>{label}</CardDescription><CardTitle>{node ? <NodeName node={node} /> : emptyText}</CardTitle></CardHeader></Card> }
 function NodeBadges({ node }) { return <div className="badges">{node.isNativeSelected && <StatusBadge>native</StatusBadge>}{node.isOverride && <StatusBadge tone="warning">override</StatusBadge>}{node.isEffective && <StatusBadge tone="success">effective</StatusBadge>}</div> }
-function formatUptime(seconds) { if (!seconds) return '—'; const hours = Math.floor(seconds / 3600); const minutes = Math.floor((seconds % 3600) / 60); return `${hours}h ${minutes}m` }
+function formatUptime(seconds) { if (!seconds) return 'â€”'; const hours = Math.floor(seconds / 3600); const minutes = Math.floor((seconds % 3600) / 60); return `${hours}h ${minutes}m` }
 
 createRoot(document.getElementById('root')).render(<StrictMode><TooltipProvider delay={300}><App /></TooltipProvider></StrictMode>)

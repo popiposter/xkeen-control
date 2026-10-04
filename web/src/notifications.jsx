@@ -15,8 +15,8 @@ const safeStatus = (value) => {
     configured: value.configured, enabled: value.enabled, authorityState: value.authorityState, deliveryState: value.deliveryState,
     controlConfigured: value.controlConfigured === true, controlEnabled: value.controlEnabled === true,
     controlState: ['disabled', 'listening', 'failed'].includes(value.controlState) ? value.controlState : 'disabled',
-    lastAttemptAt: Number.isFinite(Date.parse(value.lastAttemptAt)) ? new Date(value.lastAttemptAt).toLocaleString() : '—',
-    lastDeliveredAt: Number.isFinite(Date.parse(value.lastDeliveredAt)) ? new Date(value.lastDeliveredAt).toLocaleString() : '—',
+    lastAttemptAt: Number.isFinite(Date.parse(value.lastAttemptAt)) ? new Date(value.lastAttemptAt).toLocaleString() : 'â€”',
+    lastDeliveredAt: Number.isFinite(Date.parse(value.lastDeliveredAt)) ? new Date(value.lastDeliveredAt).toLocaleString() : 'â€”',
     errorCode: safeCodes.includes(value.errorCode) ? value.errorCode : '',
   }
 }

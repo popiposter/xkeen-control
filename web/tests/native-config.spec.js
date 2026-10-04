@@ -240,7 +240,7 @@ test('installed geodata adds an ordered category rule only to the shared draft',
   await expect(page.getByLabel('Database file', { exact: true })).toHaveValue('geosite_vendor.dat')
   await page.locator('summary').filter({ hasText: 'Browse one database' }).click()
   await page.getByRole('button', { name: 'Search installed database', exact: true }).click()
-  await expect(page.getByText('video · category · 2 entries', { exact: true })).toBeVisible()
+  await expect(page.getByText('video Â· category Â· 2 entries', { exact: true })).toBeVisible()
   await page.getByLabel('Rule destination', { exact: true }).selectOption('outbound:vpn')
   await page.getByRole('button', { name: 'Add category rule', exact: true }).click()
   await page.getByRole('button', { name: 'Done browsing', exact: true }).click()

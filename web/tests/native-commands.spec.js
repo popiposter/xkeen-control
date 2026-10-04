@@ -70,7 +70,7 @@ test('delayed lazy console preserves every output chunk and is read-only for sta
   await page.getByRole('button', { name: 'Run native command', exact: true }).click()
   await expect(page.getByText('status: completed', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Console output', exact: true }).click()
-  await expect(page.getByText('Loading console…', { exact: true })).toBeVisible()
+  await expect(page.getByText('Loading consoleâ€¦', { exact: true })).toBeVisible()
   expect(model.reads.filter((read) => read.id && read.cursor < Number.MAX_SAFE_INTEGER)).toEqual([])
   release()
   await expect.poll(() => model.reads.some((read) => read.cursor === 32768)).toBe(true)

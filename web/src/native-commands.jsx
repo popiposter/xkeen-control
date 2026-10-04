@@ -153,19 +153,19 @@ export function NativeCommands({ csrfToken, onUnauthorized, onRefresh, jobNotifi
     <CardContent className="flex flex-col gap-4">
       <div className="grid gap-4 sm:grid-cols-2">{[
         { title: 'Service', icon: IconPlayerPlay, description: 'Run and inspect the native VPN service.', match: (id) => ['start','stop','restart','status','test-xray'].includes(id) },
-        { title: 'Updates', icon: IconRefresh, description: 'Use XKeen’s own component installers and updaters.', match: (id) => id.startsWith('update-') },
+        { title: 'Updates', icon: IconRefresh, description: 'Use XKeenвЂ™s own component installers and updaters.', match: (id) => id.startsWith('update-') },
         { title: 'Schedules', icon: IconCalendar, description: 'Configure the cron jobs maintained by XKeen.', match: (id) => id.includes('schedule') },
         { title: 'Network & tools', icon: IconTools, description: 'Native network modes, diagnostics and maintenance.', match: (id) => !['start','stop','restart','status','test-xray'].includes(id) && !id.startsWith('update-') && !id.includes('schedule') },
-      ].map((group) => <section key={group.title} className="rounded-lg border p-4"><h3 className="flex items-center gap-2 font-semibold"><group.icon className="text-info" />{group.title}</h3><p className="my-2 text-sm text-muted-foreground">{group.description}</p><div className="flex flex-wrap gap-2">{catalog.filter((command) => group.match(command.action)).map((command) => <Button key={command.action} aria-label={command.label} variant="outline" disabled={busy} onClick={() => choose(command)}>{command.label}{command.interactive && <span className="text-xs text-muted-foreground"> � console</span>}</Button>)}</div></section>)}</div>
+      ].map((group) => <section key={group.title} className="rounded-lg border p-4"><h3 className="flex items-center gap-2 font-semibold"><group.icon className="text-info" />{group.title}</h3><p className="my-2 text-sm text-muted-foreground">{group.description}</p><div className="flex flex-wrap gap-2">{catalog.filter((command) => group.match(command.action)).map((command) => <Button key={command.action} aria-label={command.label} variant="outline" disabled={busy} onClick={() => choose(command)}>{command.label}{command.interactive && <span className="text-xs text-muted-foreground"> · console</span>}</Button>)}</div></section>)}</div>
       {selected && <form onSubmit={start} className="flex flex-col gap-3">
-        <p>{selected.label}{selected.interactive ? ' � answer the native prompts in the console.' : ''}</p>
+        <p>{selected.label}{selected.interactive ? ' — answer the native prompts in the console.' : ''}</p>
         {selected.parameter && <Field><FieldLabel htmlFor="native-parameter">{selected.parameter === 'state' ? 'State: on or off' : selected.parameter === 'version' ? 'Version or auto' : 'Ports/ranges, for example 80 443 1000:2000'}</FieldLabel><Input id="native-parameter" value={parameter} maxLength={512} onChange={(event) => setParameter(event.target.value)} disabled={busy} /></Field>}
         <div className="flex gap-2"><Button type="submit" disabled={busy}>Run native command</Button><Button type="button" variant="outline" disabled={pending} onClick={() => setSelected(null)}>Cancel</Button></div>
       </form>}
       {notice && <p role="status">{notice}</p>}
       {unknown && job && <div className="flex flex-col gap-2"><p>Review the console and current XKeen status before enabling another change. This does not repeat the interrupted command.</p><Button variant="outline" onClick={() => refresh.current?.()}>Refresh current status</Button><Button variant="outline" disabled={pending} onClick={resolveInspection}>I inspected XKeen; allow new actions</Button></div>}
       {job && <div className="flex flex-wrap items-center gap-2"><span>{job.action}: {job.state}</span><Button variant="outline" onClick={openConsole}>Console output</Button>{job.state === 'running' && <Button variant="outline" onClick={cancel}>Interrupt command</Button>}</div>}
-      {consoleOpen && job && <Suspense fallback={<p>Loading console�</p>}><NativeConsole key={job.id} chunk={chunk} interactive={job.interactive && job.state === 'running' && !inputFault} onInput={input} onResize={resize} onCancel={cancel} onReady={() => setConsoleReady(true)} onConsumed={() => consumed.current?.()} /></Suspense>}
+      {consoleOpen && job && <Suspense fallback={<p>Loading console…</p>}><NativeConsole key={job.id} chunk={chunk} interactive={job.interactive && job.state === 'running' && !inputFault} onInput={input} onResize={resize} onCancel={cancel} onReady={() => setConsoleReady(true)} onConsumed={() => consumed.current?.()} /></Suspense>}
     </CardContent>
   </Card>
 }

@@ -117,7 +117,7 @@ test('loads the cold empty release version without a metadata check', async ({ p
   await revealSystemSettings(page, 'Access')
   await expect(page.getByRole('heading', { name: '127.0.0.1:8787', exact: true })).toBeVisible()
   await expect(page.getByLabel('New management host')).toBeEnabled()
-  await expect(page.getByText('Reading listener…', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Reading listenerâ€¦', { exact: true })).toHaveCount(0)
   expect(state.requests.filter(({ method }) => method === 'POST')).toHaveLength(0)
 })
 
