@@ -22,8 +22,12 @@ type NativeQualityCost struct {
 // including after the panel stops. Callers must preserve selector/fallback and
 // validate the complete config through the native editor before explicit Apply.
 func NativeQualityCosts(result AdaptiveResult, now time.Time, pool []string) ([]NativeQualityCost, error) {
+	maxAttempts := AdaptiveMaxCandidates
+	if result.NativeQuality {
+		maxAttempts = NativeQualityMaxAttempts
+	}
 	invalid := errors.New("fresh complete quality measurements required")
-	if result.Generation == 0 || result.State != "completed" || result.StartedAt.IsZero() || result.CompletedAt.Before(result.StartedAt) || result.CompletedAt.Sub(result.StartedAt) > AdaptiveMaxGenerationWallTime+AdaptiveCleanupReserve || result.CompletedAt.IsZero() || result.CompletedAt.After(now) || now.Sub(result.CompletedAt) > 30*time.Minute || len(result.Candidates) > AdaptiveMaxCandidates || result.ShortlistCount != len(result.Candidates) || len(pool) > MaxRegistryNodes {
+	if result.Generation == 0 || result.State != "completed" || result.StartedAt.IsZero() || result.CompletedAt.Before(result.StartedAt) || result.CompletedAt.Sub(result.StartedAt) > AdaptiveMaxGenerationWallTime+AdaptiveCleanupReserve || result.CompletedAt.IsZero() || result.CompletedAt.After(now) || now.Sub(result.CompletedAt) > 30*time.Minute || len(result.Candidates) > maxAttempts || result.ShortlistCount != len(result.Candidates) || len(pool) > MaxRegistryNodes {
 		return nil, invalid
 	}
 	known := make(map[string]bool, len(pool))

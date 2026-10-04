@@ -1,3 +1,4 @@
+import { IconGauge, IconDeviceFloppy, IconRefresh } from '@tabler/icons-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from './components/ui/button.jsx'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './components/ui/card.jsx'
@@ -68,15 +69,15 @@ export function NativeQualitySection({ csrfToken, onUnauthorized, busy, onStaged
     } finally { if (mounted.current && ticket === epoch.current) setWorking(false) }
   }
   return <Card>
-    <CardHeader><CardTitle>Node quality</CardTitle><CardDescription>Compare download and upload speed, then let Xray select a healthy node using those measurements and latency.</CardDescription></CardHeader>
+    <CardHeader><CardTitle>Speed test</CardTitle><CardDescription>Compare download and upload speed, then let Xray select a healthy node using those measurements and latency.</CardDescription></CardHeader>
     <CardContent className="flex flex-col gap-4">
       {error && <Alert variant="destructive"><AlertTitle>Check the current state</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
-      <p>One comparison checks the current node, up to four low-latency alternatives and one rotating alternative. Maximum 144 MiB and three minutes. Results describe this sample and test provider.</p>
-      <p>Automatic comparison runs every six hours, with refreshes coalesced into that interval. Up to 576 MiB per day. Measurements do not restart Xray or apply settings; save and apply a recommendation when needed.</p>
-      <p role="status">{status?.state === 'running' ? `Comparing nodes (${status.progress?.candidates?.length || 0} measured)…` : status?.state === 'completed' ? 'Comparison complete' : status?.state === 'consumed' ? 'Recommendation saved to Routing. Inspect the configuration there for its application state.' : status?.state === 'failed' || status?.state === 'cleanup-pending' || status?.state === 'cancelled' ? 'Comparison did not complete. Inspect diagnostics before starting another.' : 'Ready to compare nodes'}</p>
+      <p>Each test reads the latest native health observations and starts with the six enabled, healthy nodes with the lowest latency, independent of the saved weights or current selection. An unsuccessful measurement is replaced by the next candidate in latency order. Up to 12 attempts within the same 144 MiB / three-minute budget; the result may be partial.</p>
+      <p>Automatic speed tests run every six hours, with subscription refreshes coalesced into that interval. Up to 576 MiB per day. Measurements do not restart Xray or apply settings; save and apply a recommendation when needed.</p>
+      <p role="status">{status?.state === 'running' ? `Testing nodes (${status.progress?.validCount || 0} successful, ${status.progress?.candidates?.length || 0} attempted)…` : status?.state === 'completed' ? `Speed test complete: ${status.progress?.validCount || 0} successful${status.progress?.reasonCode === 'generation-budget' ? ' (budget reached)' : ''}` : status?.state === 'consumed' ? 'Recommendation saved to Routing. Inspect the configuration there for its application state.' : status?.state === 'failed' || status?.state === 'cleanup-pending' || status?.state === 'cancelled' ? 'Speed test did not complete. Inspect diagnostics before starting another.' : 'Ready to test node speeds'}</p>
       {(status?.progress?.candidates?.length > 0) && <Table><TableHeader><TableRow><TableHead>Node</TableHead><TableHead>Latency</TableHead><TableHead>Download</TableHead><TableHead>Upload</TableHead></TableRow></TableHeader><TableBody>{status.progress.candidates.map((node) => <TableRow key={node.tag}><TableCell>{nodesByTag?.get(node.tag)?.name || node.tag}</TableCell><TableCell>{node.rttMs} ms</TableCell><TableCell>{node.valid ? rate(node.downloadBps) : 'Unavailable'}</TableCell><TableCell>{node.valid ? rate(node.uploadBps) : 'Unavailable'}</TableCell></TableRow>)}</TableBody></Table>}
       <p>Saving creates a pending routing change. Review, discard or apply it in the configuration editor. Xray handles failover even while the panel is stopped; existing connections may need to reconnect.</p>
     </CardContent>
-    <CardFooter className="flex flex-wrap gap-2"><Button disabled={!status || busy || working || status.state === 'running'} onClick={() => act('start')}>Compare nodes</Button><Button variant="outline" disabled={!status?.canStage || working || busy} onClick={() => act('stage')}>Save recommendation</Button><Button variant="ghost" disabled={working} onClick={refresh}>Refresh</Button></CardFooter>
+    <CardFooter className="flex flex-wrap gap-2"><Button disabled={!status || busy || working || status.state === 'running'} onClick={() => act('start')}><IconGauge data-icon="inline-start" />Run speed test</Button><Button variant="outline" disabled={!status?.canStage || working || busy} onClick={() => act('stage')}><IconDeviceFloppy data-icon="inline-start" />Save recommendation</Button><Button variant="ghost" disabled={working} onClick={refresh}><IconRefresh data-icon="inline-start" />Refresh</Button></CardFooter>
   </Card>
 }

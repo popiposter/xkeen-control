@@ -7,8 +7,10 @@ in [Node lifecycle](NODE-LIFECYCLE.md), including installed settings and limitat
 
 Native quality comparison: authenticated GET `/api/v1/performance/quality`,
 POST `/start` with `{}`, POST `/stage` with the comparison's exact config digest.
-These use the existing diagnostic lifecycle and panel lease; fixed six-node,
-144MiB/180s measurements remain RAM-only. Stage consumes the recommendation,
+These use the existing diagnostic lifecycle and panel lease. Each speed test reads
+fresh native health, starts with the six lowest-latency eligible nodes, then tries
+the next candidates after failed measurements, up to twelve attempts within the
+unchanged 144MiB/180s budget. Measurements remain RAM-only. Stage consumes the recommendation,
 validates and saves only native routing strategy through the existing pending
 config editor. It never restarts or writes an API override. The GUI replaces
 inactive adaptive-policy controls; native Xray owns selection and failover.

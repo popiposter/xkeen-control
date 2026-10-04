@@ -59,3 +59,33 @@ and narrow layouts. Any new DNS Apply must have a fresh baseline, private
 snapshot, recorded intent and independent native health/config readback.
 Never replay an unknown command/Apply or any previous delivery. Retain the
 previous panel and native config generation for explicit rollback.
+
+## 2026-10-04 operator UX / speed-test revision
+
+Each speed-test Start reads the native API now, takes fresh (<=2min), alive enabled
+pool members with RTT<=750ms, ordered RTT/tag. Take first6 regardless of saved
+weights/current selection; freeze next6 as replacements. Aim for6valid down/up
+results, max12attempts, retaining failed rows. Share original144MiB/180s+cleanup
+ceiling, count failed bytes; stop replacements on budget, disclose partial results.
+No auto-stage, restart or selection write. Button becomes Run speed test.
+
+Nodes: numeric rank/down/up sorting with missing samples last in both directions;
+disabled nodes visually muted. Config actions get icons while retaining labels.
+Native commands: rich keyboard/disabled-aware explanations, meaningful groups and
+icons; auto-open command-bound console even for read-only commands. Existing ANSI
+colour rendering is preserved, terminal follows theme. Read actual recognized native
+cron jobs (geodata/speed balancer) into safe projections, never expose arbitrary
+crontab text or add a cron writer. Native commands remain unmodified.
+
+System: left-aligned labels, bounded controls, distinct notification/channel/install
+groups. Development builds must not be labelled signed release commits.
+Metadata-only node/subscription Apply retains existing snapshot/intent/drift checks,
+but compares parsed runtime output with numeric precision preserved; when identical,
+save only registry, leave runtime bytes and PID untouched. All actual native runtime
+changes retain full validation and normal activation. Covers labels, subscription
+metadata and edits to disabled profiles; no new transaction authority.
+
+Verification: focused Go fixtures for shortlist/replacement/budget/no-restart/safe
+cron; grouped changed UI workflows; one final exact FULL before new panel-only
+installation and visual readback. Preserve current native DNS/routing/auth/registry,
+no prior router action replay. No new release/merge. Stock XKeen stays unmodified.

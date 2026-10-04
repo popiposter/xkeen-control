@@ -10,7 +10,7 @@ const complete = () => ({ state: 'completed', digest: 'a'.repeat(64), generation
 async function open(page) {
   await page.goto('/')
   await (await revealNavigation(page)).getByRole('button', { name: 'Performance', exact: true }).click()
-  await expect(page.getByText('Node quality', { exact: true })).toBeVisible()
+  await expect(page.getByText('Speed test', { exact: true })).toBeVisible()
 }
 
 test('compares and stages once without applying or writing a selection override', async ({ page }) => {
@@ -26,7 +26,7 @@ test('compares and stages once without applying or writing a selection override'
     await route.fulfill({ json: { digest: 'b'.repeat(64), restartRequired: true } })
   })
   await open(page)
-  await page.getByRole('button', { name: 'Compare nodes', exact: true }).click()
+  await page.getByRole('button', { name: 'Run speed test', exact: true }).click()
   await expect(page.getByText('800.0 Mbps', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Save recommendation', exact: true }).click()
   await expect(page.getByText('Routing configuration', { exact: true })).toBeVisible()

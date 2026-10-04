@@ -3,6 +3,7 @@ package nodes
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -120,6 +121,7 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 	if err != nil {
 		return err
 	}
+	runtimeChanged := !previousOutboundsExists || !nativeDocumentsEqual(previousOutbounds, rendered)
 	candidateDir, err := os.MkdirTemp("", "xkeen-node-candidate-")
 	if err != nil {
 		return errors.New("unable to create candidate directory")
@@ -133,7 +135,7 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 	if err := atomicWrite(filepath.Join(candidateDir, "04_outbounds.json"), rendered, 0o600); err != nil {
 		return err
 	}
-	if t.Activator != nil {
+	if runtimeChanged && t.Activator != nil {
 		validationContext, cancelValidation := context.WithTimeout(transactionContext, budget.CandidateValidation)
 		validationErr := t.Activator.ValidateCandidate(validationContext, candidateDir)
 		cancelValidation()
@@ -180,6 +182,23 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 			settled = true
 			return
 		}
+		if !runtimeChanged {
+			var restoreErr error
+			if previousRegistryExists {
+				restoreErr = t.Store.Save(previousRegistry)
+			} else {
+				restoreErr = os.Remove(t.Store.Path)
+				if errors.Is(restoreErr, os.ErrNotExist) {
+					restoreErr = nil
+				}
+			}
+			if restoreErr != nil {
+				err = &RollbackError{Cause: err, Recovery: restoreErr}
+				return
+			}
+			settled = true
+			return
+		}
 		if errors.Is(err, xkeen.ErrLifecycleUnknown) {
 			// Keep both the current candidate and previous snapshot untouched.
 			// Native hooks may not have settled after
@@ -207,6 +226,9 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 	mutated = true
 	if err := t.Store.Save(registry); err != nil {
 		return err
+	}
+	if !runtimeChanged {
+		return nil
 	}
 	if err := atomicWrite(t.ActiveOutboundsPath, rendered, 0o600); err != nil {
 		return err
@@ -1124,4 +1146,34 @@ func verifyEmptyXrayBalancerRuntime(ctx context.Context, address, balancerTag st
 		case <-ticker.C:
 		}
 	}
+}
+
+// Compare parsed JSONC data, not whitespace: metadata changes must not rewrite
+// or restart an identical native runtime configuration.
+func nativeDocumentsEqual(a, b []byte) bool {
+	left, err := configjson.DecodeObject(a)
+	if err != nil {
+		return false
+	}
+	right, err := configjson.DecodeObject(b)
+	if err != nil {
+		return false
+	}
+	var l, r any
+	la, err := json.Marshal(left)
+	if err != nil {
+		return false
+	}
+	ra, err := json.Marshal(right)
+	if err != nil {
+		return false
+	}
+	ld := json.NewDecoder(bytes.NewReader(la))
+	ld.UseNumber()
+	rd := json.NewDecoder(bytes.NewReader(ra))
+	rd.UseNumber()
+	if ld.Decode(&l) != nil || rd.Decode(&r) != nil {
+		return false
+	}
+	return reflect.DeepEqual(l, r)
 }

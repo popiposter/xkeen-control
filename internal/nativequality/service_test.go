@@ -35,13 +35,14 @@ func TestStopClosesAdmissionAndWaitsForCleanup(t *testing.T) {
 	}
 }
 
-func TestPrepareNativeCurrentFirstExploresWithoutOverride(t *testing.T) {
+func TestPrepareUsesLowestFreshLatencyAndOrderedFallbacks(t *testing.T) {
 	now := time.Now().UTC()
 	s := xrayapi.Snapshot{APIReachable: true, RoutingReachable: true, ObservatoryReachable: true, Balancer: xrayapi.BalancerState{NativeSelected: "proxy-current"}}
 	pool := []string{"proxy-current", "proxy-a", "proxy-b", "proxy-c", "proxy-d", "proxy-e", "proxy-f", "proxy-dead", "proxy-stale"}
 	for i, tag := range pool {
 		s.OutboundHealth = append(s.OutboundHealth, xrayapi.OutboundHealth{Tag: tag, Alive: true, DelayMS: int64(10 + i*10), LastTry: now})
 	}
+	s.OutboundHealth[0].DelayMS = 700
 	s.OutboundHealth[7].Alive = false
 	s.OutboundHealth[8].LastTry = now.Add(-3 * time.Minute)
 	first, err := prepare(s, pool, 1, 0, now)
@@ -52,8 +53,8 @@ func TestPrepareNativeCurrentFirstExploresWithoutOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Candidates) != 6 || first.Candidates[0].Tag != "proxy-current" || first.Candidates[5].Tag == second.Candidates[5].Tag {
-		t.Fatalf("bad bounded exploration: %+v %+v", first, second)
+	if len(first.Candidates) != 6 || first.Candidates[0].Tag != "proxy-a" || first.Candidates[5].Tag != "proxy-f" || second.Candidates[5].Tag != "proxy-f" || len(first.Fallbacks) != 1 || first.Fallbacks[0].Tag != "proxy-current" {
+		t.Fatalf("bad latency order or replacement queue: %+v %+v", first, second)
 	}
 	for _, n := range first.Candidates {
 		if n.Tag == "proxy-dead" || n.Tag == "proxy-stale" || n.Samples != 0 || n.HealthPenalty != 0 {
@@ -63,6 +64,20 @@ func TestPrepareNativeCurrentFirstExploresWithoutOverride(t *testing.T) {
 	s.Balancer.Override = "proxy-current"
 	if _, err := prepare(s, pool, 3, 0, now); err == nil {
 		t.Fatal("override bypass admitted")
+	}
+}
+
+func TestReplacementRetainsHealthEvidenceWithoutReplacingFreshLatency(t *testing.T) {
+	generation := c1.AdaptiveGeneration{
+		Candidates: []c1.AdaptiveCandidateInput{{Tag: "proxy-a", RTTMS: 20}},
+		Fallbacks:  []c1.AdaptiveCandidateInput{{Tag: "proxy-b", RTTMS: 80}},
+	}
+	retainHealthEvidence(&generation, map[string]c1.AdaptiveCandidateInput{
+		"proxy-a": {Samples: 3, HealthPenalty: 1.2},
+		"proxy-b": {Samples: 8, HealthPenalty: 2.5, RTTMS: 200},
+	})
+	if generation.Candidates[0].Samples != 3 || generation.Candidates[0].HealthPenalty != 1.2 || generation.Fallbacks[0].Samples != 8 || generation.Fallbacks[0].HealthPenalty != 2.5 || generation.Fallbacks[0].RTTMS != 80 {
+		t.Fatalf("lost retained replacement evidence or fresh latency: %+v", generation)
 	}
 }
 

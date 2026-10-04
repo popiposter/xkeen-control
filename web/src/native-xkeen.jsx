@@ -1,3 +1,4 @@
+import { IconCalendar } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { NativeCommands } from './native-commands'
@@ -22,9 +23,21 @@ export function NativeXkeenSection({ facts, onRefresh, onOpenSystem, csrfToken, 
     <NativeXkeenStatus facts={facts} />
     <Card><CardHeader><CardTitle><h2>XKeen and components</h2></CardTitle><CardDescription>Updates and their schedules are managed by XKeen.</CardDescription></CardHeader><CardContent className="flex flex-col gap-4">
       <dl className="system-facts-grid"><div><dt>Core</dt><dd>{facts?.core || 'Not detected'}</dd></div><div><dt>Geodata files</dt><dd>{facts?.geodataFiles ?? 'Unknown'}</dd></div><div><dt>Native geodata schedule</dt><dd>{facts?.geodataCron === 'available' ? 'Configured in XKeen' : facts?.geodataCron === 'missing' ? 'Not configured' : 'Unknown'}</dd></div></dl>
+      <div className="flex flex-col gap-2"><h3 className="flex items-center gap-2 font-medium"><IconCalendar className="text-info" />Native schedules</h3>{facts?.schedules?.length ? facts.schedules.map((task, i) => <div key={`${task.action}-${i}`} className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-3"><strong>{task.action === 'update-geodata' ? 'Geodata updates' : 'Native speed test'}</strong><span>{scheduleLabel(task.expression)}</span><code>{task.expression}</code></div>) : <p className="text-sm text-muted-foreground">{facts?.geodataCron === 'unknown' ? 'Schedule could not be read.' : 'No supported native cron jobs found.'}</p>}<p className="text-xs text-muted-foreground">Times use the router’s local timezone. Change these schedules with the native commands below.</p></div>
       <div><Button variant="outline" onClick={onRefresh}>Refresh status</Button></div>
     </CardContent></Card>
     {csrfToken && <NativeCommands csrfToken={csrfToken} onUnauthorized={onUnauthorized} onRefresh={onRefresh} jobNotification={jobNotification} />}
     <Card><CardHeader><CardTitle>Panel updates</CardTitle><CardDescription>XKeen Control updates are separate from native components.</CardDescription></CardHeader><CardContent><Button variant="outline" onClick={onOpenSystem}>Open panel settings</Button></CardContent></Card>
   </div>
+}
+
+function scheduleLabel(expression) {
+  const [minute, hour, day, month, weekday] = expression.split(' ')
+  if (/^\d+$/.test(minute) && /^\d+$/.test(hour) && day === '*' && month === '*') {
+    const time = `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`
+    if (weekday === '*') return `Daily at ${time}`
+    const names = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']
+    if (/^[0-7]$/.test(weekday)) return `${names[Number(weekday)]} at ${time}`
+  }
+  return 'Custom cron schedule'
 }

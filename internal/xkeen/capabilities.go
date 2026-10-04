@@ -25,25 +25,31 @@ const (
 
 // Capabilities describes observed files, not a working tunnel or permission to
 // execute a command. Discovery never invokes native self-heal/install logic.
+type NativeSchedule struct {
+	Action     string `json:"action"`
+	Expression string `json:"expression"`
+}
+
 type Capabilities struct {
-	Installation         CapabilityState `json:"installation"`
-	Version              string          `json:"version,omitempty"`
-	Channel              string          `json:"channel,omitempty"`
-	Core                 string          `json:"core,omitempty"`
-	Lifecycle            CapabilityState `json:"lifecycle"`
-	Configuration        CapabilityState `json:"configuration"`
-	ConfigFiles          int             `json:"configFiles"`
-	GeodataFiles         int             `json:"geodataFiles"`
-	GeodataCron          CapabilityState `json:"geodataCron"`
-	NativeHook           CapabilityState `json:"nativeHook"`
-	KernelModules        CapabilityState `json:"kernelModules"`
-	XrayRunning          bool            `json:"xrayRunning"`
-	APIConfigured        bool            `json:"apiConfigured"`
-	PoolConfigured       bool            `json:"poolConfigured"`
-	PanelIntegration     CapabilityState `json:"panelIntegration"`
-	NeedsOnboarding      bool            `json:"needsOnboarding"`
-	SpeedBalancer        CapabilityState `json:"speedBalancer"`
-	SpeedBalancerEnabled bool            `json:"speedBalancerEnabled"`
+	Schedules            []NativeSchedule `json:"schedules,omitempty"`
+	Installation         CapabilityState  `json:"installation"`
+	Version              string           `json:"version,omitempty"`
+	Channel              string           `json:"channel,omitempty"`
+	Core                 string           `json:"core,omitempty"`
+	Lifecycle            CapabilityState  `json:"lifecycle"`
+	Configuration        CapabilityState  `json:"configuration"`
+	ConfigFiles          int              `json:"configFiles"`
+	GeodataFiles         int              `json:"geodataFiles"`
+	GeodataCron          CapabilityState  `json:"geodataCron"`
+	NativeHook           CapabilityState  `json:"nativeHook"`
+	KernelModules        CapabilityState  `json:"kernelModules"`
+	XrayRunning          bool             `json:"xrayRunning"`
+	APIConfigured        bool             `json:"apiConfigured"`
+	PoolConfigured       bool             `json:"poolConfigured"`
+	PanelIntegration     CapabilityState  `json:"panelIntegration"`
+	NeedsOnboarding      bool             `json:"needsOnboarding"`
+	SpeedBalancer        CapabilityState  `json:"speedBalancer"`
+	SpeedBalancerEnabled bool             `json:"speedBalancerEnabled"`
 }
 
 // Root is only an operator/test filesystem root; it is never request input.
@@ -118,10 +124,9 @@ func (d Discovery) Inspect(ctx context.Context) Capabilities {
 	}
 	if data, state := d.read("opt/var/spool/cron/crontabs/root", maxCronSize); state == CapabilityAvailable {
 		r.GeodataCron = CapabilityMissing
-		for _, line := range strings.Split(string(data), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) >= 7 && !strings.HasPrefix(fields[0], "#") &&
-				(fields[5] == "/opt/sbin/xkeen" || fields[5] == "xkeen") && fields[6] == "-ug" {
+		r.Schedules = readNativeSchedules(data)
+		for _, task := range r.Schedules {
+			if task.Action == "update-geodata" {
 				r.GeodataCron = CapabilityAvailable
 			}
 		}
@@ -316,4 +321,26 @@ func (d Discovery) entries(path string, limit int) ([]os.DirEntry, error) {
 		return nil, errors.New("native directory exceeds supported bound")
 	}
 	return entries, nil
+}
+
+// Project only recognized native cron invocations, never arbitrary commands,
+// comments, credentials, environment assignments or shell fragments.
+func readNativeSchedules(data []byte) []NativeSchedule {
+	pattern := regexp.MustCompile(`^([0-9*/,-]+\s+[0-9*/,-]+\s+[0-9*/,-]+\s+[0-9*/,-]+\s+[0-9*/,-]+)\s+(?:/opt/sbin/)?xkeen\s+(-ug|-sbt)\s*(?:#.*)?$`)
+	var tasks []NativeSchedule
+	for _, line := range strings.Split(string(data), "\n") {
+		match := pattern.FindStringSubmatch(strings.TrimSpace(line))
+		if len(match) != 3 || len(match[1]) > 128 {
+			continue
+		}
+		action := "update-geodata"
+		if match[2] == "-sbt" {
+			action = "native-speed-test"
+		}
+		tasks = append(tasks, NativeSchedule{Action: action, Expression: strings.Join(strings.Fields(match[1]), " ")})
+		if len(tasks) == 32 {
+			break
+		}
+	}
+	return tasks
 }

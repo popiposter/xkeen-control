@@ -266,11 +266,21 @@ async function prepare(page) {
 
 test('quality columns, hidden source and disabled action hints are usable', async ({ page }) => {
   const prepared=await prepare(page); page.__nodesIssues=prepared.issues
-  await page.route('**/api/v1/performance/quality',(route)=>json(route,{state:'completed',canStage:true,ranking:[{tag:prepared.state.nodes[0].outboundTag,rank:1,cost:1}],progress:{candidates:[{tag:prepared.state.nodes[0].outboundTag,valid:true,downloadBps:10e6,uploadBps:2e6}]}}))
+  await page.route('**/api/v1/performance/quality',(route)=>json(route,{state:'completed',canStage:true,ranking:[{tag:prepared.state.nodes[0].outboundTag,rank:2,cost:2},{tag:prepared.state.nodes[2].outboundTag,rank:1,cost:1}],progress:{candidates:[{tag:prepared.state.nodes[0].outboundTag,valid:true,downloadBps:10e6,uploadBps:2e6},{tag:prepared.state.nodes[2].outboundTag,valid:true,downloadBps:20e6,uploadBps:4e6}]}}))
   await openNodes(page)
   await expect(page.getByRole('columnheader',{name:'Source',exact:true})).toHaveCount(0)
   await expect(page.getByRole('columnheader',{name:'Quality rank',exact:true})).toBeVisible()
   await expect(page.getByRole('cell',{name:'80.0 Mbps',exact:true})).toBeVisible()
+  const firstRow = page.locator('.nodes-table tbody tr').first()
+  await page.getByRole('button',{name:'Download',exact:true}).click()
+  await expect(firstRow).toContainText('Node 001')
+  await page.getByRole('button',{name:'Download',exact:true}).click()
+  await expect(firstRow).toContainText('Node 003')
+  await page.getByRole('button',{name:'Upload',exact:true}).click()
+  await expect(firstRow).toContainText('Node 001')
+  await page.getByRole('button',{name:'Quality rank',exact:true}).click()
+  await expect(firstRow).toContainText('Node 003')
+  await expect(page.getByRole('row').filter({hasText:'Node 002'})).toHaveClass(/node-disabled/)
   await page.getByRole('button',{name:'Columns',exact:true}).click()
   await page.getByRole('menuitemcheckbox',{name:'Source',exact:true}).click()
   await page.keyboard.press('Escape')

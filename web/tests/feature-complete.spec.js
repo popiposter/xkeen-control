@@ -92,7 +92,7 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
   await page.getByRole('checkbox', { name: 'Select Feature test node', exact: true }).check()
   await expect(page.getByRole('button', { name: 'Enable', exact: true })).toBeEnabled()
   await openSection(page, 'Performance')
-  await expect(page.getByRole('button', { name: 'Compare nodes' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Run speed test' })).toBeEnabled()
   await openSection(page, 'Components / Updates')
   await expect(page.getByRole('heading', { name: 'XKeen and components' })).toBeVisible()
   await openSection(page, 'Backup & Restore')
@@ -117,8 +117,8 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
     await expect(page.getByRole('button', { name: 'Enable', exact: true })).toBeDisabled()
     await expect(page.getByText('Feature test node', { exact: true })).toBeVisible()
     await openSection(page, 'Performance')
-    await expect(page.getByRole('button', { name: 'Compare nodes' })).toBeDisabled()
-    await expect(page.getByText('Node quality', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Run speed test' })).toBeDisabled()
+    await expect(page.getByText('Speed test', { exact: true })).toBeVisible()
     await openSection(page, 'Components / Updates')
     await expect(page.getByRole('heading', { name: 'XKeen and components' })).toBeVisible()
     await openSection(page, 'Backup & Restore')
@@ -283,7 +283,7 @@ test('keeps safe projections secretless, browser storage empty, and the Dashboar
     ['Nodes', page.getByText('Feature test node', { exact: true })],
     ['Routing', page.getByText('Routing configuration', { exact: true })],
     ['DNS', page.getByText('DNS configuration', { exact: true })],
-    ['Performance', page.getByText('Node quality', { exact: true })],
+    ['Performance', page.getByText('Speed test', { exact: true })],
     ['Components / Updates', page.getByRole('heading', { name: 'XKeen and components', exact: true })],
     ['Backup & Restore', page.getByLabel('Backup bundle')],
     ['System / Panel', page.getByRole('heading', { name: '127.0.0.1:8787', exact: true })],

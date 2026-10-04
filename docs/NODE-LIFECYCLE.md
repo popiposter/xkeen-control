@@ -60,16 +60,19 @@ still consumes the6h slot. Maximum automatic transfer budget576MiB/day in a cont
 run; panel restarts reset the RAM schedule. No automatic Stage, Apply, native restart
 or override: results are a recommendation, applied explicitly through the editor.
 Eligible nodes need
-fresh native observations (<=2min), alive and RTT<=750ms. Current native target is
-first, then up to four lowest-RTT alternatives and one rotating exploration candidate.
+fresh native observations (<=2min), alive and RTT<=750ms. Each run reads a new native API snapshot and takes the six lowest-RTT eligible
+nodes, independent of the current selection and saved weights. Up to six further
+nodes are frozen in the same latency order as replacements for failed measurements.
 This is a shortlist, not a measurement of every node or proof of the global best.
 
 Existing bounded diagnostics temporarily target each candidate and clean their
 owned temporary diagnostic state; they do not replace the production selection.
 Download stages1/3/4/8MiB (max16), upload1/3/4MiB (max8),8s per stage,30s per node;
 each direction stops once a complete stage lasts>=1s. Aggregate complete byte/time
-rates require>=250ms; incomplete transfers fail. Whole comparison max6nodes,
-144MiB/180s plus3s cleanup. Download then upload; do not infer packet loss from
+rates require>=250ms; incomplete transfers fail. The target is six successful measurements with at most12attempts, sharing the
+unchanged144MiB/180s plus3s cleanup ceiling. All failed bytes count. Replacements
+stop at that ceiling; at least two valid results may form an explicitly partial
+recommendation. The action is named Run speed test. Download then upload; do not infer packet loss from
 HTTP failures. Unique retained native observations contribute failure-frequency and
 median absolute RTT-deviation penalties after sufficient successful observations.
 
@@ -114,3 +117,10 @@ Sources for pinned native semantics:
 [Observatory](https://raw.githubusercontent.com/XTLS/Xray-core/v26.9.30/app/observatory/observer.go).
 Panel sources: internal/nodes/refresher.go, operations.go, transaction.go;
 internal/nativequality/service.go; internal/c1/adaptive.go and native_quality.go.
+
+
+Metadata-only node/subscription commits retain the same intent, drift check and
+rollback snapshot. When parsed native outbounds are unchanged, save only the
+registry: no Xray validation, outbounds rewrite or service restart. Display names,
+subscription labels/URLs/cadence and disabled-profile edits can qualify; actual
+runtime changes still require full validation and normal activation.

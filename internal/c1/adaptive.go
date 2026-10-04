@@ -21,6 +21,7 @@ const (
 	AdaptiveEarlyStopDuration           = time.Second
 	AdaptiveShortlistLimit              = 5
 	AdaptiveMaxCandidates               = 6
+	NativeQualityMaxAttempts            = 12
 	AdaptiveMaxGenerationBytes          = 144 * MiB
 	AdaptiveMaxGenerationWallTime       = 180 * time.Second
 	AdaptiveMaximumRTTMS                = 750
@@ -69,6 +70,8 @@ type AdaptiveCandidate = AdaptiveCandidateInput
 // AdaptiveGeneration freezes all selection inputs before any fixed transfer
 // starts. It deliberately contains no endpoint, profile or registry material.
 type AdaptiveGeneration struct {
+	NativeQuality bool
+	Fallbacks     []AdaptiveCandidateInput
 	Generation    uint64
 	StartedAt     time.Time
 	CurrentTarget string
@@ -88,6 +91,7 @@ type AdaptiveCandidateResult struct {
 }
 
 type AdaptiveResult struct {
+	NativeQuality  bool
 	Generation     uint64
 	StartedAt      time.Time
 	CompletedAt    time.Time
@@ -120,6 +124,7 @@ type AdaptiveCandidateStatus struct {
 // AdaptivePerformanceStatus is bounded, RAM-only status for the scheduled
 // adaptive quality generation. It has no run-now or configuration surface.
 type AdaptivePerformanceStatus struct {
+	NativeQuality  bool                      `json:"-"`
 	State          string                    `json:"state"`
 	NextRunAt      time.Time                 `json:"nextRunAt"`
 	StartedAt      time.Time                 `json:"startedAt,omitempty"`
@@ -169,6 +174,7 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 	}
 	started := adaptiveNow(r)
 	result := AdaptiveResult{
+		NativeQuality:  generation.NativeQuality,
 		Generation:     generation.Generation,
 		StartedAt:      started,
 		CurrentTarget:  generation.CurrentTarget,
@@ -178,10 +184,15 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 	status := AdaptivePerformanceStatus{
 		State:          "running",
 		StartedAt:      started,
+		NativeQuality:  generation.NativeQuality,
 		Generation:     generation.Generation,
 		CurrentTarget:  safeTag(generation.CurrentTarget),
 		ShortlistCount: len(generation.Candidates),
 		Candidates:     adaptiveInputStatuses(generation.Candidates),
+	}
+	candidateLimit := AdaptiveMaxCandidates
+	if generation.NativeQuality {
+		candidateLimit = NativeQualityMaxAttempts
 	}
 	emit := func() {
 		if publish != nil {
@@ -195,7 +206,7 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 		status.CompletedAt = result.CompletedAt
 		status.ValidCount = result.ValidCount
 		status.ReasonCode = result.ReasonCode
-		status.Candidates = adaptiveResultStatuses(result.Candidates)
+		status.Candidates = adaptiveResultStatuses(result.Candidates, candidateLimit)
 		emit()
 		return result
 	}
@@ -213,7 +224,11 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 
 	generationContext, cancelGeneration := context.WithTimeout(parent, AdaptiveMaxGenerationWallTime)
 	defer cancelGeneration()
-	for _, input := range generation.Candidates {
+	queue := append(append([]AdaptiveCandidateInput(nil), generation.Candidates...), generation.Fallbacks...)
+	for _, input := range queue {
+		if generation.NativeQuality && countAdaptiveValid(result.Candidates) >= len(generation.Candidates) {
+			break
+		}
 		if err := parent.Err(); err != nil {
 			result.State = "cancelled"
 			result.ReasonCode = AdaptiveReasonCancelled
@@ -221,11 +236,17 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 		}
 		if generationContext.Err() != nil {
 			result.State = "failed"
+			if generation.NativeQuality && countAdaptiveValid(result.Candidates) >= 2 {
+				result.State = "completed"
+			}
 			result.ReasonCode = AdaptiveReasonGenerationBudget
 			break
 		}
 		if !adaptiveCanAdmitCandidate(generationContext, result.AggregateBytes) {
 			result.State = "failed"
+			if generation.NativeQuality && countAdaptiveValid(result.Candidates) >= 2 {
+				result.State = "completed"
+			}
 			result.ReasonCode = AdaptiveReasonGenerationBudget
 			break
 		}
@@ -254,6 +275,9 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 		}
 		if generationContext.Err() != nil && candidateErr == context.DeadlineExceeded {
 			result.State = "failed"
+			if generation.NativeQuality && countAdaptiveValid(result.Candidates) >= 2 {
+				result.State = "completed"
+			}
 			result.ReasonCode = AdaptiveReasonGenerationBudget
 			break
 		}
@@ -275,7 +299,10 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 			result.AggregateBytes += maxInt64(execution.bytes, 0)
 		}
 		result.Candidates = append(result.Candidates, candidate)
-		status.Candidates = adaptiveResultStatuses(result.Candidates)
+		if generation.NativeQuality {
+			result.ShortlistCount = len(result.Candidates)
+		}
+		status.Candidates = adaptiveResultStatuses(result.Candidates, candidateLimit)
 		status.ValidCount = countAdaptiveValid(result.Candidates)
 		status.ShortlistCount = result.ShortlistCount
 		emit()
@@ -293,7 +320,7 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 		if !challenger {
 			result.SelectedTarget = ""
 		}
-		status.Candidates = adaptiveResultStatuses(result.Candidates)
+		status.Candidates = adaptiveResultStatuses(result.Candidates, candidateLimit)
 		status.ValidCount = result.ValidCount
 		status.SelectedTarget = safeTag(result.SelectedTarget)
 		status.ReasonCode = result.ReasonCode
@@ -305,7 +332,7 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 	status.ReasonCode = safeAdaptiveReason(result.ReasonCode)
 	status.ValidCount = result.ValidCount
 	status.SelectedTarget = safeTag(result.SelectedTarget)
-	status.Candidates = adaptiveResultStatuses(result.Candidates)
+	status.Candidates = adaptiveResultStatuses(result.Candidates, candidateLimit)
 	emit()
 	return result
 }
@@ -392,12 +419,15 @@ func adaptiveCanAdmitCandidate(ctx context.Context, aggregateBytes int64) bool {
 }
 
 func validAdaptiveGeneration(generation AdaptiveGeneration) bool {
+	if len(generation.Fallbacks) > 0 && !generation.NativeQuality || len(generation.Candidates)+len(generation.Fallbacks) > NativeQualityMaxAttempts {
+		return false
+	}
 	if generation.Generation == 0 || !validTag(generation.CurrentTarget) || len(generation.Candidates) < 2 {
 		return false
 	}
 	seen := make(map[string]struct{}, len(generation.Candidates))
 	foundCurrent := false
-	for _, candidate := range generation.Candidates {
+	for _, candidate := range append(append([]AdaptiveCandidateInput(nil), generation.Candidates...), generation.Fallbacks...) {
 		if !validTag(candidate.Tag) || candidate.RTTMS <= 0 {
 			return false
 		}
@@ -407,7 +437,7 @@ func validAdaptiveGeneration(generation AdaptiveGeneration) bool {
 		seen[candidate.Tag] = struct{}{}
 		foundCurrent = foundCurrent || candidate.Tag == generation.CurrentTarget
 	}
-	return foundCurrent
+	return foundCurrent || generation.NativeQuality
 }
 
 func adaptiveNow(r *AdaptiveRunner) time.Time {
@@ -451,10 +481,14 @@ func adaptiveInputStatuses(inputs []AdaptiveCandidateInput) []AdaptiveCandidateS
 	return result
 }
 
-func adaptiveResultStatuses(results []AdaptiveCandidateResult) []AdaptiveCandidateStatus {
-	result := make([]AdaptiveCandidateStatus, 0, minInt(len(results), AdaptiveMaxCandidates))
+func adaptiveResultStatuses(results []AdaptiveCandidateResult, limits ...int) []AdaptiveCandidateStatus {
+	limit := AdaptiveMaxCandidates
+	if len(limits) > 0 && limits[0] == NativeQualityMaxAttempts {
+		limit = NativeQualityMaxAttempts
+	}
+	result := make([]AdaptiveCandidateStatus, 0, minInt(len(results), limit))
 	for index, candidate := range results {
-		if index >= AdaptiveMaxCandidates {
+		if index >= limit {
 			break
 		}
 		item := AdaptiveCandidateStatus{Tag: safeTag(candidate.Tag), RTTMS: positiveInt64(candidate.RTTMS), Valid: candidate.Valid}
@@ -599,6 +633,10 @@ func safeAdaptiveReason(reason string) string {
 }
 
 func sanitizeAdaptiveStatus(status AdaptivePerformanceStatus) AdaptivePerformanceStatus {
+	candidateLimit := AdaptiveMaxCandidates
+	if status.NativeQuality {
+		candidateLimit = NativeQualityMaxAttempts
+	}
 	switch status.State {
 	case "waiting", "running", "skipped", "completed", "failed", "cancelled", "cleanup-pending":
 	default:
@@ -609,24 +647,28 @@ func sanitizeAdaptiveStatus(status AdaptivePerformanceStatus) AdaptivePerformanc
 	if status.ShortlistCount < 0 {
 		status.ShortlistCount = 0
 	}
-	if status.ShortlistCount > AdaptiveMaxCandidates {
-		status.ShortlistCount = AdaptiveMaxCandidates
+	if status.ShortlistCount > candidateLimit {
+		status.ShortlistCount = candidateLimit
 	}
 	if status.ValidCount < 0 {
 		status.ValidCount = 0
 	}
-	if status.ValidCount > AdaptiveMaxCandidates {
-		status.ValidCount = AdaptiveMaxCandidates
+	if status.ValidCount > candidateLimit {
+		status.ValidCount = candidateLimit
 	}
 	status.ReasonCode = safeAdaptiveReason(status.ReasonCode)
-	status.Candidates = adaptiveResultStatusesFromStatus(status.Candidates)
+	status.Candidates = adaptiveResultStatusesFromStatus(status.Candidates, candidateLimit)
 	return status
 }
 
-func adaptiveResultStatusesFromStatus(candidates []AdaptiveCandidateStatus) []AdaptiveCandidateStatus {
-	result := make([]AdaptiveCandidateStatus, 0, minInt(len(candidates), AdaptiveMaxCandidates))
+func adaptiveResultStatusesFromStatus(candidates []AdaptiveCandidateStatus, limits ...int) []AdaptiveCandidateStatus {
+	limit := AdaptiveMaxCandidates
+	if len(limits) > 0 && limits[0] == NativeQualityMaxAttempts {
+		limit = NativeQualityMaxAttempts
+	}
+	result := make([]AdaptiveCandidateStatus, 0, minInt(len(candidates), limit))
 	for index, candidate := range candidates {
-		if index >= AdaptiveMaxCandidates {
+		if index >= limit {
 			break
 		}
 		candidate.Tag = safeTag(candidate.Tag)

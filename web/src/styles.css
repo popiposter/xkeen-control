@@ -12,10 +12,18 @@
   .system-facts-grid, .manual-progress-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 1rem; }
   .system-facts-grid > div, .manual-progress-grid > div { display: flex; flex-direction: column; gap: .25rem; overflow-wrap: anywhere; }
   .system-facts-grid span, .manual-progress-grid span, .panel-label, .muted { color: var(--muted-foreground); }
-  .system-password-form, .system-policy-form, .system-channel-form, .system-check-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 1rem; }
+  .system-password-form, .system-policy-form, .system-channel-form, .system-check-row { display: grid; width: 100%; max-width: 48rem; gap: 1rem; align-items: end; }
+  .system-policy-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .system-channel-form, .system-check-row { grid-template-columns: minmax(0, 26rem) auto; justify-content: start; }
+  .system-password-form { max-width: 26rem; }
+  .system-policy-form > .system-card-actions { grid-column: 1 / -1; }
+  .listener-card > [data-slot=card-content] > [data-slot=field] { max-width: 26rem; }
+  .system-panel-section button { justify-self: start; }
+  .node-disabled { color: var(--muted-foreground); opacity: .55; }
+  .node-disabled img { filter: grayscale(1); }
   .system-password-form > p { flex-basis: 100%; }
-  .system-panel-section label { display: flex; flex-direction: column; gap: .5rem; min-width: 0; }
-  .system-panel-section label input, .system-panel-section label select { width: min(100%, 26rem); }
+  .system-panel-section label { display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; text-align: start; gap: .5rem; min-width: 0; }
+  .system-panel-section label input, .system-panel-section label select { width: 100%; }
   .disclosure { border: 1px solid var(--border); border-radius: var(--radius); }
   .disclosure > summary { display: flex; align-items: center; gap: .5rem; padding: .75rem 1rem; min-height: 44px; cursor: pointer; list-style: none; font-size: .875rem; font-weight: 500; }
   .disclosure > summary::-webkit-details-marker { display: none; }
@@ -55,3 +63,5 @@
     .workspace button[data-slot="toggle-group-item"] { min-height: 44px; min-width: 44px; }
   }
 }
+
+@media (max-width: 640px) { .system-policy-form, .system-channel-form, .system-check-row { grid-template-columns: minmax(0, 1fr); } }

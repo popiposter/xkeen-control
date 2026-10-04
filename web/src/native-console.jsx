@@ -13,6 +13,11 @@ export default function NativeConsole({ chunk, interactive, onInput, onResize, o
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(container.current)
+    // Native ANSI sequences are rendered by xterm, never interpreted as markup.
+    const refreshTheme = () => { const dark = document.documentElement.classList.contains('dark'); term.options.theme = { background: dark ? '#171717' : '#ffffff', foreground: dark ? '#fafafa' : '#171717', cursor: dark ? '#fafafa' : '#171717', red: '#ef4444', green: '#22c55e', yellow: '#eab308', blue: '#3b82f6', magenta: '#a855f7', cyan: '#06b6d4', brightRed: '#f87171', brightGreen: '#4ade80', brightYellow: '#facc15', brightBlue: '#60a5fa' } }
+    refreshTheme()
+    const themeObserver = new MutationObserver(refreshTheme)
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
     terminal.current = term
     callbacks.current.onReady?.()
     const clipboard = term.parser.registerOscHandler(52, () => true)
@@ -32,7 +37,7 @@ export default function NativeConsole({ chunk, interactive, onInput, onResize, o
     const observer = new ResizeObserver(resize)
     observer.observe(container.current)
     resize()
-    return () => { observer.disconnect(); input.dispose(); clipboard.dispose(); links.dispose(); terminal.current = null; term.dispose() }
+    return () => { themeObserver.disconnect(); observer.disconnect(); input.dispose(); clipboard.dispose(); links.dispose(); terminal.current = null; term.dispose() }
   }, [])
   useEffect(() => { if (terminal.current) terminal.current.options.disableStdin = !interactive }, [interactive])
   useEffect(() => {
@@ -41,5 +46,5 @@ export default function NativeConsole({ chunk, interactive, onInput, onResize, o
     if (chunk.output) terminal.current.write(Uint8Array.from(atob(chunk.output), (character) => character.charCodeAt(0)), () => callbacks.current.onConsumed?.())
     else callbacks.current.onConsumed?.()
   }, [chunk])
-  return <div ref={container} className="h-80 w-full overflow-hidden rounded-md bg-black p-2" aria-label="Native XKeen console" />
+  return <div ref={container} className="h-80 w-full overflow-hidden rounded-md border bg-background p-2" aria-label="Native XKeen console" />
 }

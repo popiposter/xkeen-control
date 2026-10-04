@@ -207,11 +207,14 @@ const formatAdaptiveRate = (value) => {
   const numeric = Number(value)
   return value == null || !Number.isFinite(numeric) || numeric <= 0 || numeric >= 99999999 ? '—' : `${((numeric * 8) / 1000000).toFixed(1)} Mbps`
 }
-const sortNodes = (nodes, key, direction) => {
+const sortNodes = (nodes, key, direction, measurements = new Map()) => {
   const multiplier = direction === 'desc' ? -1 : 1
   const stringValue = (value) => String(value || '').toLocaleLowerCase()
   const valueFor = (node) => {
     switch (key) {
+      case 'rank': return measurements.get(node.outboundTag || node.tag)?.rank ?? null
+      case 'download': return measurements.get(node.outboundTag || node.tag)?.valid ? measurements.get(node.outboundTag || node.tag)?.downloadBps : null
+      case 'upload': return measurements.get(node.outboundTag || node.tag)?.valid ? measurements.get(node.outboundTag || node.tag)?.uploadBps : null
       case 'address': return stringValue(node.address)
       case 'health': return healthRank(node)
       case 'latency': return node.alive && node.latencyMs ? node.latencyMs : Number.MAX_SAFE_INTEGER
@@ -225,6 +228,7 @@ const sortNodes = (nodes, key, direction) => {
   return [...nodes].sort((left, right) => {
     const leftValue = valueFor(left)
     const rightValue = valueFor(right)
+    if (leftValue == null || rightValue == null) return leftValue == null && rightValue == null ? visibleNodeName(left).localeCompare(visibleNodeName(right)) : leftValue == null ? 1 : -1
     let compared = 0
     if (typeof leftValue === 'number' && typeof rightValue === 'number') compared = leftValue - rightValue
     else compared = String(leftValue).localeCompare(String(rightValue), undefined, { numeric: true, sensitivity: 'base' })
@@ -523,7 +527,7 @@ function NodeWorkspace({ measurements, nodes, subscriptions, performance, manual
       return true
     })
   }, [nodes, query, statusFilter, roleFilter, sourceFilter, subscriptionFilter, countryFilter])
-  const ordered = useMemo(() => sortNodes(filtered, sort.key, sort.direction), [filtered, sort])
+  const ordered = useMemo(() => sortNodes(filtered, sort.key, sort.direction, measurements), [filtered, sort, measurements])
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const visibleNodes = ordered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
   const selectedNodes = useMemo(() => nodes.filter((node) => node.id && selectedIDs.has(node.id)), [nodes, selectedIDs])
@@ -787,7 +791,7 @@ function NodeWorkspace({ measurements, nodes, subscriptions, performance, manual
       <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" type="button" onClick={() => { setEditingID(''); setReplacement('') }}>Cancel</Button><Button type="button" disabled={busy || lifecycleBlocked || !replacement.trim()} onClick={() => requestPreview('/api/v1/nodes/replace/preview', { id: selectedNode.id, profile: replacement })}>Preview replacement</Button></div>
     </FieldGroup></CardContent></Card>}
 
-    <Table className="nodes-table"><TableHeader><TableRow><TableHead className="selection-column"><SelectionCheckbox label="Select all filtered nodes" checked={allFilteredSelected} indeterminate={selectedFilteredCount > 0 && !allFilteredSelected} onChange={toggleAllFiltered} /></TableHead><SortHeader label="Name" sortKey="name" sort={sort} onSort={changeSort} />{showColumn('address') && <SortHeader label="Address" sortKey="address" sort={sort} onSort={changeSort} />}{showColumn('health') && <SortHeader label="Health" sortKey="health" sort={sort} onSort={changeSort} />}{showColumn('latency') && <SortHeader label="Latency" sortKey="latency" sort={sort} onSort={changeSort} />}{showColumn('rank') && <TableHead>Quality rank</TableHead>}{showColumn('download') && <TableHead>Download</TableHead>}{showColumn('upload') && <TableHead>Upload</TableHead>}{showColumn('role') && <SortHeader label="Role" sortKey="role" sort={sort} onSort={changeSort} />}{showColumn('source') && <SortHeader label="Source" sortKey="source" sort={sort} onSort={changeSort} />}{showColumn('subscription') && <SortHeader label="Subscription" sortKey="subscription" sort={sort} onSort={changeSort} />}</TableRow></TableHeader><TableBody>
+    <Table className="nodes-table"><TableHeader><TableRow><TableHead className="selection-column"><SelectionCheckbox label="Select all filtered nodes" checked={allFilteredSelected} indeterminate={selectedFilteredCount > 0 && !allFilteredSelected} onChange={toggleAllFiltered} /></TableHead><SortHeader label="Name" sortKey="name" sort={sort} onSort={changeSort} />{showColumn('address') && <SortHeader label="Address" sortKey="address" sort={sort} onSort={changeSort} />}{showColumn('health') && <SortHeader label="Health" sortKey="health" sort={sort} onSort={changeSort} />}{showColumn('latency') && <SortHeader label="Latency" sortKey="latency" sort={sort} onSort={changeSort} />}{showColumn('rank') && <SortHeader label="Quality rank" sortKey="rank" sort={sort} onSort={changeSort} />}{showColumn('download') && <SortHeader label="Download" sortKey="download" sort={sort} onSort={changeSort} />}{showColumn('upload') && <SortHeader label="Upload" sortKey="upload" sort={sort} onSort={changeSort} />}{showColumn('role') && <SortHeader label="Role" sortKey="role" sort={sort} onSort={changeSort} />}{showColumn('source') && <SortHeader label="Source" sortKey="source" sort={sort} onSort={changeSort} />}{showColumn('subscription') && <SortHeader label="Subscription" sortKey="subscription" sort={sort} onSort={changeSort} />}</TableRow></TableHeader><TableBody>
       {visibleNodes.map((node) => <NodeRows key={node.id || node.tag} showColumn={showColumn} measurement={measurements.get(node.outboundTag || node.tag)} node={node} selected={selectedIDs.has(node.id)} onToggle={() => toggleSelection(node.id)} />)}
       {!visibleNodes.length && <TableRow><TableCell colSpan="8" className="empty">No nodes match this view.</TableCell></TableRow>}
     </TableBody></Table>
@@ -830,13 +834,13 @@ function ManualPerformanceCard({ status, node }) {
 }
 
 function NodeRows({ showColumn, measurement, node, selected, onToggle }) {
-  const health = node.alive ? 'Alive' : (node.enabled ? (node.lastError || 'No data') : 'Disabled')
+  const health = !node.enabled ? 'Disabled' : node.alive ? 'Alive' : (node.lastError || 'No data')
   return <>
-    <TableRow data-state={selected ? 'selected' : undefined} tabIndex={0} aria-selected={selected} onClick={(event) => { if (!event.target.closest('input, label, button, a, [role=checkbox]')) onToggle() }} onKeyDown={(event) => { if (event.target === event.currentTarget && [' ', 'Enter'].includes(event.key)) { event.preventDefault(); onToggle() } }}>
+    <TableRow className={!node.enabled ? "node-disabled" : undefined} data-state={selected ? 'selected' : undefined} tabIndex={0} aria-selected={selected} onClick={(event) => { if (!event.target.closest('input, label, button, a, [role=checkbox]')) onToggle() }} onKeyDown={(event) => { if (event.target === event.currentTarget && [' ', 'Enter'].includes(event.key)) { event.preventDefault(); onToggle() } }}>
       <TableCell className="selection-column"><SelectionCheckbox label={`Select ${visibleNodeName(node)}`} checked={selected} onChange={onToggle} /></TableCell>
       <TableCell><NodeName node={node} />{node.stale && <Badge variant="secondary">stale</Badge>}</TableCell>
       {showColumn('address') && <TableCell data-label="Address"><code className="address">{node.address || '—'}</code></TableCell>}
-      {showColumn('health') && <TableCell data-label="Health"><StatusBadge tone={node.alive ? 'success' : node.enabled ? 'warning' : 'muted'}>{health}</StatusBadge></TableCell>}
+      {showColumn('health') && <TableCell data-label="Health"><StatusBadge tone={!node.enabled ? 'muted' : node.alive ? 'success' : 'warning'}>{health}</StatusBadge></TableCell>}
       {showColumn('latency') && <TableCell data-label="Latency">{node.alive ? formatAdaptiveLatency(node.latencyMs) : '-'}</TableCell>}
       {showColumn('rank') && <TableCell data-label="Quality rank">{measurement?.rank ? <StatusBadge>#{measurement.rank}</StatusBadge> : '—'}</TableCell>}
       {showColumn('download') && <TableCell data-label="Download">{measurement?.valid ? formatRate(measurement.downloadBps) : '—'}</TableCell>}

@@ -195,3 +195,12 @@ func TestNativeDiscoveryRejectsAmbiguousManagementDeclarations(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeSchedulesExcludeShellAndProjectRecognizedJobs(t *testing.T) {
+	d := nativeFixture(t)
+	writeNativeFixture(t, d, "opt/var/spool/cron/crontabs/root", "23 4 * * * /opt/sbin/xkeen -ug\n*/30 * * * * xkeen -sbt\n1 2 * * * echo xkeen -ug\n1 2 * * * xkeen -ug ; curl secret\n# 1 2 * * * xkeen -ug\nTOKEN=secret\n")
+	facts := d.Inspect(context.Background())
+	if facts.GeodataCron != CapabilityAvailable || len(facts.Schedules) != 2 || facts.Schedules[0].Expression != "23 4 * * *" || facts.Schedules[1].Action != "native-speed-test" {
+		t.Fatalf("bad cron projection: %+v", facts.Schedules)
+	}
+}

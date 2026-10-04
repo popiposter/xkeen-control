@@ -42,3 +42,38 @@ func TestMeasureNativeQualitySharesAdmissionAndApplyCleanup(t *testing.T) {
 		t.Fatal("cleanup/progress not settled")
 	}
 }
+
+func TestNativeSpeedTestReplacesFailedCandidatesInLatencyOrder(t *testing.T) {
+	api := &benchmarkProbeAPI{}
+	transport := &adaptiveTransportStub{duration: time.Second, failedDownload: 0, failedUpload: -1}
+	runner := &AdaptiveRunner{Probe: NewProbeRouter(api), Transport: transport}
+	g := adaptiveTestGeneration("proxy-a", "proxy-b", "proxy-c", "proxy-d", "proxy-e", "proxy-f")
+	g.NativeQuality = true
+	g.CurrentTarget = "proxy-not-in-shortlist"
+	g.Fallbacks = []AdaptiveCandidateInput{{Tag: "proxy-g", RTTMS: 200}, {Tag: "proxy-h", RTTMS: 210}}
+	var final AdaptivePerformanceStatus
+	r := runner.Run(context.Background(), g, func(p AdaptivePerformanceStatus) { final = p })
+	if r.State != "completed" || r.ValidCount != 6 || len(r.Candidates) != 7 || r.Candidates[0].Valid || r.Candidates[6].Tag != "proxy-g" || len(final.Candidates) != 7 || final.ValidCount != 6 {
+		t.Fatalf("replacement failed: %+v %+v", r, final)
+	}
+	if len(api.adds) != 7 || len(api.removes) != 7 || runner.Probe.Blocked() {
+		t.Fatal("diagnostic cleanup or attempt count")
+	}
+	pool := []string{"proxy-a", "proxy-b", "proxy-c", "proxy-d", "proxy-e", "proxy-f", "proxy-g", "proxy-h"}
+	if _, err := NativeQualityCosts(r, r.CompletedAt, pool); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNativeSpeedTestReplacementDoesNotIncreaseTransferBudget(t *testing.T) {
+	api := &benchmarkProbeAPI{}
+	transport := &adaptiveTransportStub{duration: 300 * time.Millisecond, failedDownload: 0, failedUpload: -1}
+	runner := &AdaptiveRunner{Probe: NewProbeRouter(api), Transport: transport}
+	g := adaptiveTestGeneration("proxy-a", "proxy-b", "proxy-c", "proxy-d", "proxy-e", "proxy-f")
+	g.NativeQuality = true
+	g.Fallbacks = []AdaptiveCandidateInput{{Tag: "proxy-g", RTTMS: 200}}
+	r := runner.Run(context.Background(), g, nil)
+	if r.State != "completed" || r.ReasonCode != AdaptiveReasonGenerationBudget || r.ValidCount != 5 || len(api.adds) != 6 || r.AggregateBytes > AdaptiveMaxGenerationBytes {
+		t.Fatalf("budget exceeded or partial result hidden: %+v", r)
+	}
+}

@@ -13,7 +13,7 @@ Sources: [override bypass](https://raw.githubusercontent.com/XTLS/Xray-core/v26.
 ## Decisions
 
 1. Keep calibrated download/upload/RTT comparison,10% hysteresis and dwell, but remove fastest-node-relative RTT veto. A20ms/1Mbps node must not exclude60ms/100Mbps. Keep absolute750ms challenger ceiling. Unique retained Observatory failures and median absolute RTT deviation penalize instability. HTTP probe failure is not described as packet loss.
-2. Keep existing transfer ceilings:6candidates/144MiB/180s, no sustained benchmark. Measure current target first, retain rotating exploration and report shortlist scope, never global best among unmeasured nodes.
+2. Keep transfer ceilings144MiB/180s, no sustained benchmark. Target6successful measurements from the lowest fresh native RTTs, with up to12attempts in that same order. Each run reads current native observations, without preferring the saved/current pool. Failed bytes count and replacements stop at the original budget. Report partial scope, never global best among unmeasured nodes.
 3. No persistent API override for automatic quality: it bypasses native health and has no TTL. Do not revive old supervisor, add watchdogs or patch native code. Translate quality evidence into ordinary native leastLoad costs, preserving selectors/fallback/all backups. Xray remains sole selection/failover owner if panel stops.
 4. Costs weight throughput and observed health, not RTT twice. Exact anchored escaped tag match; bounded1..100. Failed/unmeasured nodes are not removed; all explicit pool members receive exact costs; unmeasured/failed backups receive conservative100 and remain eligible. Proposals need nonzero generation, ordered bounded start/completion, exact shortlist count, pool membership,2valid measurements and age<=30m. This partial recommendation cannot guarantee global best. Persisted costs may become stale but do not pin dead nodes.
 
@@ -37,9 +37,9 @@ Before delivery, quality core, bounded comparison and GUI cost proposal were sou
 ## Comparison/editor cohort
 
 Explicit RAM-only comparison uses the existing coordinator lifecycle and fixed
-adaptive transfer runner, with the SAME panel lease held through cleanup. Current
-native target first, four fastest eligible alternatives, one rotating alternative;
-six candidates/144MiB/180s ceilings. Fresh native observations required, no override.
+adaptive transfer runner, with the SAME panel lease held through cleanup. Fresh native API snapshot; six lowest-latency eligible nodes, followed by up to
+six replacements in the same order if tests fail. Six successful results targeted
+within the same144MiB/180s budget, at most12attempts; partial results are labelled. Fresh native observations required, no override.
 The existing policy engine retains unique Observatory timestamps from ordinary
 collector reads, with no new poller or automatic selection loop. Three retained
 successes permit failure/jitter penalties; a single observation is not presented

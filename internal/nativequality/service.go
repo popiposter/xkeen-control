@@ -58,7 +58,6 @@ type Service struct {
 	cancel        context.CancelFunc
 	done          chan struct{}
 	closed        bool
-	rotation      int
 	lastStartedAt time.Time
 }
 
@@ -248,19 +247,12 @@ func (s *Service) Start(ctx context.Context) error {
 		return err
 	}
 	snapshot := s.Reader.Snapshot(ctx)
-	generation, err := prepare(snapshot, pool, s.status.Generation+1, s.rotation, time.Now().UTC())
+	generation, err := prepare(snapshot, pool, s.status.Generation+1, 0, time.Now().UTC())
 	if err != nil {
 		release()
 		return err
 	}
-	evidenceByTag := s.Measurement.NativeQualityEvidence(snapshot)
-	for i, candidate := range generation.Candidates {
-		if evidence, ok := evidenceByTag[candidate.Tag]; ok {
-			generation.Candidates[i].Samples = evidence.Samples
-			generation.Candidates[i].HealthPenalty = evidence.HealthPenalty
-		}
-	}
-	s.rotation++
+	retainHealthEvidence(&generation, s.Measurement.NativeQualityEvidence(snapshot))
 	s.lastStartedAt = time.Now().UTC()
 	job, cancel := context.WithTimeout(context.Background(), c1.AdaptiveMaxGenerationWallTime+c1.AdaptiveCleanupReserve)
 	s.cancel = cancel
@@ -290,6 +282,17 @@ func (s *Service) Start(ctx context.Context) error {
 		}
 	}()
 	return nil
+}
+
+func retainHealthEvidence(generation *c1.AdaptiveGeneration, evidenceByTag map[string]c1.AdaptiveCandidateInput) {
+	for _, candidates := range [][]c1.AdaptiveCandidateInput{generation.Candidates, generation.Fallbacks} {
+		for i, candidate := range candidates {
+			if evidence, ok := evidenceByTag[candidate.Tag]; ok {
+				candidates[i].Samples = evidence.Samples
+				candidates[i].HealthPenalty = evidence.HealthPenalty
+			}
+		}
+	}
 }
 
 func (s *Service) Stop() {
@@ -419,7 +422,7 @@ func routingPool(text string, nodes []c1.NodeState, targets []xkeen.ConfigTarget
 	return pool, index, nil
 }
 
-func prepare(snapshot xrayapi.Snapshot, pool []string, id uint64, rotation int, now time.Time) (c1.AdaptiveGeneration, error) {
+func prepare(snapshot xrayapi.Snapshot, pool []string, id uint64, _ int, now time.Time) (c1.AdaptiveGeneration, error) {
 	if !snapshot.APIReachable || !snapshot.RoutingReachable || !snapshot.ObservatoryReachable || snapshot.Balancer.Override != "" {
 		return c1.AdaptiveGeneration{}, ErrUnavailable
 	}
@@ -449,27 +452,11 @@ func prepare(snapshot xrayapi.Snapshot, pool []string, id uint64, rotation int, 
 		}
 		return eligible[i].RTTMS < eligible[j].RTTMS
 	})
-	g := c1.AdaptiveGeneration{Generation: id, StartedAt: now, CurrentTarget: snapshot.Balancer.NativeSelected}
-	var other []c1.AdaptiveCandidateInput
-	for _, n := range eligible {
-		if n.Tag == g.CurrentTarget {
-			g.Candidates = append(g.Candidates, n)
-		} else {
-			other = append(other, n)
-		}
+	if len(eligible) < 2 {
+		return c1.AdaptiveGeneration{}, ErrUnavailable
 	}
-	if len(g.Candidates) != 1 || len(other) == 0 {
-		return g, ErrUnavailable
-	}
-	fast := len(other)
-	if fast > 4 {
-		fast = 4
-	}
-	g.Candidates = append(g.Candidates, other[:fast]...)
-	if len(other) > fast {
-		rest := other[fast:]
-		sort.Slice(rest, func(i, j int) bool { return rest[i].Tag < rest[j].Tag })
-		g.Candidates = append(g.Candidates, rest[rotation%len(rest)])
-	}
-	return g, nil
+	initial := min(len(eligible), c1.AdaptiveMaxCandidates)
+	end := min(len(eligible), c1.NativeQualityMaxAttempts)
+	return c1.AdaptiveGeneration{Generation: id, StartedAt: now, CurrentTarget: snapshot.Balancer.NativeSelected,
+		NativeQuality: true, Candidates: eligible[:initial], Fallbacks: eligible[initial:end]}, nil
 }

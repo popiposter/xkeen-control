@@ -127,3 +127,49 @@ func TestReconciliationNativeTimeoutIsFirstOperationAndCannotReplay(t *testing.T
 		t.Fatal("reconciliation snapshot lost")
 	}
 }
+
+func TestMetadataChangesPreserveRuntimeBytesAndNeverRestart(t *testing.T) {
+	dir := t.TempDir()
+	store := Store{Path: filepath.Join(dir, "secrets", "nodes.json")}
+	old := NewRegistry()
+	old.Nodes = []Node{testNode(t, syntheticProfile, "node-11111111", true)}
+	old.Subscriptions = []Subscription{{ID: "sub-11111111", Name: "Provider", URL: "https://fixture.invalid/sub", Enabled: true}}
+	if err := store.Save(old); err != nil {
+		t.Fatal(err)
+	}
+	active := filepath.Join(dir, "04_outbounds.json")
+	before, _ := Render(old)
+	before = append([]byte("// untouched native comment\n"), before...)
+	if err := os.WriteFile(active, before, 0600); err != nil {
+		t.Fatal(err)
+	}
+	next := old
+	next.Nodes = append([]Node(nil), old.Nodes...)
+	next.Nodes[0].Name = "New display name"
+	next.Subscriptions = append([]Subscription(nil), old.Subscriptions...)
+	next.Subscriptions[0].Name = "Renamed provider"
+	a := &fakeActivator{validateErr: errors.New("must not validate metadata"), restartErr: errors.New("must not restart metadata")}
+	tx := Transaction{Store: store, ActiveOutboundsPath: active, PreviousDir: filepath.Join(dir, "previous"), Activator: a}
+	if err := tx.Apply(context.Background(), next); err != nil {
+		t.Fatal(err)
+	}
+	if a.restarts != 0 || a.validatedPath != "" {
+		t.Fatal("metadata invoked native service")
+	}
+	if got, _ := os.ReadFile(active); !bytes.Equal(got, before) {
+		t.Fatal("metadata rewrote runtime bytes")
+	}
+	current, err := store.Load()
+	if err != nil || current.Nodes[0].Name != next.Nodes[0].Name {
+		t.Fatal("metadata not saved")
+	}
+	next.Nodes[0].Enabled = false
+	a.validateErr = nil
+	a.restartErr = nil
+	if err := tx.Apply(context.Background(), next); err != nil {
+		t.Fatal(err)
+	}
+	if a.restarts != 1 || a.validatedPath == "" {
+		t.Fatal("real runtime change skipped activation")
+	}
+}
