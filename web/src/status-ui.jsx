@@ -9,7 +9,7 @@ export function StatusBadge({ tone = 'info', children }) {
 }
 
 export function ActionHint({ label, description, disabled, children }) {
-  return <CSPProvider nonce={document.querySelector('meta[name="style-nonce"]')?.content} disableStyleElements><Tooltip><TooltipTrigger render={<span className="inline-flex" tabIndex={disabled ? 0 : undefined} aria-label={disabled ? label : undefined} />}>{children}</TooltipTrigger><TooltipContent><div className="flex flex-col gap-1"><strong>{label}</strong>{description && <span>{description}</span>}{disabled && <span>Unavailable in the current state.</span>}</div></TooltipContent></Tooltip></CSPProvider>
+  return <CSPProvider nonce={document.querySelector('meta[name="style-nonce"]')?.content} disableStyleElements><Tooltip><TooltipTrigger render={<span className="inline-flex" tabIndex={disabled ? 0 : undefined} aria-label={disabled ? label : undefined} aria-description={disabled ? description : undefined} />}>{children}</TooltipTrigger><TooltipContent><div className="flex flex-col gap-1"><strong>{label}</strong>{description && <span>{description}</span>}{disabled && <span>Unavailable in the current state.</span>}</div></TooltipContent></Tooltip></CSPProvider>
 }
 
 export function DestinationBadge({ target, tag }) {

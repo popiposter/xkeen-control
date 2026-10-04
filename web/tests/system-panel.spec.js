@@ -114,7 +114,7 @@ test('loads the cold empty release version without a metadata check', async ({ p
   const state = await prepare(page, { update: { latestCompatibleVersion: '' } }); page.__systemIssues = state.issues
   await page.goto('/')
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page, 'Releases')
+  await revealSystemSettings(page, 'Access')
   await expect(page.getByRole('heading', { name: '127.0.0.1:8787', exact: true })).toBeVisible()
   await expect(page.getByLabel('New management host')).toBeEnabled()
   await expect(page.getByText('Reading listener…', { exact: true })).toHaveCount(0)
