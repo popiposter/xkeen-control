@@ -85,6 +85,7 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
   await openSection(page, 'System / Panel')
   await page.getByLabel('New management host').selectOption('10.0.0.4')
   await expect(page.getByRole('button', { name: 'Preview rebind' })).toBeEnabled()
+  await revealSystemSettings(page, 'Releases')
   await expect(page.getByRole('button', { name: 'Apply checked release' })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Rollback retained release' })).toBeEnabled()
   await openSection(page, 'Nodes')
@@ -125,6 +126,7 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
     await expect(page.getByRole('button', { name: 'Download encrypted backup' })).toBeEnabled()
     await openSection(page, 'System / Panel')
     await expect(page.getByRole('button', { name: 'Preview rebind' })).toBeDisabled()
+    await revealSystemSettings(page, 'Releases')
     await expect(page.getByRole('button', { name: 'Apply checked release' })).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Rollback retained release' })).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Check fixed release' })).toBeEnabled()
@@ -279,17 +281,18 @@ test('keeps safe projections secretless, browser storage empty, and the Dashboar
   const renderedSections = [await page.locator('body').innerText(), await page.locator('body').evaluate((body) => body.outerHTML)]
   for (const [section, ready] of [
     ['Nodes', page.getByText('Feature test node', { exact: true })],
-    ['Routing', page.getByText('Native configuration', { exact: true })],
-    ['DNS', page.getByText('Native configuration', { exact: true })],
+    ['Routing', page.getByText('Routing configuration', { exact: true })],
+    ['DNS', page.getByText('DNS configuration', { exact: true })],
     ['Performance', page.getByText('Node quality', { exact: true })],
     ['Components / Updates', page.getByRole('heading', { name: 'XKeen and components', exact: true })],
     ['Backup & Restore', page.getByLabel('Backup bundle')],
-    ['System / Panel', page.getByRole('heading', { name: '0.2.0', exact: true })],
+    ['System / Panel', page.getByRole('heading', { name: '127.0.0.1:8787', exact: true })],
   ]) {
     await openSection(page, section)
     await expect(ready).toBeVisible()
     renderedSections.push(await page.locator('body').innerText(), await page.locator('body').evaluate((body) => body.outerHTML))
   }
+  await revealSystemSettings(page, 'Releases')
   await expect(page.getByRole('heading', { name: '0.2.0', exact: true })).toBeVisible()
 
   for (const path of ['/api/v1/session', '/api/v1/status', '/api/v1/nodes', '/api/v1/performance', ...lazySettingsPaths]) {

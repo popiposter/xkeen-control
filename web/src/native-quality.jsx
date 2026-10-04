@@ -4,7 +4,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Alert, AlertTitle, AlertDescription } from './components/ui/alert.jsx'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from './components/ui/table.jsx'
 
-const rate = (value) => Number.isFinite(value) && value > 0 ? `${(value * 8 / 1e6).toFixed(1)} Mbps` : 'â€”'
+const rate = (value) => Number.isFinite(value) && value > 0 ? `${(value * 8 / 1e6).toFixed(1)} Mbps` : '—'
 
 export function NativeQualitySection({ csrfToken, onUnauthorized, busy, onStaged, nodesByTag, onStatusChange }) {
   const [status, setStatus] = useState(null)
@@ -73,7 +73,7 @@ export function NativeQualitySection({ csrfToken, onUnauthorized, busy, onStaged
       {error && <Alert variant="destructive"><AlertTitle>Check the current state</AlertTitle><AlertDescription>{error}</AlertDescription></Alert>}
       <p>One comparison checks the current node, up to four low-latency alternatives and one rotating alternative. Maximum 144 MiB and three minutes. Results describe this sample and test provider.</p>
       <p>Automatic comparison runs every six hours, with refreshes coalesced into that interval. Up to 576 MiB per day. Measurements do not restart Xray or apply settings; save and apply a recommendation when needed.</p>
-      <p role="status">{status?.state === 'running' ? `Comparing nodes (${status.progress?.candidates?.length || 0} measured)â€¦` : status?.state === 'completed' ? 'Comparison complete' : status?.state === 'consumed' ? 'Recommendation saved to Routing. Inspect the configuration there for its application state.' : status?.state === 'failed' || status?.state === 'cleanup-pending' || status?.state === 'cancelled' ? 'Comparison did not complete. Inspect diagnostics before starting another.' : 'Ready to compare nodes'}</p>
+      <p role="status">{status?.state === 'running' ? `Comparing nodes (${status.progress?.candidates?.length || 0} measured)…` : status?.state === 'completed' ? 'Comparison complete' : status?.state === 'consumed' ? 'Recommendation saved to Routing. Inspect the configuration there for its application state.' : status?.state === 'failed' || status?.state === 'cleanup-pending' || status?.state === 'cancelled' ? 'Comparison did not complete. Inspect diagnostics before starting another.' : 'Ready to compare nodes'}</p>
       {(status?.progress?.candidates?.length > 0) && <Table><TableHeader><TableRow><TableHead>Node</TableHead><TableHead>Latency</TableHead><TableHead>Download</TableHead><TableHead>Upload</TableHead></TableRow></TableHeader><TableBody>{status.progress.candidates.map((node) => <TableRow key={node.tag}><TableCell>{nodesByTag?.get(node.tag)?.name || node.tag}</TableCell><TableCell>{node.rttMs} ms</TableCell><TableCell>{node.valid ? rate(node.downloadBps) : 'Unavailable'}</TableCell><TableCell>{node.valid ? rate(node.uploadBps) : 'Unavailable'}</TableCell></TableRow>)}</TableBody></Table>}
       <p>Saving creates a pending routing change. Review, discard or apply it in the configuration editor. Xray handles failover even while the panel is stopped; existing connections may need to reconnect.</p>
     </CardContent>

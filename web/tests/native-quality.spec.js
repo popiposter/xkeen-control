@@ -29,7 +29,7 @@ test('compares and stages once without applying or writing a selection override'
   await page.getByRole('button', { name: 'Compare nodes', exact: true }).click()
   await expect(page.getByText('800.0 Mbps', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Save recommendation', exact: true }).click()
-  await expect(page.getByText('Native configuration', { exact: true })).toBeVisible()
+  await expect(page.getByText('Routing configuration', { exact: true })).toBeVisible()
   expect(starts).toBe(1); expect(stages).toBe(1)
   expect(featureCompleteRequests(model, '/api/v1/selection/override', 'POST')).toEqual([])
   expect(featureCompleteRequests(model, '/api/v1/xkeen/config/apply', 'POST')).toEqual([])

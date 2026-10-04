@@ -136,7 +136,7 @@ test('Base UI confirmation stays open during an outstanding Apply', async ({ pag
   })
   const dialog = page.getByRole('dialog', { name: 'Preview node change' })
   await dialog.getByRole('button', { name: 'Apply and validate' }).click()
-  await expect(dialog.getByRole('button', { name: 'Applyingâ€¦' })).toBeDisabled()
+  await expect(dialog.getByRole('button', { name: 'Applying…' })).toBeDisabled()
   await page.keyboard.press('Escape')
   await page.mouse.click(3, 3)
   await expect(dialog).toBeVisible()

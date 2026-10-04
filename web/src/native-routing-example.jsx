@@ -33,7 +33,7 @@ export default function RoutingExample({ text, request, disabled }) {
       {['domain', 'ip', 'inbound'].map((key) => <Field key={key}><FieldLabel htmlFor={'example-' + key}>{key === 'domain' ? 'Domain name' : key === 'ip' ? 'Known destination IP' : 'Inbound tag'}</FieldLabel><Input id={'example-' + key} disabled={disabled} maxLength={key === 'domain' ? 253 : 128} value={sample[key]} onChange={(event) => setSample({ ...sample, [key]: event.target.value })} /></Field>)}
       <Field><FieldLabel htmlFor="example-port">Destination port</FieldLabel><Input id="example-port" type="number" min="1" max="65535" disabled={disabled} value={sample.port || ''} onChange={(event) => setSample({ ...sample, port: Number(event.target.value) })} /></Field>
       <Field><FieldLabel htmlFor="example-network">Network</FieldLabel><NativeSelect id="example-network" disabled={disabled} value={sample.network} onChange={(event) => setSample({ ...sample, network: event.target.value })}><option value="tcp">TCP</option><option value="udp">UDP</option></NativeSelect></Field>
-      <Button variant="outline" disabled={disabled || busy || !sample.domain && !sample.ip} onClick={() => void check()}>{busy ? 'Checking exampleâ€¦' : 'Check routing example'}</Button>
+      <Button variant="outline" disabled={disabled || busy || !sample.domain && !sample.ip} onClick={() => void check()}>{busy ? 'Checking example…' : 'Check routing example'}</Button>
       {notice && <p role="alert">{notice}</p>}
       {result && <p role="status">{result.state === 'matched' ? 'Rule ' + result.rule + ': ' + result.targetKind + ' ' + result.target : (result.rule ? 'Rule ' + result.rule + ': ' : '') + result.reason}</p>}
     </FieldGroup></CardContent>

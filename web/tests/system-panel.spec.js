@@ -117,7 +117,7 @@ test('loads the cold empty release version without a metadata check', async ({ p
   await revealSystemSettings(page, 'Access')
   await expect(page.getByRole('heading', { name: '127.0.0.1:8787', exact: true })).toBeVisible()
   await expect(page.getByLabel('New management host')).toBeEnabled()
-  await expect(page.getByText('Reading listenerâ€¦', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Reading listener…', { exact: true })).toHaveCount(0)
   expect(state.requests.filter(({ method }) => method === 'POST')).toHaveLength(0)
 })
 
@@ -190,7 +190,7 @@ for (const [channel, mode, text] of [['stable', 'notify', 'Background discovery 
     const state = await prepare(page, { update: { channel, policy: { channel, mode, checkCadenceMinutes: 60 }, scheduler: { state: mode === 'auto-stable' ? 'unsupported-mode' : channel === 'beta' ? 'unsupported-channel' : 'completed', notificationState: 'notified' } } }); page.__systemIssues = state.issues
     await page.goto('/')
     await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page, 'Notifications')
+  await revealSystemSettings(page, 'Releases')
     await expect(page.getByRole('region', { name: 'Signed panel release' })).toContainText(channel === 'stable' && mode === 'notify' ? 'It never authorizes Apply' : text)
     await expect(page.getByRole('button', { name: 'Apply checked release', exact: true })).toBeDisabled()
     expect(state.requests.filter(({ path }) => ['/api/v1/update/check', '/api/v1/update/apply'].includes(path))).toHaveLength(0)
@@ -337,7 +337,7 @@ for (const width of [1440, 375]) test(`shows checked version/channel/source befo
   await page.goto('/')
   const navigation = await revealNavigation(page)
   await navigation.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page, 'Access')
+  await revealSystemSettings(page, 'Releases')
   await page.getByRole('button', { name: 'Check fixed release' }).click()
   await expect(page.getByText('Explicit release Check completed')).toBeVisible()
   const release = page.getByRole('region', { name: 'Signed panel release' })

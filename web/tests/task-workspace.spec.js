@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { mountFeatureCompleteDashboard, featureCompleteRequests } from './fixtures/feature-complete-model.js'
-import { revealDetails, revealNavigation } from './fixtures/disclosures.js'
+import { revealDetails, revealNavigation, revealSystemSettings } from './fixtures/disclosures.js'
 
 async function openTask(page, name) {
   const navigation = await revealNavigation(page)
@@ -126,7 +126,7 @@ test('a row edit uses the existing replacement Preview and clears the sensitive 
   expect(model.requests.some(({ method }) => method === 'POST')).toBe(false)
 })
 
-test('System starts with access, reveals optional forms and never fetches on disclosure clicks', async ({ page }) => {
+test('System starts with access, switches subpages without repeating discovery', async ({ page }) => {
   const model = await mountFeatureCompleteDashboard(page)
   page.__workspaceModel = model
   await page.route('**/api/v1/notifications', (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ provider: 'telegram', configured: false, enabled: false, authorityState: 'unconfigured', deliveryState: 'idle' }) }))
@@ -138,9 +138,9 @@ test('System starts with access, reveals optional forms and never fetches on dis
   await expect(page.getByRole('button', { name: 'Check fixed release' })).toBeHidden()
   await expect.poll(() => featureCompleteRequests(model, '/api/v1/update', 'GET').length).toBe(1)
   const reads = model.requests.filter(({ method }) => method === 'GET').length
-  await revealDetails(page, 'Password')
+  await revealSystemSettings(page, 'Password')
   await expect(page.getByLabel('New panel password')).toBeVisible()
-  await revealDetails(page, 'Panel releases')
+  await revealSystemSettings(page, 'Releases')
   await expect(page.getByRole('button', { name: 'Check fixed release' })).toBeVisible()
   expect(model.requests.filter(({ method }) => method === 'GET').length).toBe(reads)
 })

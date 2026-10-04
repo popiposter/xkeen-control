@@ -15,7 +15,7 @@ export function ActionHint({ label, description, disabled, children }) {
 export function DestinationBadge({ target, tag }) {
   const kind = target?.protocol === 'freedom' ? 'direct' : target?.protocol === 'blackhole' ? 'block' : target?.kind === 'balancer' || ['vless', 'vmess', 'trojan', 'shadowsocks'].includes(target?.protocol) ? 'vpn' : 'other'
   const Glyph = { direct: IconWorld, block: IconBan, vpn: IconShieldLock, other: IconInfoCircle }[kind]
-  return <Badge variant="outline" className={`status-${{ direct: 'success', block: 'danger', vpn: 'info', other: 'muted' }[kind]}`}><Glyph data-icon="inline-start" />{kind === 'other' ? tag : kind.toUpperCase()}{kind !== 'other' && <span className="font-normal opacity-80"> Â· {tag}</span>}</Badge>
+  return <Badge variant="outline" className={`status-${{ direct: 'success', block: 'danger', vpn: 'info', other: 'muted' }[kind]}`}><Glyph data-icon="inline-start" />{kind === 'other' ? tag : kind.toUpperCase()}{kind !== 'other' && <span className="font-normal opacity-80"> · {tag}</span>}</Badge>
 }
 
-export const formatRate = (value) => Number.isFinite(value) && value > 0 ? `${(value * 8 / 1e6).toFixed(1)} Mbps` : 'â€”'
+export const formatRate = (value) => Number.isFinite(value) && value > 0 ? `${(value * 8 / 1e6).toFixed(1)} Mbps` : '—'
