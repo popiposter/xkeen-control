@@ -2,6 +2,7 @@ package nativequality
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,6 +10,47 @@ import (
 	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
+
+func TestBroadSampleUsesThresholdAndMoreThanSixWithoutCurrentPoolPriority(t *testing.T) {
+	now := time.Now().UTC()
+	snapshot := xrayapi.Snapshot{APIReachable: true, RoutingReachable: true, ObservatoryReachable: true}
+	var pool []string
+	for i := 0; i < 22; i++ {
+		tag := fmt.Sprintf("proxy-%02d", i)
+		pool = append(pool, tag)
+		snapshot.OutboundHealth = append(snapshot.OutboundHealth, xrayapi.OutboundHealth{Tag: tag, Alive: true, DelayMS: int64(150 + i*8), LastTry: now})
+	}
+	snapshot.OutboundHealth[21].LastTry = now.Add(-3 * time.Minute)
+	g, err := prepare(snapshot, pool, 1, 1, now)
+	if err != nil || !g.BroadSample || len(g.Candidates) != 12 || len(g.Fallbacks) != 6 || g.Candidates[0].Tag != "proxy-00" || g.Fallbacks[5].Tag != "proxy-17" || eligibleCount(snapshot, pool, true, now) != 19 || latencyLimit(150, true) != 300 {
+		t.Fatalf("bad expanded threshold sample: %+v %v", g, err)
+	}
+	if latencyLimit(240, true) != 480 || latencyLimit(500, true) != 750 {
+		t.Fatal("dynamic threshold is not bounded")
+	}
+}
+
+func TestMeasurementPoolIncludesNodesOutsideRestrictedActivePoolAndRejectsPrefixCollision(t *testing.T) {
+	text := `{"routing":{"balancers":[{"tag":"bal-proxy","selector":["proxy-a","proxy-b"],"strategy":{"type":"leastLoad"}}]}}`
+	nodes := []c1.NodeState{{Tag: "proxy-a", Enabled: true}, {Tag: "proxy-b", Enabled: true}, {Tag: "proxy-c", Enabled: true}, {Tag: "proxy-disabled"}}
+	targets := []xkeen.ConfigTarget{{Tag: "proxy-a", Kind: "outbound"}, {Tag: "proxy-b", Kind: "outbound"}, {Tag: "proxy-c", Kind: "outbound"}}
+	pool, _, err := measurementPool(text, nodes, targets)
+	if err != nil || len(pool) != 3 || pool[2] != "proxy-c" {
+		t.Fatal("new tests restricted by old active pool", pool, err)
+	}
+	if !exactSelectors([]string{"proxy-a", "proxy-b"}, targets) {
+		t.Fatal("exact selectors rejected")
+	}
+	if exactSelectors([]string{"proxy-a"}, append(targets, xkeen.ConfigTarget{Tag: "proxy-a-backup", Kind: "outbound"})) {
+		t.Fatal("prefix collision admitted")
+	}
+	// All selected nodes can be gone while new healthy alternatives remain.
+	nodes = []c1.NodeState{{Tag: "proxy-c", Enabled: true}, {Tag: "proxy-d", Enabled: true}}
+	targets = append(targets, xkeen.ConfigTarget{Tag: "proxy-d", Kind: "outbound"})
+	if _, _, err := measurementPool(text, nodes, targets); err != nil {
+		t.Fatal("exhausted pool cannot be resampled", err)
+	}
+}
 
 func TestStopClosesAdmissionAndWaitsForCleanup(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -49,7 +91,7 @@ func TestPrepareUsesLowestFreshLatencyAndOrderedFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := prepare(s, pool, 2, 1, now)
+	second, err := prepare(s, pool, 2, 0, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +142,7 @@ func TestRoutingPoolRejectsUnweightedSelectorMembers(t *testing.T) {
 
 func TestReadExpiredRecommendationCannotStage(t *testing.T) {
 	now := time.Now().UTC()
-	s := &Service{pool: []string{"proxy-a", "proxy-b"}, status: Status{State: "completed"}, result: c1.AdaptiveResult{Generation: 1, State: "completed", StartedAt: now.Add(-time.Hour), CompletedAt: now.Add(-time.Hour + time.Second), ShortlistCount: 2, Candidates: []c1.AdaptiveCandidateResult{{Tag: "proxy-a", Valid: true, DownloadBPS: 1, UploadBPS: 1}, {Tag: "proxy-b", Valid: true, DownloadBPS: 2, UploadBPS: 2}}}}
+	s := &Service{pool: []string{"proxy-a", "proxy-b"}, status: Status{State: "completed"}, result: c1.AdaptiveResult{Generation: 1, State: "completed", StartedAt: now.Add(-time.Hour), CompletedAt: now.Add(-time.Hour + time.Second), ShortlistCount: 2, Candidates: []c1.AdaptiveCandidateResult{{Tag: "proxy-a", RTTMS: 20, Valid: true, DownloadBPS: 1, UploadBPS: 1}, {Tag: "proxy-b", RTTMS: 20, Valid: true, DownloadBPS: 2, UploadBPS: 2}}}}
 	if s.Read().CanStage {
 		t.Fatal("stale recommendation usable")
 	}

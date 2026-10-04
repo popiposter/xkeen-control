@@ -82,6 +82,19 @@ test('Form/Text share edits, formatting and undo without saving or restarting', 
   expect(model.issues).toEqual([])
 })
 
+test('quality Apply is blocked by unfinished native editor work and does not erase it', async ({ page }) => {
+  const {model,writes}=await mountEditor(page)
+  model.quality={state:'completed',digest:'a'.repeat(64),canStage:true,progress:{state:'completed',candidates:[]}}
+  await page.getByLabel('DNS address family',{exact:true}).selectOption('UseIPv6')
+  await page.getByRole('button',{name:'Performance',exact:true}).click()
+  await expect(page.getByRole('button',{name:'Apply recommendation',exact:true})).toBeDisabled()
+  await expect(page.getByText('Save or discard unfinished configuration edits before applying the recommendation.',{exact:true})).toBeVisible()
+  await page.getByRole('button',{name:'DNS',exact:true}).click()
+  await expect(page.getByLabel('DNS address family',{exact:true})).toHaveValue('UseIPv6')
+  expect(writes).toEqual([])
+  expect(model.requests.filter(({path})=>path==='/api/v1/performance/quality/apply')).toEqual([])
+})
+
 test('DNS and Routing navigation use one native workspace and retain edits across pages and console navigation', async ({ page }) => {
   const { model, writes } = await mountEditor(page)
   await page.getByRole('button', { name: 'DNS', exact: true }).click()

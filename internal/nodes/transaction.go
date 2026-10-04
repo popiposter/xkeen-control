@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
@@ -1017,6 +1018,16 @@ func verifyBalancerSelector(path, balancerTag string, expected []string) error {
 			Balancers []struct {
 				Tag      string   `json:"tag"`
 				Selector []string `json:"selector"`
+				Strategy struct {
+					Type     string `json:"type"`
+					Settings struct {
+						Costs []struct {
+							Regexp bool    `json:"regexp"`
+							Match  string  `json:"match"`
+							Value  float64 `json:"value"`
+						} `json:"costs"`
+					} `json:"settings"`
+				} `json:"strategy"`
 			} `json:"balancers"`
 		} `json:"routing"`
 	}
@@ -1024,6 +1035,7 @@ func verifyBalancerSelector(path, balancerTag string, expected []string) error {
 		return errors.New("active routing policy is invalid")
 	}
 	var selectors []string
+	restrictedQuality := false
 	found := 0
 	for _, balancer := range document.Routing.Balancers {
 		if balancer.Tag != balancerTag {
@@ -1037,6 +1049,21 @@ func verifyBalancerSelector(path, balancerTag string, expected []string) error {
 			return errors.New("balancer selector contract is invalid")
 		}
 		selectors = append(selectors, balancer.Selector...)
+		// Quality selects a subset of otherwise enabled/observed outbounds.
+		// Recognize only the exact full-tag, weighted native shape; ordinary
+		// prefix/custom policies retain the existing visibility requirement.
+		restrictedQuality = balancer.Strategy.Type == "leastLoad" && len(selectors) <= 6
+		for _, selector := range selectors {
+			weighted := false
+			for _, cost := range balancer.Strategy.Settings.Costs {
+				if cost.Regexp && cost.Match == "^"+regexp.QuoteMeta(selector)+"$" && cost.Value >= 1 && cost.Value <= 100 {
+					weighted = true
+				}
+			}
+			if !redact.IsUnifiedOutboundTag(selector) || !weighted {
+				restrictedQuality = false
+			}
+		}
 	}
 	if found != 1 {
 		return errors.New("balancer selector contract is unavailable")
@@ -1049,7 +1076,7 @@ func verifyBalancerSelector(path, balancerTag string, expected []string) error {
 				break
 			}
 		}
-		if !matched {
+		if !matched && !restrictedQuality {
 			return errors.New("expected outbound is outside balancer selector")
 		}
 	}

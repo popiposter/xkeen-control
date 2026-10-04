@@ -17,17 +17,22 @@ type NativeQualityCost struct {
 }
 
 // NativeQualityCosts proposes bounded throughput/health weights for an existing
-// native balancer. It never writes configuration, removes backup candidates or
+// native balancer. This builder never writes configuration or
 // applies an override. Native health filtering remains the selection owner,
-// including after the panel stops. Callers must preserve selector/fallback and
+// including after the panel stops. Callers preserve fallback and
 // validate the complete config through the native editor before explicit Apply.
 func NativeQualityCosts(result AdaptiveResult, now time.Time, pool []string) ([]NativeQualityCost, error) {
 	maxAttempts := AdaptiveMaxCandidates
+	maxWall := AdaptiveMaxGenerationWallTime
 	if result.NativeQuality {
 		maxAttempts = NativeQualityMaxAttempts
+		if result.BroadSample {
+			maxAttempts = NativeQualityBroadAttempts
+			maxWall = NativeQualityBroadWallTime
+		}
 	}
 	invalid := errors.New("fresh complete quality measurements required")
-	if result.Generation == 0 || result.State != "completed" || result.StartedAt.IsZero() || result.CompletedAt.Before(result.StartedAt) || result.CompletedAt.Sub(result.StartedAt) > AdaptiveMaxGenerationWallTime+AdaptiveCleanupReserve || result.CompletedAt.IsZero() || result.CompletedAt.After(now) || now.Sub(result.CompletedAt) > 30*time.Minute || len(result.Candidates) > maxAttempts || result.ShortlistCount != len(result.Candidates) || len(pool) > MaxRegistryNodes {
+	if result.BroadSample && !result.NativeQuality || result.Generation == 0 || result.State != "completed" || result.StartedAt.IsZero() || result.CompletedAt.Before(result.StartedAt) || result.CompletedAt.Sub(result.StartedAt) > maxWall+AdaptiveCleanupReserve || result.CompletedAt.IsZero() || result.CompletedAt.After(now) || now.Sub(result.CompletedAt) > 30*time.Minute || len(result.Candidates) > maxAttempts || result.ShortlistCount != len(result.Candidates) || len(pool) > MaxRegistryNodes {
 		return nil, invalid
 	}
 	known := make(map[string]bool, len(pool))
@@ -74,4 +79,34 @@ func NativeQualityCosts(result AdaptiveResult, now time.Time, pool []string) ([]
 	}
 	sort.Slice(costs, func(i, j int) bool { return costs[i].Match < costs[j].Match })
 	return costs, nil
+}
+
+// NativeQualityRanking uses the same RTT * sqrt(cost) tradeoff as native
+// leastLoad. It is sample evidence, not a promise about live native selection.
+func NativeQualityRanking(result AdaptiveResult, costs []NativeQualityCost) []string {
+	values := map[string]float64{}
+	for _, cost := range costs {
+		values[cost.Match] = cost.Value
+	}
+	var candidates []AdaptiveCandidateResult
+	for _, candidate := range result.Candidates {
+		if candidate.Valid && candidate.RTTMS > 0 && finitePositive(adaptiveHealthPenalty(candidate.HealthPenalty)) && finitePositive(candidate.DownloadBPS) && finitePositive(candidate.UploadBPS) && finitePositive(values["^"+regexp.QuoteMeta(candidate.Tag)+"$"]) {
+			candidates = append(candidates, candidate)
+		}
+	}
+	score := func(c AdaptiveCandidateResult) float64 {
+		return float64(c.RTTMS) * math.Sqrt(values["^"+regexp.QuoteMeta(c.Tag)+"$"])
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		a, b := score(candidates[i]), score(candidates[j])
+		if a == b {
+			return candidates[i].Tag < candidates[j].Tag
+		}
+		return a < b
+	})
+	var tags []string
+	for _, candidate := range candidates[:min(len(candidates), AdaptiveMaxCandidates)] {
+		tags = append(tags, candidate.Tag)
+	}
+	return tags
 }

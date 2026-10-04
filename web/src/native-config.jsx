@@ -21,7 +21,7 @@ const fields = [
   { file: '07_observatory.json', area: 'observatory', field: 'enableConcurrency', label: 'Concurrent node probes', boolean: true },
 ]
 
-export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, focusFile = '', scopeFile = '', onOpenConsole, readbackKey = 0 }) {
+export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, onWorkingChange, focusFile = '', scopeFile = '', onOpenConsole, readbackKey = 0 }) {
   const [open, setOpen] = useState(false)
   const [workspace, setWorkspace] = useState(null)
   const [drafts, setDrafts] = useState({})
@@ -49,6 +49,7 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, fo
   const text = drafts[file] ?? ''
   const parsed = inspectDocument(text)
   const changed = workspace && Object.keys(drafts).some((id) => drafts[id] !== workspace.documents[id]?.text)
+  useEffect(() => { onWorkingChange?.(!!changed) }, [changed, onWorkingChange])
   const changedDocuments = Object.fromEntries(Object.entries(drafts).filter(([id, value]) => value !== workspace?.documents[id]?.text))
   const invalidChanged = Object.values(changedDocuments).some((value) => inspectDocument(value).error)
   const pending = workspace?.pending

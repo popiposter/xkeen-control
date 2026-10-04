@@ -66,7 +66,7 @@ func (s *Schedule) Run(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			if s.service.Start(ctx) != nil {
+			if s.service.start(ctx, false) != nil {
 				next = now.Add(10 * time.Minute)
 			} else {
 				next = now.Add(qualityCadence)

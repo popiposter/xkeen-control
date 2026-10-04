@@ -4,6 +4,8 @@ package nativequality
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,9 +14,75 @@ import (
 
 	"github.com/popiposter/xkeen-control/internal/authority"
 	"github.com/popiposter/xkeen-control/internal/c1"
+	"github.com/popiposter/xkeen-control/internal/configjson"
 	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
+
+func TestStageBroadSampleRestrictsOnlySelectorAndCostsAndKeepsFutureSampleBroad(t *testing.T) {
+	dir := t.TempDir()
+	validator := filepath.Join(t.TempDir(), "xray")
+	if err := os.WriteFile(validator, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	routing := `{/*keep*/"routing":{"rules":[{"domain":["example.invalid"],"outboundTag":"direct"}],"balancers":[{"tag":"bal-proxy","selector":["proxy-"],"fallbackTag":"blocked","strategy":{"type":"leastPing"}}]}}`
+	var nodes []c1.NodeState
+	var pool []string
+	var outbounds []map[string]string
+	now := time.Now().UTC()
+	result := c1.AdaptiveResult{NativeQuality: true, BroadSample: true, Generation: 1, State: "completed", StartedAt: now.Add(-4 * time.Minute), CompletedAt: now, ShortlistCount: 9}
+	for i := 0; i < 9; i++ {
+		tag := fmt.Sprintf("proxy-%02d", i)
+		pool = append(pool, tag)
+		nodes = append(nodes, c1.NodeState{Tag: tag, Enabled: true})
+		outbounds = append(outbounds, map[string]string{"tag": tag, "protocol": "vless"})
+		rate := 10e6
+		if i == 0 {
+			rate = 1e6
+		}
+		result.Candidates = append(result.Candidates, c1.AdaptiveCandidateResult{Tag: tag, RTTMS: int64(150 + i*5), DownloadBPS: rate, UploadBPS: rate, Valid: true})
+	}
+	encoded, _ := json.Marshal(map[string]any{"outbounds": outbounds})
+	for name, data := range map[string][]byte{"05_routing.json": []byte(routing), "04_outbounds.json": encoded} {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := &xkeen.ConfigEditor{Dir: dir, XrayBinary: validator, Lease: authority.NewLease(), PreviousDir: filepath.Join(t.TempDir(), "previous")}
+	w, err := e.Workspace(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{Editor: e, Nodes: func(context.Context) []c1.NodeState { return nodes }, pool: pool, result: result, status: Status{State: "completed", Digest: w.Digest}}
+	if _, err := s.Stage(context.Background(), w.Digest); err != nil {
+		t.Fatal(err)
+	}
+	after, err := e.Workspace(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Routing struct {
+			Balancers []struct {
+				Selector []string
+				Strategy struct {
+					Settings struct{ Costs []c1.NativeQualityCost }
+				}
+			}
+		}
+	}
+	if configjson.Decode([]byte(after.Documents["05_routing.json"].Text), &doc) != nil {
+		t.Fatal("invalid saved JSONC")
+	}
+	selected := doc.Routing.Balancers[0].Selector
+	actualOutbounds, readErr := os.ReadFile(filepath.Join(dir, "04_outbounds.json"))
+	if len(selected) != 6 || selected[0] != "proxy-01" || selected[5] != "proxy-06" || len(doc.Routing.Balancers[0].Strategy.Settings.Costs) != 6 || readErr != nil || string(actualOutbounds) != string(encoded) || !strings.Contains(after.Documents["05_routing.json"].Text, `"fallbackTag":"blocked"`) || !strings.Contains(after.Documents["05_routing.json"].Text, "/*keep*/") {
+		t.Fatal("wrong selected pool or unrelated write", selected)
+	}
+	if next, _, err := measurementPool(after.Documents["05_routing.json"].Text, nodes, after.Targets); err != nil || len(next) != 9 {
+		t.Fatal("subsequent test cannot reconsider excluded nodes", next, err)
+	}
+}
 
 type pinRuntime struct {
 	override  string
@@ -104,7 +172,7 @@ func TestStageUsesExistingPendingEditorPreservesOtherNativeBytes(t *testing.T) {
 	now := time.Now().UTC()
 	s := &Service{Editor: e, Nodes: func(context.Context) []c1.NodeState {
 		return []c1.NodeState{{Tag: "proxy-a", Enabled: true}, {Tag: "proxy-b", Enabled: true}}
-	}, pool: []string{"proxy-a", "proxy-b"}, status: Status{State: "completed", Digest: w.Digest}, result: c1.AdaptiveResult{Generation: 1, StartedAt: now.Add(-time.Second), CompletedAt: now, State: "completed", ShortlistCount: 2, Candidates: []c1.AdaptiveCandidateResult{{Tag: "proxy-a", Valid: true, DownloadBPS: 1e6, UploadBPS: 1e6}, {Tag: "proxy-b", Valid: true, DownloadBPS: 100e6, UploadBPS: 10e6}}}}
+	}, pool: []string{"proxy-a", "proxy-b"}, status: Status{State: "completed", Digest: w.Digest}, result: c1.AdaptiveResult{Generation: 1, StartedAt: now.Add(-time.Second), CompletedAt: now, State: "completed", ShortlistCount: 2, Candidates: []c1.AdaptiveCandidateResult{{Tag: "proxy-a", RTTMS: 20, Valid: true, DownloadBPS: 1e6, UploadBPS: 1e6}, {Tag: "proxy-b", RTTMS: 60, Valid: true, DownloadBPS: 100e6, UploadBPS: 10e6}}}}
 	digest, err := s.Stage(context.Background(), w.Digest)
 	if err != nil {
 		t.Fatal(err)

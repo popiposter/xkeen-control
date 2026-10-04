@@ -22,6 +22,10 @@ const (
 	AdaptiveShortlistLimit              = 5
 	AdaptiveMaxCandidates               = 6
 	NativeQualityMaxAttempts            = 12
+	NativeQualityBroadCandidates        = 12
+	NativeQualityBroadAttempts          = 18
+	NativeQualityBroadBytes             = 288 * MiB
+	NativeQualityBroadWallTime          = 360 * time.Second
 	AdaptiveMaxGenerationBytes          = 144 * MiB
 	AdaptiveMaxGenerationWallTime       = 180 * time.Second
 	AdaptiveMaximumRTTMS                = 750
@@ -71,6 +75,7 @@ type AdaptiveCandidate = AdaptiveCandidateInput
 // starts. It deliberately contains no endpoint, profile or registry material.
 type AdaptiveGeneration struct {
 	NativeQuality bool
+	BroadSample   bool
 	Fallbacks     []AdaptiveCandidateInput
 	Generation    uint64
 	StartedAt     time.Time
@@ -92,6 +97,7 @@ type AdaptiveCandidateResult struct {
 
 type AdaptiveResult struct {
 	NativeQuality  bool
+	BroadSample    bool
 	Generation     uint64
 	StartedAt      time.Time
 	CompletedAt    time.Time
@@ -125,6 +131,7 @@ type AdaptiveCandidateStatus struct {
 // adaptive quality generation. It has no run-now or configuration surface.
 type AdaptivePerformanceStatus struct {
 	NativeQuality  bool                      `json:"-"`
+	BroadSample    bool                      `json:"-"`
 	State          string                    `json:"state"`
 	NextRunAt      time.Time                 `json:"nextRunAt"`
 	StartedAt      time.Time                 `json:"startedAt,omitempty"`
@@ -175,6 +182,7 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 	started := adaptiveNow(r)
 	result := AdaptiveResult{
 		NativeQuality:  generation.NativeQuality,
+		BroadSample:    generation.BroadSample,
 		Generation:     generation.Generation,
 		StartedAt:      started,
 		CurrentTarget:  generation.CurrentTarget,
@@ -185,6 +193,7 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 		State:          "running",
 		StartedAt:      started,
 		NativeQuality:  generation.NativeQuality,
+		BroadSample:    generation.BroadSample,
 		Generation:     generation.Generation,
 		CurrentTarget:  safeTag(generation.CurrentTarget),
 		ShortlistCount: len(generation.Candidates),
@@ -193,6 +202,10 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 	candidateLimit := AdaptiveMaxCandidates
 	if generation.NativeQuality {
 		candidateLimit = NativeQualityMaxAttempts
+	}
+	maxCandidates, maxBytes, maxWall := AdaptiveMaxCandidates, int64(AdaptiveMaxGenerationBytes), AdaptiveMaxGenerationWallTime
+	if generation.NativeQuality && generation.BroadSample {
+		candidateLimit, maxCandidates, maxBytes, maxWall = NativeQualityBroadAttempts, NativeQualityBroadCandidates, NativeQualityBroadBytes, NativeQualityBroadWallTime
 	}
 	emit := func() {
 		if publish != nil {
@@ -211,7 +224,7 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 		return result
 	}
 
-	if !validAdaptiveGeneration(generation) || len(generation.Candidates) > AdaptiveMaxCandidates {
+	if !validAdaptiveGeneration(generation) || len(generation.Candidates) > maxCandidates {
 		return finishEarly("failed", AdaptiveReasonUnavailable)
 	}
 	if r == nil || r.Probe == nil {
@@ -222,7 +235,7 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 		transport = newFixedMeasurementTransport()
 	}
 
-	generationContext, cancelGeneration := context.WithTimeout(parent, AdaptiveMaxGenerationWallTime)
+	generationContext, cancelGeneration := context.WithTimeout(parent, maxWall)
 	defer cancelGeneration()
 	queue := append(append([]AdaptiveCandidateInput(nil), generation.Candidates...), generation.Fallbacks...)
 	for _, input := range queue {
@@ -242,7 +255,7 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 			result.ReasonCode = AdaptiveReasonGenerationBudget
 			break
 		}
-		if !adaptiveCanAdmitCandidate(generationContext, result.AggregateBytes) {
+		if !adaptiveCanAdmitCandidate(generationContext, result.AggregateBytes, maxBytes) {
 			result.State = "failed"
 			if generation.NativeQuality && countAdaptiveValid(result.Candidates) >= 2 {
 				result.State = "completed"
@@ -293,7 +306,7 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 		}
 		if candidate.Valid {
 			result.AggregateBytes += execution.bytes
-		} else if result.AggregateBytes+execution.bytes <= AdaptiveMaxGenerationBytes {
+		} else if result.AggregateBytes+execution.bytes <= maxBytes {
 			// Invalid transport bytes are still bounded accounting; they never
 			// become score evidence or a persistence input.
 			result.AggregateBytes += maxInt64(execution.bytes, 0)
@@ -410,8 +423,12 @@ func (e *adaptiveExecution) runDirection(ctx context.Context, stages []int64, tr
 	return rate, nil
 }
 
-func adaptiveCanAdmitCandidate(ctx context.Context, aggregateBytes int64) bool {
-	if aggregateBytes < 0 || aggregateBytes+AdaptiveMaxDownloadBytes+AdaptiveMaxUploadBytes > AdaptiveMaxGenerationBytes {
+func adaptiveCanAdmitCandidate(ctx context.Context, aggregateBytes int64, budgets ...int64) bool {
+	limit := int64(AdaptiveMaxGenerationBytes)
+	if len(budgets) > 0 && budgets[0] == NativeQualityBroadBytes {
+		limit = NativeQualityBroadBytes
+	}
+	if aggregateBytes < 0 || aggregateBytes+AdaptiveMaxDownloadBytes+AdaptiveMaxUploadBytes > limit {
 		return false
 	}
 	deadline, ok := ctx.Deadline()
@@ -419,10 +436,17 @@ func adaptiveCanAdmitCandidate(ctx context.Context, aggregateBytes int64) bool {
 }
 
 func validAdaptiveGeneration(generation AdaptiveGeneration) bool {
-	if len(generation.Fallbacks) > 0 && !generation.NativeQuality || len(generation.Candidates)+len(generation.Fallbacks) > NativeQualityMaxAttempts {
+	maxAttempts := NativeQualityMaxAttempts
+	if generation.BroadSample {
+		if !generation.NativeQuality {
+			return false
+		}
+		maxAttempts = NativeQualityBroadAttempts
+	}
+	if len(generation.Fallbacks) > 0 && !generation.NativeQuality || len(generation.Candidates)+len(generation.Fallbacks) > maxAttempts {
 		return false
 	}
-	if generation.Generation == 0 || !validTag(generation.CurrentTarget) || len(generation.Candidates) < 2 {
+	if generation.Generation == 0 || (!validTag(generation.CurrentTarget) && !(generation.NativeQuality && generation.CurrentTarget == "")) || len(generation.Candidates) < 2 {
 		return false
 	}
 	seen := make(map[string]struct{}, len(generation.Candidates))
@@ -483,8 +507,8 @@ func adaptiveInputStatuses(inputs []AdaptiveCandidateInput) []AdaptiveCandidateS
 
 func adaptiveResultStatuses(results []AdaptiveCandidateResult, limits ...int) []AdaptiveCandidateStatus {
 	limit := AdaptiveMaxCandidates
-	if len(limits) > 0 && limits[0] == NativeQualityMaxAttempts {
-		limit = NativeQualityMaxAttempts
+	if len(limits) > 0 && (limits[0] == NativeQualityMaxAttempts || limits[0] == NativeQualityBroadAttempts) {
+		limit = limits[0]
 	}
 	result := make([]AdaptiveCandidateStatus, 0, minInt(len(results), limit))
 	for index, candidate := range results {
@@ -636,6 +660,9 @@ func sanitizeAdaptiveStatus(status AdaptivePerformanceStatus) AdaptivePerformanc
 	candidateLimit := AdaptiveMaxCandidates
 	if status.NativeQuality {
 		candidateLimit = NativeQualityMaxAttempts
+		if status.BroadSample {
+			candidateLimit = NativeQualityBroadAttempts
+		}
 	}
 	switch status.State {
 	case "waiting", "running", "skipped", "completed", "failed", "cancelled", "cleanup-pending":
@@ -663,8 +690,8 @@ func sanitizeAdaptiveStatus(status AdaptivePerformanceStatus) AdaptivePerformanc
 
 func adaptiveResultStatusesFromStatus(candidates []AdaptiveCandidateStatus, limits ...int) []AdaptiveCandidateStatus {
 	limit := AdaptiveMaxCandidates
-	if len(limits) > 0 && limits[0] == NativeQualityMaxAttempts {
-		limit = NativeQualityMaxAttempts
+	if len(limits) > 0 && (limits[0] == NativeQualityMaxAttempts || limits[0] == NativeQualityBroadAttempts) {
+		limit = limits[0]
 	}
 	result := make([]AdaptiveCandidateStatus, 0, minInt(len(candidates), limit))
 	for index, candidate := range candidates {

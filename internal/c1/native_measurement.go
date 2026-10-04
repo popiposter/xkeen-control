@@ -56,7 +56,7 @@ func (c *Coordinator) MeasureNativeQuality(ctx context.Context, generation Adapt
 	done := make(chan struct{})
 	c.benchmarkCancel, c.benchmarkDone = cancel, done
 	c.performanceMode = "native-quality"
-	c.adaptive = AdaptivePerformanceStatus{NativeQuality: generation.NativeQuality, State: "running", Generation: generation.Generation, StartedAt: generation.StartedAt, CurrentTarget: generation.CurrentTarget, ShortlistCount: len(generation.Candidates)}
+	c.adaptive = AdaptivePerformanceStatus{NativeQuality: generation.NativeQuality, BroadSample: generation.BroadSample, State: "running", Generation: generation.Generation, StartedAt: generation.StartedAt, CurrentTarget: generation.CurrentTarget, ShortlistCount: len(generation.Candidates)}
 	c.mu.Unlock()
 	defer func() {
 		cancel()

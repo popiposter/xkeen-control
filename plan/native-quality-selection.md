@@ -2,6 +2,34 @@
 
 Issue121 refinement, requested 2026-10-03. Stock XKeen code stays unchanged.
 
+## Active operator revision — 2026-10-04 expanded manual sample
+
+This revision supersedes the historical six-success / Stage-only behavior below.
+Manual tests sample all enabled managed outbounds, independently of the current
+balancer selector. Require fresh healthy native observations (at most two minutes)
+and RTT <= min(750ms, max(300ms, 2 * lowest eligible RTT)). Test in RTT/tag order:
+up to 12 successful measurements / 18 attempts, bounded by 288MiB / 360s plus
+existing cleanup. Failed transfers consume the budget; report partial results.
+Automatic diagnostics retain six successes / 12 attempts / 144MiB / 180s and
+the six-hour cadence, with no automatic configuration application.
+
+Choose up to six measured healthy nodes by RTT * sqrt(native leastLoad cost),
+where cost retains the existing 75% download / 25% upload and observed stability
+weights. Save only those exact full tags as bal-proxy selectors, rejecting prefix
+collisions with any other outbound. Keep broad native Observatory monitoring,
+fallbacks, all registry/outbounds and unrelated configuration unchanged. Xray
+continues to own live selection/failover; rank one is not a permanent override.
+
+Apply recommendation is one explicit operation: fresh digest-bound Stage through
+the existing editor, followed by the existing native Jobs ApplyConfigs restart.
+Reject unrelated pending changes and unfinished GUI edits. Require job terminal
+completed and configurationState applied; HTTP202 is only acceptance. If saving
+succeeds but restart fails or is ambiguous, retain normal pending configuration
+and diagnostics without retry/rollback. No new lifecycle owner or XKeen changes.
+Qualification covers broad sample bounds/failure replacement, weak low-RTT versus
+balanced faster nodes, future sampling outside the selected pool, exact selector
+matching, one Apply and ambiguous readback, plus unsaved-draft preservation.
+
 ## Initial audit baseline
 
 Installed panel source0d6a, audit sourceabeeb9a. Main does not start the old C1 supervisor or expose override writes. Live read-only status: native/effective target present, no override, Observatory interval5m,43healthy/60observed at snapshot. This is configuration evidence, not a measured failover time or LAN success.

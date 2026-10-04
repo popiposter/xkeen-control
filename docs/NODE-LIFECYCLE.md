@@ -58,37 +58,47 @@ automatic start happens within6h of any previous manual/automatic comparison sta
 Busy, pending or unavailable conditions defer10min; an admitted failed measurement
 still consumes the6h slot. Maximum automatic transfer budget576MiB/day in a continuous
 run; panel restarts reset the RAM schedule. No automatic Stage, Apply, native restart
-or override: results are a recommendation, applied explicitly through the editor.
-Eligible nodes need
-fresh native observations (<=2min), alive and RTT<=750ms. Each run reads a new native API snapshot and takes the six lowest-RTT eligible
-nodes, independent of the current selection and saved weights. Up to six further
-nodes are frozen in the same latency order as replacements for failed measurements.
-This is a shortlist, not a measurement of every node or proof of the global best.
+or override: results are a recommendation. Manual Apply recommendation uses the
+same editor and native restart job directly from the test screen.
+Eligible nodes need fresh native observations (<=2min), alive and RTT<=750ms.
+Manual tests additionally require RTT <= max(300ms, twice the lowest fresh RTT),
+capped at750ms. Sample all enabled managed outbounds, not only the current selected
+pool: up to12successful measurements /18attempts in fresh RTT/tag order. Failed
+measurements use the next eligible candidate. Automatic tests retain6successes /
+12attempts and the absolute750ms ceiling. This bounded sample is not proof of
+the global best among unmeasured nodes.
 
 Existing bounded diagnostics temporarily target each candidate and clean their
 owned temporary diagnostic state; they do not replace the production selection.
 Download stages1/3/4/8MiB (max16), upload1/3/4MiB (max8),8s per stage,30s per node;
 each direction stops once a complete stage lasts>=1s. Aggregate complete byte/time
-rates require>=250ms; incomplete transfers fail. The target is six successful measurements with at most12attempts, sharing the
-unchanged144MiB/180s plus3s cleanup ceiling. All failed bytes count. Replacements
+rates require>=250ms; incomplete transfers fail. Manual tests have288MiB/360s,
+automatic tests144MiB/180s, plus existing3s cleanup. All failed bytes count. Replacements
 stop at that ceiling; at least two valid results may form an explicitly partial
 recommendation. The action is named Run speed test. Download then upload; do not infer packet loss from
 HTTP failures. Unique retained native observations contribute failure-frequency and
 median absolute RTT-deviation penalties after sufficient successful observations.
 
-Display score includes RTT/download/upload/health. Applying a recommendation uses
-separate native costs, avoiding double RTT weighting:
+Rank up to six valid measured nodes by RTT * sqrt(cost), matching ordinary native
+leastLoad's tradeoff. Costs avoid double RTT weighting:
 Q = (down/bestDown)^0.75 * (up/bestUp)^0.25 / healthPenalty;
-cost = clamp(1/Q^2,1,100). Unmeasured/failed members get100, remain eligible backups.
-At least two valid measurements and age<=30min are required. Stage consumes the
-recommendation, rejects baseline/pool drift, saves only bal-proxy.strategy through
-the same validated native editor. Explicit Apply restarts once. Stage alone does
-not select a node or activate saved config.
+cost = clamp(1/Q^2,1,100). The selected six receive exact tag costs and become the
+balancer selector; other enabled nodes remain loaded and broadly observed for the
+next test. Reject prefix collisions with any other outbound. At least two valid
+measurements and age<=30min are required. Stage consumes the recommendation,
+rejects baseline/inventory drift or unrelated pending changes, saves only
+bal-proxy.strategy and selector through the same validated native editor.
+Apply recommendation follows with one existing native restart job. HTTP202 is
+acceptance; completed plus configurationState applied proves application. Failed
+or ambiguous restart leaves ordinary pending config/console for inspection, with
+no automatic retry or rollback. Unsaved GUI edits block this action and survive
+navigation. The Stage API alone remains save-only.
 
 ## Native selection and switching
 
-Installed strategy is leastLoad, expected1, maxRTT750ms,53 exact tag costs, fallback
-block; no runtime override. Native Xray excludes dead/noncandidate/too-slow nodes
+The recommendation uses leastLoad, expected1, maxRTT750ms, up to six exact tag
+costs and selectors, preserving the existing fallback; no automatic override.
+Native Xray excludes dead/noncandidate/too-slow nodes
 and orders eligible nodes by its RTT-deviation metric multiplied by sqrt(cost),
 with average RTT and health tie-breaks. Ordinary Observatory supplies delay as that
 metric; burst HealthPing data, if configured, supplies its deviation. Lowest eligible
@@ -104,9 +114,11 @@ not. Manual API override can bypass native health selection: remove it to return
 automatic balancing. No automatic override is created by quality recommendations.
 
 Persisted costs do not expire or continuously remeasure speed. New/changed profiles
-can make them stale; newly added tags without matching cost use Xray default1 until
-a fresh comparison is applied. Exact tag weights cover the measured pool at Stage,
-not future subscription members. These limits matter when interpreting best-node UI.
+can make them stale; newly added tags remain outside a restricted active pool until
+a fresh recommendation is applied, but are eligible for subsequent speed tests.
+Node/subscription verification recognizes the exact weighted quality subset without
+requiring all enabled outbounds in the active selector. It still verifies the full
+enabled artifact and native API. These limits matter when interpreting best-node UI.
 
 Actual stock-core isolated failure/recovery fixture passed; its2s/loopback timing
 is not a production/LAN guarantee. Independent LAN DNS/outage/failover timing is

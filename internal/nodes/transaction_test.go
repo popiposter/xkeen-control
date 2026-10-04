@@ -559,6 +559,37 @@ func TestNodeInventoryPreservesNativeBalancerStrategies(t *testing.T) {
 	}
 }
 
+func TestQualitySubsetDoesNotRejectSubscriptionMembersOutsideActiveSix(t *testing.T) {
+	dir := t.TempDir()
+	active, routing := filepath.Join(dir, "04_outbounds.json"), filepath.Join(dir, "05_routing.json")
+	a, b := "proxy-node-88888888", "proxy-node-99999999"
+	if err := os.WriteFile(active, []byte(`{"outbounds":[{"tag":"`+a+`"},{"tag":"`+b+`"}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	policy := `{"routing":{"balancers":[{"tag":"bal-proxy","selector":["` + a + `"],"strategy":{"type":"leastLoad","settings":{"costs":[{"regexp":true,"match":"^` + a + `$","value":1}]}}}]}}`
+	if err := os.WriteFile(routing, []byte(policy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	activator := CommandActivator{ActiveOutboundsPath: active, RoutingPath: routing, RuntimeVerifier: func(_ context.Context, _, _ string, tags []string) error {
+		calls++
+		if len(tags) != 2 {
+			t.Fatal("all enabled inventory not verified")
+		}
+		return nil
+	}}
+	if err := activator.VerifyOutboundTags(context.Background(), []string{a, b}); err != nil || calls != 1 {
+		t.Fatal("restricted quality pool rejected valid enabled inventory", err, calls)
+	}
+	// An unweighted custom selector still requires every enabled member.
+	if err := os.WriteFile(routing, []byte(strings.Replace(policy, `"value":1`, `"value":0`, 1)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if activator.VerifyOutboundTags(context.Background(), []string{a, b}) == nil {
+		t.Fatal("custom policy bypassed existing selector contract")
+	}
+}
+
 func TestCommandActivatorRejectsFileOnlyVisibility(t *testing.T) {
 	dir := t.TempDir()
 	active := filepath.Join(dir, "04_outbounds.json")

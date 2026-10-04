@@ -3,9 +3,39 @@ package c1
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
+
+func TestBroadManualMeasuresTwelveAndKeepsTransferCleanupBounded(t *testing.T) {
+	api := &benchmarkProbeAPI{}
+	transport := &adaptiveTransportStub{duration: time.Second, failedDownload: 0, failedUpload: -1}
+	runner := &AdaptiveRunner{Probe: NewProbeRouter(api), Transport: transport}
+	g := AdaptiveGeneration{NativeQuality: true, BroadSample: true, Generation: 1, StartedAt: time.Now()}
+	for i := 0; i < 18; i++ {
+		c := AdaptiveCandidateInput{Tag: fmt.Sprintf("proxy-%02d", i), RTTMS: int64(100 + i*5)}
+		if i < 12 {
+			g.Candidates = append(g.Candidates, c)
+		} else {
+			g.Fallbacks = append(g.Fallbacks, c)
+		}
+	}
+	var final AdaptivePerformanceStatus
+	r := runner.Run(context.Background(), g, func(p AdaptivePerformanceStatus) { final = p })
+	if r.State != "completed" || r.ValidCount != 12 || len(r.Candidates) != 13 || len(final.Candidates) != 13 || r.Candidates[12].Tag != "proxy-12" || r.AggregateBytes > NativeQualityBroadBytes || len(api.adds) != 13 || len(api.removes) != 13 || runner.Probe.Blocked() {
+		t.Fatalf("broad sample or cleanup failed: %+v %+v", r, final)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if adaptiveCanAdmitCandidate(ctx, NativeQualityBroadBytes-AdaptiveMaxDownloadBytes-AdaptiveMaxUploadBytes+1, NativeQualityBroadBytes) {
+		t.Fatal("broad byte ceiling exceeded")
+	}
+	g.BroadSample = false
+	if got := runner.Run(context.Background(), g, nil); got.State != "failed" {
+		t.Fatal("automatic twelve-node test admitted")
+	}
+}
 
 func TestMeasureNativeQualitySharesAdmissionAndApplyCleanup(t *testing.T) {
 	api := &benchmarkProbeAPI{}

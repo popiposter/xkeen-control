@@ -1,11 +1,38 @@
 package c1
 
 import (
+	"fmt"
 	"math"
 	"regexp"
 	"testing"
 	"time"
 )
+
+func TestBalancedRankingSelectsSixFromBroadSampleInsteadOfWeakLowPing(t *testing.T) {
+	now := time.Now()
+	r := AdaptiveResult{NativeQuality: true, BroadSample: true, Generation: 1, State: "completed", StartedAt: now.Add(-4 * time.Minute), CompletedAt: now, ShortlistCount: 12}
+	var pool []string
+	for i := 0; i < 12; i++ {
+		tag := fmt.Sprintf("proxy-%02d", i)
+		pool = append(pool, tag)
+		r.Candidates = append(r.Candidates, AdaptiveCandidateResult{Tag: tag, RTTMS: int64(150 + i*5), DownloadBPS: 80e6 / 8, UploadBPS: 30e6 / 8, Valid: true})
+	}
+	r.Candidates[0].DownloadBPS = 8.4e6 / 8
+	r.Candidates[1].HealthPenalty = 4
+	r.Candidates[11].Valid = false
+	costs, err := NativeQualityCosts(r, now, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ranked := NativeQualityRanking(r, costs)
+	if len(ranked) != 6 || ranked[0] != "proxy-02" || ranked[5] != "proxy-07" {
+		t.Fatal("weak low ping or instability displaced balanced candidates", ranked)
+	}
+	r.BroadSample = false
+	if _, err := NativeQualityCosts(r, now, pool); err == nil {
+		t.Fatal("automatic budget silently expanded")
+	}
+}
 
 func TestQualityFastDownloadCanBeatLowPing(t *testing.T) {
 	results := []AdaptiveCandidateResult{
