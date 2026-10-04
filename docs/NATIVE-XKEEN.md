@@ -27,6 +27,10 @@ native admission/update architecture. Old qualification records remain historica
   The panel can run bounded quality comparisons and propose native leastLoad
   weights through the same config editor. No quality supervisor or automatic
   runtime override is installed; periodic measurements do not restart Xray.
+  An explicit operator pin uses Xray's volatile native balancer override and
+  validates/readbacks an enabled pool member. It bypasses automatic selection
+  and failover until cleared or the native service restarts; no selector loop,
+  persistent selection record or automatic override worker is enabled.
 - Auth/private management, subscriptions, bounded observations/probes, portable
   config export and the signed updater **for this panel only** remain panel functions.
 

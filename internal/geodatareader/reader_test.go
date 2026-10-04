@@ -30,6 +30,16 @@ func fixture(t *testing.T, name string, data []byte) *Reader {
 	return r
 }
 
+func TestServiceSearchFindsCategoryNamesAndTheirContents(t *testing.T) {
+	data := append(site("MICROSOFT", 2, "example.test"), site("OFFICE", 2, "microsoft.test")...)
+	data = append(data, site("OTHER", 2, "unrelated.test")...)
+	reader := fixture(t, "geosite_vendor.dat", data)
+	result, err := reader.Query(context.Background(), Request{File: "geosite_vendor.dat", View: "search", Search: "microsoft", Limit: 50})
+	if err != nil || result.Total != 2 || len(result.Items) != 2 || result.Items[0].Type != "category" || result.Items[1].Category != "office" {
+		t.Fatal(result, err)
+	}
+}
+
 func TestInstalledDomainTypesPagingAndUpdateInvalidation(t *testing.T) {
 	data := append(site("ROOT", 2, "example.test"), site("EXACT", 3, "www.example.test")...)
 	data = append(data, site("WORDS", 0, "example")...)

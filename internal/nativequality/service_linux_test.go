@@ -13,7 +13,76 @@ import (
 	"github.com/popiposter/xkeen-control/internal/authority"
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/xkeen"
+	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
+
+type pinRuntime struct {
+	override  string
+	writes    int
+	reachable bool
+}
+
+func (p *pinRuntime) Snapshot(context.Context) xrayapi.Snapshot {
+	return xrayapi.Snapshot{APIReachable: p.reachable, RoutingReachable: p.reachable, Balancer: xrayapi.BalancerState{Override: p.override}}
+}
+func (p *pinRuntime) ProbeReachable(context.Context) bool { return p.reachable }
+func (p *pinRuntime) OverrideBalancerTarget(_ context.Context, balancer, target string) error {
+	if balancer != "bal-proxy" {
+		return ErrUnavailable
+	}
+	p.override = target
+	p.writes++
+	return nil
+}
+func (*pinRuntime) AddRule(context.Context, xrayapi.Rule, bool) error { return ErrUnavailable }
+func (*pinRuntime) RemoveRule(context.Context, string) error          { return ErrUnavailable }
+func (*pinRuntime) ListRules(context.Context) ([]xrayapi.Rule, error) { return nil, ErrUnavailable }
+
+func TestNativePinUsesEnabledPoolAndReadbackWithoutConfigWrites(t *testing.T) {
+	dir := t.TempDir()
+	validator := filepath.Join(t.TempDir(), "xray")
+	os.WriteFile(validator, []byte("#!/bin/sh\nexit 0\n"), 0700)
+	routing := `{"routing":{"rules":[],"balancers":[{"tag":"bal-proxy","selector":["proxy-"],"strategy":{"type":"leastLoad"}}]}}`
+	os.WriteFile(filepath.Join(dir, "05_routing.json"), []byte(routing), 0600)
+	os.WriteFile(filepath.Join(dir, "04_outbounds.json"), []byte(`{"outbounds":[{"tag":"proxy-a","protocol":"vless"},{"tag":"proxy-b","protocol":"vless"}]}`), 0600)
+	lease := authority.NewLease()
+	editor := &xkeen.ConfigEditor{Dir: dir, XrayBinary: validator, Lease: lease, PreviousDir: filepath.Join(t.TempDir(), "previous")}
+	runtime := &pinRuntime{reachable: true}
+	service := &Service{Editor: editor, Lease: lease, Reader: runtime, Control: runtime, Nodes: func(context.Context) []c1.NodeState {
+		return []c1.NodeState{{Tag: "proxy-a", Enabled: true}, {Tag: "proxy-b", Enabled: true}, {Tag: "proxy-disabled"}}
+	}}
+	for _, invalid := range []string{"proxy-disabled", "foreign"} {
+		if service.SetManualOverride(context.Background(), invalid) == nil {
+			t.Fatal("invalid pool pin admitted")
+		}
+	}
+	if runtime.writes != 0 {
+		t.Fatal("invalid pin wrote runtime")
+	}
+	if service.SetManualOverride(context.Background(), "proxy-a") != nil || runtime.override != "proxy-a" {
+		t.Fatal("native pin not read back")
+	}
+	if service.SetManualOverride(context.Background(), "") != nil || runtime.override != "" {
+		t.Fatal("clear not read back")
+	}
+	content, _ := os.ReadFile(filepath.Join(dir, "05_routing.json"))
+	if string(content) != routing {
+		t.Fatal("pin changed native configuration")
+	}
+	current, err := editor.Workspace(context.Background())
+	if err != nil || current.Pending != nil {
+		t.Fatal("pin staged a configuration")
+	}
+	release, _ := lease.TryAcquire()
+	if service.SetManualOverride(context.Background(), "proxy-a") == nil {
+		t.Fatal("busy panel pin admitted")
+	}
+	release()
+	runtime.reachable = false
+	if service.SetManualOverride(context.Background(), "proxy-a") == nil {
+		t.Fatal("unreachable runtime admitted")
+	}
+}
 
 func TestStageUsesExistingPendingEditorPreservesOtherNativeBytes(t *testing.T) {
 	dir := t.TempDir()

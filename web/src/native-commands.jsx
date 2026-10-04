@@ -1,3 +1,4 @@
+import { IconPlayerPlay, IconRefresh, IconCalendar, IconTools, IconShieldLock, IconNetwork } from '@tabler/icons-react'
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
@@ -5,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Field, FieldLabel } from '@/components/ui/field'
 
 const NativeConsole = lazy(() => import('./native-console.jsx'))
-const primaryActions = new Set(['start', 'stop', 'restart', 'status', 'update-xkeen', 'update-xray', 'update-geodata', 'geodata-schedule', 'geodata-schedule-remove', 'test-xray'])
+
 
 export function NativeCommands({ csrfToken, onUnauthorized, onRefresh, jobNotification }) {
   const [catalog, setCatalog] = useState([])
@@ -150,8 +151,12 @@ export function NativeCommands({ csrfToken, onUnauthorized, onRefresh, jobNotifi
   return <Card>
     <CardHeader><CardTitle>Native XKeen commands</CardTitle><CardDescription>XKeen performs these actions itself. Console output stays private to your session.</CardDescription></CardHeader>
     <CardContent className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-2">{catalog.filter((command) => primaryActions.has(command.action)).map((command) => <Button key={command.action} variant="outline" disabled={busy} onClick={() => choose(command)}>{command.label}</Button>)}</div>
-      <details><summary>More native settings and tools</summary><div className="mt-3 flex flex-wrap gap-2">{catalog.filter((command) => !primaryActions.has(command.action)).map((command) => <Button key={command.action} variant="outline" disabled={busy} onClick={() => choose(command)}>{command.label}</Button>)}</div></details>
+      <div className="grid gap-4 sm:grid-cols-2">{[
+        { title: 'Service', icon: IconPlayerPlay, description: 'Run and inspect the native VPN service.', match: (id) => ['start','stop','restart','status','test-xray'].includes(id) },
+        { title: 'Updates', icon: IconRefresh, description: 'Use XKeen’s own component installers and updaters.', match: (id) => id.startsWith('update-') },
+        { title: 'Schedules', icon: IconCalendar, description: 'Configure the cron jobs maintained by XKeen.', match: (id) => id.includes('schedule') },
+        { title: 'Network & tools', icon: IconTools, description: 'Native network modes, diagnostics and maintenance.', match: (id) => !['start','stop','restart','status','test-xray'].includes(id) && !id.startsWith('update-') && !id.includes('schedule') },
+      ].map((group) => <section key={group.title} className="rounded-lg border p-4"><h3 className="flex items-center gap-2 font-semibold"><group.icon className="text-info" />{group.title}</h3><p className="my-2 text-sm text-muted-foreground">{group.description}</p><div className="flex flex-wrap gap-2">{catalog.filter((command) => group.match(command.action)).map((command) => <Button key={command.action} variant="outline" disabled={busy} onClick={() => choose(command)}>{command.label}{command.interactive && <span className="text-xs text-muted-foreground"> · console</span>}</Button>)}</div></section>)}</div>
       {selected && <form onSubmit={start} className="flex flex-col gap-3">
         <p>{selected.label}{selected.interactive ? ' — answer the native prompts in the console.' : ''}</p>
         {selected.parameter && <Field><FieldLabel htmlFor="native-parameter">{selected.parameter === 'state' ? 'State: on or off' : selected.parameter === 'version' ? 'Version or auto' : 'Ports/ranges, for example 80 443 1000:2000'}</FieldLabel><Input id="native-parameter" value={parameter} maxLength={512} onChange={(event) => setParameter(event.target.value)} disabled={busy} /></Field>}

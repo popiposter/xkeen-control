@@ -1,3 +1,5 @@
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { IconLock, IconKey, IconPackage, IconBell, IconActivity } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -482,13 +484,14 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
 }
 
 export function SystemPanelSection({ controller, status, onOpenComponents, onOpenBackup }) {
+  const [page, setPage] = useState(() => ({ '#system-password': 'password', '#system-releases': 'releases', '#system-notifications': 'notifications', '#system-runtime': 'runtime' })[location.hash] || 'access')
   const listener = controller.listener
   const update = controller.update
   const lifecycleBlocked = lifecycleBlocksMutations(status?.lifecycle)
   return <div className="section-stack system-panel-section">
     {controller.result && <Alert variant={controller.result.tone === 'error' ? 'destructive' : 'default'} role={controller.result.tone === 'error' ? 'alert' : 'status'}><AlertDescription><strong>{controller.result.title}</strong> {controller.result.message}</AlertDescription></Alert>}
-    <nav className="local-navigation" aria-label="System settings">{[['system-access', 'Access'], ['system-password', 'Password'], ['system-releases', 'Releases'], ['system-notifications', 'Notifications']].map(([id, label]) => <a key={id} href={`#${id}`} onClick={() => { const target = document.getElementById(id); if (target?.tagName === 'DETAILS') target.open = true }}>{label}</a>)}</nav>
-    <div className="system-panel-grid">
+    <Tabs value={page} onValueChange={(value) => { setPage(value); history.replaceState(null, '', `#system-${value}`) }}><TabsList className="h-auto flex-wrap justify-start">{[['access','Access',IconLock], ['password','Password',IconKey], ['releases','Releases',IconPackage], ['notifications','Notifications',IconBell], ['runtime','Runtime',IconActivity]].map(([value,label,Glyph]) => <TabsTrigger key={value} value={value}><Glyph className="text-info" />{label}</TabsTrigger>)}</TabsList><TabsContent value="access" className="flex flex-col gap-4">
+
       <Card role="region" id="system-access" className="panel system-panel-card listener-card" aria-label="Management listener"><CardContent className="flex flex-col gap-4">
         <div className="system-card-heading"><div><span className="panel-label">Management listener</span><h2>{listener ? addressText(listener) : 'Reading listener…'}</h2></div>{listener && <Badge variant="secondary">{editabilityLabel(listener.editability)}</Badge>}</div>
         {listener && <>
@@ -512,7 +515,8 @@ export function SystemPanelSection({ controller, status, onOpenComponents, onOpe
         <p className="muted">Never bind to WAN or open a WAN firewall rule. Hostname and wildcard binds are unavailable. Configure VPN, firewall and DDNS yourself; this panel does not automate them.</p>
       </CardContent></Card></Disclosure>
 
-      <Disclosure title="Password" id="system-password" attention={controller.password.pending || Boolean(controller.password.error)}>      <Card role="region" className="panel system-panel-card" aria-label="Panel password"><CardContent className="flex flex-col gap-4">
+    </TabsContent><TabsContent value="password">
+      <SettingsGroup title="Password" id="system-password" attention={controller.password.pending || Boolean(controller.password.error)}>      <Card role="region" className="panel system-panel-card" aria-label="Panel password"><CardContent className="flex flex-col gap-4">
 
         <form className="system-password-form" onSubmit={controller.replacePassword}>
           <Field><FieldLabel>New panel password<Input type="password" autoComplete="new-password" value={controller.password.newPassword} onChange={(event) => controller.setPassword((current) => ({ ...current, newPassword: event.target.value, error: '' }))} disabled={controller.password.pending} /></FieldLabel></Field>
@@ -520,9 +524,10 @@ export function SystemPanelSection({ controller, status, onOpenComponents, onOpe
           {controller.password.error && <p className="warning" role="alert">{controller.password.error}</p>}
           <p className="form-note muted">Changing the password signs out all sessions.</p><Button type="submit" disabled={controller.password.pending}>{controller.password.pending ? 'Replacing…' : 'Replace password'}</Button>
         </form>
-      </CardContent></Card></Disclosure>
+      </CardContent></Card></SettingsGroup>
 
-      <Disclosure title="Panel releases" id="system-releases" attention={controller.checkPending || controller.rollbackPending || Boolean(controller.updateError) || controller.handoffState !== 'idle' || Boolean(update?.rollbackVerificationRequired)}>      <Card role="region" className="panel system-panel-card" aria-label="Signed panel release"><CardContent className="flex flex-col gap-4">
+    </TabsContent><TabsContent value="releases">
+      <SettingsGroup title="Panel releases" id="system-releases" attention={controller.checkPending || controller.rollbackPending || Boolean(controller.updateError) || controller.handoffState !== 'idle' || Boolean(update?.rollbackVerificationRequired)}>      <Card role="region" className="panel system-panel-card" aria-label="Signed panel release"><CardContent className="flex flex-col gap-4">
         <div className="system-card-heading"><div><span className="panel-label">Installed version</span><h2>{update?.installed?.version || 'Unavailable'}</h2></div>{update && <Badge variant="secondary">{update.signingKeyConfigured ? 'Signing key configured' : 'Signing key unavailable'}</Badge>}</div>
         {update && <>
           <div className="system-facts-grid"><Fact label="Installed source" value={update.installed?.sourceCommit ? 'Signed release commit' : 'Unknown'} /><Fact label="Rollback" value={update.rollbackVerificationRequired ? 'Verify required' : update.rollbackAvailable ? 'Available' : 'None'} /></div>
@@ -544,17 +549,19 @@ export function SystemPanelSection({ controller, status, onOpenComponents, onOpe
           <div className="system-card-actions"><Button type="button" onClick={controller.applyUpdate} disabled={lifecycleBlocked || !controller.checkedCandidate || controller.rollbackPending}>{controller.rollbackPending && controller.handoffState === 'update-unknown' ? 'Verifying…' : 'Apply checked release'}</Button><Button variant="outline" type="button" onClick={controller.rollbackUpdate} disabled={lifecycleBlocked || !update.rollbackAvailable || update.rollbackVerificationRequired || controller.rollbackPending || controller.handoffState !== 'idle'}>{controller.rollbackPending && controller.handoffState === 'rollback-unknown' ? 'Verifying…' : 'Rollback retained release'}</Button></div>
         </>}
         {controller.updateError && <p className="system-blocked" role="alert">{controller.updateError}</p>}
-      </CardContent></Card></Disclosure>
+      </CardContent></Card></SettingsGroup>
 
-      <Disclosure title="Notifications" id="system-notifications" attention={controller.notifications.pending && Boolean(controller.notifications.status) || Boolean(controller.notifications.message)}><NotificationsCard controller={controller.notifications} sessionKey={controller.sessionKey} /></Disclosure>
+    </TabsContent><TabsContent value="notifications">
+      <SettingsGroup title="Notifications" id="system-notifications" attention={controller.notifications.pending && Boolean(controller.notifications.status) || Boolean(controller.notifications.message)}><NotificationsCard controller={controller.notifications} sessionKey={controller.sessionKey} /></SettingsGroup>
 
-      <Disclosure title="Runtime facts" id="system-runtime" attention={false}>      <Card role="region" className="panel system-panel-card" aria-label="Source-owned runtime facts"><CardContent className="flex flex-col gap-4">
+    </TabsContent><TabsContent value="runtime">
+      <SettingsGroup title="Runtime facts" id="system-runtime" attention={false}>      <Card role="region" className="panel system-panel-card" aria-label="Source-owned runtime facts"><CardContent className="flex flex-col gap-4">
 
         <div className="system-facts-grid"><Fact label="Control plane" value={status?.controlPlane?.version || 'dev'} /><Fact label="Runtime" value={status?.setup?.runtime || 'unknown'} /><Fact label="XKeen" value={status?.xkeen?.running ? 'Running' : 'Not detected'} /><Fact label="Xray" value={status?.xray?.running ? 'Running' : 'Not detected'} /><Fact label="Observatory" value={status?.observatory?.apiReachable ? 'Reachable' : 'Degraded'} /><Fact label="Uptime" value={formatUptime(status?.controlPlane?.uptimeSeconds)} /></div>
-      </CardContent></Card></Disclosure>
+      </CardContent></Card></SettingsGroup>
 
       <Disclosure title="Related workspaces" id="system-workspaces" attention={false}>      <Card role="region" className="panel system-panel-card system-navigation-card" aria-label="System workspace navigation"><CardContent className="flex flex-col gap-4"><div className="system-navigation-actions"><Button type="button" onClick={onOpenComponents}>Components / Updates</Button><Button type="button" variant="outline" onClick={onOpenBackup}>Backup &amp; Restore</Button></div></CardContent></Card></Disclosure>
-    </div>
+    </TabsContent></Tabs>
   </div>
 }
 
@@ -566,3 +573,5 @@ function ListenerPreview({ preview, busy, onCancel, onApply }) {
 
 function Fact({ label, value }) { return <div><span>{label}</span><strong>{value}</strong></div> }
 function formatUptime(value) { if (!Number.isFinite(value)) return '—'; const hours = Math.floor(value / 3600); const minutes = Math.floor((value % 3600) / 60); return `${hours}h ${minutes}m` }
+
+function SettingsGroup({ title, id, children }) { return <section id={id} className="flex flex-col gap-4"><h2 className="flex items-center gap-2 text-lg font-semibold"><IconActivity className="text-info" />{title}</h2>{children}</section> }

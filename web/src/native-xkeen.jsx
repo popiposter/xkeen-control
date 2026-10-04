@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { NativeCommands } from './native-commands'
+import { StatusBadge } from './status-ui'
 
 export function NativeXkeenStatus({ facts = {}, onOpenNodes }) {
   const installed = facts?.installation === 'available'
@@ -11,7 +12,7 @@ export function NativeXkeenStatus({ facts = {}, onOpenNodes }) {
   const uncertain = !installed && !missing || installed && !attached && !attachable
   const title = uncertain ? 'Check XKeen status' : missing ? 'Install XKeen first' : attachable ? 'Connect the panel to XKeen' : facts.xrayRunning ? 'XKeen is running' : 'Add your VPN profiles'
   return <Card role="region" aria-label="Native XKeen">
-    <CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle><h2>{title}</h2></CardTitle><Badge variant="secondary">{installed ? `XKeen ${facts.version} - ${facts.channel}` : 'Installation not confirmed'}</Badge></div>
+    <CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle><h2>{title}</h2></CardTitle><StatusBadge tone={installed && facts.xrayRunning ? 'success' : 'warning'}>{installed ? `XKeen ${facts.version} - ${facts.channel}` : 'Installation not confirmed'}</StatusBadge></div>
       <CardDescription>{uncertain ? 'The native installation state is unavailable. Inspect XKeen and refresh status.' : !installed ? 'Use the official XKeen installer, then refresh this page.' : !attached ? 'Connect the panel to the native configuration to manage profiles.' : 'XKeen manages the traffic service. The panel manages your profiles and configuration.'}</CardDescription></CardHeader>
     {installed && attached && onOpenNodes && <CardContent><Button variant="outline" onClick={onOpenNodes}>Manage VPN profiles</Button></CardContent>}
   </Card>

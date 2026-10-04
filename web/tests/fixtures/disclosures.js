@@ -6,8 +6,8 @@ export async function revealDetails(page, title) {
   if (await summary.locator('..').getAttribute('open') === null) await summary.click()
 }
 
-export async function revealSystemSettings(page) {
-  for (const title of ['Password', 'Panel releases', 'Notifications', 'Runtime facts']) await revealDetails(page, title)
+export async function revealSystemSettings(page, section = 'Access') {
+  await page.getByRole('tab', { name: section, exact: true }).click()
 }
 
 export async function revealNavigation(page) {

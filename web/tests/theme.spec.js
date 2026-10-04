@@ -39,7 +39,7 @@ for (const theme of ['light', 'dark']) test(`all workspaces use one readable ${t
   await mkdir(output, { recursive: true })
   for (const [index, name] of ['Overview', 'Nodes 1', 'Routing', 'DNS', 'Performance', 'Components / Updates', 'Backup & Restore', 'System / Panel'].entries()) {
     await (await revealNavigation(page)).getByRole('button', { name, exact: true }).click()
-    if (name === 'Routing' || name === 'DNS') await expect(page.getByLabel('Configuration file', { exact: true })).toBeVisible()
+    if (name === 'Routing' || name === 'DNS') await expect(page.getByLabel('Configuration file', { exact: true })).toHaveCount(0)
     await expect(page.locator('.workspace')).toBeVisible()
     await expect(page.locator('.legacy-workspace')).toHaveCount(0)
     // Regression for old inherited white labels on white cards: all visible

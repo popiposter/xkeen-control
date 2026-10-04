@@ -63,7 +63,7 @@ Default listener:
 
 One exact private LAN address may be configured. Wildcard/public/hostname binds fail closed. Direct WAN exposure is not supported.
 
-Authentication uses a local bcrypt hash, random RAM sessions, HttpOnly/SameSite cookies, same-origin/CSRF checks on mutations, in-memory throttling and security headers. `/healthz` is the only unauthenticated endpoint and returns generic process health.
+Authentication uses a local bcrypt hash, bounded remembered native-install sessions (30 days, protected hash-keyed storage bound to the password, transport and listener), HttpOnly/SameSite cookies, same-origin/CSRF checks on mutations, in-memory throttling and security headers. Explicit logout persists revocation; password replacement invalidates all sessions. `/healthz` is the only unauthenticated endpoint and returns generic process health. Auth fixtures can retain RAM-only sessions.
 
 There is no generic shell, PTY, arbitrary command endpoint, filesystem API or raw configuration editor.
 

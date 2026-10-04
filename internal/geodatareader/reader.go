@@ -129,7 +129,7 @@ func hashFile(ctx context.Context, f *os.File) (string, error) {
 func (r *Reader) Query(ctx context.Context, q Request) (Result, error) {
 	result := Result{File: q.File, Items: []Item{}, Offset: q.Offset}
 	match := filename.FindStringSubmatch(q.File)
-	if match == nil || q.Offset < 0 || q.Offset > 10000000 || q.Limit < 0 || q.Limit > 100 || len(q.Search) > 253 || !utf8.ValidString(q.Search) || q.Category != "" && !codeName.MatchString(q.Category) || q.View != "categories" && q.View != "entries" && q.View != "match" {
+	if match == nil || q.Offset < 0 || q.Offset > 10000000 || q.Limit < 0 || q.Limit > 100 || len(q.Search) > 253 || !utf8.ValidString(q.Search) || q.Category != "" && !codeName.MatchString(q.Category) || q.View != "categories" && q.View != "entries" && q.View != "match" && q.View != "search" || q.View == "search" && strings.TrimSpace(q.Search) == "" {
 		return result, ErrUnavailable
 	}
 	if q.Limit == 0 {
@@ -221,7 +221,7 @@ func (r *Reader) Query(ctx context.Context, q Request) (Result, error) {
 		if q.Category != "" && !strings.EqualFold(category, q.Category) {
 			continue
 		}
-		if q.View == "categories" {
+		if q.View == "categories" || q.View == "search" && strings.Contains(category, search) {
 			if search == "" || strings.Contains(category, search) {
 				add(Item{Category: category, Type: "category", Value: category, Count: count, Inverse: inverse})
 			}
@@ -260,13 +260,18 @@ func (r *Reader) Query(ctx context.Context, q Request) (Result, error) {
 					if item.Type == "cidr" {
 						item.Value = item.prefix.String()
 					}
-					add(item)
+					if q.View != "search" {
+						add(item)
+					}
 				}
 			}
 			return nil
 		})
 		if err != nil {
 			return result, ErrUnavailable
+		}
+		if q.View == "search" && matched {
+			add(Item{Category: category, Type: "category", Value: category, Count: count, Inverse: inverse})
 		}
 		if q.View == "match" && inverse && !matched {
 			add(Item{Category: category, Type: "inverse", Value: "Outside this category's listed networks", Inverse: true})

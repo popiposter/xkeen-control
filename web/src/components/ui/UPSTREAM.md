@@ -9,3 +9,8 @@ The CLI is a component-generation tool, not a build dependency. Run it explicitl
 when adding components, then review the generated source and dependencies.
 Keeping the stylesheet locally preserves the standard shadcn utilities without
 installing the CLI and its registry/glob dependencies in every build.
+
+Tooltip, Tabs and DropdownMenu were generated from the official `base-nova`
+registry on 2026-10-04. Their utility import is normalized to the project's
+`@/lib/utils` alias. They use the existing pinned Base UI and lucide dependencies.
+Application portals use the existing CSPProvider boundary.

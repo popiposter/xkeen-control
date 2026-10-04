@@ -7,6 +7,8 @@ import { Field, FieldLabel } from '@/components/ui/field'
 import { NativeSelect } from '@/components/ui/native-select'
 import { documentField, editDocumentField, formatDocument, inspectDocument } from './native-config-document'
 import { NativeConfigForm } from './native-config-form'
+import { splitDNSDocuments } from './native-dns-policy'
+import { Disclosure } from './ui'
 
 const TextEditor = lazy(() => import('./native-config-text.jsx'))
 const fields = [
@@ -18,7 +20,7 @@ const fields = [
   { file: '07_observatory.json', area: 'observatory', field: 'enableConcurrency', label: 'Concurrent node probes', boolean: true },
 ]
 
-export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, focusFile = '', onOpenConsole, readbackKey = 0 }) {
+export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, focusFile = '', scopeFile = '', onOpenConsole, readbackKey = 0 }) {
   const [open, setOpen] = useState(false)
   const [workspace, setWorkspace] = useState(null)
   const [drafts, setDrafts] = useState({})
@@ -163,6 +165,24 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, fo
     setWorkspace((previous) => ({ ...previous, digest: result.digest, pending: { ...previous.pending, files: [...new Set([...(previous.pending?.files || []), file])], drift: false }, documents: { ...previous.documents, [file]: { ...previous.documents[file], text } } }))
     setNotice('Saved and validated. Use the native Restart command to apply saved configurations together.')
   }
+  async function prepareSplitDNS() {
+    const ids = ['02_dns.json', '05_routing.json']
+    const loaded = {}
+    for (const id of ids) {
+      const result = await request('document', { file: id })
+      if (result.digest !== workspace.digest || typeof result.document?.text !== 'string') throw new Error('Configuration changed. Reload before preparing DNS.')
+      loaded[id] = result.document
+    }
+    const prepared = splitDNSDocuments(drafts['02_dns.json'] ?? loaded['02_dns.json'].text, drafts['05_routing.json'] ?? loaded['05_routing.json'].text, workspace.targets || [])
+    for (const id of ids) {
+      const old = drafts[id] ?? loaded[id].text
+      const item = history.current[id] ||= { undo: [], redo: [] }
+      item.undo.push(old); item.redo = []; while (item.undo.length > 40 || item.undo.reduce((sum,value) => sum+value.length,0) > (4 << 20)) item.undo.shift()
+    }
+    setWorkspace((previous) => ({ ...previous, documents: { ...previous.documents, ...loaded } }))
+    setDrafts((previous) => ({ ...previous, ...prepared.documents }))
+    setNotice(`DNS draft prepared: ${prepared.vpnMatches} VPN matches, ${prepared.directMatches} DIRECT matches. Save all configurations to validate both files together. LAN clients still use the router's own DNS; IP-only rules and ordered overlapping matches need separate inspection.`)
+  }
   async function saveAll() {
     const result = await request('save-set', { digest: workspace.digest, documents: changedDocuments })
     if (!/^[a-f0-9]{64}$/.test(result.digest)) throw new Error('Save was not confirmed. Reload before another save.')
@@ -205,11 +225,11 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, fo
   }, [applying, applyJob?.id, csrfToken])
   const storedDraft = workspace?.documents[file]?.draft
   return <Card>
-    <CardHeader><CardTitle>Native configuration</CardTitle><CardDescription>Form and Text share one document. Save validates files; native Restart applies them together.</CardDescription></CardHeader>
+    <CardHeader><CardTitle>{scopeFile === '02_dns.json' ? 'DNS configuration' : scopeFile === '05_routing.json' ? 'Routing configuration' : 'Native configurations'}</CardTitle><CardDescription>Form and Text share one document. Save validates files; native Restart applies them together.</CardDescription></CardHeader>
     <CardContent className="flex flex-col gap-4">
       {!open ? <Button className="self-start" variant="outline" onClick={() => { setOpen(true); void run(reload) }}>Edit native configuration</Button> : <Button className="self-start" variant="outline" disabled={locked || !!changed} onClick={() => void run(reload)}>Reload current configuration</Button>}
       {notice && <p role="status">{notice}</p>}
-      {open && workspace && <>
+      {open && workspace && (!scopeFile || file === scopeFile) && <>
         {(pending?.files?.length > 0 || pending?.restartRequired) && <p role="status">Saved configurations: {pending.files.join(', ') || 'Restored pre-apply set'} — {pending.applyState === 'running' ? 'Restart in progress' : pending.applyState === 'unknown' ? 'Application needs inspection' : 'Awaiting native restart'}</p>}
         {workspace.pending?.drift && <p role="alert">Saved configuration changed externally. Inspect and reload; pending files will not be overwritten.</p>}
         <div className="flex flex-wrap gap-2">
@@ -228,7 +248,7 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, fo
           {pending?.applyId && pending.applyState !== 'running' && <Button className="self-start" variant="outline" disabled={locked} onClick={() => void run(async () => { await request('inspect', { id: pending.applyId }); await syncWorkspace(); setNotice('Saved configuration and a new running process were independently confirmed. No Restart was repeated.') })}>Check applied configuration</Button>}
           {workspace.hasPrevious && <Button className="self-start" variant="outline" disabled={locked || !!pending || workspace.previousDrift} onClick={() => void run(async () => { await request('restore-previous', { digest: workspace.digest }); await syncWorkspace(); setNotice('Previous configuration saved. Apply it when ready; the running service is unchanged.') })}>Restore previous configuration</Button>}
         </div>
-        <Field><FieldLabel htmlFor="native-config-file">Configuration file</FieldLabel><NativeSelect id="native-config-file" value={file} disabled={locked} onChange={(event) => void run(() => selectFile(event.target.value))}>{Object.keys(workspace.documents).map((id) => <option key={id} value={id}>{({ '01_log.json': 'Logging', '02_dns.json': 'DNS', '03_inbounds.json': 'Traffic listeners', '05_routing.json': 'Routing & balancing', '06_policy.json': 'Connection policy', '07_observatory.json': 'Node health', '08_api.json': 'Local API & probes' })[id] || id} - {id}</option>)}</NativeSelect></Field>
+        {!scopeFile && <Field><FieldLabel htmlFor="native-config-file">Configuration file</FieldLabel><NativeSelect id="native-config-file" value={file} disabled={locked} onChange={(event) => void run(() => selectFile(event.target.value))}>{Object.keys(workspace.documents).map((id) => <option key={id} value={id}>{({ '01_log.json': 'Logging', '02_dns.json': 'DNS', '03_inbounds.json': 'Traffic listeners', '05_routing.json': 'Routing & balancing', '06_policy.json': 'Connection policy', '07_observatory.json': 'Node health', '08_api.json': 'Local API & probes' })[id] || id} - {id}</option>)}</NativeSelect></Field>}
         <div className="flex flex-wrap gap-2">
           <ToggleGroup variant="outline" aria-label="Editor mode" value={[mode]} onValueChange={(values) => { if (values.length) setMode(values[0]) }}><ToggleGroupItem value="form">Form</ToggleGroupItem><ToggleGroupItem value="text">Text</ToggleGroupItem></ToggleGroup>
           <Button className="self-start" variant="outline" disabled={locked || !!parsed.error} onClick={() => { try { edit(formatDocument(text)) } catch (error) { setNotice(error.message) } }}>Format JSON</Button>
@@ -238,7 +258,8 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, fo
         {storedDraft !== undefined && <div className="flex flex-wrap items-center gap-2"><span>A saved draft is available.</span><Button className="self-start" variant="outline" disabled={locked} onClick={() => edit(storedDraft)}>Resume draft</Button><Button className="self-start" variant="outline" disabled={locked} onClick={() => void run(async () => { await request('draft', { file, discard: true }); setWorkspace((previous) => ({ ...previous, documents: { ...previous.documents, [file]: { text: previous.documents[file].text } } })) })}>Discard saved draft</Button></div>}
         {parsed.error && <p role="alert">{parsed.error}</p>}
         {mode === 'text' ? <Suspense fallback={<p>Loading text editor…</p>}><TextEditor text={text} disabled={locked} onChange={edit} onUndo={() => step('undo')} onRedo={() => step('redo')} /></Suspense> : !parsed.error && <div className="flex flex-col gap-3">
-          {fields.filter((item) => item.file === file).map((item) => <NativeField key={item.field} item={item} current={documentField(parsed.tree, item.area, item.field)} disabled={locked} onChange={(value) => { try { edit(editDocumentField(text, item.area, item.field, value)) } catch (error) { setNotice(error.message) } }} />)}
+          {file === '02_dns.json' && <div className="rounded-lg border bg-muted/30 p-4"><h3 className="font-semibold">DNS follows VPN domain categories</h3><p className="my-2 text-sm text-muted-foreground">Replace the resolver list in the draft with Cloudflare and Google DoH through the existing VPN pool for its domain categories. Other Xray lookups use system DNS. This does not change router DHCP or intercept LAN DNS, so the router resolver remains independent of XKeen. Review overlapping categories and IP-only rules separately.</p><Button className="self-start" variant="outline" disabled={locked || !workspace.targetsComplete} onClick={() => void run(prepareSplitDNS)}>Prepare DNS from routing</Button></div>}
+          <Disclosure defaultOpen title="General settings">{fields.filter((item) => item.file === file).map((item) => <NativeField key={item.field} item={item} current={documentField(parsed.tree, item.area, item.field)} disabled={locked} onChange={(value) => { try { edit(editDocumentField(text, item.area, item.field, value)) } catch (error) { setNotice(error.message) } }} />)}</Disclosure>
           <NativeConfigForm key={file} file={file} text={text} tree={parsed.tree} disabled={locked} onChange={edit} onError={setNotice} request={request} targets={workspace.targets || []} />
           <p className="text-sm text-muted-foreground">Additional native properties are available in Text mode. Unknown fields and comments are preserved.</p>
         </div>}

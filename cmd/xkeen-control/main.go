@@ -108,6 +108,9 @@ func main() {
 		HashPath:            getenv("XKEEN_CONTROL_AUTH_HASH", auth.PasswordHashPath),
 		BootstrapMarkerPath: getenv("XKEEN_CONTROL_BOOTSTRAP_MARKER", auth.BootstrapMarkerPath),
 		SecureCookies:       envBool("XKEEN_CONTROL_TLS"),
+		SessionTTL:          30 * 24 * time.Hour,
+		SessionPath:         filepath.Join(filepath.Dir(getenv("XKEEN_CONTROL_AUTH_HASH", auth.PasswordHashPath)), "sessions.json"),
+		SessionAudience:     listenAddress,
 	})
 	xrayReader := xrayapi.NewClient(
 		getenv("XKEEN_XRAY_API_ADDR", xrayapi.DefaultAPIAddress),
@@ -193,25 +196,24 @@ func main() {
 			return state.Lifecycle.Maintenance, state.Lifecycle.Applying, true
 		},
 	})
-	qualityService := &nativequality.Service{Editor: nativeConfig, Lease: authorityLease, Reader: xrayReader, Nodes: nodeReader, Measurement: coordinator}
+	qualityService := &nativequality.Service{Editor: nativeConfig, Lease: authorityLease, Reader: xrayReader, Nodes: nodeReader, Measurement: coordinator, Control: xrayReader}
 	qualitySchedule := nativequality.NewSchedule(qualityService)
 	nodeManager.OnSubscriptionRefresh = qualitySchedule.NotifyRefresh
 	defer qualityService.Stop()
 	nativeTransfer := &nativebackup.Service{Editor: nativeConfig, Nodes: nodeManager, Lease: authorityLease}
 	handler := httpapi.New(httpapi.Config{
-		Native:         xkeen.Discovery{},
-		NativeJobs:     nativeJobs,
-		Geodata:        &geodatareader.Reader{Dir: getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)},
-		NativeConfig:   nativeConfig,
-		Collector:      collector,
-		Auth:           authManager,
-		Nodes:          nodeManager,
-		Backup:         nativeTransfer,
-		NativeTransfer: nativeTransfer,
-		NativeQuality:  qualityService,
-		Benchmark:      coordinator,
-		// Selection writes stay unavailable until native ownership and independent
-		// override expiry are qualified. Not starting the loop alone is insufficient.
+		Native:            xkeen.Discovery{},
+		NativeJobs:        nativeJobs,
+		Geodata:           &geodatareader.Reader{Dir: getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)},
+		NativeConfig:      nativeConfig,
+		Collector:         collector,
+		Auth:              authManager,
+		Nodes:             nodeManager,
+		Backup:            nativeTransfer,
+		NativeTransfer:    nativeTransfer,
+		NativeQuality:     qualityService,
+		Benchmark:         coordinator,
+		Selection:         qualityService, // Explicit native volatile pin; no panel selection loop.
 		Assets:            webassets.Handler(),
 		StartedAt:         startedAt,
 		Manual:            coordinator,

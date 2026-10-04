@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { CSPProvider } from '@base-ui/react/csp-provider'
 import { useEffect, useRef } from 'react'
 import { IconChevronRight, IconArrowUp, IconArrowDown, IconTrash } from '@tabler/icons-react'
+import { ActionHint } from './status-ui'
 
 export function Modal({ label, busy, onCancel, returnFocus, children }) {
   return <CSPProvider disableStyleElements><Dialog open onOpenChange={(open, details) => {
@@ -36,7 +37,7 @@ export function MobileNavigationDrawer({ open, onClose, returnFocus, children })
 
 export function RowAction({ action, label, className = '', ...props }) {
   const Icon = { up: IconArrowUp, down: IconArrowDown, remove: IconTrash }[action]
-  return <Button type="button" variant={action === 'remove' ? 'destructive' : 'outline'} size="icon" className={className} aria-label={label} title={label} {...props}><Icon data-icon="inline-start" aria-hidden="true" /></Button>
+  return <ActionHint label={label} description={action === 'remove' ? 'Remove this item from the working draft.' : 'The first matching routing rule wins.'} disabled={props.disabled}><Button type="button" variant={action === 'remove' ? 'destructive' : 'outline'} size="icon" className={className} aria-label={label} {...props}><Icon data-icon="inline-start" aria-hidden="true" /></Button></ActionHint>
 }
 
 // Native disclosure preserves keyboard behavior and keeps controller ownership

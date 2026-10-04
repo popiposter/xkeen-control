@@ -5,6 +5,8 @@ package nativequality
 import (
 	"context"
 	"errors"
+	"math"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,12 +28,20 @@ type Measurement interface {
 }
 
 type Status struct {
-	State      string                       `json:"state"`
-	Digest     string                       `json:"digest,omitempty"`
-	Generation uint64                       `json:"generation"`
-	Progress   c1.AdaptivePerformanceStatus `json:"progress"`
-	CanStage   bool                         `json:"canStage"`
-	PoolCount  int                          `json:"poolCount"`
+	State          string                       `json:"state"`
+	Digest         string                       `json:"digest,omitempty"`
+	Generation     uint64                       `json:"generation"`
+	Progress       c1.AdaptivePerformanceStatus `json:"progress"`
+	CanStage       bool                         `json:"canStage"`
+	PoolCount      int                          `json:"poolCount"`
+	Ranking        []RankedNode                 `json:"ranking,omitempty"`
+	AppliedRanking []RankedNode                 `json:"appliedRanking,omitempty"`
+}
+
+type RankedNode struct {
+	Tag  string  `json:"tag"`
+	Rank int     `json:"rank"`
+	Cost float64 `json:"cost"`
 }
 
 type Service struct {
@@ -40,6 +50,7 @@ type Service struct {
 	Reader        xrayapi.Reader
 	Nodes         c1.NodeReader
 	Measurement   Measurement
+	Control       xrayapi.RoutingController
 	mu            sync.Mutex
 	status        Status
 	result        c1.AdaptiveResult
@@ -53,7 +64,6 @@ type Service struct {
 
 func (s *Service) Read() Status {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	value := s.status
 	if value.State == "" {
 		value.State = "idle"
@@ -61,7 +71,154 @@ func (s *Service) Read() Status {
 	value.Progress.Candidates = append([]c1.AdaptiveCandidateStatus(nil), value.Progress.Candidates...)
 	_, err := c1.NativeQualityCosts(s.result, time.Now().UTC(), s.pool)
 	value.CanStage = value.State == "completed" && err == nil
+	// Rank the completed measurement using the same throughput/health cost as
+	// Stage. Old results remain labelled as measurements, never as applied state.
+	costs, rankErr := c1.NativeQualityCosts(s.result, s.result.CompletedAt, s.pool)
+	if rankErr == nil {
+		byMatch := make(map[string]float64)
+		for _, cost := range costs {
+			byMatch[cost.Match] = cost.Value
+		}
+		for _, candidate := range s.result.Candidates {
+			if candidate.Valid && candidate.DownloadBPS > 0 && candidate.UploadBPS > 0 && !math.IsNaN(candidate.DownloadBPS) && !math.IsInf(candidate.DownloadBPS, 0) && !math.IsNaN(candidate.UploadBPS) && !math.IsInf(candidate.UploadBPS, 0) {
+				value.Ranking = append(value.Ranking, RankedNode{Tag: candidate.Tag, Cost: byMatch["^"+regexp.QuoteMeta(candidate.Tag)+"$"]})
+			}
+		}
+		sort.Slice(value.Ranking, func(i, j int) bool {
+			if value.Ranking[i].Cost == value.Ranking[j].Cost {
+				return value.Ranking[i].Tag < value.Ranking[j].Tag
+			}
+			return value.Ranking[i].Cost < value.Ranking[j].Cost
+		})
+		for i := range value.Ranking {
+			value.Ranking[i].Rank = i + 1
+		}
+	}
+	s.mu.Unlock()
+	value.AppliedRanking = s.appliedRanking()
 	return value
+}
+
+func (s *Service) appliedRanking() []RankedNode {
+	if s.Editor == nil || s.Nodes == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	w, err := s.Editor.Workspace(ctx)
+	if err != nil || !w.TargetsComplete || w.Pending != nil {
+		return nil
+	}
+	pool, index, err := routingPool(w.Documents["05_routing.json"].Text, s.Nodes(ctx), w.Targets)
+	if err != nil {
+		return nil
+	}
+	var document struct {
+		Routing struct {
+			Balancers []struct {
+				Strategy struct {
+					Type     string `json:"type"`
+					Settings struct {
+						Costs []c1.NativeQualityCost `json:"costs"`
+					} `json:"settings"`
+				} `json:"strategy"`
+			} `json:"balancers"`
+		} `json:"routing"`
+	}
+	if configjson.Decode([]byte(w.Documents["05_routing.json"].Text), &document) != nil || index >= len(document.Routing.Balancers) || document.Routing.Balancers[index].Strategy.Type != "leastLoad" {
+		return nil
+	}
+	costs := document.Routing.Balancers[index].Strategy.Settings.Costs
+	// Only the exact anchored weights produced by the native quality editor can
+	// be attributed to individual nodes. Custom regex/substring weights stay native.
+	values := map[string]float64{}
+	for _, tag := range pool {
+		for _, cost := range costs {
+			if cost.Regexp && cost.Match == "^"+regexp.QuoteMeta(tag)+"$" && cost.Value >= 1 && cost.Value <= 100 && !math.IsNaN(cost.Value) {
+				if _, exists := values[tag]; exists {
+					return nil
+				}
+				values[tag] = cost.Value
+			}
+		}
+	}
+	if len(values) != len(pool) {
+		return nil
+	}
+	var ranked []RankedNode
+	for tag, cost := range values {
+		ranked = append(ranked, RankedNode{Tag: tag, Cost: cost})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].Cost == ranked[j].Cost {
+			return ranked[i].Tag < ranked[j].Tag
+		}
+		return ranked[i].Cost < ranked[j].Cost
+	})
+	if len(ranked) > 6 {
+		ranked = ranked[:6]
+	}
+	for i := range ranked {
+		ranked[i].Rank = i + 1
+	}
+	return ranked
+}
+
+// SetManualOverride uses Xray's native volatile override; it does not start the
+// retired panel selector or alter native files. A pin bypasses automatic choice
+// until explicitly cleared or Xray is restarted.
+func (s *Service) SetManualOverride(ctx context.Context, target string) error {
+	if s.Editor == nil || s.Lease == nil || s.Reader == nil || s.Control == nil || s.Nodes == nil {
+		return ErrUnavailable
+	}
+	release, err := s.Lease.TryAcquire()
+	if err != nil {
+		return c1.ErrManualBusy
+	}
+	defer release()
+	w, err := s.Editor.Workspace(ctx)
+	if err != nil || w.Pending != nil || !w.TargetsComplete {
+		return ErrUnavailable
+	}
+	pool, index, err := routingPool(w.Documents["05_routing.json"].Text, s.Nodes(ctx), w.Targets)
+	if err != nil {
+		return ErrUnavailable
+	}
+	var document struct {
+		Routing struct {
+			Balancers []struct {
+				Tag string `json:"tag"`
+			} `json:"balancers"`
+		} `json:"routing"`
+	}
+	if configjson.Decode([]byte(w.Documents["05_routing.json"].Text), &document) != nil || index >= len(document.Routing.Balancers) {
+		return ErrUnavailable
+	}
+	balancer := document.Routing.Balancers[index].Tag
+	if target != "" {
+		found := false
+		for _, tag := range pool {
+			if tag == target {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return ErrUnavailable
+		}
+	}
+	before := s.Reader.Snapshot(ctx)
+	if !before.APIReachable || !before.RoutingReachable {
+		return ErrUnavailable
+	}
+	if err := s.Control.OverrideBalancerTarget(ctx, balancer, target); err != nil {
+		return ErrUnavailable
+	}
+	after := s.Reader.Snapshot(ctx)
+	if !after.RoutingReachable || after.Balancer.Override != target {
+		return ErrUnavailable
+	}
+	return nil
 }
 
 // Start reserves the same panel lease before reading configuration and keeps it
@@ -185,7 +342,6 @@ func (s *Service) Stage(ctx context.Context, digest string) (string, error) {
 		return "", ErrUnavailable
 	}
 	s.status.State = "consumed"
-	s.result = c1.AdaptiveResult{}
 	return s.Editor.SaveTexts(ctx, digest, map[string]string{"05_routing.json": string(text)})
 }
 

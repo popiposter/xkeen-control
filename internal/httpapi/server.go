@@ -659,7 +659,10 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	// final same-session check after C1 returns; this ordering makes a preview
 	// admitted before logout fail that check even if it completes while the
 	// synchronous restore purge is still running.
-	s.auth.Logout(r)
+	if err := s.auth.Logout(r); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "session revocation could not be saved")
+		return
+	}
 	if s.nativeTransfer != nil {
 		s.nativeTransfer.Invalidate(session.CSRFToken)
 	}

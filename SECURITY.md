@@ -11,9 +11,18 @@ Production-only material lives on the router under root-only storage:
 ```text
 /opt/etc/xkeen-control/secrets/nodes.json
 /opt/etc/xkeen-control/auth/password.bcrypt
+/opt/etc/xkeen-control/auth/sessions.json
 ```
 
 `nodes.json` (`schemaVersion: 1`) is the authoritative VPN node/subscription registry. It can contain node credentials and subscription URLs/tokens and must be mode `0600` under a `0700` parent directory.
+
+Native installations remember up to 32 authenticated browser sessions for 30 days
+in protected `sessions.json` (0600, parent 0700). It contains hashed session
+identifiers and private CSRF tokens, never passwords or raw session cookies.
+Restoration requires the same password authority and cookie transport policy.
+Logout persists revocation; password replacement invalidates every session.
+Never include this file in backups, downloads, public evidence or build inputs.
+Auth-only fixtures may continue using RAM sessions with shorter explicit TTLs.
 
 The active:
 

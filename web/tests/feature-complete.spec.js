@@ -4,7 +4,6 @@ import { featureCompleteRequests, mountFeatureCompleteDashboard, PRIVATE_SENTINE
 
 const lazySettingsPaths = [
   '/api/v1/xkeen/config/workspace',
-  '/api/v1/performance/quality',
   '/api/v1/notifications',
   '/api/v1/panel/listener',
   '/api/v1/update',
@@ -34,9 +33,9 @@ test('composes the final navigation lazily and leaves settings out of the dashbo
   page.__featureCompleteModel = model
   await page.goto('/')
 
-  await expect(page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button')).toHaveCount(8)
+  await expect(page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button')).toHaveCount(9)
   expect(await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))).toEqual([
-    'Overview', 'Nodes 1', 'Routing', 'DNS', 'Performance', 'Components / Updates', 'Backup & Restore', 'System / Panel',
+    'Overview', 'Nodes 1', 'Routing', 'DNS', 'Configurations', 'Performance', 'Components / Updates', 'Backup & Restore', 'System / Panel',
   ])
   await page.clock.runFor(5_300)
   await expect.poll(() => featureCompleteRequests(model, '/api/v1/status', 'GET').length).toBeGreaterThan(1)
@@ -46,7 +45,7 @@ test('composes the final navigation lazily and leaves settings out of the dashbo
   for (const [section, path] of [
     ['Routing', '/api/v1/xkeen/config/workspace'],
     ['DNS', null],
-    ['Performance', '/api/v1/performance/quality'],
+    ['Performance', null],
     ['Components / Updates', null],
     ['System / Panel', '/api/v1/panel/listener'],
     ['Backup & Restore', null],
@@ -220,6 +219,7 @@ test('clears cross-domain previews on session turnover and rejects old tokens af
   await page.getByRole('button', { name: 'Preview rebind' }).click()
   await expect(page.getByRole('region', { name: 'Listener rebind Preview', exact: true })).toBeVisible()
   const passwordResetToken = [...model.previewTokens.keys()][0]
+  await page.getByRole('tab', { name: 'Password', exact: true }).click()
   await page.getByLabel('New panel password').fill('synthetic-new-password')
   await page.getByLabel('Confirm new password').fill('synthetic-new-password')
   await page.getByRole('button', { name: 'Replace password', exact: true }).click()

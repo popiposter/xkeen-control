@@ -6,8 +6,9 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '.
 
 const rate = (value) => Number.isFinite(value) && value > 0 ? `${(value * 8 / 1e6).toFixed(1)} Mbps` : '—'
 
-export function NativeQualitySection({ csrfToken, onUnauthorized, busy, onStaged, nodesByTag }) {
+export function NativeQualitySection({ csrfToken, onUnauthorized, busy, onStaged, nodesByTag, onStatusChange }) {
   const [status, setStatus] = useState(null)
+  useEffect(() => { onStatusChange?.(status) }, [status, onStatusChange])
   const [error, setError] = useState('')
   const [working, setWorking] = useState(false)
   const epoch = useRef(0)
@@ -44,8 +45,8 @@ export function NativeQualitySection({ csrfToken, onUnauthorized, busy, onStaged
     return () => { mounted.current = false; epoch.current += 1; for (const controller of requests.current) controller.abort(); requests.current.clear() }
   }, [refresh])
   useEffect(() => {
-    if (status?.state !== 'running') return
-    const timer = setTimeout(refresh, 2000)
+    if (!status) return
+    const timer = setTimeout(() => { if (!document.hidden) refresh(); else setStatus((value) => ({ ...value })) }, status.state === 'running' ? 2000 : 30000)
     return () => clearTimeout(timer)
   }, [status, refresh])
   const act = async (action) => {

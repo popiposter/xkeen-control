@@ -36,7 +36,7 @@ const statusFixture = (nodes) => ({
   controlPlane: { version: 'dev', uptimeSeconds: 120 },
   xray: { running: true, apiReachable: true, probeReachable: true },
   xkeen: { running: true },
-  balancer: { nativeSelected: nodes[0].outboundTag, effective: nodes[0].outboundTag },
+  balancer: { nativeSelected: nodes[0].outboundTag, effective: nodes[0].outboundTag, override: nodes[1].outboundTag },
   observatory: { healthy: 50, total: 51, apiReachable: true },
   benchmark: { controlPlane: { running: false, state: 'idle' } },
   selection: { state: 'stable', manualOverride: nodes[1].outboundTag },
@@ -179,6 +179,7 @@ async function prepare(page) {
     switch (path) {
       case '/api/v1/session': return json(route, { csrfToken })
       case '/api/v1/status': return json(route, state.status)
+      case '/api/v1/performance/quality': return json(route, { state: 'idle', progress: { candidates: [] } })
       case '/api/v1/nodes': {
         const nodes = state.missingNextRefresh ? state.nodes.filter((node) => node.id !== nodeID(1)) : state.nodes
         state.missingNextRefresh = false
@@ -262,6 +263,25 @@ async function prepare(page) {
   })
   return { state, issues }
 }
+
+test('quality columns, hidden source and disabled action hints are usable', async ({ page }) => {
+  const prepared=await prepare(page); page.__nodesIssues=prepared.issues
+  await page.route('**/api/v1/performance/quality',(route)=>json(route,{state:'completed',canStage:true,ranking:[{tag:prepared.state.nodes[0].outboundTag,rank:1,cost:1}],progress:{candidates:[{tag:prepared.state.nodes[0].outboundTag,valid:true,downloadBps:10e6,uploadBps:2e6}]}}))
+  await openNodes(page)
+  await expect(page.getByRole('columnheader',{name:'Source',exact:true})).toHaveCount(0)
+  await expect(page.getByRole('columnheader',{name:'Quality rank',exact:true})).toBeVisible()
+  await expect(page.getByRole('cell',{name:'80.0 Mbps',exact:true})).toBeVisible()
+  await page.getByRole('button',{name:'Columns',exact:true}).click()
+  await page.getByRole('menuitemcheckbox',{name:'Source',exact:true}).click()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('columnheader',{name:'Source',exact:true})).toBeVisible()
+  const pin=page.getByRole('button',{name:'Set manual override',exact:true})
+  await expect(pin).toBeDisabled()
+  await pin.locator('..').hover()
+  await expect(page.getByRole('tooltip')).toContainText('Select one enabled node first')
+  await page.getByRole('checkbox',{name:'Select Node 001',exact:true}).check()
+  await expect(pin).toBeEnabled()
+})
 
 async function openNodes(page) {
   await page.goto('/')
@@ -540,16 +560,16 @@ test('keeps effective and manual impact warnings for exact provider removals', a
   await page.getByRole('button', { name: 'Cancel', exact: true }).click()
 })
 
-test('blocks native selection mutations while retaining profile replacement without exposing secrets', async ({ page }) => {
+test('offers native manual pin and retains profile replacement without exposing secrets', async ({ page }) => {
   const prepared = await prepare(page)
   page.__nodesIssues = prepared.issues
   await openNodes(page)
 
   await page.getByRole('checkbox', { name: 'Select Node 002', exact: true }).check()
-  await expect(page.getByRole('button', { name: 'Clear manual override', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Clear manual override', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: 'Clear selection', exact: true }).click()
   await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
-  await expect(page.getByRole('button', { name: 'Set manual override', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Set manual override', exact: true })).toBeEnabled()
   expect(prepared.state.requests.filter((request) => request.path === '/api/v1/selection/override')).toHaveLength(0)
 
   await page.getByRole('button', { name: 'Edit / replace profile', exact: true }).click()
