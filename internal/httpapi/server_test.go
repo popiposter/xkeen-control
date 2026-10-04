@@ -95,7 +95,7 @@ func (stub *updateRequestStub) Rollback(context.Context) error                  
 
 func TestUpdateRoutesAreAuthenticatedAndCSRFBound(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(path, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(path, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	updates := &updateRequestStub{}
@@ -125,7 +125,7 @@ func TestUpdateRoutesAreAuthenticatedAndCSRFBound(t *testing.T) {
 
 func TestManualOverrideRouteRequiresCSRFAndPersistsTarget(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(path, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(path, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	selection := &selectionRequestStub{}
@@ -152,7 +152,7 @@ func TestManualOverrideRouteRequiresCSRFAndPersistsTarget(t *testing.T) {
 
 func TestBenchmarkRunRequiresCSRFAndIsSingleFlightRequest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(path, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(path, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	benchmark := &benchmarkRequestStub{}
@@ -183,6 +183,7 @@ func TestBenchmarkRunRequiresCSRFAndIsSingleFlightRequest(t *testing.T) {
 
 func TestServerAuthReadOnlyRoutesAndHealthBoundary(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "password.bcrypt")
+	// Keep one production-cost password creation + real HTTP login smoke.
 	if err := auth.SetPassword(path, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}

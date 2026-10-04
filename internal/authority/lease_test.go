@@ -57,3 +57,19 @@ func TestTryAcquireFailsClosedDuringRecoveryBlock(t *testing.T) {
 		release()
 	}
 }
+
+func TestDefaultLeaseUnblockWhileOwnedPreservesLegacyBehavior(t *testing.T) {
+	lease := NewLease()
+	release, err := lease.Acquire(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.Block()
+	lease.Unblock()
+	release()
+	next, err := lease.TryAcquire()
+	if err != nil {
+		t.Fatalf("default Unblock changed legacy behavior: %v", err)
+	}
+	next()
+}

@@ -1,0 +1,38 @@
+{
+  "components": {
+    "productionLines": 21068,
+    "testLines": 8685
+  },
+  "c1": {
+    "productionLines": 4883,
+    "testLines": 2469
+  },
+  "nodes": {
+    "productionLines": 4483,
+    "testLines": 3257
+  },
+  "appliance": {
+    "productionLines": 2708,
+    "testLines": 755
+  },
+  "restore": {
+    "productionLines": 2077,
+    "testLines": 1184
+  },
+  "backup": {
+    "productionLines": 733,
+    "testLines": 554
+  },
+  "xkeen": {
+    "productionLines": 396,
+    "testLines": 127
+  },
+  "notifications": {
+    "productionLines": 556,
+    "testLines": 312
+  },
+  "update": {
+    "productionLines": 887,
+    "testLines": 806
+  }
+}

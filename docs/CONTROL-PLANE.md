@@ -1,5 +1,22 @@
 # Control plane
 
+> **Active implementation:** [Native XKeen contract](NATIVE-XKEEN.md) governs Issue #121 on clean Entware. Older panel migration/recovery compatibility is not required. Historical behavior below is not the new installation authority.
+
+Current node loading/refresh, measurement, native choice and failover are described
+in [Node lifecycle](NODE-LIFECYCLE.md), including installed settings and limitations.
+
+Native quality comparison: authenticated GET `/api/v1/performance/quality`,
+POST `/start` with `{}`, POST `/stage` with the comparison's exact config digest.
+These use the existing diagnostic lifecycle and panel lease. Each speed test reads
+fresh native health, starts with the six lowest-latency eligible nodes, then tries
+the next candidates after failed measurements, up to twelve attempts within the
+unchanged 144MiB/180s budget. Measurements remain RAM-only. Stage consumes the recommendation,
+validates and saves only native routing strategy through the existing pending
+config editor. It never restarts or writes an API override. The GUI replaces
+inactive adaptive-policy controls; native Xray owns selection and failover.
+See [native quality plan](../plan/native-quality-selection.md) for evidence and
+the separate source/installed/LAN boundaries.
+
 `xkeen-control` is the lightweight management process around XKeen + Xray. Xray remains the traffic data plane; the panel owns typed local operations, safe projections, stable selection, signed panel lifecycle and bounded coordination.
 
 This document describes the **current production-qualified runtime** after D.1 / Issue #3. Signed stable `v0.2.0` is the qualified `linux/arm64` release. Later #4/#5 work exists in source but is not deployed; `docs/ROADMAP.md` owns current source sequencing.
@@ -48,7 +65,7 @@ Default listener:
 
 One exact private LAN address may be configured. Wildcard/public/hostname binds fail closed. Direct WAN exposure is not supported.
 
-Authentication uses a local bcrypt hash, random RAM sessions, HttpOnly/SameSite cookies, same-origin/CSRF checks on mutations, in-memory throttling and security headers. `/healthz` is the only unauthenticated endpoint and returns generic process health.
+Authentication uses a local bcrypt hash, bounded remembered native-install sessions (30 days, protected hash-keyed storage bound to the password, transport and listener), HttpOnly/SameSite cookies, same-origin/CSRF checks on mutations, in-memory throttling and security headers. Explicit logout persists revocation; password replacement invalidates all sessions. `/healthz` is the only unauthenticated endpoint and returns generic process health. Auth fixtures can retain RAM-only sessions.
 
 There is no generic shell, PTY, arbitrary command endpoint, filesystem API or raw configuration editor.
 

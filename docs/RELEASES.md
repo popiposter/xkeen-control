@@ -1,5 +1,20 @@
 # Releases, bootstrap and panel updates
 
+> **Native-shell candidate:** stable `v0.3.0` is being prepared, not published.
+> Use [Native XKeen contract](NATIVE-XKEEN.md) for the new generation: install
+> stock XKeen first, then the panel alongside it. Historical Setup/appliance
+> adoption and component repair below are not native installation procedures.
+> Compatibility with older panel generations is outside the supported contract.
+> Panel replacement/rebind excludes active native panel jobs/config writes;
+> external CLI/cron still requires operator quiescence and independent readback.
+
+Invoking the installer on an existing managed development panel delegates to its
+installed signed self-update command. Stop starting panel jobs and inspect their
+terminal state before using this external CLI path: an independent CLI process
+does not share the serving panel's in-memory lease. Unknown operations require
+readback, not another installer/update attempt. Development metadata acceptance
+does not waive installed-marker matching, helper/layout or signed-candidate checks.
+
 Slice D / Issue #2 remains production-qualified. Public signed releases, bounded first-install bootstrap, historical C.1 adoption and panel-only self-update/rollback are current behavior for the qualified `linux/arm64` target. Historical stable release `v0.1.1` is the first release qualified through the complete legacy adoption → rollback → re-adoption production sequence. D.1 / Issue #3 is production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`.
 
 ## Release authority

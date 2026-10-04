@@ -1,5 +1,14 @@
 # AGENTS.md
 
+> **Active implementation:** [Native XKeen contract](docs/NATIVE-XKEEN.md) governs Issue #121 on clean Entware. Older panel migration/recovery compatibility is not required. Historical behavior below is not the new installation authority.
+
+> **2026-10-03 operator revision:** XKeen code stays unmodified. Use its supported
+> commands and edit native configuration only. No dispatcher/init/hook/module
+> patches, native admission/profile workers or second component updater. Follow
+> [v2 plan](plan/architecture-native-shell-v2.md); the panel lease serializes only
+> panel operations, not external CLI/cron. Historical D.1 appliance authority below
+> does not govern the new native config editors.
+
 This is the mandatory entry point for coding/review agents in this repository.
 
 The goal is **high signal with minimal context**. Do not preload every document “just in case”. Read the active issue, inspect the affected code, then open only the authorities required by the task.
@@ -37,6 +46,8 @@ If code, issue and an authority document conflict, stop broad implementation, de
 - After a successful typed D.1 `appliance adopt`, `/opt/etc/xkeen-control/config/appliance.json` is the local authority for supported non-secret appliance policy; deterministic managed `02_dns.json`, `05_routing.json` and `07_observatory.json` derive from it, while `04_outbounds.json` derives from `/opt/etc/xkeen-control/secrets/nodes.json`. Before adoption, an existing router retains the explicit repository-derived/legacy policy boundary; adoption must prove compatibility and fail closed on unknown/manual drift. Node-only mutations must not silently regenerate unrelated appliance policy.
 - High-churn/transient state belongs in RAM or `/tmp`; persistent router writes must be explicit and bounded.
 - No generic shell, PTY, command runner, file manager or arbitrary raw-config API.
+  The active native contract permits an authenticated command-bound console for
+  one allowlisted XKeen action, including answers to its native prompts.
 - The panel is loopback / exact trusted-LAN / management-VPN only. Never open a wildcard/public listener or WAN firewall rule for convenience.
 - Go/Node/build toolchains stay off Keenetic.
 - Production evidence in public GitHub must be sanitized: prefer versions, bounded counts, state transitions and hashes. Do not publish live infrastructure details unless they are intentionally public product information.
@@ -61,7 +72,7 @@ The implementation prompt should normally be only repository + issue number + an
 
 For code, frontend, build, packaging or operational-script changes, use the supported local Docker/Linux qualification described in `docs/DEVELOPMENT.md`. Ordinary PR/main GitHub Actions CI is intentionally absent; exact local evidence is the development gate.
 
-Fast proportional Windows-host command for iteration:
+Fast proportional Windows-host command for iteration (working edits, or last commit when clean; use `-Plan` to inspect and `-Scope branch` for the cumulative diff):
 
 ```powershell
 pwsh -NoProfile -File scripts/dev-check.ps1

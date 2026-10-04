@@ -23,15 +23,18 @@ func (e Error) NotificationState() string {
 }
 
 type Status struct {
-	Provider        string     `json:"provider"`
-	Configured      bool       `json:"configured"`
-	Enabled         bool       `json:"enabled"`
-	AuthorityState  string     `json:"authorityState"`
-	ReasonCode      string     `json:"reasonCode,omitempty"`
-	DeliveryState   string     `json:"deliveryState"`
-	LastAttemptAt   *time.Time `json:"lastAttemptAt,omitempty"`
-	LastDeliveredAt *time.Time `json:"lastDeliveredAt,omitempty"`
-	ErrorCode       string     `json:"errorCode,omitempty"`
+	Provider          string     `json:"provider"`
+	Configured        bool       `json:"configured"`
+	Enabled           bool       `json:"enabled"`
+	AuthorityState    string     `json:"authorityState"`
+	ReasonCode        string     `json:"reasonCode,omitempty"`
+	DeliveryState     string     `json:"deliveryState"`
+	LastAttemptAt     *time.Time `json:"lastAttemptAt,omitempty"`
+	LastDeliveredAt   *time.Time `json:"lastDeliveredAt,omitempty"`
+	ErrorCode         string     `json:"errorCode,omitempty"`
+	ControlEnabled    bool       `json:"controlEnabled"`
+	ControlConfigured bool       `json:"controlConfigured"`
+	ControlState      string     `json:"controlState"`
 }
 
 // Alert is opaque outside this package. Only the three closed constructors can
@@ -71,10 +74,11 @@ func PanelAlert(version, identity string, checked time.Time) Alert {
 func TestAlert() Alert { return Alert{text: "xkeen-control: outbound notification test", test: true} }
 
 type Service struct {
-	mu        sync.Mutex
-	path      string
-	transport *telegram
-	status    Status
+	mu           sync.Mutex
+	path         string
+	transport    *telegram
+	status       Status
+	controlEpoch uint64
 }
 
 func NewService() *Service { return &Service{path: DefaultPath, transport: newTelegram()} }
@@ -89,6 +93,14 @@ func (s *Service) statusLocked() Status {
 	status.AuthorityState = state
 	status.Configured = state == "configured"
 	status.Enabled = status.Configured && value.Enabled
+	status.ControlConfigured = status.Configured && validUserID(value.AllowedUserID)
+	status.ControlEnabled = status.ControlConfigured && value.ControlEnabled
+	if status.ControlState == "" {
+		status.ControlState = "disabled"
+	}
+	if !status.ControlEnabled {
+		status.ControlState = "disabled"
+	}
 	status.ReasonCode = ""
 	if state == "unavailable" {
 		status.ReasonCode = "authority-unavailable"
@@ -108,6 +120,7 @@ func (s *Service) Configure(token, chat string) (Status, error) {
 	err := writeAuthority(s.path, authority{SchemaVersion: 1, Provider: "telegram", BotToken: token, ChatID: chat})
 	if err == nil {
 		s.status = Status{}
+		s.controlEpoch++
 	}
 	return s.statusLocked(), err
 }
@@ -125,6 +138,7 @@ func (s *Service) SetEnabled(enabled bool) (Status, error) {
 func (s *Service) Clear() (Status, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.controlEpoch++
 	if _, state := readAuthority(s.path); state == "unconfigured" {
 		s.status = Status{}
 		return s.statusLocked(), nil

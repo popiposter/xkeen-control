@@ -43,9 +43,12 @@ type Config struct {
 	BootstrapMarkerPath string
 	SecureCookies       bool
 	SessionTTL          time.Duration
-	LockoutAfter        int
-	LockoutFor          time.Duration
-	Now                 func() time.Time
+	// SessionPath enables bounded, protected remembered sessions. Empty is RAM-only.
+	SessionPath     string
+	SessionAudience string
+	LockoutAfter    int
+	LockoutFor      time.Duration
+	Now             func() time.Time
 }
 
 type Manager struct {
@@ -95,7 +98,9 @@ func NewManager(config Config) *Manager {
 	if config.Now == nil {
 		config.Now = time.Now
 	}
-	return &Manager{config: config, sessions: make(map[string]session), attempts: make(map[string]attempt)}
+	m := &Manager{config: config, sessions: make(map[string]session), attempts: make(map[string]attempt)}
+	m.loadSessions()
+	return m
 }
 
 func (m *Manager) Login(remoteIP, password string) (Session, string, error) {
@@ -142,6 +147,9 @@ func (m *Manager) login(remoteIP, password string, compare func([]byte, []byte) 
 	if generation != m.credentialGeneration {
 		return Session{}, "", ErrInvalidCredentials
 	}
+	if current, err := readPasswordAuthority(m.config.HashPath); err != nil || !bytes.Equal(current, hash) {
+		return Session{}, "", ErrInvalidCredentials
+	}
 	m.mu.Lock()
 	if !m.admitAttempt(remoteIP, m.config.Now()) {
 		m.mu.Unlock()
@@ -159,7 +167,12 @@ func (m *Manager) login(remoteIP, password string, compare func([]byte, []byte) 
 		}
 		delete(m.sessions, oldest)
 	}
-	m.sessions[token] = s
+	m.sessions[m.sessionKey(token)] = s
+	if err := m.saveSessions(); err != nil {
+		delete(m.sessions, m.sessionKey(token))
+		m.mu.Unlock()
+		return Session{}, "", ErrNotConfigured
+	}
 	m.mu.Unlock()
 	return Session{CSRFToken: csrf, ExpiresAt: s.expiresAt}, token, nil
 }
@@ -242,24 +255,26 @@ func (m *Manager) SessionFromRequest(r *http.Request) (Session, bool) {
 	now := m.config.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	value, ok := m.sessions[cookie.Value]
+	value, ok := m.sessions[m.sessionKey(cookie.Value)]
 	if !ok || !now.Before(value.expiresAt) {
 		if ok {
-			delete(m.sessions, cookie.Value)
+			delete(m.sessions, m.sessionKey(cookie.Value))
 		}
 		return Session{}, false
 	}
 	return Session{CSRFToken: value.csrfToken, ExpiresAt: value.expiresAt}, true
 }
 
-func (m *Manager) Logout(r *http.Request) {
+func (m *Manager) Logout(r *http.Request) error {
 	cookie, err := r.Cookie(SessionCookieName)
 	if err != nil {
-		return
+		return nil
 	}
 	m.mu.Lock()
-	delete(m.sessions, cookie.Value)
+	delete(m.sessions, m.sessionKey(cookie.Value))
+	err = m.saveSessions()
 	m.mu.Unlock()
+	return err
 }
 
 // CredentialState is intentionally a small allowlisted state projection. It
@@ -284,7 +299,7 @@ func (m *Manager) CredentialState() string {
 
 // ReplacePassword is only called after the HTTP layer has checked an active
 // session and CSRF token. It atomically replaces the bcrypt hash, clears the
-// setup marker and invalidates every RAM-only session.
+// setup marker and invalidates every remembered and RAM session.
 func (m *Manager) ReplacePassword(password []byte) error {
 	if m == nil {
 		return ErrNotConfigured
@@ -315,6 +330,9 @@ func (m *Manager) InvalidateAll() {
 	}
 	m.mu.Lock()
 	m.sessions = make(map[string]session)
+	if m.config.SessionPath != "" {
+		_ = os.Remove(m.config.SessionPath)
+	}
 	m.mu.Unlock()
 }
 

@@ -57,6 +57,8 @@ func (s *Server) handleNotifications(w http.ResponseWriter, r *http.Request) {
 		fields = []string{"botToken", "chatId"}
 	case "/api/v1/notifications/enabled":
 		fields = []string{"enabled"}
+	case "/api/v1/notifications/control":
+		fields = []string{"enabled", "allowedUserId"}
 	}
 	value, err := notifications.DecodeObject(data, fields...)
 	if err != nil {
@@ -79,6 +81,14 @@ func (s *Server) handleNotifications(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		status, err = s.notifications.SetEnabled(enabled)
+	case "/api/v1/notifications/control":
+		var enabled bool
+		var user string
+		if json.Unmarshal(value["enabled"], &enabled) != nil || json.Unmarshal(value["allowedUserId"], &user) != nil {
+			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid notification request")
+			return
+		}
+		status, err = s.notifications.SetControl(enabled, user)
 	case "/api/v1/notifications/test":
 		status, err = s.notifications.Test(r.Context())
 	case "/api/v1/notifications/clear":

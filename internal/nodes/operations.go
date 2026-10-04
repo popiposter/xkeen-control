@@ -47,24 +47,29 @@ type Config struct {
 	Coordinator    interface {
 		BeginApply(context.Context) (func(), error)
 	}
-	Fetcher     SubscriptionFetcher
-	PreviewTTL  time.Duration
-	MaxPreviews int
-	Now         func() time.Time
+	Fetcher SubscriptionFetcher
+	// Called under the ordinary panel lease before a runtime-changing commit.
+	BeforeCommit func(context.Context) error
+	PreviewTTL   time.Duration
+	MaxPreviews  int
+	Now          func() time.Time
 }
 
 const DefaultApplyGateWaitTimeout = 15 * time.Second
 
 type Manager struct {
-	store       Store
-	legacyPath  string
-	tx          Transaction
-	fetcher     SubscriptionFetcher
-	ttl         time.Duration
-	maxPreviews int
-	now         func() time.Time
-	gateTimeout time.Duration
-	coordinator interface {
+	// Set once before serving requests. Notification only; never starts work inline.
+	OnSubscriptionRefresh func()
+	store                 Store
+	legacyPath            string
+	tx                    Transaction
+	fetcher               SubscriptionFetcher
+	beforeCommit          func(context.Context) error
+	ttl                   time.Duration
+	maxPreviews           int
+	now                   func() time.Time
+	gateTimeout           time.Duration
+	coordinator           interface {
 		BeginApply(context.Context) (func(), error)
 	}
 	managedCoordinator interface {
@@ -145,8 +150,9 @@ func NewManager(config Config) *Manager {
 	manager := &Manager{
 		store: config.Store, legacyPath: config.LegacyPath, tx: config.Transaction,
 		fetcher: config.Fetcher, ttl: config.PreviewTTL, maxPreviews: config.MaxPreviews, now: config.Now,
-		gateTimeout: DefaultApplyGateWaitTimeout,
-		coordinator: config.Coordinator, authority: lease, previews: make(map[string]previewEntry),
+		gateTimeout:  DefaultApplyGateWaitTimeout,
+		beforeCommit: config.BeforeCommit,
+		coordinator:  config.Coordinator, authority: lease, previews: make(map[string]previewEntry),
 	}
 	if managed, ok := config.Coordinator.(interface {
 		TryBeginManagedApply() (func(), error)
@@ -246,7 +252,7 @@ func (m *Manager) tryBeginAutomaticCommit() (func(), error) {
 // benchmark or supervisor work. Unlike ordinary empty-registry node flows,
 // backup export requires the authoritative file to exist and fails closed when
 // it is missing.
-func (m *Manager) Snapshot(ctx context.Context) (Registry, error) {
+func (m *Manager) Snapshot(ctx context.Context) (result Registry, resultErr error) {
 	if m == nil {
 		return Registry{}, ErrSnapshotUnavailable
 	}
@@ -257,14 +263,18 @@ func (m *Manager) Snapshot(ctx context.Context) (Registry, error) {
 	if gateTimeout <= 0 {
 		gateTimeout = DefaultApplyGateWaitTimeout
 	}
-	release, err := m.authority.Acquire(ctx, gateTimeout)
+	_, release, err := m.authority.AcquireContext(ctx, gateTimeout)
 	if err != nil {
 		if ctx.Err() != nil {
 			return Registry{}, ctx.Err()
 		}
 		return Registry{}, ErrSnapshotUnavailable
 	}
-	defer release()
+	defer func() {
+		if release() != nil {
+			result, resultErr = Registry{}, ErrSnapshotUnavailable
+		}
+	}()
 
 	registry, err := m.store.Load()
 	if err != nil {
@@ -296,6 +306,30 @@ func (m *Manager) SnapshotUnderLease(context.Context) (Registry, error) {
 	return copy, nil
 }
 
+// NativeSnapshotUnderLease includes positive registry absence in the baseline.
+// A stock native installation need not create panel-managed nodes to export.
+// Missing is distinct from unreadable, corrupt, or a dangling symlink.
+func (m *Manager) NativeSnapshotUnderLease(context.Context) (Registry, string, error) {
+	if m == nil {
+		return Registry{}, "", ErrSnapshotUnavailable
+	}
+	registry, err := m.store.Load()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if _, statErr := os.Lstat(m.store.Path); errors.Is(statErr, os.ErrNotExist) {
+				return NewRegistry(), "absent", nil
+			}
+		}
+		return Registry{}, "", ErrSnapshotUnavailable
+	}
+	copy, err := cloneRegistry(registry)
+	if err != nil || copy.Validate() != nil {
+		return Registry{}, "", ErrSnapshotUnavailable
+	}
+	digest := registryDigest(copy)
+	return copy, "present:" + hex.EncodeToString(digest[:]), nil
+}
+
 func (m *Manager) PreviewImport(binding, profiles string) (Preview, error) {
 	registry, err := m.current()
 	if err != nil {
@@ -314,7 +348,7 @@ func (m *Manager) PreviewImport(binding, profiles string) (Preview, error) {
 		if err != nil {
 			return Preview{}, errors.New("profile rejected")
 		}
-		node.Enabled = !nodeNameWL(node.Name)
+		node.Enabled = !subscriptionNodeDisabledByDefault(node.Name, node.VLESS.Host)
 		registry.Nodes = append(registry.Nodes, node)
 	}
 	return m.createPreview(binding, before, registry, "import", false)
@@ -647,13 +681,9 @@ func buildSubscriptionCandidate(before Registry, target Subscription, parsed []P
 			node := before.Nodes[matches[0]]
 			node.VLESS = item.profile.VLESS
 			node.SourceKey = item.key
-			// A default-disabled member must not be re-enabled by refresh;
-			// retain explicit per-node choices for matching names as well.
-			if subscriptionNodeDisabledByDefault(item.profile.Name, item.profile.VLESS.Host) {
-				node.Enabled = node.Enabled && target.Enabled
-			} else {
-				node.Enabled = target.Enabled
-			}
+			// Defaults apply only to new members. Refresh preserves every saved
+			// choice, including disabled ordinary nodes and explicitly enabled RU/BY.
+			node.Enabled = node.Enabled && target.Enabled
 			node.Stale, node.Missing = false, false
 			if item.profile.Name != "Imported node" {
 				node.Name = item.profile.Name
@@ -687,7 +717,12 @@ func buildSubscriptionCandidate(before Registry, target Subscription, parsed []P
 	return candidate, nil
 }
 
-func (m *Manager) Apply(ctx context.Context, binding, token string, acceptMissing bool) (ApplyResult, error) {
+func (m *Manager) Apply(ctx context.Context, binding, token string, acceptMissing bool) (result ApplyResult, resultErr error) {
+	defer func() {
+		if resultErr == nil && result.Operation == "subscription-refresh" && m.OnSubscriptionRefresh != nil {
+			m.OnSubscriptionRefresh()
+		}
+	}()
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -704,14 +739,19 @@ func (m *Manager) Apply(ctx context.Context, binding, token string, acceptMissin
 	if gateTimeout <= 0 {
 		gateTimeout = DefaultApplyGateWaitTimeout
 	}
-	releaseAuthority, err := m.authority.Acquire(ctx, gateTimeout)
+	admittedContext, releaseAuthority, err := m.authority.AcquireContext(ctx, gateTimeout)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ApplyResult{}, ctx.Err()
 		}
 		return ApplyResult{}, errors.New("node activation gate busy")
 	}
-	defer releaseAuthority()
+	ctx = admittedContext
+	defer func() {
+		if releaseAuthority() != nil {
+			result, resultErr = ApplyResult{}, errors.Join(resultErr, ErrNodeRecoveryRequired)
+		}
+	}()
 	// The transaction budget starts only after the serialized apply slot is
 	// acquired, preserving the full recovery reserve for persistent mutations.
 	applyContext, cancelApply := context.WithTimeout(ctx, m.tx.totalTimeout())
@@ -752,7 +792,13 @@ func (m *Manager) Apply(ctx context.Context, binding, token string, acceptMissin
 	if entry.Noop {
 		return ApplyResult{Operation: entry.Operation, Nodes: entry.Registry.PublicNodes(), Changes: entry.Changes}, nil
 	}
+	if m.beforeCommit != nil && m.beforeCommit(applyContext) != nil {
+		return ApplyResult{}, ErrOperationUnavailable
+	}
 	if err := m.tx.Apply(applyContext, entry.Registry); err != nil {
+		if errors.Is(err, ErrNodeRecoveryRequired) || errors.Is(err, ErrRollbackFailed) {
+			m.authority.Block()
+		}
 		return ApplyResult{}, err
 	}
 	return ApplyResult{Operation: entry.Operation, Nodes: entry.Registry.PublicNodes(), Changes: entry.Changes}, nil

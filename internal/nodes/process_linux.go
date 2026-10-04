@@ -15,6 +15,15 @@ func configureCommandProcessGroup(command *exec.Cmd) {
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
+func syncNodeDirectory(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
+}
+
 func killCommandProcessGroup(command *exec.Cmd) {
 	if command.Process == nil {
 		return

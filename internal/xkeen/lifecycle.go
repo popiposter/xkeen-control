@@ -1,0 +1,103 @@
+package xkeen
+
+import (
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+)
+
+type LifecycleAction string
+
+const (
+	Start   LifecycleAction = "start"
+	Stop    LifecycleAction = "stop"
+	Restart LifecycleAction = "restart"
+)
+
+var (
+	ErrLifecycleFailed  = errors.New("native XKeen lifecycle failed")
+	ErrLifecycleUnknown = errors.New("native XKeen lifecycle outcome unknown; inspect before retry")
+)
+
+// Lifecycle is the fixed-command subprocess boundary. The caller owns panel serialization,
+// the transaction receipt and independent runtime verification. Exit zero means
+// only that the native foreground command completed; it is not tunnel proof.
+type Lifecycle struct {
+	// Binary and Timeout are operator/test configuration, never request input.
+	Binary string
+	// InitPath selects native service control without dispatcher package repair.
+	// It is operator configuration, mutually exclusive with Binary.
+	InitPath string
+	Timeout  time.Duration
+}
+
+func (l Lifecycle) Run(ctx context.Context, action LifecycleAction) error {
+	return l.runForeground(ctx, action, os.Environ())
+}
+
+func (l Lifecycle) runForeground(ctx context.Context, action LifecycleAction, env []string) error {
+	if action != Start && action != Stop && action != Restart {
+		return ErrLifecycleFailed
+	}
+	if l.InitPath != "" && l.Binary != "" {
+		return ErrLifecycleFailed
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	limit := l.Timeout
+	if limit <= 0 {
+		limit = 90 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	if ctx.Err() != nil {
+		return ErrLifecycleFailed
+	}
+	binary := l.Binary
+	args := []string{"-" + string(action)}
+	if l.InitPath != "" {
+		binary = l.InitPath
+		args = []string{string(action), "on"}
+	} else if binary == "" {
+		binary = "/opt/sbin/xkeen"
+	}
+	command := exec.Command(binary, args...)
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, "XKEEN_FOREGROUND=") {
+			command.Env = append(command.Env, entry)
+		}
+	}
+	command.Env = append(command.Env, "XKEEN_FOREGROUND=1")
+	// Nil output streams connect directly to os.DevNull. An io.Writer such as
+	// io.Discard makes os/exec create pipes; native background services inherit
+	// those pipes and keep Wait blocked after the foreground command has exited.
+	// Never retain or expose native output, which can contain private config.
+	configureLifecycleProcess(command)
+	if command.Start() != nil {
+		return ErrLifecycleFailed
+	}
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	select {
+	case err := <-done:
+		if ctx.Err() != nil {
+			return ErrLifecycleUnknown
+		}
+		if err != nil {
+			return ErrLifecycleFailed
+		}
+		return nil
+	case <-ctx.Done():
+		killLifecycleProcess(command)
+		// Bound cleanup even if the kernel cannot reap immediately.
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+		return ErrLifecycleUnknown
+	}
+}

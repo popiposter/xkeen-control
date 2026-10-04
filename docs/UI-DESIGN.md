@@ -1,3 +1,10 @@
+> **2026-10-04 active UI revision:** Use standard shadcn Base Nova / neutral tokens
+> throughout every workspace, dialog and editor in both light and dark modes.
+> The previous scoped dark workspace CSS is removed. Native Xray owns node
+> selection; obsolete adaptive-supervisor/readiness views are retired.
+> See [current audit and implementation](../plan/ui-shadcn-audit-2026-10-04.md).
+> Historical visual references below no longer govern styling or obsolete forms.
+
 # Compact operator workspace
 
 Issue #102 implements the operator-selected graphite sidebar direction with the

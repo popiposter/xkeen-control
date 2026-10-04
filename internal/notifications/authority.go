@@ -1,5 +1,4 @@
-// Package notifications owns only fixed-provider outbound alerts and their
-// separate panel-local secret authority. It has no inbound command surface.
+// Package notifications owns fixed-provider alerts and allowlisted bot control.
 package notifications
 
 import (
@@ -20,11 +19,15 @@ var tokenGrammar = regexp.MustCompile(`^[1-9][0-9]{0,19}:[A-Za-z0-9_-]{20,128}$`
 var chatGrammar = regexp.MustCompile(`^-?[1-9][0-9]{0,19}$`)
 
 type authority struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	Provider      string `json:"provider"`
-	Enabled       bool   `json:"enabled"`
-	BotToken      string `json:"botToken"`
-	ChatID        string `json:"chatId"`
+	SchemaVersion   int    `json:"schemaVersion"`
+	Provider        string `json:"provider"`
+	Enabled         bool   `json:"enabled"`
+	BotToken        string `json:"botToken"`
+	ChatID          string `json:"chatId"`
+	ControlEnabled  bool   `json:"controlEnabled,omitempty"`
+	AllowedUserID   string `json:"allowedUserId,omitempty"`
+	LastUpdateID    int64  `json:"lastUpdateId,omitempty"`
+	LastMessageDate int64  `json:"lastMessageDate,omitempty"`
 }
 
 // DecodeObject enforces exact, case-sensitive fields, including required fields
@@ -140,11 +143,21 @@ func readAuthority(path string) (authority, string) {
 	if err != nil || statErr != nil || !os.SameFile(opened, after) || after.Size() != opened.Size() || !after.ModTime().Equal(opened.ModTime()) || !protected(after, false) || !safeDirectory(dir, false) {
 		return authority{}, "unavailable"
 	}
-	if _, err := DecodeObject(data, "schemaVersion", "provider", "enabled", "botToken", "chatId"); err != nil {
+	var object map[string]json.RawMessage
+	if json.Unmarshal(data, &object) != nil {
+		return authority{}, "unavailable"
+	}
+	fields := []string{"schemaVersion", "provider", "enabled", "botToken", "chatId"}
+	for _, field := range []string{"controlEnabled", "allowedUserId", "lastUpdateId", "lastMessageDate"} {
+		if _, exists := object[field]; exists {
+			fields = append(fields, field)
+		}
+	}
+	if _, err := DecodeObject(data, fields...); err != nil {
 		return authority{}, "unavailable"
 	}
 	var value authority
-	if json.Unmarshal(data, &value) != nil || value.SchemaVersion != 1 || value.Provider != "telegram" || !validCredentials(value.BotToken, value.ChatID) {
+	if json.Unmarshal(data, &value) != nil || value.SchemaVersion != 1 || value.Provider != "telegram" || !validCredentials(value.BotToken, value.ChatID) || value.LastUpdateID < 0 || value.LastUpdateID >= 1<<63-1 || value.LastMessageDate < 0 || value.ControlEnabled && !validUserID(value.AllowedUserID) {
 		return authority{}, "unavailable"
 	}
 	return value, "configured"

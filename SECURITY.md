@@ -1,5 +1,7 @@
 # Security
 
+> **Active implementation:** [Native XKeen contract](docs/NATIVE-XKEEN.md) governs Issue #121 on clean Entware. Older panel migration/recovery compatibility is not required. Historical behavior below is not the new installation authority.
+
 `xkeen-control` is designed so the source repository, issues/PRs, qualification logs and release artifacts can be public **without containing router credentials**.
 
 ## Secret boundary
@@ -9,9 +11,18 @@ Production-only material lives on the router under root-only storage:
 ```text
 /opt/etc/xkeen-control/secrets/nodes.json
 /opt/etc/xkeen-control/auth/password.bcrypt
+/opt/etc/xkeen-control/auth/sessions.json
 ```
 
 `nodes.json` (`schemaVersion: 1`) is the authoritative VPN node/subscription registry. It can contain node credentials and subscription URLs/tokens and must be mode `0600` under a `0700` parent directory.
+
+Native installations remember up to 32 authenticated browser sessions for 30 days
+in protected `sessions.json` (0600, parent 0700). It contains hashed session
+identifiers and private CSRF tokens, never passwords or raw session cookies.
+Restoration requires the same password authority and cookie transport policy.
+Logout persists revocation; password replacement invalidates every session.
+Never include this file in backups, downloads, public evidence or build inputs.
+Auth-only fixtures may continue using RAM sessions with shorter explicit TTLs.
 
 The active:
 
@@ -78,6 +89,23 @@ Never expose the panel directly to WAN or add a WAN firewall opening for conveni
 
 Authenticated node projections may include a display name and endpoint host/port for operator identification, but must never return UUIDs, REALITY key material, short IDs, subscription URLs, VLESS strings, raw secret registry/outbound JSON or raw upstream error payloads that can contain secrets.
 
+The active native contract additionally permits an explicit authenticated private
+console for one allowlisted XKeen job. It may show native output and accept native
+prompt answers; it is separate from sanitized status/node projections. Fixed
+executable/validated argv, job/session-bound access, origin/CSRF checks and bounded
+RAM buffers apply to output, input and resize. No arbitrary shell, file API,
+post-exit shell, automatic log/export to public artifacts or Telegram, or terminal
+clipboard/external-link controls. Logout removes access and clears browser output;
+closing the viewer does not repeat or cancel the native job. Treat all console
+contents as private, even when upstream masks some fields.
+
+The native config editor additionally permits authenticated private JSON/JSONC
+text for fixed data-config IDs, with origin/CSRF checks, bounded bodies and
+root-only explicit draft/previous storage. Text may contain secrets; it must
+never enter sanitized status responses, browser localStorage, public evidence,
+Telegram or automatic exports. No arbitrary path, sourced script or generic
+filesystem API is authorized. See docs/CONFIG-EDITOR-WORKFLOWS.md.
+
 Sessions, throttling and high-churn runtime state stay in RAM. Issue #99 B caps
 sessions at 32 and remote attempt entries at 256. Expired state is pruned before
 admission; sessions evict by oldest expiry with a stable token tie-break. Attempt
@@ -119,7 +147,11 @@ The separate panel-local notification authority is
 secrets directory. Telegram token/chat ID never appear in safe responses or
 logs; this authority is excluded from safe export and encrypted node backup.
 It is separately reconfigurable after reinstall; older binaries ignore it.
-No inbound command, generic webhook or VPN/firewall/DDNS automation is added.
+Inbound Telegram control is disabled by default and restricted to one explicit
+user and chat, fresh exact commands, a persisted before-dispatch update watermark
+and the existing native jobs/lease. No generic webhook, shell, prompt input,
+config or private console output is forwarded. Authenticated local operators may
+inspect the bot job in the panel. See docs/TELEGRAM-CONTROL.md.
 
 ## Backup / restore
 

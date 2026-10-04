@@ -1,0 +1,20 @@
+[
+  {
+    "challenger": true,
+    "currentScore": 0.9729225596106857,
+    "passesDefaultHysteresis": false,
+    "relativeScoreGain": 0.027831033540993477,
+    "throughputMultiplier": 2,
+    "winner": "proxy-fast",
+    "winnerScore": 1
+  },
+  {
+    "challenger": true,
+    "currentScore": 0.9179862961083765,
+    "passesDefaultHysteresis": false,
+    "relativeScoreGain": 0.08934088040235966,
+    "throughputMultiplier": 10,
+    "winner": "proxy-fast",
+    "winnerScore": 1
+  }
+]

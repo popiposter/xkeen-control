@@ -8,5 +8,5 @@ npm --prefix web ci --ignore-scripts --prefer-offline
 npm --prefix web run build
 find internal/webassets/dist -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 cp -R web/dist/. internal/webassets/dist/
-find internal/webassets/dist -type f -exec sed -i 's/\r$//' {} +
+find internal/webassets/dist -type f \( -name '*.html' -o -name '*.css' -o -name '*.js' -o -name '*.svg' \) -exec sed -i 's/\r$//' {} +
 echo "updated tracked embedded web assets; review the resulting diff"

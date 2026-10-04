@@ -77,7 +77,7 @@ func (stub *panelListenerHTTPStub) InvalidateAll() {
 
 func TestPanelListenerRoutesAreAuthenticatedCSRFBoundAndExact(t *testing.T) {
 	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	listener := &panelListenerHTTPStub{applied: make(chan string, 1)}
@@ -283,7 +283,7 @@ func (stub *checkedUpdateHTTPStub) Rollback(context.Context) error {
 
 func TestUpdateApplyRequiresExactCheckedCandidateAndReturnsHandoff202(t *testing.T) {
 	passwordPath := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(passwordPath, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	updates := &checkedUpdateHTTPStub{applied: make(chan [2]string, 1)}

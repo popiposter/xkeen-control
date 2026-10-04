@@ -2,7 +2,150 @@
 
 This is the sequencing/status authority. The active GitHub issue is the detailed architecture/acceptance contract for the slice being implemented.
 
-## Current production baseline
+## Current direction — native XKeen implementation
+
+### Active revision — 2026-10-03
+
+The operator stopped the invasive native admission implementation and redefined
+the panel as a lightweight graphical shell over **unmodified XKeen code**.
+The [new contract](NATIVE-XKEEN.md), [source audit](../plan/audit-native-shell-2026-10-03.md)
+and [v2 plan](../plan/architecture-native-shell-v2.md) supersede v1 sequencing and
+shared-admission requirements below. Issue #121 / Draft PR122 remain active.
+The [complete native command matrix](../plan/xkeen-command-inventory-v2.md) maps
+69 dispatcher branches to panel workflows. Interactive actions use a native
+command-bound console; parameterized actions use forms/buttons with optional output.
+
+The native-shell v2 is now installed as development source `f405162` (2026-10-04):
+stock native XKeen, command-bound jobs/console, native Form/Text editors with
+pending/apply/optional restore, installed-geodata browser and rule examples,
+subscription refresh, encrypted native transfer and optional Telegram control.
+Exact local FULL passed with 104 browser cases and actual ARM64 artifact;
+independent replacement preserved native process/files, registry and auth.
+Same-router encrypted export/validated preview/Cancel and selective routing
+readback passed. These are development milestones, not a signed release.
+
+The obsolete component/Setup/appliance APIs and tests have been retired.
+Stable `v0.3.0` release preparation is the next step; it is not published yet.
+Keep useful native validation, auth, nodes, config rollback and this panel's
+signed updater. Real Telegram acceptance needs
+private bot credentials (currently unconfigured); second-router transfer and
+unproxied LAN DNS/VPN/outage acceptance need their respective hardware contours.
+Native Xray remains the active selection owner; panel adaptive override stays
+optional and disabled without demonstrated benefit. The
+[v2 plan](../plan/architecture-native-shell-v2.md) records evidence boundaries.
+
+The latest manual speed sample completed with eight attempts, seven successful
+measurements and six recommendations. A scheduled subscription update after
+completion changed the registry/outbounds and native process, so the older
+recommendation was correctly rejected as stale; its Apply was not submitted.
+This is not a successful live broad-pool Apply claim. Stable release review must
+retain that boundary, plus the unqualified LAN/outage, bot and second-router
+acceptance contours.
+
+### Historical 2026-10-02 direction and checkpoints
+
+After the 2026-10-02 audit the operator authorized full ordered implementation and qualification on clean Entware. The [native implementation contract](NATIVE-XKEEN.md) governs this work: native XKeen first, panel alongside it, no compatibility with older panel installations. Service restarts and local SSH key setup are authorized; no router reboot is planned.
+
+The [audit](../plan/audit-xkeen-foundation-2026-10-02.md) binds findings to source `8adff1e00e89515b37aac1d7d6e7e1df924a9143`. [Issue #121](https://github.com/popiposter/xkeen-control/issues/121) and the [implementation plan](../plan/architecture-xkeen-foundation-v1.md) return install/update/cron/lifecycle/interception ownership to native XKeen, retain the panel updater and node management, and schedule config/geodata UX, reliability, portable backup and Telegram work in separate slices. Implementation is in progress. Independent plan review reproduced the audit counterexamples and required minimal config onboarding before subscription Apply, plus a real shared lock for any CLI/cron concurrency claim. These corrections are incorporated in the plan; runtime acceptance is pending.
+
+Beta.5 publication/public verification and prior panel-only installation are historical PASS. The subsequent authorized reset/native-file reconstruction did not reach integrated subscription/LAN/quality acceptance. The old router state is no longer a reusable baseline after the operator's planned opkg reset. Preserve unknown/failed operation receipts; do not replay them. Earlier sequencing below is historical except where explicitly retained by the new plan.
+
+## Native development installation — 2026-10-02
+
+Issue #121 now has a working native installation with the development panel from
+`c805a551846b30f2e8ae7fc423723d39ecbc6db3`. Its full local Linux gate passed,
+including 149 browser cases. Independent live readback verified the installed
+and running ARM64 executable hash, authenticated health, 59 profiles (52 enabled),
+two subscriptions and no enabled WL profiles. The panel-only replacement kept
+Xray process identity, native configuration, registry and authentication intact;
+no configuration transaction is pending. See the [live evidence](https://github.com/popiposter/xkeen-control/issues/121#issuecomment-5957677528).
+
+This is a hash-bound development build, not a signed release. Native Xray remains
+the selection owner; panel adaptive scheduling and automatic subscription writes
+are disabled while shared native admission is unfinished. The source-only native
+admission candidates remain fenced and must not be installed. LAN-client traffic,
+late-crash behavior, native update/cron concurrency and the remaining plan stages
+are not yet qualified. The earlier installation/import/recovery operations must
+not be replayed.
+
+HTTP fixture optimization in `f97fac50f5ee59e804af241d7878bde5f4b1e5b4` preserves
+production authentication code and real authorization tests. An uncached HTTP
+package race run fell from 296.465s to 22.025s by reducing bcrypt cost only in
+ordinary test fixtures; one production-cost HTTP smoke and password-rotation
+tests remain. This proportional result is not a new full-gate claim.
+
+Native admission source now includes foreground init/hook borrowing, a bounded
+elected NDM caller with current-ready reconciliation and protected RAM bootstrap.
+Independent focused review/checks passed; generated candidates remain fenced and
+uninstalled. Exact `22f02c7` FAST passed Go/helpers/ARM64 and 149 browser cases;
+newer `36596a8` FAST passed Go/helpers/ARM64 without browsers. These are source
+iteration results, not native update/cron, boot, kernel or LAN acceptance. Native
+update preservation and target qualification remain prerequisites to activation.
+
+The exact clean `5c2ca61` event/bootstrap checkpoint subsequently passed the
+full local gate (Go/vet/race, native helpers131, browser149, frontend/audit and
+ARM64 artifact) in 3m58s. Later native registration-template and installer staging
+experiments have independent focused review and remain source-only; their
+authenticated updater handoff and target qualification are still pending.
+The full checkpoint is not reused as qualification of these newer edits.
+
+The clean `721a0c1` checkpoint passed FULL in 3m42s (helpers138,
+browser149, Go/vet/race, frontend/audit and ARM64). Subsequent source work adds
+exclusive updater-body binding and a one-use post-exec proof of the fixed native
+interpreter/path/argument vector. Independent focused review passed; the public
+native-source catalogue passed 94 fixtures separately from the default gate.
+These proofs do not enable an updater: staged profile decoration, entry/finish
+integration, update readback and all native writer/cron coverage remain pending.
+All generated native candidates remain fenced and uninstalled.
+
+The updater generation proof checkpoint `a967ea2` passed FULL in 4m07s
+(helpers154, browser149, Go/vet/race, frontend/audit and ARM64). Later `82fd985`
+passed FAST Go/helpers159/ARM64 without browsers, race or audit. A complete
+72-file pinned public archive profile and fixed authenticated staging worker now
+have independent source review. Extracted native-installer integration preserves
+the old live files on refusal and promotes the three decorated overlays plus all
+unchanged modules on success. The explicit public-source catalogue passed110
+cases; this is separate from the default FULL gate and hardware acceptance.
+Full updater entry/finish, post-update verification, writer/cron coverage and
+target qualification remain prerequisites to enabling native admission.
+
+The clean `aa6c924` primitive checkpoint passed FULL in 3m44s (helpers190,
+browser149, Go/vet/race, frontend/audit0 and ARM64). Subsequent source work
+composes the update-specific pre/post verifier from the reviewed profile,
+init/package/environment/core/kernel checks. Its pinned-source fixtures use
+synthetic runtime callbacks; native executor integration and target acceptance
+remain pending. This does not enable or install any native candidate, and the
+prior FULL is not reused after edits.
+
+The exact `1f9d339` verifier checkpoint subsequently passed FULL in 3m37s
+(helpers190, browser149, Go/vet/race, frontend/audit0 and ARM64). The subsequent
+`a80911a` forced update-to-init borrowing seam passed independent review and FAST
+Go/helpers197/ARM64 without Chromium. `6182dd3` additionally checks all nine native
+update dependencies, preserves opkg configuration and refuses stopped hook
+cleanup drift. Independent focused checks passed 17 groups; the separate pinned
+public-source catalogue passed 153 cases. These are source iteration results.
+Native updater entry,
+terminal/cleanup/drain wiring and hardware qualification remain pending; this
+does not enable the native backend or adaptive writer.
+
+The exact `d6e3666` borrower/prerequisite checkpoint passed FULL in 3m40s
+(helpers197, browser149, Go/vet/race, frontend/audit0 and ARM64). Subsequent
+source work checks the actual native package reload before both update phases,
+preserves its classifier, prepares four fenced overlays and removes only the
+script-update path's unused Entware feed refresh. Independent focused review
+passed; updater entry, terminal, cleanup/drain and target qualification remain
+pending. This newer source is not covered by the prior FULL result.
+
+The exact `194d3e6` prefix/cache checkpoint passed FULL in 3m41s
+(helpers197, browser149, Go/vet/race, frontend/audit0 and ARM64), with independent
+source-slice approval. The next fenced source connects the fixed updater entry,
+same-body exec, verified cleanup and owner-only dirty drain. Its real native
+successful terminal remains unwired pending inner-writer error propagation,
+cron/cache handling, safe destinations and archive verification before extraction.
+No new updater candidate is installed or enabled; prior FULL does not qualify
+these newer changes.
+
+## Historical production baseline
 
 Slices A/B/C/C.1 and D remain production-qualified. The validated fresh-source migration baseline merged as #7, the canonical Go module/import identity cleanup merged as #9 / Issue #8, and Slice D completed through Issue #2 with historical signed stable release `v0.1.1` from source `8f15246099538426ef08163b832c3aa6f73e8265` plus bounded live Keenetic adoption → rollback → re-adoption qualification. D.1 / Issue #3 is also production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. Issue #78 Slice F is present on source main as source-qualified-only work and is not a production-qualification or release claim.
 
@@ -34,7 +177,7 @@ Router-specific settings and secrets never enter this repository or release asse
 
 The active Go module/import identity is canonical: `github.com/popiposter/xkeen-control`. Historical `popiposter/xkeen-keenetic` references that remain in documentation describe quarantine/history only.
 
-## Product direction after D.1
+## Historical product direction after D.1 — superseded by the audit plan
 
 Per-router settings are not synchronized from Git.
 
@@ -43,7 +186,7 @@ public source + signed GitHub Releases (#2, done)
         ↓
 local typed appliance state + portable backup (#3, done / v0.2.0)
         ↓
-managed XKeen / Xray / geodata lifecycle (#4 active; beta.4 panel installed/verified; source corrections delivered; managed convergence and quality pending)
+managed XKeen / Xray / geodata lifecycle (#4 trial stopped; architecture under audit)
         ↓
 visual typed configuration + transactional render/apply (#5 source delivery complete through #91 F; trial panel installed, integrated acceptance pending)
         ↓
@@ -63,7 +206,7 @@ feature freeze + exact-main integrated qualification (#106 complete; reviewed su
 | Pre-D — canonical Go module/import identity | Done | Issue #8 / PR #9 | Canonical `github.com/popiposter/xkeen-control` provenance; no runtime behavior change |
 | D — releases/bootstrap/panel self-update | Done | Issue #2 / `v0.1.1` | Public signed Releases, protected release pipeline, one-command bootstrap, setup mode, transactional panel update/rollback |
 | D.1 — appliance state + backup/import/export | Done / production-qualified | Issue #3 / `v0.2.0` | Local schema-versioned settings, safe export, encrypted secret backup, typed restore |
-| D.2 — component lifecycle | **Active — beta.4 panel installed/verified; managed convergence and quality pending** | Issue #4 / reviewed source + live `v0.3.0-beta.4` trial | #64/F3/#46 A-F/G source work is delivered. #112/#114/#115/#117 corrections are merged; the separately authorized beta.5 successor requires its own exact-main, protected publication and independent public verification gates before installation and fresh typed convergence. Stable promotion is not implied |
+| D.2 — component lifecycle | **Trial stopped by operator; native-XKeen architecture plan pending** | Issue #4 + 2026-10-02 audit | Source work through #117 and beta.5 publication/panel installation remain historical. Integrated convergence/quality was not completed. Do not resume the previous successor-release/Setup sequence |
 | D.3 — foundation A-F (#46) | **Source delivered through Issue #78; integrated acceptance pending** | Issue #46 / #68 / #70 / #72 / #74 / #76 / #78 | Selection-first Nodes/batch mutations, subscription reconciliation/refresh and one manual/adaptive quality owner are in the trial panel; source delivery alone does not prove integrated live acceptance |
 | D.3/#5 — visual configuration | **Source delivered; integrated live acceptance pending** | Issue #5 / #91 + ledger #4 | Routing, DNS/Observatory, bounded Performance, System/Panel, and final Dashboard integration are in the trial panel. Production-qualified stable remains `v0.2.0` |
 | E — notifications/security hardening | **Source delivered; stable qualification unchanged** | Issue #99 / PRs #100/#101 | Fixed-host notifications, stable-notify discovery and private-management/auth protections are in the trial panel; integrated live acceptance remains separate |
@@ -98,7 +241,7 @@ Safe export excludes secrets by default; secret-bearing export is explicit and e
 
 Pre-adoption compatibility is explicit: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit and unknown/manual drift fails closed.
 
-## D.2 / Issue #4 — active trial continuation; stable qualification unchanged
+## D.2 / Issue #4 — historical trial; continuation stopped
 
 Phase A merged via PR #23 to `main` `bda9dd0cc7bb142a4cb1468811fff9b5146b1e8e`; source main gained the bounded read-only component inventory and authenticated `GET /api/v1/components` for panel, XKeen, Xray, geodata, KeeneticOS and Entware.
 
@@ -179,18 +322,23 @@ passed in [ledger #4](https://github.com/popiposter/xkeen-control/issues/4#issue
 Issue #117 / PR #118 is completed: Keenetic absent-writer resource admission,
 exact default-route spelling and hook compatibility, cold System state, and
 the requested standalone-WL new-node disabled default are reviewed and locally
-qualified. Beta.4's working historical lifecycle remains restored after the
-known Setup resource rejection; operator-added subscriptions are preserved.
-The separately authorized next step is a new immutable beta.5 candidate:
-exact reviewed main qualification, one protected Release, independent seven
-public assets verification, bounded signed panel install, then a fresh typed
-managed takeover and bounded manual/adaptive quality proof. A prior unknown
-Apply is never replayed. Detailed tuples, receipts and final PASS/BLOCKED
-evidence belong in #108/#117/#4; no beta.5 publication, install or managed
-convergence PASS is claimed here.
-Issue #80 remains a separate reliability follow-up and is not silently
-re-sequenced into this gate.
+qualified. Beta.5 from `8adff1e00e89515b37aac1d7d6e7e1df924a9143` later passed
+protected publication, independent public verification and panel installation.
+The subsequent reset/convergence work did not complete integrated acceptance.
+The operator stopped further installation on 2026-10-02 and requested the
+native-XKeen audit/plan above. No new release or Setup retry is the current next
+step. Issues #4/#81 remain historical/reconciliation references; #80 reliability
+requirements must be reconciled with the new native lifecycle before implementation.
 
 ## Maintenance rule
 
 After every merge, update this file only when status/sequencing changed, refresh master issue #1 if stale, and remove contradictory planning evidence. Do not duplicate detailed active-issue architecture here.
+
+
+### Native cleanup delivery — 2026-10-03
+
+Development artifact from `0d6a0d6763947a21bc7804492e29d624fefe2dff` is installed. Panel-only replacement independently verified executable, health and preserved native process/configuration. Current 60 nodes, 53 enabled, two subscriptions, WL enabled zero, no pending config. Old component/Setup/appliance import routes return JSON404; native conditional updates expose a terminal from startup. XKeen code remains stock.
+
+Qualification is combined exact-source evidence: original FULL passed Go/race/helpers/frontend/embed/audit and 110/111 browser cases; the single login-heading timeout passed 5/5 unchanged isolated repetitions, then proportional artifact build passed. Cause remains unproven. Do not label this a single successful FULL invocation. Previous 6dba FULL remains bound to that source.
+
+Source/live implementation is delivered for native commands, editors, geodata, subscriptions, encrypted transfer and optional Telegram, with hardware boundaries explicit: unproxied LAN DNS/DIRECT/proxy/outage and client policy, second-router Stage/Apply, real configured bot and native quality comparison remain NOT RUN. Adaptive override remains disabled; native selection is current. No new install feature or native repair protocol is required to run those acceptance checks.

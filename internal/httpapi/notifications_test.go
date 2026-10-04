@@ -19,7 +19,7 @@ func TestNotificationsExactRoutesAndSecretlessRoundtrip(t *testing.T) {
 	os.Mkdir(secretDir, 0o700)
 	path := filepath.Join(secretDir, "notifications.json")
 	password := filepath.Join(dir, "password.bcrypt")
-	if err := auth.SetPassword(password, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(password, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	service := notifications.NewServiceForTest(path)
@@ -85,6 +85,18 @@ func TestNotificationsExactRoutesAndSecretlessRoundtrip(t *testing.T) {
 	}
 	if request("/api/v1/notifications/configure", configure, session.CSRFToken, "application/json", server.URL) != 200 || service.Status().Enabled {
 		t.Fatal("configure enabled delivery")
+	}
+	for _, csrf := range []string{"", session.CSRFToken} {
+		code := request("/api/v1/notifications/control", `{"enabled":true,"allowedUserId":"12345"}`, csrf, "application/json", server.URL)
+		if csrf == "" && code != 403 || csrf != "" && code != 200 {
+			t.Fatal("control auth/CSRF", code)
+		}
+	}
+	if request("/api/v1/notifications/control", `{"enabled":true,"allowedUserId":"12345","command":"reboot"}`, session.CSRFToken, "application/json", server.URL) != 400 {
+		t.Fatal("generic command accepted")
+	}
+	if request("/api/v1/notifications/control", `{"enabled":true,"allowedUserId":"12345"}`, session.CSRFToken, "application/json", "https://other.invalid") != 403 {
+		t.Fatal("foreign bot control origin")
 	}
 	response, _ = client.Get(server.URL + "/api/v1/notifications")
 	data, _ := io.ReadAll(response.Body)

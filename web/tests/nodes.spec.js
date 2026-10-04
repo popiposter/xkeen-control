@@ -36,11 +36,11 @@ const statusFixture = (nodes) => ({
   controlPlane: { version: 'dev', uptimeSeconds: 120 },
   xray: { running: true, apiReachable: true, probeReachable: true },
   xkeen: { running: true },
-  balancer: { nativeSelected: nodes[0].outboundTag, effective: nodes[0].outboundTag },
+  balancer: { nativeSelected: nodes[0].outboundTag, effective: nodes[0].outboundTag, override: nodes[1].outboundTag },
   observatory: { healthy: 50, total: 51, apiReachable: true },
   benchmark: { controlPlane: { running: false, state: 'idle' } },
   selection: { state: 'stable', manualOverride: nodes[1].outboundTag },
-  setup: { runtime: 'running', credential: 'ready', xkeen: 'ready', xray: 'ready', configuration: 'ready' },
+  native: { installation: 'available', panelIntegration: 'available', version: '2.0.1', channel: 'beta', core: 'xray', xrayRunning: true },
   lifecycle: { maintenance: false, applying: false },
 })
 
@@ -48,6 +48,101 @@ const json = (route, body, status = 200) => route.fulfill({
   status,
   contentType: 'application/json',
   body: JSON.stringify(body),
+})
+
+test('node confirmation contains keyboard focus and restores it on Escape', async ({ page }) => {
+  await prepare(page)
+  await openNodes(page)
+  await page.evaluate(() => {
+    window.modalCSPViolations = []
+    document.addEventListener('securitypolicyviolation', (event) => window.modalCSPViolations.push(event.violatedDirective))
+    const policy = document.createElement('meta')
+    policy.httpEquiv = 'Content-Security-Policy'
+    policy.content = "script-src 'self'; style-src 'self'"
+    document.head.append(policy)
+  })
+  const trigger = page.getByRole('button', { name: 'Refresh Provider', exact: true })
+  await trigger.click()
+  const dialog = page.getByRole('dialog', { name: 'Preview node change' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Close preview' })).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(dialog.getByRole('button', { name: 'Apply and validate' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(dialog.getByRole('button', { name: 'Close preview' })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(dialog).not.toBeVisible()
+  await expect(trigger).toBeFocused()
+  expect(await page.evaluate(() => window.modalCSPViolations)).toEqual([])
+})
+
+for (const body of ['not json', '{}', '{"unrelated":true}']) {
+  test(`malformed Apply reply consumes preview: ${body}`, async ({ page }) => {
+    await prepare(page)
+    await openNodes(page)
+    let calls = 0
+    await page.route('**/api/v1/node-changes/apply', async (route) => {
+      calls++
+      await route.fulfill({ status: 200, contentType: 'application/json', body })
+    })
+    await page.getByRole('button', { name: 'Refresh Provider', exact: true }).click()
+    await page.getByRole('button', { name: 'Apply and validate', exact: true }).click()
+    await expect(page.getByText('The change outcome could not be confirmed.', { exact: false })).toBeVisible()
+    await expect(page.getByRole('dialog', { name: 'Preview node change' })).toHaveCount(0)
+    await expect(page.getByText('Change applied;', { exact: false })).toHaveCount(0)
+    expect(calls).toBe(1)
+  })
+}
+
+test('late logout response cannot clear a newly established session', async ({ page }) => {
+  await page.clock.install()
+  const prepared = await prepare(page)
+  await openNodes(page)
+  let release, finished
+  const pending = new Promise((resolve) => { release = resolve })
+  const done = new Promise((resolve) => { finished = resolve })
+  await page.route('**/api/v1/session/logout', async (route) => {
+    await pending
+    await json(route, { loggedOut: true })
+    finished()
+  })
+  let expired = true
+  await page.route('**/api/v1/status', (route) => json(route, expired ? { error: 'unauthorized' } : prepared.state.status, expired ? 401 : 200))
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await page.clock.fastForward(5000)
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible()
+  expired = false
+  await page.route('**/api/v1/session/login', (route) => json(route, { csrfToken: 'synthetic-new-session' }))
+  await page.getByLabel('Panel password', { exact: true }).fill('synthetic-test-password')
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+  release()
+  await done
+  await page.clock.fastForward(5000)
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toHaveCount(0)
+})
+
+test('Base UI confirmation stays open during an outstanding Apply', async ({ page }) => {
+  const prepared = await prepare(page)
+  page.__nodesIssues = prepared.issues
+  await openNodes(page)
+  await page.getByRole('button', { name: 'Refresh Provider', exact: true }).click()
+  let release
+  const pending = new Promise((resolve) => { release = resolve })
+  await page.route('**/api/v1/node-changes/apply', async (route) => {
+    await pending
+    await json(route, { operation: 'subscription-refresh', nodes: [], changes: [] })
+  })
+  const dialog = page.getByRole('dialog', { name: 'Preview node change' })
+  await dialog.getByRole('button', { name: 'Apply and validate' }).click()
+  await expect(dialog.getByRole('button', { name: 'Applying…' })).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await page.mouse.click(3, 3)
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled()
+  release()
+  await expect(dialog).not.toBeVisible()
 })
 
 async function prepare(page) {
@@ -84,6 +179,7 @@ async function prepare(page) {
     switch (path) {
       case '/api/v1/session': return json(route, { csrfToken })
       case '/api/v1/status': return json(route, state.status)
+      case '/api/v1/performance/quality': return json(route, { state: 'idle', progress: { candidates: [] } })
       case '/api/v1/nodes': {
         const nodes = state.missingNextRefresh ? state.nodes.filter((node) => node.id !== nodeID(1)) : state.nodes
         state.missingNextRefresh = false
@@ -101,11 +197,6 @@ async function prepare(page) {
       }
       case '/api/v1/config-summary': return json(route, { routing: {}, dns: {}, observatory: {} })
       case '/api/v1/update': return json(route, { channel: 'stable', installed: { version: '0.2.0' } })
-      case '/api/v1/selection/override': {
-        state.status.selection.manualOverride = body.target
-        for (const node of state.nodes) node.isOverride = Boolean(body.target) && node.outboundTag === body.target
-        return json(route, { manualOverride: body.target })
-      }
       case '/api/v1/performance/manual-node': {
         state.manualPolls = 0
         state.manual = { mode: 'manual-node', state: 'running', phase: 'latency', targetNodeId: body.nodeId, targetTag: `proxy-${body.nodeId}`, startedAt: new Date().toISOString(), elapsedMs: 0, plannedStages: 11, completedStages: 0, bytesPlanned: 48 * 1024 * 1024, bytesTransferred: 0 }
@@ -128,7 +219,7 @@ async function prepare(page) {
             after: remove ? 'removed' : (body.enabled ? 'enabled' : 'disabled'),
           }))
         const previewToken = `synthetic-batch-${++state.previewNumber}`
-        state.pending.set(previewToken, { remove, ids: [...body.nodeIds], enabled: body.enabled })
+        state.pending.set(previewToken, { operation, remove, ids: [...body.nodeIds], enabled: body.enabled })
         return json(route, { previewToken, operation, expiresAt: new Date(Date.now() + 300_000).toISOString(), changes, requiresAcceptance: false, noop: changes.length === 0 })
       }
       case '/api/v1/subscriptions/refresh/preview': {
@@ -164,7 +255,7 @@ async function prepare(page) {
           else state.nodes = state.nodes.map((node) => pending.ids.includes(node.id) ? { ...node, enabled: pending.enabled } : node)
           state.pending.delete(body.previewToken)
         }
-        return json(route, { operation: pending?.refresh ? 'subscription-refresh' : pending?.subscriptionState ? 'subscription-enable-disable' : pending?.remove ? 'batch-remove' : 'batch-state', nodes: state.nodes, changes: [] })
+        return json(route, { operation: pending?.refresh ? 'subscription-refresh' : pending?.subscriptionState ? 'subscription-enable-disable' : pending?.operation, nodes: state.nodes, changes: [] })
       }
       case '/api/v1/node-changes/cancel': return json(route, { canceled: true })
       default: return json(route, { error: `unexpected synthetic route: ${path}` }, 404)
@@ -172,6 +263,39 @@ async function prepare(page) {
   })
   return { state, issues }
 }
+
+test('quality columns, hidden source and disabled action hints are usable', async ({ page }) => {
+  const prepared=await prepare(page); page.__nodesIssues=prepared.issues
+  await page.route('**/api/v1/performance/quality',(route)=>json(route,{state:'completed',canStage:true,ranking:[{tag:prepared.state.nodes[0].outboundTag,rank:2,cost:2},{tag:prepared.state.nodes[2].outboundTag,rank:1,cost:1}],progress:{candidates:[{tag:prepared.state.nodes[0].outboundTag,valid:true,downloadBps:10e6,uploadBps:2e6},{tag:prepared.state.nodes[2].outboundTag,valid:true,downloadBps:20e6,uploadBps:4e6}]}}))
+  await openNodes(page)
+  await expect(page.getByRole('columnheader',{name:'Source',exact:true})).toHaveCount(0)
+  await expect(page.getByRole('columnheader',{name:'Quality rank',exact:true})).toBeVisible()
+  await expect(page.getByRole('cell',{name:'80.0 Mbps',exact:true})).toBeVisible()
+  const firstRow = page.locator('.nodes-table tbody tr').first()
+  await page.getByRole('button',{name:'Download',exact:true}).click()
+  await expect(firstRow).toContainText('Node 001')
+  await page.getByRole('button',{name:'Download',exact:true}).click()
+  await expect(firstRow).toContainText('Node 003')
+  await page.getByRole('button',{name:'Upload',exact:true}).click()
+  await expect(firstRow).toContainText('Node 001')
+  await page.getByRole('button',{name:'Quality rank',exact:true}).click()
+  await expect(firstRow).toContainText('Node 003')
+  await expect(page.getByRole('row').filter({hasText:'Node 002'})).toHaveClass(/node-disabled/)
+  await page.getByRole('button',{name:'Columns',exact:true}).click()
+  await page.getByRole('menuitemcheckbox',{name:'Source',exact:true}).click()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('columnheader',{name:'Source',exact:true})).toBeVisible()
+  const pin=page.getByRole('button',{name:'Set manual override',exact:true})
+  await expect(pin).toBeDisabled()
+  await pin.locator('..').hover()
+  await expect(page.locator('[data-slot=tooltip-content]')).toBeVisible()
+  await expect(page.locator('[data-slot=tooltip-content]')).toContainText('Select one enabled node first')
+  await page.mouse.move(0, 0)
+  await pin.locator('..').focus()
+  await expect(page.locator('[data-slot=tooltip-content]')).toBeVisible()
+  await page.getByRole('checkbox',{name:'Select Node 001',exact:true}).check()
+  await expect(pin).toBeEnabled()
+})
 
 async function openNodes(page) {
   await page.goto('/')
@@ -242,7 +366,7 @@ test('projects disabled subscription as non-participating before scheduler resca
   await expect(status).toContainText('Disabled subscriptions do not participate')
   await expect(status).not.toContainText('Next:')
   await expect(status).not.toContainText('Refresh deferred')
-  await expect(page.locator('.subscription-card.disabled')).toContainText('Disabled')
+  await expect(page.getByTestId('subscription-card-sub-12345678')).toHaveAttribute('data-enabled', 'false')
 })
 
 test('selects one, many and all filtered nodes across pages and reconciles selection', async ({ page }) => {
@@ -251,17 +375,17 @@ test('selects one, many and all filtered nodes across pages and reconciles selec
   await openNodes(page)
 
   await expect(page.getByTestId('selected-count')).toHaveText('0 selected')
-  await page.getByLabel('Select Node 001').check()
-  await expect(page.getByLabel('Select all filtered nodes')).toHaveJSProperty('indeterminate', true)
+  await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
+  await expect(page.getByRole('checkbox', { name: 'Select all filtered nodes', exact: true })).toHaveAttribute('aria-checked', 'mixed')
   await page.getByRole('button', { name: 'Next page' }).click()
-  await expect(page.getByLabel('Select Node 026')).toBeVisible()
-  await page.getByLabel('Select Node 026').check()
+  await expect(page.getByRole('checkbox', { name: 'Select Node 026', exact: true })).toBeVisible()
+  await page.getByRole('checkbox', { name: 'Select Node 026', exact: true }).check()
   await expect(page.getByTestId('selected-count')).toHaveText('2 selected')
 
   await page.getByRole('button', { name: 'Select all 51 filtered' }).click()
   await expect(page.getByTestId('selected-count')).toHaveText('51 selected')
   await page.getByRole('button', { name: 'Next page' }).click()
-  await expect(page.getByLabel('Select Node 051')).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Select Node 051', exact: true })).toBeVisible()
   await expect(page.getByTestId('selected-count')).toHaveText('51 selected')
   await page.locator('.sort-button').filter({ hasText: 'Name' }).click()
   await expect(page.getByTestId('selected-count')).toHaveText('51 selected')
@@ -273,11 +397,11 @@ test('selects one, many and all filtered nodes across pages and reconciles selec
 
   await page.getByRole('button', { name: 'Clear', exact: true }).click()
   await page.getByLabel('Search nodes').fill('Node 001')
-  await page.getByLabel('Select Node 001').check()
+  await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
   prepared.state.missingNextRefresh = true
   await page.getByRole('button', { name: 'Refresh dashboard' }).click()
   await expect(page.getByTestId('selected-count')).toHaveText('0 selected')
-  await expect(page.getByLabel('Select Node 001')).toHaveCount(0)
+  await expect(page.getByRole('checkbox', { name: 'Select Node 001', exact: true })).toHaveCount(0)
   await expect(page.locator('tbody .row-actions')).toHaveCount(0)
   await expect(page.locator('tbody tr button')).toHaveCount(0)
   expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 })
@@ -291,10 +415,10 @@ test('gates toolbar actions and sends one exact batch state preview', async ({ p
   const button = (name) => page.getByRole('button', { name, exact: true })
   await expect(page.getByRole('toolbar', { name: 'Selected node actions' })).toBeVisible()
 
-  await page.getByLabel('Select Node 001').check()
+  await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
   await expect(button('Enable')).toBeDisabled()
   await expect(button('Disable')).toBeEnabled()
-  await page.getByLabel('Select Node 002').check()
+  await page.getByRole('checkbox', { name: 'Select Node 002', exact: true }).check()
   await expect(button('Enable')).toBeEnabled()
   await expect(button('Disable')).toBeEnabled()
 
@@ -315,7 +439,7 @@ test('allows Full speed test beside another manual override and polls only while
 
   const speedTest = page.getByRole('button', { name: 'Full speed test', exact: true })
   await expect(page.getByRole('toolbar', { name: 'Selected node actions' })).toBeVisible()
-  await page.getByLabel('Select Node 001').check()
+  await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
   expect(prepared.state.status.selection.manualOverride).toBe(`proxy-${nodeID(2)}`)
   await expect(speedTest).toBeEnabled()
   await speedTest.click()
@@ -333,9 +457,9 @@ test('allows Full speed test beside another manual override and polls only while
   expect(prepared.state.requests.filter((request) => request.path === '/api/v1/performance')).toHaveLength(performanceRequestsAfterCompletion)
 
   await page.getByRole('button', { name: 'Clear selection', exact: true }).click()
-  await page.getByLabel('Select Node 002').check()
+  await page.getByRole('checkbox', { name: 'Select Node 002', exact: true }).check()
   await expect(speedTest).toBeDisabled()
-  await page.getByLabel('Select Node 001').check()
+  await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
   await expect(speedTest).toBeDisabled()
 })
 
@@ -344,14 +468,14 @@ test('stops manual performance polling when the Nodes workspace unmounts', async
   page.__nodesIssues = prepared.issues
   await openNodes(page)
 
-  await page.getByLabel('Select Node 001').check()
+  await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
   await page.getByRole('button', { name: 'Full speed test', exact: true }).click()
   await expect(page.getByTestId('manual-performance')).toContainText('Running')
   const performanceRequestsBeforeUnmount = prepared.state.requests.filter((request) => request.path === '/api/v1/performance').length
 
   await page.getByRole('button', { name: 'Overview', exact: true }).click()
   await revealDetails(page, 'Selection details')
-  await expect(page.getByText('Panel readiness')).toBeVisible()
+  await expect(page.getByText('Native selection', { exact: true })).toBeVisible()
   await page.waitForTimeout(1200)
   expect(prepared.state.requests.filter((request) => request.path === '/api/v1/performance')).toHaveLength(performanceRequestsBeforeUnmount)
 })
@@ -360,9 +484,9 @@ test('sends one batch remove preview, renders warnings, and reconciles after App
   const prepared = await prepare(page)
   page.__nodesIssues = prepared.issues
   await openNodes(page)
-  await page.getByLabel('Select Node 001').check()
-  await page.getByLabel('Select Node 002').check()
-  await page.getByLabel('Select Node 003').check()
+  await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
+  await page.getByRole('checkbox', { name: 'Select Node 002', exact: true }).check()
+  await page.getByRole('checkbox', { name: 'Select Node 003', exact: true }).check()
 
   await page.getByRole('button', { name: 'Delete', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Preview node change' })).toBeVisible()
@@ -372,7 +496,7 @@ test('sends one batch remove preview, renders warnings, and reconciles after App
   await expect(page.getByRole('dialog')).toContainText('The currently effective node changes in this preview.')
   await expect(page.getByRole('dialog')).toContainText('The current manual-override node changes in this preview.')
   await expect(page.getByRole('dialog')).toContainText('may return on a later subscription refresh')
-  await expect(page.locator('.diff-row')).toHaveCount(3)
+  await expect(page.getByRole('list', { name: 'Node changes' }).getByRole('listitem')).toHaveCount(3)
 
   await page.getByRole('button', { name: 'Apply and validate' }).click()
   await expect(page.getByTestId('selected-count')).toHaveText('0 selected')
@@ -392,7 +516,7 @@ test('renders exact provider removals without stale or manual-reappearance warni
   await expect(dialog).toContainText('Provider snapshot removes 1 node that is no longer present upstream.')
   await expect(dialog).not.toContainText('keeps them stale/missing')
   await expect(dialog).not.toContainText('may return on a later subscription refresh')
-  await expect(page.locator('.diff-row')).toHaveCount(1)
+  await expect(page.getByRole('list', { name: 'Node changes' }).getByRole('listitem')).toHaveCount(1)
   expect(prepared.state.requests.filter((request) => request.path === '/api/v1/subscriptions/refresh/preview')).toEqual([
     { path: '/api/v1/subscriptions/refresh/preview', method: 'POST', body: { subscriptionId: 'sub-12345678' } },
   ])
@@ -401,7 +525,7 @@ test('renders exact provider removals without stale or manual-reappearance warni
 
   await page.getByRole('button', { name: 'Apply and validate' }).click()
   await expect(page.getByTestId('selected-count')).toHaveText('0 selected')
-  await expect(page.getByLabel('Select Node 003')).toHaveCount(0)
+  await expect(page.getByRole('checkbox', { name: 'Select Node 003', exact: true })).toHaveCount(0)
   const applies = prepared.state.requests.filter((request) => request.path === '/api/v1/node-changes/apply')
   expect(applies).toHaveLength(1)
   expect(applies[0].body).toEqual({ previewToken: 'synthetic-subscription-1', acceptMissing: false })
@@ -450,22 +574,17 @@ test('keeps effective and manual impact warnings for exact provider removals', a
   await page.getByRole('button', { name: 'Cancel', exact: true }).click()
 })
 
-test('keeps manual override and replacement as single-selection toolbar actions without exposing profile secrets', async ({ page }) => {
+test('offers native manual pin and retains profile replacement without exposing secrets', async ({ page }) => {
   const prepared = await prepare(page)
   page.__nodesIssues = prepared.issues
   await openNodes(page)
 
-  await page.getByLabel('Select Node 002').check()
-  await page.getByRole('button', { name: 'Clear manual override', exact: true }).click()
-  const overrideRequests = prepared.state.requests.filter((request) => request.path === '/api/v1/selection/override')
-  expect(overrideRequests).toHaveLength(1)
-  expect(overrideRequests[0].body).toEqual({ target: '' })
-
+  await page.getByRole('checkbox', { name: 'Select Node 002', exact: true }).check()
+  await expect(page.getByRole('button', { name: 'Clear manual override', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: 'Clear selection', exact: true }).click()
-  await page.getByLabel('Select Node 001').check()
-  await page.getByRole('button', { name: 'Set manual override', exact: true }).click()
-  await expect.poll(() => prepared.state.requests.filter((request) => request.path === '/api/v1/selection/override').length).toBe(2)
-  expect(prepared.state.requests.filter((request) => request.path === '/api/v1/selection/override')[1].body).toEqual({ target: `proxy-${nodeID(1)}` })
+  await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
+  await expect(page.getByRole('button', { name: 'Set manual override', exact: true })).toBeEnabled()
+  expect(prepared.state.requests.filter((request) => request.path === '/api/v1/selection/override')).toHaveLength(0)
 
   await page.getByRole('button', { name: 'Edit / replace profile', exact: true }).click()
   const profile = ['vless:', '//', '11111111-1111-4111-8111-111111111111@secret.example.com:443?security=reality&sni=front.example.com&fp=chrome&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=abcd&type=tcp#Synthetic'].join('')

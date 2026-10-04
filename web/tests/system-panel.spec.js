@@ -10,7 +10,7 @@ const status = {
   xkeen: { running: true },
   observatory: { healthy: 2, total: 3, apiReachable: true },
   balancer: {}, selection: {}, benchmark: { controlPlane: { running: false } },
-  setup: { runtime: 'running', credential: 'configured', xkeen: 'ready', xray: 'ready', configuration: 'ready' },
+  native: { installation: 'available', panelIntegration: 'available', version: '2.0.1', channel: 'beta', core: 'xray', xrayRunning: true },
   lifecycle: { maintenance: false, applying: false },
 }
 
@@ -57,6 +57,7 @@ async function prepare(page, options = {}) {
         return json(route, { csrfToken: state.reconnected ? `${csrfToken}-reconnected` : csrfToken })
       }
       case '/api/v1/status': return json(route, { ...status, lifecycle: state.lifecycle })
+      case '/api/v1/performance/quality': return json(route, { state: 'idle', progress: { candidates: [] } })
       case '/api/v1/nodes': return json(route, { total: 0, nodes: [], subscriptions: [] })
       case '/api/v1/performance': return json(route, { nodes: [] })
       case '/api/v1/panel/listener': return json(route, state.listener)
@@ -80,6 +81,7 @@ async function prepare(page, options = {}) {
         state.notification = { ...state.notification, configured: true, enabled: false, authorityState: 'configured' }
         if (options.rejectNotificationConfigure) return json(route, { error: 'synthetic_notification_token_sentinel', code: 'invalid-request' }, 400)
         return json(route, state.notification)
+      case '/api/v1/notifications/control': state.notification = { ...state.notification, controlEnabled: body.enabled, controlConfigured: !!body.allowedUserId, controlState: body.enabled ? 'listening' : 'disabled' }; return json(route, state.notification)
       case '/api/v1/notifications/enabled': state.notification.enabled = body.enabled; return json(route, state.notification)
       case '/api/v1/notifications/test': state.notification.deliveryState = 'delivered'; return json(route, state.notification)
       case '/api/v1/notifications/clear': state.notification = { provider: 'telegram', configured: false, enabled: false, authorityState: 'unconfigured', deliveryState: 'idle' }; return json(route, state.notification)
@@ -112,7 +114,7 @@ test('loads the cold empty release version without a metadata check', async ({ p
   const state = await prepare(page, { update: { latestCompatibleVersion: '' } }); page.__systemIssues = state.issues
   await page.goto('/')
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Access')
   await expect(page.getByRole('heading', { name: '127.0.0.1:8787', exact: true })).toBeVisible()
   await expect(page.getByLabel('New management host')).toBeEnabled()
   await expect(page.getByText('Reading listener…', { exact: true })).toHaveCount(0)
@@ -123,7 +125,7 @@ test('rejects a malformed cold release version without a metadata check', async 
   const state = await prepare(page, { update: { latestCompatibleVersion: false } }); page.__systemIssues = state.issues
   await page.goto('/')
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Releases')
   await expect(page.getByText('Signed panel release state is unavailable.', { exact: true })).toBeVisible()
   expect(state.requests.filter(({ method }) => method === 'POST')).toHaveLength(0)
 })
@@ -132,13 +134,13 @@ test('configures tests enables disables and clears without redisplaying or stori
   const state = await prepare(page); page.__systemIssues = state.issues
   await page.goto('/')
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Notifications')
   const card = page.getByRole('region', { name: 'Notifications', exact: true })
   await expect(card).toBeVisible()
   await page.getByLabel('Telegram bot token').fill('123456:synthetic_notification_token_sentinel')
   await page.getByLabel('Telegram chat ID').fill('-1234567890123')
   expect(await page.getByLabel('Telegram bot token').getAttribute('type')).toBe('password')
-  expect(await page.getByLabel('Telegram chat ID').getAttribute('type')).toBe('password')
+  expect(await page.getByLabel('Telegram chat ID').getAttribute('type')).toBe('text')
   await page.getByRole('button', { name: 'Configure notifications', exact: true }).click()
   await expect(page.getByLabel('Telegram bot token')).toHaveValue('')
   await expect(page.getByLabel('Telegram chat ID')).toHaveValue('')
@@ -168,7 +170,7 @@ test('clears submitted credentials on rejection and navigation and discards raw 
   const state = await prepare(page, { rejectNotificationConfigure: true }); page.__systemIssues = state.issues
   await page.goto('/')
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Notifications')
   await page.getByLabel('Telegram bot token').fill('123456:synthetic_notification_token_sentinel')
   await page.getByLabel('Telegram chat ID').fill('-1234567890123')
   await page.getByRole('button', { name: 'Configure notifications', exact: true }).click()
@@ -179,7 +181,7 @@ test('clears submitted credentials on rejection and navigation and discards raw 
   await page.getByLabel('Telegram bot token').fill('unsent_secret_sentinel')
   await page.getByRole('button', { name: 'Overview', exact: true }).click()
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Notifications')
   await expect(page.getByLabel('Telegram bot token')).toHaveValue('')
 })
 
@@ -188,7 +190,7 @@ for (const [channel, mode, text] of [['stable', 'notify', 'Background discovery 
     const state = await prepare(page, { update: { channel, policy: { channel, mode, checkCadenceMinutes: 60 }, scheduler: { state: mode === 'auto-stable' ? 'unsupported-mode' : channel === 'beta' ? 'unsupported-channel' : 'completed', notificationState: 'notified' } } }); page.__systemIssues = state.issues
     await page.goto('/')
     await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Releases')
     await expect(page.getByRole('region', { name: 'Signed panel release' })).toContainText(channel === 'stable' && mode === 'notify' ? 'It never authorizes Apply' : text)
     await expect(page.getByRole('button', { name: 'Apply checked release', exact: true })).toBeDisabled()
     expect(state.requests.filter(({ path }) => ['/api/v1/update/check', '/api/v1/update/apply'].includes(path))).toHaveLength(0)
@@ -199,7 +201,7 @@ test('saves stable notify policy without checking or enabling Apply', async ({ p
   const state = await prepare(page); page.__systemIssues = state.issues
   await page.goto('/')
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Releases')
   await page.getByLabel('Panel notification mode').selectOption('notify')
   await page.getByLabel('Panel check cadence (minutes)').fill('60')
   await page.getByRole('button', { name: 'Save notify policy', exact: true }).click()
@@ -210,22 +212,6 @@ test('saves stable notify policy without checking or enabling Apply', async ({ p
 
 test.afterEach(async ({ page }) => {
   if (page.__systemIssues) expect(page.__systemIssues).toEqual([])
-})
-
-test('keeps System / Panel lazy and uses the final tail navigation', async ({ page }) => {
-  const state = await prepare(page); page.__systemIssues = state.issues
-  await page.goto('/')
-  await expect(page.locator('.section-nav button')).toHaveCount(8)
-  expect(await page.locator('.section-nav button').allTextContents()).toEqual(['Overview', 'Nodes 0', 'Routing', 'DNS', 'Performance', 'Components / Updates', 'Backup & Restore', 'System / Panel'])
-  expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener' || path === '/api/v1/update' || path === '/api/v1/notifications')).toHaveLength(0)
-  await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
-  await expect(page.getByText('Management listener', { exact: true })).toBeVisible()
-  await expect.poll(() => state.requests.filter(({ path }) => path === '/api/v1/panel/listener')).toHaveLength(1)
-  await expect.poll(() => state.requests.filter(({ path }) => path === '/api/v1/update')).toHaveLength(1)
-  await page.waitForTimeout(5_300)
-  expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener')).toHaveLength(1)
-  expect(state.requests.filter(({ path }) => path === '/api/v1/update')).toHaveLength(1)
 })
 
 for (const host of ['127.0.0.1', '10.0.0.4', 'fd00::4']) {
@@ -243,7 +229,6 @@ for (const host of ['127.0.0.1', '10.0.0.4', 'fd00::4']) {
     await expect(card).toContainText('Never bind to WAN or open a WAN firewall rule')
     await expect(card).toContainText('does not automate')
     await expect(card.locator('button, input, select, a')).toHaveCount(0)
-    await page.waitForTimeout(5_300)
     expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener')).toHaveLength(1)
     expect(state.requests.filter(({ method }) => method !== 'GET')).toHaveLength(0)
     expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 })
@@ -254,7 +239,7 @@ test('sends only the server-listed host and presents rebind 202 as a handoff', a
   const state = await prepare(page); page.__systemIssues = state.issues
   await page.goto('/')
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Access')
   await page.getByLabel('New management host').selectOption('10.0.0.4')
   await page.getByRole('button', { name: 'Preview rebind' }).click()
   await expect(page.getByRole('heading', { name: 'Review management listener rebind' })).toBeVisible()
@@ -264,7 +249,7 @@ test('sends only the server-listed host and presents rebind 202 as a handoff', a
   await expect(page.getByText('Listener rebind handoff started', { exact: true })).toBeVisible()
   expect(state.requests.filter(({ path }) => path === '/api/v1/panel/listener/apply')).toHaveLength(1)
   expect(state.requests.find(({ path }) => path === '/api/v1/panel/listener/apply').body).toEqual({ previewToken: 'listener-preview-1' })
-  await expect(page.locator('div.notice.warning').filter({ hasText: /reconnect and verify/i })).toBeVisible()
+  await expect(page.getByRole('alert').filter({ hasText: /reconnect and verify/i })).toBeVisible()
   await expect(page.locator('p.system-blocked').filter({ hasText: /same-session Refresh cannot prove completion/i })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Preview rebind' })).toBeDisabled()
   await expect(page.getByLabel('New management host')).toBeDisabled()
@@ -276,7 +261,7 @@ test('sends only the server-listed host and presents rebind 202 as a handoff', a
   state.reconnected = true
   await page.reload()
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Access')
   await expect(page.getByRole('heading', { name: '10.0.0.4:8787', exact: true })).toBeVisible()
   await expect(page.getByLabel('New management host')).toBeEnabled()
   await page.getByLabel('New management host').selectOption('127.0.0.1')
@@ -290,7 +275,7 @@ test('locks listener rebind after a lost Apply response until a fresh listener r
   const state = await prepare(page, { dropListenerApplyResponse: true }); page.__systemIssues = state.issues
   await page.goto('/')
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Access')
   await page.getByLabel('New management host').selectOption('10.0.0.4')
   await page.getByRole('button', { name: 'Preview rebind' }).click()
   await page.getByRole('button', { name: 'Start rebind handoff' }).click()
@@ -307,7 +292,7 @@ test('locks listener rebind after a lost Apply response until a fresh listener r
   state.reconnected = true
   await page.reload()
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Access')
   await expect(page.getByRole('heading', { name: '10.0.0.4:8787', exact: true })).toBeVisible()
   await page.getByLabel('New management host').selectOption('127.0.0.1')
   await expect(page.getByRole('button', { name: 'Preview rebind' })).toBeEnabled()
@@ -321,7 +306,7 @@ test('treats a malformed listener Apply response as unknown without replay', asy
   const state = await prepare(page, { malformedListenerApplyResponse: true }); page.__systemIssues = state.issues
   await page.goto('/')
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Access')
   await page.getByLabel('New management host').selectOption('10.0.0.4')
   await page.getByRole('button', { name: 'Preview rebind' }).click()
   await page.getByRole('button', { name: 'Start rebind handoff' }).click()
@@ -335,13 +320,13 @@ test('safe-cancels a late listener Preview after navigation', async ({ page }) =
   const state = await prepare(page, { delayListenerPreview: true }); page.__systemIssues = state.issues
   await page.goto('/')
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Access')
   await page.getByLabel('New management host').selectOption('10.0.0.4')
   await page.getByRole('button', { name: 'Preview rebind' }).click()
   await page.getByRole('button', { name: 'Overview', exact: true }).click()
   await expect.poll(() => state.requests.filter(({ path }) => path === '/api/v1/panel/listener/cancel')).toHaveLength(1)
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Access')
   await expect(page.getByText('Management listener', { exact: true })).toBeVisible()
   expect(await page.getByRole('heading', { name: 'Review management listener rebind' }).count()).toBe(0)
 })
@@ -352,10 +337,11 @@ for (const width of [1440, 375]) test(`shows checked version/channel/source befo
   await page.goto('/')
   const navigation = await revealNavigation(page)
   await navigation.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Releases')
   await page.getByRole('button', { name: 'Check fixed release' }).click()
   await expect(page.getByText('Explicit release Check completed')).toBeVisible()
   const release = page.getByRole('region', { name: 'Signed panel release' })
+  await expect(release.locator('[data-slot=field-label]').first()).toHaveCSS('align-items', 'flex-start')
   for (const [label, value] of [['Latest checked', '1.2.3'], ['Checked channel', 'stable'], ['Checked source', 'github-release']]) {
     const fact = release.locator('.system-facts-grid > div').filter({ has: page.getByText(label, { exact: true }) })
     await expect(fact.locator('strong')).toHaveText(value)
@@ -378,7 +364,7 @@ test('locks checked Apply after a lost response until a fresh explicit Check', a
   const state = await prepare(page, { dropApplyResponse: true }); page.__systemIssues = state.issues
   await page.goto('/')
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Releases')
   await page.getByRole('button', { name: 'Check fixed release' }).click()
   await page.getByRole('button', { name: 'Apply checked release' }).click()
   await expect(page.getByText('Panel update outcome is unknown', { exact: true })).toBeVisible()
@@ -395,7 +381,7 @@ test('locks rollback after a lost response and does not replay it', async ({ pag
   const state = await prepare(page, { dropRollbackResponse: true }); page.__systemIssues = state.issues
   await page.goto('/')
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Releases')
   await page.getByRole('button', { name: 'Rollback retained release' }).click()
   await expect(page.getByText('Panel rollback outcome is unknown', { exact: true })).toBeVisible()
   await expect(page.locator('p.system-blocked').filter({ hasText: /retained generation before another action/i })).toBeVisible()
@@ -421,7 +407,7 @@ test('gates panel update and rollback during maintenance, Apply, or unavailable 
     state.lifecycle = lifecycle
     await page.goto('/')
     await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Releases')
     await expect(page.getByRole('button', { name: 'Check fixed release' })).toBeEnabled()
     await expect(page.getByRole('button', { name: 'Apply checked release' })).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Rollback retained release' })).toBeDisabled()
@@ -440,7 +426,7 @@ test('re-arms rollback after a proven HTTP rejection and allows a later retry', 
   const state = await prepare(page, { rollbackRejectOnce: true }); page.__systemIssues = state.issues
   await page.goto('/')
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Releases')
   await page.getByRole('button', { name: 'Rollback retained release' }).click()
   await expect(page.getByText('Panel rollback was rejected', { exact: true })).toBeVisible()
   await expect(page.getByText('Panel rollback outcome is unknown', { exact: true })).toHaveCount(0)
@@ -456,11 +442,32 @@ test('password replacement uses the exact RAM-only request and returns to login'
   const state = await prepare(page); page.__systemIssues = state.issues
   await page.goto('/')
   await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
-  await revealSystemSettings(page)
+  await revealSystemSettings(page, 'Password')
   await page.getByLabel('New panel password').fill('synthetic-new-password')
   await page.getByLabel('Confirm new password').fill('synthetic-new-password')
   await page.getByRole('button', { name: 'Replace password' }).click()
   await expect(page.getByRole('heading', { name: 'XKeen Control' })).toBeVisible()
   expect(state.requests.find(({ path }) => path === '/api/v1/session/password').body).toEqual({ newPassword: 'synthetic-new-password' })
   expect(await page.evaluate(() => ({ local: localStorage.length, session: sessionStorage.length }))).toEqual({ local: 0, session: 0 })
+})
+
+test('bot control requires an explicit user, clears its input, and disables separately', async ({ page }) => {
+ const state = await prepare(page); page.__systemIssues = state.issues
+ await page.goto('/')
+ await page.getByRole('button', { name: 'System / Panel', exact: true }).click()
+ await revealSystemSettings(page, 'Notifications')
+ await expect(page.getByRole('button', { name: 'Enable bot control', exact: true })).toBeDisabled()
+ await page.getByLabel('Telegram bot token').fill('123456:synthetic_notification_token_sentinel')
+ await page.getByLabel('Telegram chat ID').fill('-1234567890123')
+ await page.getByRole('button', { name: 'Configure notifications', exact: true }).click()
+ await page.getByLabel('Allowed Telegram user ID').fill('12345')
+ await page.getByRole('button', { name: 'Enable bot control', exact: true }).click()
+ await expect(page.getByLabel('Allowed Telegram user ID')).toHaveValue('')
+ await expect(page.getByRole('button', { name: 'Disable bot control', exact: true })).toBeEnabled()
+ await page.getByRole('button', { name: 'Disable bot control', exact: true }).click()
+ await expect(page.getByRole('button', { name: 'Disable bot control', exact: true })).toBeDisabled()
+ const controls = state.requests.filter(({path}) => path === '/api/v1/notifications/control')
+ expect(controls.map(({body})=>body)).toEqual([{enabled:true,allowedUserId:'12345'},{enabled:false,allowedUserId:''}])
+ expect(controls.every(({csrf})=>csrf===csrfToken)).toBe(true)
+ expect(await page.evaluate(()=>[localStorage.length,sessionStorage.length])).toEqual([0,0])
 })

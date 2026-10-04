@@ -39,6 +39,7 @@ var (
 		{code: "LV", name: "Latvia", flag: "🇱🇻", aliases: []string{"latvia", "lva"}},
 		{code: "NL", name: "Netherlands", flag: "🇳🇱", aliases: []string{"netherlands", "nld", "nl"}},
 		{code: "PL", name: "Poland", flag: "🇵🇱", aliases: []string{"poland", "pol", "pl"}},
+		{code: "RO", name: "Romania", flag: "🇷🇴", aliases: []string{"romania", "romanian", "rou", "румыния"}},
 		{code: "RU", name: "Russia", flag: "🇷🇺", aliases: []string{"russia", "russian", "rus", "россия", "рф"}},
 		{code: "SE", name: "Sweden", flag: "🇸🇪", aliases: []string{"sweden", "swe"}},
 		{code: "SG", name: "Singapore", flag: "🇸🇬", aliases: []string{"singapore", "sgp"}},

@@ -60,6 +60,7 @@ type PolicyEngine struct {
 type sample struct {
 	at    time.Time
 	delay int64
+	alive bool
 }
 
 func NewPolicyEngine(policy Policy) *PolicyEngine {
@@ -103,7 +104,7 @@ func (e *PolicyEngine) Observe(now time.Time, observations []Observation) map[st
 		}
 		e.lastTry[item.Tag] = item.LastTry
 		values := e.samples[item.Tag]
-		values = append(values, sample{at: item.LastTry, delay: item.DelayMS})
+		values = append(values, sample{at: item.LastTry, delay: item.DelayMS, alive: item.Alive})
 		first := 0
 		for first < len(values) && values[first].at.Before(cutoff) {
 			first++

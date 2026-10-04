@@ -30,7 +30,7 @@ func (s *manualHTTPStub) TriggerManualNode(nodeID string) error {
 
 func TestManualNodeRouteIsAuthenticatedCSRFBoundAndClosed(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(path, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(path, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	manual := &manualHTTPStub{}
@@ -137,7 +137,7 @@ func (b *chunkedManualBody) Read(value []byte) (int, error) {
 
 func TestManualNodeRouteRejectsCrossOriginQueryAndChunkedOversizeBeforeService(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(path, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(path, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	manual := &manualHTTPStub{}
@@ -210,7 +210,7 @@ func TestManualNodeRouteRejectsCrossOriginQueryAndChunkedOversizeBeforeService(t
 
 func TestManualNodeRouteMapsBusyCleanupAndUnavailableToClosedStates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(path, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(path, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
@@ -244,7 +244,7 @@ func TestManualNodeRouteMapsBusyCleanupAndUnavailableToClosedStates(t *testing.T
 
 func TestManualPerformanceRouteRequiresGETAndDoesNotExposeProviderError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := auth.SetPassword(path, []byte("synthetic-control-password")); err != nil {
+	if err := setHTTPTestPassword(path, []byte("synthetic-control-password")); err != nil {
 		t.Fatal(err)
 	}
 	manual := &manualHTTPStub{err: errors.New("secret provider URL and UUID")}

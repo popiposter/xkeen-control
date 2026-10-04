@@ -1,5 +1,32 @@
 # Operations
 
+> **Active implementation:** [Native XKeen contract](NATIVE-XKEEN.md) governs Issue #121 on clean Entware. Older panel migration/recovery compatibility is not required. Historical behavior below is not the new installation authority.
+
+## Native-shell release candidate
+
+Stable `v0.3.0` is being prepared, not published. Stock XKeen is installed through
+its official procedure and owns components, service/interception and cron.
+The panel is installed alongside it; use the native contract for commands,
+configuration editing, validation, explicit Apply and optional previous restore.
+Do not use the historical appliance adoption/component repair procedures below
+for this generation. There is no supported upgrade contract from older panels.
+
+Publication still requires an independently reviewed exact current `main`, the
+protected Release workflow (`channel=stable`, exact version/source), both build
+and publish success, and independent download/signature/manifest/assets/checksum
+verification of the seven public assets. Development panel delivery is not signed
+release installation evidence. Do not dispatch while the candidate remains on
+an unmerged PR or substitute a manually created tag/Release after a failure.
+
+For a native config Apply or quality recommendation, HTTP 202 is handoff only;
+require the existing job's terminal `completed` / configuration `applied` and
+independent native health/configuration readback. If a subscription refresh or
+external native action changes the configuration after a measurement, its old
+recommendation must remain rejected; do not silently rebase or replay it.
+
+The sections below describe historical qualified generations unless explicitly
+retained by the native contract.
+
 This runbook describes the **currently production-qualified** control-plane generation. Slice D / Issue #2 remains complete, and D.1 / Issue #3 is production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86` for `linux/arm64`. Later #4/#5 work exists in source but is not deployed; `docs/ROADMAP.md` owns current source sequencing.
 
 Production is a live router. Prefer typed/repository transactions over ad-hoc edits.
@@ -62,21 +89,9 @@ legacy exact
 
 During that sequence bounded non-secret fingerprints for auth/listener/node/Xray/XKeen/selection/benchmark state remained unchanged.
 
-## Historical repository deployment
+## Native development installation
 
-Repository deployment remains an advanced developer/operator path for deliberate development qualification, not the normal production distribution path:
-
-```sh
-cd /opt/etc/xkeen/repo
-./scripts/deploy.sh
-./scripts/verify.sh
-```
-
-Build `xkeen-control` off-router. Do not install Go/Node on Keenetic.
-
-`deploy.sh` builds a complete `/tmp` candidate, renders outbounds from the local authoritative `nodes.json`, validates Xray, snapshots the active generation, swaps/restarts through the bounded foreground lifecycle and rolls back on failure.
-
-Do not copy only a generated `04_outbounds.json` as a restore mechanism.
+Repository template deployment and legacy secret migration are removed under Issue #121. Stock XKeen owns its components and configuration lifecycle. Build the panel off-router and follow the active issue's bounded panel-only installation and independent readback procedure. Do not copy a generated `04_outbounds.json` over a different node registry or deploy old repository templates as current native policy.
 
 ## Xray restart
 
@@ -377,7 +392,7 @@ Inspect at most 32 relevant cron/init/deployment configuration files, each
 at most 64 KiB, in a private bounded session: `/opt/etc/crontab`,
 `/opt/etc/cron.d`, `/opt/var/spool/cron/crontabs`, `/opt/etc/init.d` and the
 operator's active deployment/package job list. Review only relevant entries
-for `update-geodata`, `deploy.sh`, upstream geodata updates, legacy balancer,
+for `update-geodata`, the retired repository deployment script, upstream geodata updates, legacy balancer,
 watchdog and benchmark writers, including scripts those entries call. Do not
 publish raw crontabs, environments or process command lines. Report owned
 entry counts, schedules and active/inactive/unknown conclusions. Unknown
@@ -537,7 +552,7 @@ XKeen → complete rollback. Obtain a separate approval per exact pair, permitti
 one Apply and one explicit Rollback plus ordinary automatic recovery on failure.
 Never leave one class changed while diagnosing another. Use only F2/F1 paths
 above: no private engine calls, path environment overrides, `-ux/-uk/-i/-fixed`,
-`deploy.sh`, `update-geodata.sh` or manual active-file copies.
+the retired repository deployment script, `update-geodata.sh` or manual active-file copies.
 
 For component requests allow 540 seconds client-side: the server's synchronous
 window is 8m45s including independent recovery. Never abort a transaction to
@@ -635,7 +650,7 @@ recovery must be verified, not manufactured.
 
 The source D.2 core manages the complete product geodata set transactionally.
 Historical `scripts/update-geodata.sh` still replaces active files individually
-with fallback mirrors, and `scripts/deploy.sh` invokes it. Neither script is a
+with fallback mirrors, and the removed repository deployment script formerly invoked it. Neither script is a
 D.2 qualification shortcut or part of the typed component transaction boundary.
 
 Before any authorized live component trial, inspect relevant external writers

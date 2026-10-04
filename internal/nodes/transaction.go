@@ -11,10 +11,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/popiposter/xkeen-control/internal/configjson"
 	"github.com/popiposter/xkeen-control/internal/redact"
+	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
 
@@ -35,6 +38,7 @@ const (
 )
 
 var ErrRollbackFailed = errors.New("node activation failed; rollback failed")
+var ErrNodeRecoveryRequired = errors.New("node operation needs independent runtime recovery before another change")
 
 type TransactionBudget struct {
 	CandidateValidation time.Duration
@@ -79,6 +83,13 @@ type Transaction struct {
 }
 
 func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
+	if t.PreviousDir == "" {
+		t.PreviousDir = filepath.Join(filepath.Dir(t.Store.Path), "previous")
+	}
+	pendingPath := filepath.Join(t.PreviousDir, ".pending")
+	if _, checkErr := os.Lstat(pendingPath); !errors.Is(checkErr, os.ErrNotExist) {
+		return ErrNodeRecoveryRequired
+	}
 	budget := t.Budget.normalized()
 	transactionDeadline := time.Now().Add(budget.Total)
 	if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(transactionDeadline) {
@@ -90,10 +101,28 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 	if err := registry.Validate(); err != nil {
 		return err
 	}
-	rendered, err := Render(registry)
+	previousRegistry, previousRegistryExists, err := loadOptionalRegistry(t.Store)
 	if err != nil {
 		return err
 	}
+	previousOutbounds, previousOutboundsExists, err := readOptional(t.ActiveOutboundsPath, MaxLegacyDocument)
+	if err != nil {
+		return err
+	}
+	var rendered []byte
+	if previousOutboundsExists {
+		baseline := previousRegistry
+		if !previousRegistryExists {
+			baseline = NewRegistry()
+		}
+		rendered, err = RenderNative(previousOutbounds, baseline, registry)
+	} else {
+		rendered, err = Render(registry)
+	}
+	if err != nil {
+		return err
+	}
+	runtimeChanged := !previousOutboundsExists || !nativeDocumentsEqual(previousOutbounds, rendered)
 	candidateDir, err := os.MkdirTemp("", "xkeen-node-candidate-")
 	if err != nil {
 		return errors.New("unable to create candidate directory")
@@ -107,7 +136,7 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 	if err := atomicWrite(filepath.Join(candidateDir, "04_outbounds.json"), rendered, 0o600); err != nil {
 		return err
 	}
-	if t.Activator != nil {
+	if runtimeChanged && t.Activator != nil {
 		validationContext, cancelValidation := context.WithTimeout(transactionContext, budget.CandidateValidation)
 		validationErr := t.Activator.ValidateCandidate(validationContext, candidateDir)
 		cancelValidation()
@@ -116,40 +145,92 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 		}
 	}
 
-	previousRegistry, previousRegistryExists, err := loadOptionalRegistry(t.Store)
+	intent, intentErr := acquireNodeIntent(ctx, t.PreviousDir)
+	if intentErr != nil {
+		return intentErr
+	}
+	defer intent.Close()
+	settled := true
+	defer func() {
+		if settled {
+			if releaseErr := intent.Settle(); releaseErr != nil {
+				err = releaseErr
+			}
+		}
+	}()
+	currentRegistry, currentRegistryExists, err := loadOptionalRegistry(t.Store)
 	if err != nil {
 		return err
 	}
-	previousOutbounds, previousOutboundsExists, err := readOptional(t.ActiveOutboundsPath, MaxLegacyDocument)
+	currentOutbounds, currentOutboundsExists, err := readOptional(t.ActiveOutboundsPath, MaxLegacyDocument)
 	if err != nil {
 		return err
+	}
+	if currentRegistryExists != previousRegistryExists || !reflect.DeepEqual(currentRegistry, previousRegistry) ||
+		currentOutboundsExists != previousOutboundsExists || !bytes.Equal(currentOutbounds, previousOutbounds) {
+		return errors.New("native node configuration changed during validation")
 	}
 	if err := t.savePrevious(previousRegistry, previousRegistryExists, previousOutbounds, previousOutboundsExists); err != nil {
+		settled = true
 		return err
+	}
+	if syncNodeDirectory(t.PreviousDir) != nil {
+		return ErrNodeRecoveryRequired
 	}
 	mutated := false
 	defer func() {
 		if err == nil || !mutated {
+			settled = true
+			return
+		}
+		if !runtimeChanged {
+			var restoreErr error
+			if previousRegistryExists {
+				restoreErr = t.Store.Save(previousRegistry)
+			} else {
+				restoreErr = os.Remove(t.Store.Path)
+				if errors.Is(restoreErr, os.ErrNotExist) {
+					restoreErr = nil
+				}
+			}
+			if restoreErr != nil {
+				err = &RollbackError{Cause: err, Recovery: restoreErr}
+				return
+			}
+			settled = true
+			return
+		}
+		if errors.Is(err, xkeen.ErrLifecycleUnknown) {
+			// Keep both the current candidate and previous snapshot untouched.
+			// Native hooks may not have settled after
+			// committing the candidate. Neither permits unowned rollback writes
+			// or a second lifecycle mutation in place of independent readback.
+			err = errors.Join(ErrNodeRecoveryRequired, err)
 			return
 		}
 		rollbackDeadline := time.Now().Add(budget.Rollback)
 		if transactionDeadline.Before(rollbackDeadline) {
 			rollbackDeadline = transactionDeadline
 		}
-		rollbackContext, cancelRollback := context.WithDeadline(context.Background(), rollbackDeadline)
+		rollbackContext, cancelRollback := context.WithDeadline(context.WithoutCancel(ctx), rollbackDeadline)
 		rollbackErr := t.rollback(rollbackContext, previousRegistry, previousRegistryExists, previousOutbounds, previousOutboundsExists)
 		cancelRollback()
 		if rollbackErr != nil {
 			err = &RollbackError{Cause: err, Recovery: rollbackErr}
 			return
 		}
+		settled = true
 		err = errors.New(err.Error() + "; previous generation restored")
 	}()
 
+	settled = false
+	mutated = true
 	if err := t.Store.Save(registry); err != nil {
 		return err
 	}
-	mutated = true
+	if !runtimeChanged {
+		return nil
+	}
 	if err := atomicWrite(t.ActiveOutboundsPath, rendered, 0o600); err != nil {
 		return err
 	}
@@ -166,6 +247,9 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 
 func (t Transaction) activate(ctx context.Context, registry Registry) error {
 	if err := t.Activator.Restart(ctx); err != nil {
+		if errors.Is(err, xkeen.ErrLifecycleUnknown) {
+			return err
+		}
 		return errors.New("Xray restart failed")
 	}
 	if err := t.Activator.WaitReady(ctx); err != nil {
@@ -340,6 +424,7 @@ type CommandActivator struct {
 	XrayAssetDir        string
 	ConfigDir           string
 	XkeenBinary         string
+	NativeLifecycleInit string
 	FixedLifecycleInit  string
 	LegacyLifecycleInit string
 	// SetupLifecycleIdentity is required for Setup-only start/stop selection.
@@ -393,10 +478,13 @@ func (a CommandActivator) Restart(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if a.NativeLifecycleInit != "" && (a.XkeenBinary != "" || a.FixedLifecycleInit != "") {
+		return xkeen.ErrLifecycleFailed
+	}
 	if a.FixedLifecycleInit != "" {
 		return a.restartViaFixedInit(ctx)
 	}
-	if a.XkeenBinary == "" {
+	if a.XkeenBinary == "" && a.NativeLifecycleInit == "" {
 		a.XkeenBinary = "xkeen"
 	}
 	timeout := a.RestartTimeout
@@ -418,11 +506,19 @@ func (a CommandActivator) Restart(ctx context.Context) error {
 	if restartErr == nil {
 		return nil
 	}
+	if a.NativeLifecycleInit != "" || errors.Is(restartErr, xkeen.ErrLifecycleUnknown) {
+		// Native init owns Stop/Start ordering. Never turn its failed Stop into
+		// a separate forced Start; configuration rollback remains its caller's job.
+		return restartErr
+	}
 	// XKeen can stop Xray and then return a failed -restart. Match the
 	// repository lifecycle contract: if time remains, recover with -start so
 	// activation and rollback can still prove readiness on the selected files.
-	if restartContext.Err() == nil && a.runXkeenLifecycle(restartContext, "-start") == nil {
-		return nil
+	if restartContext.Err() == nil {
+		startErr := a.runXkeenLifecycle(restartContext, "-start")
+		if startErr == nil || errors.Is(startErr, xkeen.ErrLifecycleUnknown) {
+			return startErr
+		}
 	}
 	return errors.New("Xray restart failed")
 }
@@ -723,43 +819,8 @@ func (a CommandActivator) apiReachable(ctx context.Context) bool {
 }
 
 func (a CommandActivator) runXkeenLifecycle(ctx context.Context, action string) error {
-	previousPIDs := xrayPIDSet(ctx)
-	command := exec.Command(a.XkeenBinary, action)
-	command.Env = xkeenForegroundEnvironment()
-	command.Stdout = io.Discard
-	command.Stderr = io.Discard
-	configureCommandProcessGroup(command)
-	if err := command.Start(); err != nil {
-		return errors.New("Xray restart failed")
-	}
-	done := make(chan error, 1)
-	go func() { done <- command.Wait() }()
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		select {
-		case err := <-done:
-			if err != nil {
-				return errors.New("Xray restart failed")
-			}
-			return nil
-		case <-ticker.C:
-			if a.newXrayRuntimeStarted(ctx, previousPIDs) {
-				// XKeen can leave its launcher attached after the replacement Xray
-				// is already serving. Stop only that launcher; the separate
-				// WaitReady and inventory phases still prove the new daemon.
-				_ = command.Process.Kill()
-				drainCommand(done)
-				return nil
-			}
-		case <-ctx.Done():
-			killCommandProcessGroup(command)
-			drainCommand(done)
-			return errors.New("Xray restart failed")
-		}
-	}
+	return (xkeen.Lifecycle{Binary: a.XkeenBinary, InitPath: a.NativeLifecycleInit, Timeout: a.RestartTimeout}).Run(ctx, xkeen.LifecycleAction(strings.TrimPrefix(action, "-")))
 }
-
 func (a CommandActivator) newXrayRuntimeStarted(ctx context.Context, previous map[string]struct{}) bool {
 	current := xrayPIDSet(ctx)
 	changed := false
@@ -865,7 +926,7 @@ func (a CommandActivator) VerifyOutboundTags(ctx context.Context, expected []str
 			Tag string `json:"tag"`
 		} `json:"outbounds"`
 	}
-	if err := json.Unmarshal(contents, &document); err != nil {
+	if err := configjson.Decode(contents, &document); err != nil {
 		return errors.New("active outbound artifact is invalid")
 	}
 	tags := make(map[string]struct{}, len(document.Outbounds))
@@ -913,7 +974,7 @@ func (a CommandActivator) VerifyEmptyOutboundTags(ctx context.Context) error {
 			Tag string `json:"tag"`
 		} `json:"outbounds"`
 	}
-	if err := json.Unmarshal(contents, &document); err != nil {
+	if err := configjson.Decode(contents, &document); err != nil {
 		return errors.New("active outbound artifact is invalid")
 	}
 	allowed := map[string]struct{}{"api": {}, "block": {}, "direct": {}, "dns-out": {}}
@@ -958,25 +1019,51 @@ func verifyBalancerSelector(path, balancerTag string, expected []string) error {
 				Tag      string   `json:"tag"`
 				Selector []string `json:"selector"`
 				Strategy struct {
-					Type string `json:"type"`
+					Type     string `json:"type"`
+					Settings struct {
+						Costs []struct {
+							Regexp bool    `json:"regexp"`
+							Match  string  `json:"match"`
+							Value  float64 `json:"value"`
+						} `json:"costs"`
+					} `json:"settings"`
 				} `json:"strategy"`
 			} `json:"balancers"`
 		} `json:"routing"`
 	}
-	if json.Unmarshal(contents, &document) != nil {
+	if configjson.Decode(contents, &document) != nil {
 		return errors.New("active routing policy is invalid")
 	}
 	var selectors []string
+	restrictedQuality := false
 	found := 0
 	for _, balancer := range document.Routing.Balancers {
 		if balancer.Tag != balancerTag {
 			continue
 		}
 		found++
-		if !strings.EqualFold(balancer.Strategy.Type, "leastPing") || len(balancer.Selector) == 0 || len(balancer.Selector) > 16 {
+		// Full Xray validation owns strategy compatibility. Node updates must
+		// preserve native leastLoad/random/roundRobin rather than impose the
+		// historical leastPing-only appliance policy after a successful restart.
+		if len(balancer.Selector) == 0 || len(balancer.Selector) > 16 {
 			return errors.New("balancer selector contract is invalid")
 		}
 		selectors = append(selectors, balancer.Selector...)
+		// Quality selects a subset of otherwise enabled/observed outbounds.
+		// Recognize only the exact full-tag, weighted native shape; ordinary
+		// prefix/custom policies retain the existing visibility requirement.
+		restrictedQuality = balancer.Strategy.Type == "leastLoad" && len(selectors) <= 6
+		for _, selector := range selectors {
+			weighted := false
+			for _, cost := range balancer.Strategy.Settings.Costs {
+				if cost.Regexp && cost.Match == "^"+regexp.QuoteMeta(selector)+"$" && cost.Value >= 1 && cost.Value <= 100 {
+					weighted = true
+				}
+			}
+			if !redact.IsUnifiedOutboundTag(selector) || !weighted {
+				restrictedQuality = false
+			}
+		}
 	}
 	if found != 1 {
 		return errors.New("balancer selector contract is unavailable")
@@ -989,7 +1076,7 @@ func verifyBalancerSelector(path, balancerTag string, expected []string) error {
 				break
 			}
 		}
-		if !matched {
+		if !matched && !restrictedQuality {
 			return errors.New("expected outbound is outside balancer selector")
 		}
 	}
@@ -1012,7 +1099,7 @@ func verifyEmptyBalancerSelector(path, balancerTag string) error {
 			} `json:"balancers"`
 		} `json:"routing"`
 	}
-	if json.Unmarshal(contents, &document) != nil {
+	if configjson.Decode(contents, &document) != nil {
 		return errors.New("active routing policy is invalid")
 	}
 	found := 0
@@ -1086,4 +1173,34 @@ func verifyEmptyXrayBalancerRuntime(ctx context.Context, address, balancerTag st
 		case <-ticker.C:
 		}
 	}
+}
+
+// Compare parsed JSONC data, not whitespace: metadata changes must not rewrite
+// or restart an identical native runtime configuration.
+func nativeDocumentsEqual(a, b []byte) bool {
+	left, err := configjson.DecodeObject(a)
+	if err != nil {
+		return false
+	}
+	right, err := configjson.DecodeObject(b)
+	if err != nil {
+		return false
+	}
+	var l, r any
+	la, err := json.Marshal(left)
+	if err != nil {
+		return false
+	}
+	ra, err := json.Marshal(right)
+	if err != nil {
+		return false
+	}
+	ld := json.NewDecoder(bytes.NewReader(la))
+	ld.UseNumber()
+	rd := json.NewDecoder(bytes.NewReader(ra))
+	rd.UseNumber()
+	if ld.Decode(&l) != nil || rd.Decode(&r) != nil {
+		return false
+	}
+	return reflect.DeepEqual(l, r)
 }

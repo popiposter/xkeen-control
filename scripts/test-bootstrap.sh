@@ -203,6 +203,24 @@ after_hash="$(sha256sum "$testroot/opt/etc/xkeen-control/auth/password.bcrypt" |
 [ "$(wc -l < "$testroot/bootstrap-calls" | tr -d '[:space:]')" -eq 1 ]
 grep -Fq 'self-update --channel stable --apply' "$testroot/self-update-calls"
 
+# Development identities are build-helper output, not public release versions.
+# Accept only the known dev/hash/semver shapes; stable/beta retain strict semver.
+for entry in 'dev development pass' 'f405162 development pass' '0.3.0-beta.5 development pass' 'arbitrary development fail' 'f405162 stable fail' 'dev beta fail'; do
+	set -- $entry
+	version="$1"; channel="$2"; expected="$3"
+	devroot="$tmp/identity-$version-$channel"
+	setup_managed_root "$devroot"
+	sed -e "s/\"version\":\"1.2.3\"/\"version\":\"$version\"/" -e "s/\"channel\":\"stable\"/\"channel\":\"$channel\"/" "$fixture/xkeen-control-linux-arm64" > "$devroot/opt/sbin/xkeen-control"
+	chmod 755 "$devroot/opt/sbin/xkeen-control"
+	if run_installer "$devroot" > "$tmp/dev-installer.log" 2>&1; then
+		[ "$expected" = pass ] || { echo 'invalid development/release identity admitted' >&2; exit 1; }
+		grep -Fq 'self-update --channel stable --apply' "$devroot/self-update-calls"
+	else
+		[ "$expected" = fail ] || { echo 'valid development identity rejected' >&2; exit 1; }
+		[ ! -e "$devroot/self-update-calls" ]
+	fi
+done
+
 malformed_marker_root="$tmp/malformed-marker-root"
 setup_managed_root "$malformed_marker_root"
 printf '%s\n' '{"product":"xkeen-control","version":"","sourceCommit":"","channel":"stable"}' > "$malformed_marker_root/opt/etc/xkeen-control/state/installed-release.json"

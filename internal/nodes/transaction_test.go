@@ -113,7 +113,7 @@ func TestTransactionPreservesPolicyAndRollsBackActivationFailure(t *testing.T) {
 		t.Fatal("active routing policy was modified")
 	}
 
-	rollbackActivator := &fakeActivator{restartErr: errors.New("synthetic restart failure")}
+	rollbackActivator := &fakeActivator{restartErrs: []error{errors.New("synthetic restart failure"), nil}}
 	tx.Activator = rollbackActivator
 	if err := tx.Apply(context.Background(), old); err == nil {
 		t.Fatal("restart failure unexpectedly succeeded")
@@ -413,7 +413,10 @@ esac
 	}
 }
 
-func TestCommandActivatorReservesTimeForStartAfterHangingRestart(t *testing.T) {
+func TestCommandActivatorDoesNotReplayAfterHangingRestart(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("native process fixture requires Linux")
+	}
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "marker")
 	fakeXkeen := filepath.Join(dir, "xkeen")
@@ -434,15 +437,14 @@ esac
 		RestartAttemptTimeout: 50 * time.Millisecond,
 	}
 	started := time.Now()
-	if err := activator.Restart(context.Background()); err != nil {
-		t.Fatal(err)
+	if err := activator.Restart(context.Background()); err == nil {
+		t.Fatal("ambiguous restart reported success")
 	}
 	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
 		t.Fatalf("restart/start fallback exceeded total budget: %s", elapsed)
 	}
-	contents, err := os.ReadFile(marker)
-	if err != nil || string(contents) != "start" {
-		t.Fatalf("fallback marker = %q, %v", contents, err)
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("start replayed after ambiguous restart: %v", err)
 	}
 }
 
@@ -519,6 +521,72 @@ func TestCommandActivatorVerifiesActiveOutboundTags(t *testing.T) {
 	}
 	if err := activator.VerifyOutboundTags(context.Background(), []string{"proxy-node-missing"}); err == nil {
 		t.Fatal("missing active tag was accepted")
+	}
+}
+
+// Regression for live subscription updates after the quality editor switches
+// bal-proxy from leastPing to leastLoad: verification must reach the native API,
+// not trigger rollback merely because the valid strategy changed.
+func TestNodeInventoryPreservesNativeBalancerStrategies(t *testing.T) {
+	for _, strategy := range []string{"leastLoad", "leastPing", "random", "roundRobin"} {
+		t.Run(strategy, func(t *testing.T) {
+			dir := t.TempDir()
+			active, routing := filepath.Join(dir, "04_outbounds.json"), filepath.Join(dir, "05_routing.json")
+			if err := os.WriteFile(active, []byte(`{"outbounds":[{"tag":"proxy-node-88888888"}]}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			policy := []byte(`{"routing":{"balancers":[{"tag":"bal-proxy","selector":["proxy-node-"],"strategy":{"type":"` + strategy + `","settings":{"expected":1,"maxRTT":"750ms"}}}]}}`)
+			if err := os.WriteFile(routing, policy, 0600); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			a := CommandActivator{ActiveOutboundsPath: active, RoutingPath: routing, RuntimeVerifier: func(context.Context, string, string, []string) error { calls++; return nil }}
+			if err := a.VerifyOutboundTags(context.Background(), []string{"proxy-node-88888888"}); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 1 {
+				t.Fatal("native runtime verification was skipped")
+			}
+			after, err := os.ReadFile(routing)
+			if err != nil || string(after) != string(policy) {
+				t.Fatal("node verification changed native strategy")
+			}
+			a.RuntimeVerifier = func(context.Context, string, string, []string) error { return errors.New("synthetic native failure") }
+			if a.VerifyOutboundTags(context.Background(), []string{"proxy-node-88888888"}) == nil {
+				t.Fatal("native failure accepted")
+			}
+		})
+	}
+}
+
+func TestQualitySubsetDoesNotRejectSubscriptionMembersOutsideActiveSix(t *testing.T) {
+	dir := t.TempDir()
+	active, routing := filepath.Join(dir, "04_outbounds.json"), filepath.Join(dir, "05_routing.json")
+	a, b := "proxy-node-88888888", "proxy-node-99999999"
+	if err := os.WriteFile(active, []byte(`{"outbounds":[{"tag":"`+a+`"},{"tag":"`+b+`"}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	policy := `{"routing":{"balancers":[{"tag":"bal-proxy","selector":["` + a + `"],"strategy":{"type":"leastLoad","settings":{"costs":[{"regexp":true,"match":"^` + a + `$","value":1}]}}}]}}`
+	if err := os.WriteFile(routing, []byte(policy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	activator := CommandActivator{ActiveOutboundsPath: active, RoutingPath: routing, RuntimeVerifier: func(_ context.Context, _, _ string, tags []string) error {
+		calls++
+		if len(tags) != 2 {
+			t.Fatal("all enabled inventory not verified")
+		}
+		return nil
+	}}
+	if err := activator.VerifyOutboundTags(context.Background(), []string{a, b}); err != nil || calls != 1 {
+		t.Fatal("restricted quality pool rejected valid enabled inventory", err, calls)
+	}
+	// An unweighted custom selector still requires every enabled member.
+	if err := os.WriteFile(routing, []byte(strings.Replace(policy, `"value":1`, `"value":0`, 1)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if activator.VerifyOutboundTags(context.Background(), []string{a, b}) == nil {
+		t.Fatal("custom policy bypassed existing selector contract")
 	}
 }
 

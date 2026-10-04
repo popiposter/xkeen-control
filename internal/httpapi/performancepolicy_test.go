@@ -55,7 +55,7 @@ func (stub *httpPerformancePolicyStub) InvalidateAll()            { stub.invalid
 func TestPerformancePolicyHTTPIsClosedAuthenticatedAndSessionBound(t *testing.T) {
 	hashPath := filepath.Join(t.TempDir(), "auth", "password.bcrypt")
 	const password = "synthetic-control-password"
-	if err := auth.SetPassword(hashPath, []byte(password)); err != nil {
+	if err := setHTTPTestPassword(hashPath, []byte(password)); err != nil {
 		t.Fatal(err)
 	}
 	policy := c1.DefaultPerformancePolicy()

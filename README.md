@@ -4,7 +4,7 @@
 
 Manage VPN nodes and subscriptions, understand what Xray is doing, keep the active proxy stable, run bounded performance checks, and apply changes transactionally — from one small Go binary with an embedded web UI.
 
-> **Status:** D.1 / Issue #3 is production-qualified on Keenetic `linux/arm64` in signed stable release `v0.2.0`, built from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`. Later D.2 component/setup and D.3 Routing work is merged source-only; the visual DNS + Observatory workspace is active in #89. None of that later source is deployed. See `docs/ROADMAP.md` for current sequencing.
+> **Active development:** Issue #121 uses stock XKeen commands and native configuration editors. The development panel is installed and qualified on the operator router; signed `v0.2.0` below describes the historical generation. See [Native contract](docs/NATIVE-XKEEN.md) and [ROADMAP](docs/ROADMAP.md).
 
 ## Why this project
 
@@ -12,47 +12,33 @@ XKeen and Xray are powerful, but operating a real router usually means editing f
 
 `xkeen-control` adds a purpose-built management layer without turning Keenetic into a general-purpose server:
 
-- one unified proxy pool with Xray `leastPing` as emergency fallback;
-- stable node selection that avoids flapping on small RTT changes;
-- fast active liveness failover independent from slower quality decisions;
+- native Xray selection and failover, without a panel selection supervisor;
+- bounded speed measurements and an explicit balanced-pool recommendation;
 - typed VPN node and subscription management with preview/apply/rollback;
-- bounded sustained throughput benchmarking with high-churn state in RAM/`/tmp`;
+- bounded diagnostics with high-churn state in RAM/`/tmp`;
 - clear runtime visibility for native, override and effective selection;
 - transactional Xray activation with validation, readiness checks and rollback;
 - signed public releases with bounded bootstrap and panel update/rollback;
 - one pre-built Go binary + embedded React UI, with no Go/Node toolchain on the router;
 - loopback or one exact trusted-LAN/management-VPN listener, never wildcard/WAN.
 
-## Current authority split
+## Native ownership and capabilities
 
-```text
-/opt/etc/xkeen-control/config/appliance.json local typed non-secret authority after successful adoption
-/opt/etc/xkeen-control/secrets/nodes.json     authoritative VPN/subscription secrets
-/opt/etc/xray/configs/02_dns.json             generated managed policy
-/opt/etc/xray/configs/05_routing.json         generated managed policy
-/opt/etc/xray/configs/07_observatory.json     generated managed policy
-/opt/etc/xray/configs/04_outbounds.json       generated from nodes.json
-config/xray 01/03/06/08 + config/xkeen        fixed D.1 compatibility templates
-RAM + /tmp                                    high-churn runtime/preview/benchmark/update state
-```
+XKeen owns its installation, service, components and native update schedules. The panel invokes allowlisted native commands, showing their console output and prompts when needed; it does not patch XKeen code or replace its cron engine.
 
-Pre-adoption compatibility boundary: routers without a successful typed `appliance adopt` retain their existing repository-derived/legacy policy. Adoption is not implicit; unknown or manually drifted layouts fail closed.
+Native JSON/JSONC editors provide text and graphical modes, drafts, full Xray validation, a shared pending configuration indicator, explicit restart, discard and optional previous configuration restore. Routing includes installed geodata categories, membership search and first-match examples. DNS configuration is editable; independent LAN DNS/outage behavior still requires qualification.
 
-See [Architecture](docs/ARCHITECTURE.md) for the exact routing, DNS, selection and transaction semantics.
+`/opt/etc/xkeen-control/secrets/nodes.json` stores VPN nodes and subscriptions privately. Only managed outbounds are generated from it; unrelated native fields and outbounds are preserved. Enabled subscriptions refresh periodically. Manually disabled nodes remain disabled on refresh; WL, Russia and Belarus profiles default to disabled. Native Xray remains the selection owner; panel adaptive overrides are disabled.
 
-## Current capabilities
+The manual speed test samples up to 12 healthy enabled nodes within a current latency threshold, replacing failed attempts with the next eligible node (18 attempts / 288 MiB / six minutes maximum). It recommends up to six balanced nodes. Apply recommendation saves the pool through the native editor and restarts XKeen once; success requires independent applied-state readback. A subscription/configuration change invalidates an older recommendation. A ranking is not a persistent pin: Xray continues choosing using live health and configured weights.
 
-Node import/replace, named subscription management, enable/disable/remove and explicit subscription refresh are preview-first. Normal API/UI responses never expose UUIDs, REALITY keys, short IDs or subscription URLs.
+Portable encrypted configuration transfer supports validation, explicit interface mapping and staging without automatic restart. Telegram notifications and restricted single-user native commands are optional and disabled until configured. Actual bot credentials and second-router transfer acceptance are separate from local fixture evidence.
 
-`xkeen-control` is the only managed writer of the stable `bal-proxy` override. Active liveness, Observatory RTT quality evidence and the bounded daily sustained benchmark remain separate mechanisms coordinated through one runtime mutation boundary.
-
-Node changes build a complete candidate, validate Xray, snapshot the previous logical generation, activate atomically, wait for RoutingService/inventory readiness and roll back on failure.
-
-Signed releases are built from an exact reviewed `main` SHA, use a source-pinned Ed25519 trust anchor and are re-downloaded/reverified before publication. Panel update candidates stay under `/tmp`; one previous panel generation supports bounded rollback.
-
-D.1 adds typed local appliance authority, safe export, explicit re-authenticated encrypted secret export and bounded authenticated preview-first restore. Safe export excludes node/subscription secrets; encrypted export remains protected operator material.
+The panel keeps authentication, origin/CSRF protection, bounded private data handling and its signed self-updater. No Go/Node toolchain runs on the router.
 
 ## Installation
+
+The native-shell generation is being prepared for stable `v0.3.0`; it is not published yet. Install stock XKeen through its official installation procedure first, then install the panel alongside it. The panel never patches XKeen or installs a second component updater. Upgrading older panel generations is outside this release's supported compatibility contract. The command below installs the historical `v0.2.0`, not the new native-shell candidate.
 
 For an Entware/Open Package-ready `linux/arm64` Keenetic, the currently production-qualified release-specific installer is:
 
@@ -64,7 +50,7 @@ The installer is bounded: it never performs blanket `opkg upgrade`, never instal
 
 Existing managed installs use the installed binary's pinned-signature self-update path. The qualified legacy C.1 install has a narrow fingerprint-gated adoption path; historical `v0.1.1` was production-qualified through legacy → adoption → exact rollback → re-adoption. Current signed `v0.2.0` adds the qualified D.1 typed appliance adoption and backup/restore boundary.
 
-See [Releases](docs/RELEASES.md), [Operations](docs/OPERATIONS.md) and [Fresh Keenetic](docs/FRESH-KEENETIC.md).
+For the native generation, see [Native contract](docs/NATIVE-XKEEN.md). [Releases](docs/RELEASES.md), [Operations](docs/OPERATIONS.md) and [Fresh Keenetic](docs/FRESH-KEENETIC.md) retain explicitly historical qualification records.
 
 The historical repository `popiposter/xkeen-keenetic` is private quarantine/history only. `popiposter/xkeen-control` is the public source/release authority; ordinary qualification runs locally and the protected manual GitHub workflow is reserved for releases. Old Git history must never be imported here.
 

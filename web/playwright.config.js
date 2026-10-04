@@ -5,7 +5,9 @@ import path from 'node:path'
 export default defineConfig({
   testDir: './tests',
   fullyParallel: false,
-  workers: 1,
+  // Specs own isolated browser contexts and mock API state. Bound parallelism
+  // instead of scaling to every host core (including on release runners).
+  workers: 2,
   timeout: 20_000,
   expect: { timeout: 5_000 },
   reporter: 'line',
