@@ -38,17 +38,13 @@ The panel keeps authentication, origin/CSRF protection, bounded private data han
 
 ## Installation
 
-The native-shell generation is being prepared for stable `v0.3.0`; it is not published yet. Install stock XKeen through its official installation procedure first, then install the panel alongside it. The panel never patches XKeen or installs a second component updater. Upgrading older panel generations is outside this release's supported compatibility contract. The command below installs the historical `v0.2.0`, not the new native-shell candidate.
-
-For an Entware/Open Package-ready `linux/arm64` Keenetic, the currently production-qualified release-specific installer is:
+Stable [v0.3.0](https://github.com/popiposter/xkeen-control/releases/tag/v0.3.0) is published for `linux/arm64`. Install stock XKeen through its official installation procedure first, then install the panel alongside it. The panel never patches XKeen or installs a second component updater. Compatibility with older panel generations is outside this release's supported contract.
 
 ```sh
-sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.2.0/install.sh)"
+sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.3.0/install.sh)"
 ```
 
-The installer is bounded: it never performs blanket `opkg upgrade`, never installs/repairs XKeen or Xray, and preserves existing auth/listener/node/Xray/XKeen/routing/DNS/Observatory state. Missing XKeen/Xray/configuration is reported as Setup Mode rather than triggering an opaque upstream installer.
-
-Existing managed installs use the installed binary's pinned-signature self-update path. The qualified legacy C.1 install has a narrow fingerprint-gated adoption path; historical `v0.1.1` was production-qualified through legacy → adoption → exact rollback → re-adoption. Current signed `v0.2.0` adds the qualified D.1 typed appliance adoption and backup/restore boundary.
+The bounded installer preserves existing native configuration and panel credentials. Existing managed development installations delegate to the installed signed self-updater: inspect running panel jobs and ensure external CLI/cron quiescence first. Unknown outcomes require independent readback rather than another attempt. Historical Setup/appliance adoption is not the native installation procedure.
 
 For the native generation, see [Native contract](docs/NATIVE-XKEEN.md). [Releases](docs/RELEASES.md), [Operations](docs/OPERATIONS.md) and [Fresh Keenetic](docs/FRESH-KEENETIC.md) retain explicitly historical qualification records.
 

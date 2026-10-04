@@ -2,9 +2,9 @@
 
 > **Active implementation:** [Native XKeen contract](NATIVE-XKEEN.md) governs Issue #121 on clean Entware. Older panel migration/recovery compatibility is not required. Historical behavior below is not the new installation authority.
 
-## Native-shell release candidate
+## Native-shell stable release
 
-Stable `v0.3.0` is being prepared, not published. Stock XKeen is installed through
+Stable [v0.3.0](https://github.com/popiposter/xkeen-control/releases/tag/v0.3.0) is published; see [public verification evidence](RELEASES.md#stable-030-publication--2026-10-05). Stock XKeen is installed through
 its official procedure and owns components, service/interception and cron.
 The panel is installed alongside it; use the native contract for commands,
 configuration editing, validation, explicit Apply and optional previous restore.

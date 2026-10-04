@@ -1,6 +1,6 @@
 # Releases, bootstrap and panel updates
 
-> **Native-shell candidate:** stable `v0.3.0` is being prepared, not published.
+> **Native-shell release:** [stable `v0.3.0`](https://github.com/popiposter/xkeen-control/releases/tag/v0.3.0) is published.
 > Use [Native XKeen contract](NATIVE-XKEEN.md) for the new generation: install
 > stock XKeen first, then the panel alongside it. Historical Setup/appliance
 > adoption and component repair below are not native installation procedures.
@@ -16,6 +16,33 @@ readback, not another installer/update attempt. Development metadata acceptance
 does not waive installed-marker matching, helper/layout or signed-candidate checks.
 
 Slice D / Issue #2 remains production-qualified. Public signed releases, bounded first-install bootstrap, historical C.1 adoption and panel-only self-update/rollback are current behavior for the qualified `linux/arm64` target. Historical stable release `v0.1.1` is the first release qualified through the complete legacy adoption → rollback → re-adoption production sequence. D.1 / Issue #3 is production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86`.
+
+## Stable 0.3.0 publication � 2026-10-05
+
+PR #122 merged with operator approval to exact source
+`8140c9cda51ca9bf703d3a7965f4595f2c69445a`, tree
+`5c4fa862e996f192dda0f7fe6b6dfc52a0657f59` (identical to reviewed PR HEAD).
+Protected [Release run 37239198359](https://github.com/popiposter/xkeen-control/actions/runs/37239198359)
+passed both build and protected publish. Independent unauthenticated public
+seven-asset download passed source-pinned Ed25519 key/signature, exact
+`0.3.0` / `stable` / source / Linux ARM64 manifest, asset sizes/hashes and
+all six `SHA256SUMS` entries. The checksum file itself was hashed separately.
+
+| Public asset | Bytes | SHA256 |
+| --- | ---: | --- |
+| S99xkeen-control | 1991 | `94f34f9ce05725525f446e2382ddd37fc420cf6b912af4a01c608bed7d77b9fd` |
+| SHA256SUMS | 515 | `c3e85e61c40f2530b2cecb8868b1730bfffe7bf1b294185c60f4b03a4eb4b941` |
+| install.sh | 14926 | `1f5b10dbadb1712aff7f124719cbe7db4ab7544986cf6d0879b31a6dcbc0d9b4` |
+| release-manifest.json | 834 | `b13856bc539e68f88930559f57e6a823538e6364976063782590a47a9358c989` |
+| release-manifest.sig | 89 | `2541645cba5c909ee86723e15fe3e4eede7f425ac976821ef09731dde826f770` |
+| xkeen-control-linux-arm64 | 15859872 | `3c44c9f26d2e7875989c58b8cc09f2de31935971c7b5d067b4d83797e4d4f08c` |
+| xkeen-control-updater | 22015 | `88acc265d8fa8d1a80f627dc1d88433a046afc06a2a7e54de8f31ce11298e027` |
+
+Publication is independent of router installation. The operator router currently
+runs development source `92d49ec`: fresh broad speed qualification measured
+12 candidates, obtained 11 valid results and applied a six-node native pool.
+Signed stable installation has not been qualified. Unproxied LAN/outage, real
+Telegram credentials and second-router transfer acceptance remain unqualified.
 
 ## Release authority
 

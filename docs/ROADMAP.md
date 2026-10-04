@@ -10,37 +10,36 @@ The operator stopped the invasive native admission implementation and redefined
 the panel as a lightweight graphical shell over **unmodified XKeen code**.
 The [new contract](NATIVE-XKEEN.md), [source audit](../plan/audit-native-shell-2026-10-03.md)
 and [v2 plan](../plan/architecture-native-shell-v2.md) supersede v1 sequencing and
-shared-admission requirements below. Issue #121 / Draft PR122 remain active.
+shared-admission requirements below. Issue #121 implementation merged through PR #122 with operator approval.
 The [complete native command matrix](../plan/xkeen-command-inventory-v2.md) maps
 69 dispatcher branches to panel workflows. Interactive actions use a native
 command-bound console; parameterized actions use forms/buttons with optional output.
 
-The native-shell v2 is now installed as development source `f405162` (2026-10-04):
-stock native XKeen, command-bound jobs/console, native Form/Text editors with
-pending/apply/optional restore, installed-geodata browser and rule examples,
-subscription refresh, encrypted native transfer and optional Telegram control.
-Exact local FULL passed with 104 browser cases and actual ARM64 artifact;
-independent replacement preserved native process/files, registry and auth.
+Stable [v0.3.0](https://github.com/popiposter/xkeen-control/releases/tag/v0.3.0)
+is published from `8140c9cda51ca9bf703d3a7965f4595f2c69445a` (2026-10-05).
+Protected Release build/publish and independent seven-public-asset pinned-key,
+signature, manifest/hash/size and checksum verification passed. Exact source,
+run and asset evidence is recorded in [RELEASES](RELEASES.md).
+
+Native-shell v2 includes command-bound jobs/console, native Form/Text editors
+with pending/apply/optional restore, geodata routing/DNS forms, subscriptions,
+encrypted native transfer and optional Telegram control. Obsolete component,
+Setup/appliance APIs and their tests are retired. XKeen code remains unmodified.
+
+The operator router runs development source `92d49ec`, not signed stable.
+Exact local FULL passed with 105 browser cases and ARM64 artifact; protected
+Release independently qualified merged source with the identical tree. A fresh
+speed run tested 12 candidates, obtained 11 valid measurements and one typed
+Apply installed six recommendations. Native validation, effective pool member,
+new process, unrelated configuration/auth preservation and no pending/override
+passed independent readback. Later automatic subscription refresh was observed
+separately; the six-node routing pool remained intact. Native Xray owns selection.
+
 Same-router encrypted export/validated preview/Cancel and selective routing
-readback passed. These are development milestones, not a signed release.
-
-The obsolete component/Setup/appliance APIs and tests have been retired.
-Stable `v0.3.0` release preparation is the next step; it is not published yet.
-Keep useful native validation, auth, nodes, config rollback and this panel's
-signed updater. Real Telegram acceptance needs
-private bot credentials (currently unconfigured); second-router transfer and
-unproxied LAN DNS/VPN/outage acceptance need their respective hardware contours.
-Native Xray remains the active selection owner; panel adaptive override stays
-optional and disabled without demonstrated benefit. The
-[v2 plan](../plan/architecture-native-shell-v2.md) records evidence boundaries.
-
-The latest manual speed sample completed with eight attempts, seven successful
-measurements and six recommendations. A scheduled subscription update after
-completion changed the registry/outbounds and native process, so the older
-recommendation was correctly rejected as stale; its Apply was not submitted.
-This is not a successful live broad-pool Apply claim. Stable release review must
-retain that boundary, plus the unqualified LAN/outage, bot and second-router
-acceptance contours.
+readback passed. Real Telegram acceptance requires private credentials;
+second-router transfer and unproxied LAN DNS/VPN/outage acceptance remain
+unqualified. These are explicit follow-up acceptance contours, not release
+installation or general network-reliability claims.
 
 ### Historical 2026-10-02 direction and checkpoints
 
