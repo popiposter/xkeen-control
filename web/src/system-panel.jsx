@@ -483,7 +483,7 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
   }
 }
 
-export function SystemPanelSection({ controller, status, onOpenComponents, onOpenBackup }) {
+export function SystemPanelSection({ controller, status }) {
   const [page, setPage] = useState(() => ({ '#system-password': 'password', '#system-releases': 'releases', '#system-notifications': 'notifications', '#system-runtime': 'runtime' })[location.hash] || 'access')
   const listener = controller.listener
   const update = controller.update
@@ -560,7 +560,6 @@ export function SystemPanelSection({ controller, status, onOpenComponents, onOpe
         <div className="system-facts-grid"><Fact label="Control plane" value={status?.controlPlane?.version || 'dev'} /><Fact label="Runtime" value={status?.setup?.runtime || 'unknown'} /><Fact label="XKeen" value={status?.xkeen?.running ? 'Running' : 'Not detected'} /><Fact label="Xray" value={status?.xray?.running ? 'Running' : 'Not detected'} /><Fact label="Observatory" value={status?.observatory?.apiReachable ? 'Reachable' : 'Degraded'} /><Fact label="Uptime" value={formatUptime(status?.controlPlane?.uptimeSeconds)} /></div>
       </CardContent></Card></SettingsGroup>
 
-      <Disclosure title="Related workspaces" id="system-workspaces" attention={false}>      <Card role="region" className="panel system-panel-card system-navigation-card" aria-label="System workspace navigation"><CardContent className="flex flex-col gap-4"><div className="system-navigation-actions"><Button type="button" onClick={onOpenComponents}>Components / Updates</Button><Button type="button" variant="outline" onClick={onOpenBackup}>Backup &amp; Restore</Button></div></CardContent></Card></Disclosure>
     </TabsContent></Tabs>
   </div>
 }

@@ -153,7 +153,7 @@ export function NativeCommands({ csrfToken, onUnauthorized, onRefresh, jobNotifi
     <CardContent className="flex flex-col gap-4">
       <div className="grid gap-4 sm:grid-cols-2">{[
         { title: 'Service', icon: IconPlayerPlay, description: 'Run and inspect the native VPN service.', match: (id) => ['start','stop','restart','status','test-xray'].includes(id) },
-        { title: 'Updates', icon: IconRefresh, description: 'Use XKeenвЂ™s own component installers and updaters.', match: (id) => id.startsWith('update-') },
+        { title: 'Updates', icon: IconRefresh, description: 'Use native component installers and updaters.', match: (id) => id.startsWith('update-') },
         { title: 'Schedules', icon: IconCalendar, description: 'Configure the cron jobs maintained by XKeen.', match: (id) => id.includes('schedule') },
         { title: 'Network & tools', icon: IconTools, description: 'Native network modes, diagnostics and maintenance.', match: (id) => !['start','stop','restart','status','test-xray'].includes(id) && !id.startsWith('update-') && !id.includes('schedule') },
       ].map((group) => <section key={group.title} className="rounded-lg border p-4"><h3 className="flex items-center gap-2 font-semibold"><group.icon className="text-info" />{group.title}</h3><p className="my-2 text-sm text-muted-foreground">{group.description}</p><div className="flex flex-wrap gap-2">{catalog.filter((command) => group.match(command.action)).map((command) => <Button key={command.action} aria-label={command.label} variant="outline" disabled={busy} onClick={() => choose(command)}>{command.label}{command.interactive && <span className="text-xs text-muted-foreground"> · console</span>}</Button>)}</div></section>)}</div>

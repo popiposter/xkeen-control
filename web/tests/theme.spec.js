@@ -31,6 +31,23 @@ test('appearance persists without secrets and follows system changes until expli
   expect(await page.evaluate(() => ({ ...localStorage }))).toEqual({ 'xkeen-ui-theme-v1': 'system' })
 })
 
+test('mobile and desktop theme controls share the same preference', async ({ page }) => {
+  await fixture(page)
+  await page.getByLabel('Appearance', { exact: true }).selectOption('dark')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('button', { name: 'Toggle navigation', exact: true }).click()
+  const drawer = page.getByRole('dialog', { name: 'Navigation menu' })
+  await drawer.getByLabel('Appearance', { exact: true }).selectOption('light')
+  await expect(page.locator('html')).not.toHaveClass(/dark/)
+  await drawer.getByRole('button', { name: 'Close navigation', exact: true }).click()
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await expect(page.getByLabel('Appearance', { exact: true })).toHaveValue('light')
+  await page.getByLabel('Appearance', { exact: true }).selectOption('system')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('button', { name: 'Toggle navigation', exact: true }).click()
+  await expect(drawer.getByLabel('Appearance', { exact: true })).toHaveValue('system')
+})
+
 for (const theme of ['light', 'dark']) test(`all workspaces use one readable ${theme} theme and fit mobile`, async ({ page }) => {
   test.setTimeout(45_000)
   const model = await fixture(page)
