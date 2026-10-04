@@ -341,6 +341,7 @@ for (const width of [1440, 375]) test(`shows checked version/channel/source befo
   await page.getByRole('button', { name: 'Check fixed release' }).click()
   await expect(page.getByText('Explicit release Check completed')).toBeVisible()
   const release = page.getByRole('region', { name: 'Signed panel release' })
+  await expect(release.locator('[data-slot=field-label]').first()).toHaveCSS('align-items', 'flex-start')
   for (const [label, value] of [['Latest checked', '1.2.3'], ['Checked channel', 'stable'], ['Checked source', 'github-release']]) {
     const fact = release.locator('.system-facts-grid > div').filter({ has: page.getByText(label, { exact: true }) })
     await expect(fact.locator('strong')).toHaveText(value)
