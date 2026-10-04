@@ -50,7 +50,10 @@ recommendation, rejects config/registry drift and incomplete target projections,
 replaces only the native balancer strategy through the SAME lossless JSONC editor,
 validates the full candidate and creates an ordinary pending change. It does not
 restart or select. Existing Apply/discard/previous/diagnostics remain the sole
-configuration owner. No automatic bandwidth test, cadence or override write;
+configuration owner. The2026-10-04 operator revision adds bounded automatic
+comparisons after subscription refresh and on a6h cadence, with6h admission spacing
+and10min busy deferral. This reuses the existing diagnostics; it never stages or
+applies configuration automatically. No automatic override write;
 native selection uses persisted costs and live health until another explicit
 comparison. Old inactive adaptive-policy GUI and its obsolete browser suite retired.
 

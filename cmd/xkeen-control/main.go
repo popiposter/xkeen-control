@@ -194,6 +194,8 @@ func main() {
 		},
 	})
 	qualityService := &nativequality.Service{Editor: nativeConfig, Lease: authorityLease, Reader: xrayReader, Nodes: nodeReader, Measurement: coordinator}
+	qualitySchedule := nativequality.NewSchedule(qualityService)
+	nodeManager.OnSubscriptionRefresh = qualitySchedule.NotifyRefresh
 	defer qualityService.Stop()
 	nativeTransfer := &nativebackup.Service{Editor: nativeConfig, Nodes: nodeManager, Lease: authorityLease}
 	handler := httpapi.New(httpapi.Config{
@@ -246,6 +248,7 @@ func main() {
 	// Native Xray owns automatic selection until the panel mode is explicitly qualified.
 	// Automatic subscription refresh is enabled separately from native commands.
 	subscriptionRefresher.Start(runtimeContext)
+	go qualitySchedule.Run(runtimeContext)
 	panelNotifyScheduler.Start(runtimeContext)
 	go notificationService.RunControl(runtimeContext, func(ctx context.Context, command notifications.Command) notifications.ControlResult {
 		if command == notifications.RefreshSubscriptions {

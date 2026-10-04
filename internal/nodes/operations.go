@@ -58,16 +58,18 @@ type Config struct {
 const DefaultApplyGateWaitTimeout = 15 * time.Second
 
 type Manager struct {
-	store        Store
-	legacyPath   string
-	tx           Transaction
-	fetcher      SubscriptionFetcher
-	beforeCommit func(context.Context) error
-	ttl          time.Duration
-	maxPreviews  int
-	now          func() time.Time
-	gateTimeout  time.Duration
-	coordinator  interface {
+	// Set once before serving requests. Notification only; never starts work inline.
+	OnSubscriptionRefresh func()
+	store                 Store
+	legacyPath            string
+	tx                    Transaction
+	fetcher               SubscriptionFetcher
+	beforeCommit          func(context.Context) error
+	ttl                   time.Duration
+	maxPreviews           int
+	now                   func() time.Time
+	gateTimeout           time.Duration
+	coordinator           interface {
 		BeginApply(context.Context) (func(), error)
 	}
 	managedCoordinator interface {
@@ -346,7 +348,7 @@ func (m *Manager) PreviewImport(binding, profiles string) (Preview, error) {
 		if err != nil {
 			return Preview{}, errors.New("profile rejected")
 		}
-		node.Enabled = !nodeNameWL(node.Name)
+		node.Enabled = !subscriptionNodeDisabledByDefault(node.Name, node.VLESS.Host)
 		registry.Nodes = append(registry.Nodes, node)
 	}
 	return m.createPreview(binding, before, registry, "import", false)
@@ -679,13 +681,9 @@ func buildSubscriptionCandidate(before Registry, target Subscription, parsed []P
 			node := before.Nodes[matches[0]]
 			node.VLESS = item.profile.VLESS
 			node.SourceKey = item.key
-			// A default-disabled member must not be re-enabled by refresh;
-			// retain explicit per-node choices for matching names as well.
-			if subscriptionNodeDisabledByDefault(item.profile.Name, item.profile.VLESS.Host) {
-				node.Enabled = node.Enabled && target.Enabled
-			} else {
-				node.Enabled = target.Enabled
-			}
+			// Defaults apply only to new members. Refresh preserves every saved
+			// choice, including disabled ordinary nodes and explicitly enabled RU/BY.
+			node.Enabled = node.Enabled && target.Enabled
 			node.Stale, node.Missing = false, false
 			if item.profile.Name != "Imported node" {
 				node.Name = item.profile.Name
@@ -720,6 +718,11 @@ func buildSubscriptionCandidate(before Registry, target Subscription, parsed []P
 }
 
 func (m *Manager) Apply(ctx context.Context, binding, token string, acceptMissing bool) (result ApplyResult, resultErr error) {
+	defer func() {
+		if resultErr == nil && result.Operation == "subscription-refresh" && m.OnSubscriptionRefresh != nil {
+			m.OnSubscriptionRefresh()
+		}
+	}()
 	if ctx == nil {
 		ctx = context.Background()
 	}

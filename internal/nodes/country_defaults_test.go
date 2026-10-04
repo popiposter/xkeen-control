@@ -172,6 +172,9 @@ func TestCountryDefaultsCandidateRetainsChoicesAndOtherAuthorities(t *testing.T)
 		t.Fatal(err)
 	}
 	for i := range before.Nodes {
+		if before.Nodes[i].Name == "Germany" {
+			before.Nodes[i].Enabled = false
+		}
 		if strings.Contains(before.Nodes[i].Name, "🇷🇺") || before.Nodes[i].Name == "Беларусь" {
 			before.Nodes[i].Enabled = true
 		}
@@ -198,6 +201,23 @@ func TestCountryDefaultsCandidateRetainsChoicesAndOtherAuthorities(t *testing.T)
 	}
 	if !reflect.DeepEqual(after.Nodes[len(after.Nodes)-1], manual) {
 		t.Fatal("parent gate changed manual member")
+	}
+}
+
+func TestManualImportCountryDefaults(t *testing.T) {
+	manager, _, _ := testManager(t, nil, nil)
+	for _, tc := range countrySubscriptionFixtures {
+		preview, err := manager.PreviewImport("country-default", strings.Replace(syntheticProfile, "#Primary", "#"+url.PathEscape(tc.name), 1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		manager.mu.Lock()
+		entry := manager.previews[preview.Token]
+		manager.mu.Unlock()
+		if len(entry.Registry.Nodes) != 1 || entry.Registry.Nodes[0].Enabled != tc.enabled {
+			t.Fatalf("unexpected manual import default for %q", tc.name)
+		}
+		manager.Cancel("country-default", preview.Token)
 	}
 }
 
@@ -313,8 +333,15 @@ func TestCountryDefaultsDoNotOverrideExplicitImportOrSubscriptionEnable(t *testi
 		t.Fatal(err)
 	}
 	registry, err := store.Load()
-	if err != nil || len(registry.Nodes) != 1 || !registry.Nodes[0].Enabled {
-		t.Fatal("manual import was default-disabled")
+	if err != nil || len(registry.Nodes) != 1 || registry.Nodes[0].Enabled {
+		t.Fatal("manual Russia import was not default-disabled")
+	}
+	preview, err = manager.PreviewState("csrf", registry.Nodes[0].ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); err != nil {
+		t.Fatal(err)
 	}
 	preview, err = manager.PreviewRefresh(context.Background(), "csrf", "", "Provider", "https://subscription.example/token")
 	if err != nil {

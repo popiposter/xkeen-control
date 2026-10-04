@@ -123,6 +123,45 @@ func TestSubscriptionRefresherStartupAndRescanTiming(t *testing.T) {
 	}
 }
 
+func TestRefreshNotifiesQualityOnlyAfterSuccessfulManualOrAutomaticResult(t *testing.T) {
+	registry := refresherRegistry(t, true)
+	registry.Nodes[0].Enabled = false
+	manager, store, _ := testManager(t, &registry, &countingSubscriptionFetcher{body: []byte(syntheticProfile)})
+	calls := 0
+	manager.OnSubscriptionRefresh = func() { calls++ }
+	preview, err := manager.PreviewRefresh(context.Background(), "csrf", "sub-12345678", "", "")
+	if err != nil || !preview.Noop {
+		t.Fatalf("disabled member changed: %v", err)
+	}
+	if calls != 0 {
+		t.Fatal("preview launched comparison")
+	}
+	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatal("manual no-op refresh did not notify")
+	}
+	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); err == nil {
+		t.Fatal("consumed preview replay succeeded")
+	}
+	if calls != 1 {
+		t.Fatal("failed apply notified")
+	}
+	r := NewSubscriptionRefresher(manager)
+	if err := r.reconcile(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	r.runAttempt(context.Background(), "sub-12345678")
+	if calls != 2 {
+		t.Fatal("automatic no-op refresh did not notify")
+	}
+	current, err := store.Load()
+	if err != nil || current.Nodes[0].Enabled {
+		t.Fatal("refresh re-enabled disabled member")
+	}
+}
+
 func TestSubscriptionRefresherDisabledAndReenabledUsesStartupDelay(t *testing.T) {
 	registry := refresherRegistry(t, false)
 	manager, store, _ := testManager(t, &registry, &countingSubscriptionFetcher{body: []byte(syntheticProfile)})

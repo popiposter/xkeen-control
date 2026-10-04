@@ -13,10 +13,11 @@ members, updates their credentials/name, adds new members and removes absent one
 Other subscriptions and unmanaged native outbounds are preserved.
 
 New WL-name profiles are disabled by default (case-insensitive separate word);
-RU/BY country defaults also apply. Currently matching non-default-disabled profiles
-are enabled when the subscription is enabled: refresh can re-enable a manually
-excluded ordinary profile. WL/RU/BY matching profiles retain their enabled flag.
-This is a current limitation, not a claim of universal manual-choice preservation.
+RU/BY country defaults also apply, including manual imports. Defaults affect only
+new members: matching profiles retain every saved enabled/disabled choice on refresh,
+with a disabled subscription gating its members. Explicitly enabled WL/RU/BY members
+are not forcibly disabled by refresh. A removed and later reintroduced identity is
+a new member and receives defaults again.
 
 Manual changes use Preview then one Apply against its exact registry baseline;
 missing-member removals in a manual refresh require explicit acceptance.
@@ -48,10 +49,17 @@ observations feed native balancing. Installed enableConcurrency=true and interva
 a parallel probe cycle finishes, then waits30s; slow probes increase revisit time.
 It is not an exact30s failover guarantee. The panel displays these native results.
 
-## Explicit throughput comparison
+## Throughput comparison
 
-The Performance action is optional and operator-started; there is no background
-bandwidth-test schedule or automatic panel selection supervisor. Eligible nodes need
+The Performance action can start a comparison manually. A RAM-only scheduler also
+runs after10min startup and every6h. Successful manual/automatic subscription refresh
+(including no-op) requests a comparison after2min; notifications coalesce and no
+automatic start happens within6h of any previous manual/automatic comparison start.
+Busy, pending or unavailable conditions defer10min; an admitted failed measurement
+still consumes the6h slot. Maximum automatic transfer budget576MiB/day in a continuous
+run; panel restarts reset the RAM schedule. No automatic Stage, Apply, native restart
+or override: results are a recommendation, applied explicitly through the editor.
+Eligible nodes need
 fresh native observations (<=2min), alive and RTT<=750ms. Current native target is
 first, then up to four lowest-RTT alternatives and one rotating exploration candidate.
 This is a shortlist, not a measurement of every node or proof of the global best.

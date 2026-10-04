@@ -35,19 +35,20 @@ type Status struct {
 }
 
 type Service struct {
-	Editor      *xkeen.ConfigEditor
-	Lease       *authority.Lease
-	Reader      xrayapi.Reader
-	Nodes       c1.NodeReader
-	Measurement Measurement
-	mu          sync.Mutex
-	status      Status
-	result      c1.AdaptiveResult
-	pool        []string
-	cancel      context.CancelFunc
-	done        chan struct{}
-	closed      bool
-	rotation    int
+	Editor        *xkeen.ConfigEditor
+	Lease         *authority.Lease
+	Reader        xrayapi.Reader
+	Nodes         c1.NodeReader
+	Measurement   Measurement
+	mu            sync.Mutex
+	status        Status
+	result        c1.AdaptiveResult
+	pool          []string
+	cancel        context.CancelFunc
+	done          chan struct{}
+	closed        bool
+	rotation      int
+	lastStartedAt time.Time
 }
 
 func (s *Service) Read() Status {
@@ -103,6 +104,7 @@ func (s *Service) Start(ctx context.Context) error {
 		}
 	}
 	s.rotation++
+	s.lastStartedAt = time.Now().UTC()
 	job, cancel := context.WithTimeout(context.Background(), c1.AdaptiveMaxGenerationWallTime+c1.AdaptiveCleanupReserve)
 	s.cancel = cancel
 	done := make(chan struct{})

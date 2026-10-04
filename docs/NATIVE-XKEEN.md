@@ -23,9 +23,10 @@ native admission/update architecture. Old qualification records remain historica
 - The private node registry owns only panel-managed profiles/subscriptions.
   Unmanaged native outbounds remain intact. Viewing a page does not add routing,
   balancers/API or alter the selected native operating mode.
-- Native leastPing/SB/manual selection remains the default/current owner.
-  Optional panel quality selection must demonstrate benefit and safe override
-  expiry before it is enabled; it does not block commands or configuration editors.
+- Native Xray leastPing/leastLoad/SB/manual selection remains the selection owner.
+  The panel can run bounded quality comparisons and propose native leastLoad
+  weights through the same config editor. No quality supervisor or automatic
+  runtime override is installed; periodic measurements do not restart Xray.
 - Auth/private management, subscriptions, bounded observations/probes, portable
   config export and the signed updater **for this panel only** remain panel functions.
 
