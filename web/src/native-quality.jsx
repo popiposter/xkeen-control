@@ -7,6 +7,12 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '.
 import { Badge } from './components/ui/badge.jsx'
 
 const rate = (value) => Number.isFinite(value) && value > 0 ? `${(value * 8 / 1e6).toFixed(1)} Mbps` : '—'
+const stageReasons = {
+  'configuration-changed': 'Subscriptions or configuration changed after this test. Run a fresh speed test before applying a recommendation.',
+  'configuration-pending': 'Saved configuration changes are pending. Apply or discard them in the configuration editor before running a fresh speed test.',
+  'configuration-unavailable': 'The current configuration could not be verified. Inspect it in the configuration editor and refresh the status.',
+  'measurement-expired-or-incomplete': 'Measurements have expired or do not include enough successful nodes. Run a fresh speed test.',
+}
 
 export function NativeQualitySection({ csrfToken, onUnauthorized, busy, workingEdits, onReadback, onNativeJob, onOpenConsole, onInspectConfigs, nodesByTag, onStatusChange }) {
   const [status, setStatus] = useState(null)
@@ -106,6 +112,7 @@ export function NativeQualitySection({ csrfToken, onUnauthorized, busy, workingE
     <CardHeader><CardTitle>Speed test</CardTitle><CardDescription>Compare download and upload speed, then let Xray select a healthy node using those measurements and latency.</CardDescription></CardHeader>
     <CardContent className="flex flex-col gap-4">
       {(applyError || error) && <Alert variant="destructive"><AlertTitle>Check the current state</AlertTitle><AlertDescription>{applyError || error}</AlertDescription></Alert>}
+      {status?.state === 'completed' && !status.canStage && stageReasons[status.stageReason] && <Alert><AlertTitle>Recommendation unavailable</AlertTitle><AlertDescription>{stageReasons[status.stageReason]}</AlertDescription></Alert>}
       <p>The manual test samples up to 12 healthy enabled nodes in fresh latency order, within twice the lowest latency (minimum threshold 300 ms, maximum 750 ms). Failed measurements are replaced by the next eligible node. At most 18 attempts, 288 MiB and six minutes; results may be partial.</p>
       <p>Automatic tests retain the smaller six-node / 144 MiB / three-minute budget every six hours, coalescing subscription refreshes. Measurements alone do not change the running configuration.</p>
       {status?.latencyLimitMs > 0 && <p className="text-sm text-muted-foreground">{status.manualSample ? 'Manual' : 'Automatic'} sample: {status.eligibleCount} eligible nodes, latency threshold {status.latencyLimitMs} ms. Recommendation: best {Math.min(6, status.progress?.validCount || 0)} measured nodes by speed, latency and observed stability.</p>}

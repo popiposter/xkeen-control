@@ -147,6 +147,9 @@ func TestReadExpiredRecommendationCannotStage(t *testing.T) {
 		t.Fatal("stale recommendation usable")
 	}
 	status := s.Read()
+	if status.StageReason != "measurement-expired-or-incomplete" {
+		t.Fatal("expired result lacks explanation", status)
+	}
 	if len(status.Ranking) != 2 || status.Ranking[0].Tag != "proxy-b" || status.Ranking[0].Rank != 1 {
 		t.Fatal("throughput ranking lost or confused with freshness", status)
 	}

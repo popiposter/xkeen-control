@@ -149,11 +149,13 @@ func main() {
 	runner := c1.NewBenchmarkRunner(policy, probeRouter, c1.BenchmarkStore{Path: getenv("XKEEN_CONTROL_BENCHMARK_PATH", c1.DefaultBenchmarkPath)})
 	coordinator := c1.NewCoordinator(policy, supervisor, runner, nodeReader)
 	coordinator.SetManualRunner(c1.NewManualNodeRunner(probeRouter))
+	authorityLease := authority.NewLease()
+	panelLifecycle := panelLifecycle{coordinator: coordinator, lease: authorityLease}
 	listenerService := panellistener.NewService(panellistener.Config{
 		FilePath:   listenerFile,
 		HelperPath: getenv("XKEEN_CONTROL_UPDATER", panellistener.DefaultHelperPath),
 		Initial:    listenerResolution,
-		Lifecycle:  coordinator,
+		Lifecycle:  panelLifecycle,
 	})
 	if err := listenerService.StartupError(); err != nil {
 		log.Printf("panel listener startup initialization failed: %v", err)
@@ -164,7 +166,6 @@ func main() {
 		log.Print("performance policy startup initialization failed")
 		os.Exit(1)
 	}
-	authorityLease := authority.NewLease()
 	nativeConfig := &xkeen.ConfigEditor{DraftDir: getenv("XKEEN_NATIVE_CONFIG_DRAFT_DIR", "/opt/etc/xkeen-control/secrets/config-drafts"), Dir: getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir), XrayBinary: getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary), Lease: authorityLease, PreviousDir: getenv("XKEEN_NATIVE_CONFIG_PREVIOUS_DIR", "/opt/etc/xkeen-control/previous/native-config"), AssetDir: getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)}
 	nativeConfig.RegistryPath = getenv("XKEEN_NODES_PATH", defaultNodesPath)
 	nodeManager = newNodeManager(coordinator, authorityLease, nativeConfig)
@@ -183,7 +184,7 @@ func main() {
 		},
 	})
 	collector.SetBuildInfo(buildinfo.Current())
-	updateManager := panelupdate.NewManager(panelupdate.Config{Current: buildinfo.Current(), Lifecycle: coordinator})
+	updateManager := panelupdate.NewManager(panelupdate.Config{Current: buildinfo.Current(), Lifecycle: panelLifecycle})
 	notificationService := notifications.NewService()
 	panelNotifyScheduler := panelupdate.NewNotifyScheduler(panelupdate.NotifySchedulerConfig{
 		Manager: updateManager,

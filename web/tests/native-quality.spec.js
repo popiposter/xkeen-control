@@ -13,6 +13,17 @@ async function open(page) {
   await expect(page.getByText('Speed test', { exact: true })).toBeVisible()
 }
 
+test('changed subscription generation explains stale recommendation without applying or retesting', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), canStage: false, stageReason: 'configuration-changed' }
+  await open(page)
+  await expect(page.getByText('Subscriptions or configuration changed after this test. Run a fresh speed test before applying a recommendation.', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Apply recommendation', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Run speed test', exact: true })).toBeEnabled()
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
+})
+
 test('speed test applies one recommendation and waits for verified configuration instead of treating 202 as success', async ({ page }) => {
   const model = await mountFeatureCompleteDashboard(page)
   let starts = 0; let applies = 0; let finished = false

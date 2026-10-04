@@ -54,6 +54,15 @@ func TestStageBroadSampleRestrictsOnlySelectorAndCostsAndKeepsFutureSampleBroad(
 		t.Fatal(err)
 	}
 	s := &Service{Editor: e, Nodes: func(context.Context) []c1.NodeState { return nodes }, pool: pool, result: result, status: Status{State: "completed", Digest: w.Digest}}
+	if err := os.WriteFile(filepath.Join(dir, "04_outbounds.json"), append(append([]byte(nil), encoded...), '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if status := s.Read(); status.CanStage || status.StageReason != "configuration-changed" {
+		t.Fatal("outbound drift was not explained", status)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "04_outbounds.json"), encoded, 0600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.Stage(context.Background(), w.Digest); err != nil {
 		t.Fatal(err)
 	}

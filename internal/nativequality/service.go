@@ -33,6 +33,7 @@ type Status struct {
 	Generation     uint64                       `json:"generation"`
 	Progress       c1.AdaptivePerformanceStatus `json:"progress"`
 	CanStage       bool                         `json:"canStage"`
+	StageReason    string                       `json:"stageReason,omitempty"`
 	PoolCount      int                          `json:"poolCount"`
 	LatencyLimitMS int64                        `json:"latencyLimitMs"`
 	EligibleCount  int                          `json:"eligibleCount"`
@@ -73,6 +74,9 @@ func (s *Service) Read() Status {
 	value.Progress.Candidates = append([]c1.AdaptiveCandidateStatus(nil), value.Progress.Candidates...)
 	_, err := c1.NativeQualityCosts(s.result, time.Now().UTC(), s.pool)
 	value.CanStage = value.State == "completed" && err == nil
+	if value.State == "completed" && err != nil {
+		value.StageReason = "measurement-expired-or-incomplete"
+	}
 	// Rank the completed measurement using the same throughput/health cost as
 	// Stage. Old results remain labelled as measurements, never as applied state.
 	costs, rankErr := c1.NativeQualityCosts(s.result, s.result.CompletedAt, s.pool)
@@ -91,6 +95,16 @@ func (s *Service) Read() Status {
 		w, err := s.Editor.Workspace(ctx)
 		cancel()
 		value.CanStage = err == nil && w.Pending == nil && w.TargetsComplete && w.Digest == value.Digest && len(value.Ranking) >= 2
+		switch {
+		case err != nil || !w.TargetsComplete:
+			value.StageReason = "configuration-unavailable"
+		case w.Pending != nil:
+			value.StageReason = "configuration-pending"
+		case w.Digest != value.Digest:
+			value.StageReason = "configuration-changed"
+		case len(value.Ranking) < 2:
+			value.StageReason = "measurement-expired-or-incomplete"
+		}
 	}
 	value.AppliedRanking = s.appliedRanking()
 	return value

@@ -15,23 +15,32 @@ The [complete native command matrix](../plan/xkeen-command-inventory-v2.md) maps
 69 dispatcher branches to panel workflows. Interactive actions use a native
 command-bound console; parameterized actions use forms/buttons with optional output.
 
-The native-shell v2 is now installed as development source `6dba729` (2026-10-03):
+The native-shell v2 is now installed as development source `f405162` (2026-10-04):
 stock native XKeen, command-bound jobs/console, native Form/Text editors with
 pending/apply/optional restore, installed-geodata browser and rule examples,
 subscription refresh, encrypted native transfer and optional Telegram control.
-Exact local FULL passed with 111 browser cases and actual ARM64 artifact;
+Exact local FULL passed with 104 browser cases and actual ARM64 artifact;
 independent replacement preserved native process/files, registry and auth.
 Same-router encrypted export/validated preview/Cancel and selective routing
 readback passed. These are development milestones, not a signed release.
 
-Next is retirement of the remaining unreachable component/Setup/appliance
-restore API/CLI and their tests. Keep useful native validation, auth, nodes,
-config rollback and this panel's signed updater. Real Telegram acceptance needs
+The obsolete component/Setup/appliance APIs and tests have been retired.
+Stable `v0.3.0` release preparation is the next step; it is not published yet.
+Keep useful native validation, auth, nodes, config rollback and this panel's
+signed updater. Real Telegram acceptance needs
 private bot credentials (currently unconfigured); second-router transfer and
 unproxied LAN DNS/VPN/outage acceptance need their respective hardware contours.
-Native leastPing remains the active selection owner; panel adaptive mode stays
+Native Xray remains the active selection owner; panel adaptive override stays
 optional and disabled without demonstrated benefit. The
 [v2 plan](../plan/architecture-native-shell-v2.md) records evidence boundaries.
+
+The latest manual speed sample completed with eight attempts, seven successful
+measurements and six recommendations. A scheduled subscription update after
+completion changed the registry/outbounds and native process, so the older
+recommendation was correctly rejected as stale; its Apply was not submitted.
+This is not a successful live broad-pool Apply claim. Stable release review must
+retain that boundary, plus the unqualified LAN/outage, bot and second-router
+acceptance contours.
 
 ### Historical 2026-10-02 direction and checkpoints
 

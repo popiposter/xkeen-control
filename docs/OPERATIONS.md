@@ -2,6 +2,31 @@
 
 > **Active implementation:** [Native XKeen contract](NATIVE-XKEEN.md) governs Issue #121 on clean Entware. Older panel migration/recovery compatibility is not required. Historical behavior below is not the new installation authority.
 
+## Native-shell release candidate
+
+Stable `v0.3.0` is being prepared, not published. Stock XKeen is installed through
+its official procedure and owns components, service/interception and cron.
+The panel is installed alongside it; use the native contract for commands,
+configuration editing, validation, explicit Apply and optional previous restore.
+Do not use the historical appliance adoption/component repair procedures below
+for this generation. There is no supported upgrade contract from older panels.
+
+Publication still requires an independently reviewed exact current `main`, the
+protected Release workflow (`channel=stable`, exact version/source), both build
+and publish success, and independent download/signature/manifest/assets/checksum
+verification of the seven public assets. Development panel delivery is not signed
+release installation evidence. Do not dispatch while the candidate remains on
+an unmerged PR or substitute a manually created tag/Release after a failure.
+
+For a native config Apply or quality recommendation, HTTP 202 is handoff only;
+require the existing job's terminal `completed` / configuration `applied` and
+independent native health/configuration readback. If a subscription refresh or
+external native action changes the configuration after a measurement, its old
+recommendation must remain rejected; do not silently rebase or replay it.
+
+The sections below describe historical qualified generations unless explicitly
+retained by the native contract.
+
 This runbook describes the **currently production-qualified** control-plane generation. Slice D / Issue #2 remains complete, and D.1 / Issue #3 is production-qualified in signed stable `v0.2.0` from exact source `f170cdb0a9531cb8f4e08c95c0ba9bc8fe3dfd86` for `linux/arm64`. Later #4/#5 work exists in source but is not deployed; `docs/ROADMAP.md` owns current source sequencing.
 
 Production is a live router. Prefer typed/repository transactions over ad-hoc edits.

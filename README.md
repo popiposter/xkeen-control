@@ -12,11 +12,10 @@ XKeen and Xray are powerful, but operating a real router usually means editing f
 
 `xkeen-control` adds a purpose-built management layer without turning Keenetic into a general-purpose server:
 
-- one unified proxy pool with Xray `leastPing` as emergency fallback;
-- stable node selection that avoids flapping on small RTT changes;
-- fast active liveness failover independent from slower quality decisions;
+- native Xray selection and failover, without a panel selection supervisor;
+- bounded speed measurements and an explicit balanced-pool recommendation;
 - typed VPN node and subscription management with preview/apply/rollback;
-- bounded sustained throughput benchmarking with high-churn state in RAM/`/tmp`;
+- bounded diagnostics with high-churn state in RAM/`/tmp`;
 - clear runtime visibility for native, override and effective selection;
 - transactional Xray activation with validation, readiness checks and rollback;
 - signed public releases with bounded bootstrap and panel update/rollback;
@@ -29,13 +28,17 @@ XKeen owns its installation, service, components and native update schedules. Th
 
 Native JSON/JSONC editors provide text and graphical modes, drafts, full Xray validation, a shared pending configuration indicator, explicit restart, discard and optional previous configuration restore. Routing includes installed geodata categories, membership search and first-match examples. DNS configuration is editable; independent LAN DNS/outage behavior still requires qualification.
 
-`/opt/etc/xkeen-control/secrets/nodes.json` stores VPN nodes and subscriptions privately. Only managed outbounds are generated from it; unrelated native fields and outbounds are preserved. Enabled subscription refresh uses the existing panel scheduler. WL nodes default to disabled. Native leastPing remains the current selection owner; panel adaptive overrides are disabled.
+`/opt/etc/xkeen-control/secrets/nodes.json` stores VPN nodes and subscriptions privately. Only managed outbounds are generated from it; unrelated native fields and outbounds are preserved. Enabled subscriptions refresh periodically. Manually disabled nodes remain disabled on refresh; WL, Russia and Belarus profiles default to disabled. Native Xray remains the selection owner; panel adaptive overrides are disabled.
+
+The manual speed test samples up to 12 healthy enabled nodes within a current latency threshold, replacing failed attempts with the next eligible node (18 attempts / 288 MiB / six minutes maximum). It recommends up to six balanced nodes. Apply recommendation saves the pool through the native editor and restarts XKeen once; success requires independent applied-state readback. A subscription/configuration change invalidates an older recommendation. A ranking is not a persistent pin: Xray continues choosing using live health and configured weights.
 
 Portable encrypted configuration transfer supports validation, explicit interface mapping and staging without automatic restart. Telegram notifications and restricted single-user native commands are optional and disabled until configured. Actual bot credentials and second-router transfer acceptance are separate from local fixture evidence.
 
 The panel keeps authentication, origin/CSRF protection, bounded private data handling and its signed self-updater. No Go/Node toolchain runs on the router.
 
 ## Installation
+
+The native-shell generation is being prepared for stable `v0.3.0`; it is not published yet. Install stock XKeen through its official installation procedure first, then install the panel alongside it. The panel never patches XKeen or installs a second component updater. Upgrading older panel generations is outside this release's supported compatibility contract. The command below installs the historical `v0.2.0`, not the new native-shell candidate.
 
 For an Entware/Open Package-ready `linux/arm64` Keenetic, the currently production-qualified release-specific installer is:
 
@@ -47,7 +50,7 @@ The installer is bounded: it never performs blanket `opkg upgrade`, never instal
 
 Existing managed installs use the installed binary's pinned-signature self-update path. The qualified legacy C.1 install has a narrow fingerprint-gated adoption path; historical `v0.1.1` was production-qualified through legacy → adoption → exact rollback → re-adoption. Current signed `v0.2.0` adds the qualified D.1 typed appliance adoption and backup/restore boundary.
 
-See [Releases](docs/RELEASES.md), [Operations](docs/OPERATIONS.md) and [Fresh Keenetic](docs/FRESH-KEENETIC.md).
+For the native generation, see [Native contract](docs/NATIVE-XKEEN.md). [Releases](docs/RELEASES.md), [Operations](docs/OPERATIONS.md) and [Fresh Keenetic](docs/FRESH-KEENETIC.md) retain explicitly historical qualification records.
 
 The historical repository `popiposter/xkeen-keenetic` is private quarantine/history only. `popiposter/xkeen-control` is the public source/release authority; ordinary qualification runs locally and the protected manual GitHub workflow is reserved for releases. Old Git history must never be imported here.
 

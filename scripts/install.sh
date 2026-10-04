@@ -127,10 +127,10 @@ validate_buildinfo_json() {
 		def info_valid:
 			if type != "object" or .product != "xkeen-control" then false
 			elif (.version | type) != "string" or (.sourceCommit | type) != "string" then false
-			elif (.channel | type) != "string" or ((semver_valid(.version)) | not) then false
-			elif .channel == "development" then (.sourceCommit == "dev" or commit_valid(.sourceCommit))
-			elif .channel == "stable" then (commit_valid(.sourceCommit) and ((.version | contains("-")) | not))
-			elif .channel == "beta" then (commit_valid(.sourceCommit) and (.version | contains("-")))
+			elif (.channel | type) != "string" then false
+			elif .channel == "development" then ((.sourceCommit == "dev" or commit_valid(.sourceCommit)) and (.version == "dev" or (.version | test("^[0-9a-f]{7,40}$")) or semver_valid(.version)))
+			elif .channel == "stable" then (semver_valid(.version) and commit_valid(.sourceCommit) and ((.version | contains("-")) | not))
+			elif .channel == "beta" then (semver_valid(.version) and commit_valid(.sourceCommit) and (.version | contains("-")))
 			else false
 			end;
 		(length == 1) and (.[0] | info_valid)
@@ -306,4 +306,4 @@ metadata="$($BIN version --json)" || fail "installed build metadata is unavailab
 printf '%s\n' "$metadata" | validate_buildinfo_json || fail "installed build provenance is invalid"
 echo "xkeen-control installed: $metadata"
 echo "Management listener remains loopback by default; use an SSH tunnel unless an exact private address is configured explicitly."
-echo "XKeen/Xray/configuration readiness is reported by the authenticated panel. Missing components remain Setup Mode; no upstream interactive installer was invoked."
+echo "Install stock XKeen using its official procedure. The panel invokes its supported commands and edits native configuration; it does not install or patch XKeen."
