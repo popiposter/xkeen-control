@@ -7,6 +7,7 @@ for (const width of [375, 1440]) {
     await page.goto('/')
     await expect(page.getByRole('heading', { name: 'XKeen Control' })).toBeVisible()
     await expect(page.locator('[data-slot="card"]')).toBeVisible()
+    await expect(page.getByLabel('Appearance', { exact: true })).toHaveCount(0)
     await expect(page.getByLabel('Panel password', { exact: true })).toBeFocused()
     await page.keyboard.press('Tab')
     await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeFocused()

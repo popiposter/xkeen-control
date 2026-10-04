@@ -524,6 +524,41 @@ func TestCommandActivatorVerifiesActiveOutboundTags(t *testing.T) {
 	}
 }
 
+// Regression for live subscription updates after the quality editor switches
+// bal-proxy from leastPing to leastLoad: verification must reach the native API,
+// not trigger rollback merely because the valid strategy changed.
+func TestNodeInventoryPreservesNativeBalancerStrategies(t *testing.T) {
+	for _, strategy := range []string{"leastLoad", "leastPing", "random", "roundRobin"} {
+		t.Run(strategy, func(t *testing.T) {
+			dir := t.TempDir()
+			active, routing := filepath.Join(dir, "04_outbounds.json"), filepath.Join(dir, "05_routing.json")
+			if err := os.WriteFile(active, []byte(`{"outbounds":[{"tag":"proxy-node-88888888"}]}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			policy := []byte(`{"routing":{"balancers":[{"tag":"bal-proxy","selector":["proxy-node-"],"strategy":{"type":"` + strategy + `","settings":{"expected":1,"maxRTT":"750ms"}}}]}}`)
+			if err := os.WriteFile(routing, policy, 0600); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			a := CommandActivator{ActiveOutboundsPath: active, RoutingPath: routing, RuntimeVerifier: func(context.Context, string, string, []string) error { calls++; return nil }}
+			if err := a.VerifyOutboundTags(context.Background(), []string{"proxy-node-88888888"}); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 1 {
+				t.Fatal("native runtime verification was skipped")
+			}
+			after, err := os.ReadFile(routing)
+			if err != nil || string(after) != string(policy) {
+				t.Fatal("node verification changed native strategy")
+			}
+			a.RuntimeVerifier = func(context.Context, string, string, []string) error { return errors.New("synthetic native failure") }
+			if a.VerifyOutboundTags(context.Background(), []string{"proxy-node-88888888"}) == nil {
+				t.Fatal("native failure accepted")
+			}
+		})
+	}
+}
+
 func TestCommandActivatorRejectsFileOnlyVisibility(t *testing.T) {
 	dir := t.TempDir()
 	active := filepath.Join(dir, "04_outbounds.json")

@@ -995,9 +995,6 @@ func verifyBalancerSelector(path, balancerTag string, expected []string) error {
 			Balancers []struct {
 				Tag      string   `json:"tag"`
 				Selector []string `json:"selector"`
-				Strategy struct {
-					Type string `json:"type"`
-				} `json:"strategy"`
 			} `json:"balancers"`
 		} `json:"routing"`
 	}
@@ -1011,7 +1008,10 @@ func verifyBalancerSelector(path, balancerTag string, expected []string) error {
 			continue
 		}
 		found++
-		if !strings.EqualFold(balancer.Strategy.Type, "leastPing") || len(balancer.Selector) == 0 || len(balancer.Selector) > 16 {
+		// Full Xray validation owns strategy compatibility. Node updates must
+		// preserve native leastLoad/random/roundRobin rather than impose the
+		// historical leastPing-only appliance policy after a successful restart.
+		if len(balancer.Selector) == 0 || len(balancer.Selector) > 16 {
 			return errors.New("balancer selector contract is invalid")
 		}
 		selectors = append(selectors, balancer.Selector...)

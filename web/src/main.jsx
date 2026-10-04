@@ -352,7 +352,7 @@ function App() {
 function Login({ error, password, setPassword, onSubmit }) {
   return <main className="flex min-h-svh items-center justify-center p-6">
     <Card className="w-full max-w-sm">
-      <CardHeader><div className="flex flex-wrap items-center justify-between gap-4"><CardTitle><h1>XKeen Control</h1></CardTitle><ThemeControl /></div><CardDescription>Sign in to manage your VPN.</CardDescription></CardHeader>
+      <CardHeader><CardTitle><h1>XKeen Control</h1></CardTitle><CardDescription>Sign in to manage your VPN.</CardDescription></CardHeader>
       <CardContent><form onSubmit={onSubmit}><FieldGroup>
         <Field><FieldLabel htmlFor="password">Panel password</FieldLabel>
           <Input id="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} autoFocus /></Field>

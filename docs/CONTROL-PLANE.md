@@ -2,6 +2,9 @@
 
 > **Active implementation:** [Native XKeen contract](NATIVE-XKEEN.md) governs Issue #121 on clean Entware. Older panel migration/recovery compatibility is not required. Historical behavior below is not the new installation authority.
 
+Current node loading/refresh, measurement, native choice and failover are described
+in [Node lifecycle](NODE-LIFECYCLE.md), including installed settings and limitations.
+
 Native quality comparison: authenticated GET `/api/v1/performance/quality`,
 POST `/start` with `{}`, POST `/stage` with the comparison's exact config digest.
 These use the existing diagnostic lifecycle and panel lease; fixed six-node,
