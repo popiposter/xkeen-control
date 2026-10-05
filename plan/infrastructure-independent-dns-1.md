@@ -99,4 +99,3 @@ Issue #121 operator qualification: keep Keenetic DNS on port 53 and use its cust
 - [mosdns v5.3.4](https://github.com/IrineSistiana/mosdns/releases/tag/v5.3.4), [domain matchers](https://github.com/IrineSistiana/mosdns/blob/v5.3.4/pkg/matcher/domain/matcher.go), [forward plugin](https://github.com/IrineSistiana/mosdns/blob/v5.3.4/plugin/executable/forward/forward.go).
 
 Operator acceptance and limits: [qualification result](../docs/qualification/independent-split-dns-2026-10-05.md).
-
