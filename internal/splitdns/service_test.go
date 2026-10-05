@@ -207,3 +207,51 @@ func TestPresentUnsafeDNSMustNotBecomeOptional(t *testing.T) {
 		t.Fatal("unsafe service accepted")
 	}
 }
+
+func TestStockTransparentLANScopeAndRuleMetadata(t *testing.T) {
+	s, files, count := fixture(t)
+	files["03_inbounds.json"] = []byte(`{"inbounds":[{"tag":"redirect","protocol":"tunnel","settings":{"followRedirect":true}},{"tag":"tproxy","protocol":"tunnel","settings":{"followRedirect":true},"streamSettings":{"sockopt":{"tproxy":"tproxy"}}},{"tag":"dns","listen":"127.0.0.1","port":5310,"protocol":"socks"}]}`)
+	var root map[string]any
+	_ = json.Unmarshal(files["05_routing.json"], &root)
+	rules := root["routing"].(map[string]any)["rules"].([]any)
+	for i, v := range rules {
+		r := v.(map[string]any)
+		r["ruleTag"] = "synthetic-rule"
+		if i > 0 {
+			r["inboundTag"] = []string{"redirect", "tproxy"}
+		}
+	}
+	rules[len(rules)-1].(map[string]any)["network"] = "tcp,udp"
+	files["05_routing.json"], _ = json.Marshal(root)
+	if err := s.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := s.Status(context.Background())
+	if status.Entries < 4 || status.Skipped != 2 || *count != 1 {
+		t.Fatal(status, *count)
+	}
+	b, _ := os.ReadFile(filepath.Join(s.Dir, "config.json"))
+	var config struct{ Plugins []plugin }
+	_ = json.Unmarshal(b, &config)
+	for _, v := range config.Plugins {
+		if v.Tag == "main" {
+			var seq []struct{ Exec string }
+			_ = json.Unmarshal(v.Args, &seq)
+			if len(seq) != 4 || seq[0].Exec != "reject 3" || seq[1].Exec != "goto vpn_only" {
+				t.Fatal(seq)
+			}
+		}
+	}
+}
+func TestUnrecognizedInboundScopeCannotEraseDomainPolicy(t *testing.T) {
+	s, files, count := fixture(t)
+	files["05_routing.json"] = []byte(`{"routing":{"rules":[{"inboundTag":["dns"],"balancerTag":"vpn"},{"inboundTag":["unknown-lan"],"domain":["domain:example.test"],"balancerTag":"vpn"},{"outboundTag":"direct"}]}}`)
+	before, _ := os.ReadFile(filepath.Join(s.Dir, "config.json"))
+	if s.Sync(context.Background()) == nil {
+		t.Fatal("unsupported scope silently became DIRECT")
+	}
+	after, _ := os.ReadFile(filepath.Join(s.Dir, "config.json"))
+	if *count != 0 || string(before) != string(after) {
+		t.Fatal("running DNS policy was changed")
+	}
+}

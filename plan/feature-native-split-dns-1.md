@@ -19,6 +19,7 @@ Issue #125 integrates the already-installed standard mosdns resolver. XKeen rema
 - **REQ-001**: Preserve first-match unconditional native domain DIRECT/VPN/BLOCK decisions, default outbound, geosite attributes and node endpoint bootstrap exceptions. Count conditional traffic rules without claiming DNS equivalence.
 - **REQ-002**: Follow native `panel-dns-vpn` DoH resolvers and the existing loopback SOCKS route. Preserve installed DIRECT DoH addresses; never add VPN-to-DIRECT fallback.
 - **REQ-003**: Validate derivation before Save/Apply, synchronize after successful native commands/verified Apply and once/minute detect external native CLI/cron changes while panel is running.
+- **REQ-004**: Project complete stock selective LAN scope from verified `redirect`/`tproxy` followRedirect tunnel inputs. Ignore inert `ruleTag`; treat `tcp,udp` as unconstrained transport. Unknown scoped domain policies must fail rather than produce empty all-DIRECT DNS.
 - **SEC-001**: Fixed paths, authenticated status, CSRF-bound synchronization, secretless DTOs/logs, regular files and bounded parsing. Router credentials remain outside Git/containers.
 - **CON-001**: No native script/init/hooks modification, second updater, automatic installation, firmware/firewall mutation or native command replay. Ordinary panel lease does not lock external CLI/cron.
 - **CON-002**: Pending/error native history prevents synchronization. Effective unchanged rules do not restart DNS. Preserve previous DNS generation; interrupted restart survives panel restart and is inspect-only.
@@ -70,6 +71,7 @@ Issue #125 integrates the already-installed standard mosdns resolver. XKeen rema
 - **TEST-001**: Export all four domain kinds, attribute/inverse-attribute selection, missing categories and unsafe files.
 - **TEST-002**: Native order/default/catch-all/conditional rules, unsupported targets/resolvers, unsafe list expressions and directory, unchanged semantics no restart, source drift rejection, pending guard, durable interrupted restart inspection without replay.
 - **TEST-003**: HTTP session/CSRF/request bounds and DNS UI pending/failed/synchronized presentation.
+- **TEST-005**: Verify stock transparent-scoped domain rules with ruleTag and full-transport catch-all; reject unrecognized scopes without resolver mutation.
 - **TEST-004**: One clean exact-HEAD full Linux gate and ARM64 artifact; bounded new live delivery plus independent native preservation and DNS no-op readback. Prior outage evidence stays distinct.
 
 ## 7. Risks & Assumptions

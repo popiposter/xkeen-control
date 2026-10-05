@@ -71,7 +71,8 @@ func validDoH(address string) bool {
 	return err == nil && u.Scheme == "https" && net.ParseIP(u.Hostname()) != nil && u.User == nil && u.RawQuery == "" && u.Fragment == "" && (u.Port() == "" || u.Port() == "443") && u.Path != ""
 }
 
-// Compile preserves native first-match order for unconditional domain decisions.
+// Compile preserves native first-match order for domain decisions unconditional
+// within the discovered stock selective LAN input scope.
 // IP/protocol/port/inbound conditions cannot classify a DNS question and are
 // explicitly counted as skipped. Unknown broad domain targets are rejected.
 func Compile(ctx context.Context, files map[string][]byte, config []byte, dir string, geo *geodatareader.Reader) (Plan, error) {
@@ -144,13 +145,23 @@ func Compile(ctx context.Context, files map[string][]byte, config []byte, dir st
 		Inbounds []struct {
 			Tag, Listen, Protocol string
 			Port                  json.RawMessage
+			Settings              struct{ FollowRedirect bool }
+			StreamSettings        struct{ Sockopt struct{ Tproxy string } }
 		}
 	}
 	if configjson.Decode(files["03_inbounds.json"], &inbounds) != nil {
 		return p, ErrPolicy
 	}
+	lanRedirect, lanTproxy := false, false
 	tag := ""
 	for _, v := range inbounds.Inbounds {
+		transparent := (v.Protocol == "tunnel" || v.Protocol == "dokodemo-door") && v.Settings.FollowRedirect
+		if transparent && v.Tag == "redirect" {
+			lanRedirect = true
+		}
+		if transparent && v.Tag == "tproxy" && v.StreamSettings.Sockopt.Tproxy == "tproxy" {
+			lanTproxy = true
+		}
 		if v.Listen == host && string(v.Port) == port && v.Protocol == "socks" {
 			if tag != "" {
 				return p, ErrPolicy
@@ -204,7 +215,7 @@ func Compile(ctx context.Context, files map[string][]byte, config []byte, dir st
 				_ = json.Unmarshal(raw, &keys)
 				for key := range keys {
 					switch key {
-					case "type", "inboundTag", "balancerTag", "outboundTag":
+					case "type", "ruleTag", "inboundTag", "balancerTag", "outboundTag":
 					default:
 						return p, ErrPolicy
 					}
@@ -225,18 +236,45 @@ func Compile(ctx context.Context, files map[string][]byte, config []byte, dir st
 	}
 	fallback := ""
 	var rules []compiledRule
+	domainRules := 0
 	requests := map[string]map[string]bool{}
 	for _, raw := range routing.Routing.Rules {
 		var r routeRule
 		if json.Unmarshal(raw, &r) != nil {
 			return p, ErrPolicy
 		}
+		if len(r.Domain) > 0 {
+			domainRules++
+		}
 		var keys map[string]json.RawMessage
 		_ = json.Unmarshal(raw, &keys)
 		conditional := false
 		for k := range keys {
 			switch k {
-			case "type", "domain", "outboundTag", "balancerTag":
+			case "type", "ruleTag", "domain", "outboundTag", "balancerTag":
+			case "inboundTag":
+				var tags []string
+				if json.Unmarshal(keys[k], &tags) != nil {
+					return p, ErrPolicy
+				}
+				redirect, tproxy := false, false
+				for _, tag := range tags {
+					redirect = redirect || tag == "redirect"
+					tproxy = tproxy || tag == "tproxy"
+				}
+				if !lanRedirect || !lanTproxy || !redirect || !tproxy {
+					conditional = true
+				}
+			case "network":
+				var network string
+				if json.Unmarshal(keys[k], &network) != nil {
+					return p, ErrPolicy
+				}
+				parts := strings.Split(network, ",")
+				both := len(parts) == 2 && ((strings.TrimSpace(parts[0]) == "tcp" && strings.TrimSpace(parts[1]) == "udp") || (strings.TrimSpace(parts[0]) == "udp" && strings.TrimSpace(parts[1]) == "tcp"))
+				if !both {
+					conditional = true
+				}
 			default:
 				conditional = true
 			}
@@ -278,6 +316,11 @@ func Compile(ctx context.Context, files map[string][]byte, config []byte, dir st
 			}
 		}
 		rules = append(rules, compiledRule{r.Domain, action})
+	}
+	// Unsupported native scopes must never turn an existing domain policy
+	// into an empty all-DIRECT resolver configuration.
+	if domainRules > 0 && len(rules) == 0 {
+		return p, ErrPolicy
 	}
 	exports := map[string]map[string][]string{}
 	exportBytes := 0
