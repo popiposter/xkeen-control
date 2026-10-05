@@ -80,6 +80,11 @@ func (e *ConfigEditor) validateSet(ctx context.Context, candidate ConfigSnapshot
 	if command.Run() != nil {
 		return &ValidationError{Output: string(output.data), Truncated: output.truncated}
 	}
+	if e.ValidateDerived != nil {
+		if err := e.ValidateDerived(ctx, candidate.NativeDocuments()); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

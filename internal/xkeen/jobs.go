@@ -60,6 +60,9 @@ type Jobs struct {
 	startTerminal   func(*exec.Cmd, bool) (*os.File, error)
 	checkInstalled  bool
 	inspectRecovery func(context.Context) error
+	// Runs with the same panel lease after native exit/readback. It may sync own
+	// derived data, but must never replay a native command or change its exit state.
+	AfterCommand func(context.Context, string)
 }
 
 func NewJobs(binary string, lease *authority.Lease) *Jobs {
@@ -287,6 +290,11 @@ func (m *Jobs) run(ctx context.Context, j *nativeJob, release func()) {
 		// Preserve the same shared panel fence as an unknown node activation.
 		// Only independent recovery/readback may reopen panel mutations.
 		m.Lease.Block()
+	}
+	if state == "completed" && (j.configEditor == nil || configurationState == "applied") && m.AfterCommand != nil {
+		readCtx, done := context.WithTimeout(context.Background(), 40*time.Second)
+		m.AfterCommand(readCtx, j.action)
+		done()
 	}
 	m.mu.Lock()
 	j.state = state

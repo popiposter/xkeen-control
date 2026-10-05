@@ -28,6 +28,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/panellistener"
 	"github.com/popiposter/xkeen-control/internal/performancepolicy"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
+	"github.com/popiposter/xkeen-control/internal/splitdns"
 	panelupdate "github.com/popiposter/xkeen-control/internal/update"
 	"github.com/popiposter/xkeen-control/internal/webassets"
 	"github.com/popiposter/xkeen-control/internal/xkeen"
@@ -170,6 +171,21 @@ func main() {
 	nativeConfig.RegistryPath = getenv("XKEEN_NODES_PATH", defaultNodesPath)
 	nodeManager = newNodeManager(coordinator, authorityLease, nativeConfig)
 	nativeJobs := newNativeJobs(authorityLease)
+	dnsIntegration := &splitdns.Service{
+		Dir: "/opt/etc/mosdns", Init: "/opt/etc/init.d/S06mosdns", AssetDir: nativeConfig.AssetDir, Lease: authorityLease,
+		ReadNative: func(ctx context.Context) (map[string][]byte, error) {
+			snapshot, err := nativeConfig.Snapshot(ctx)
+			return snapshot.NativeDocuments(), err
+		},
+		Pending: func() bool { exists, err := nativeConfig.HasSavedChanges(); return exists || err != nil },
+	}
+	nativeConfig.ValidateDerived = dnsIntegration.Validate
+	nativeJobs.AfterCommand = func(ctx context.Context, action string) {
+		switch action {
+		case "start", "restart", "update-geodata", "update-xkeen", "update-xray", "geodata-sources":
+			_ = dnsIntegration.ReconcileOwned(ctx)
+		}
+	}
 	subscriptionRefresher := nodes.NewSubscriptionRefresher(nodeManager)
 	nodeManager.SetAutoRefreshStatusProvider(subscriptionRefresher.AutoRefreshStatuses)
 	collector := controlruntime.NewCollector(buildinfo.Current().Version, startedAt, controlruntime.Dependencies{
@@ -207,6 +223,7 @@ func main() {
 		NativeJobs:        nativeJobs,
 		Geodata:           &geodatareader.Reader{Dir: getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)},
 		NativeConfig:      nativeConfig,
+		SplitDNS:          dnsIntegration,
 		Collector:         collector,
 		Auth:              authManager,
 		Nodes:             nodeManager,
@@ -251,6 +268,7 @@ func main() {
 	// Native Xray owns automatic selection until the panel mode is explicitly qualified.
 	// Automatic subscription refresh is enabled separately from native commands.
 	subscriptionRefresher.Start(runtimeContext)
+	go dnsIntegration.Run(runtimeContext)
 	go qualitySchedule.Run(runtimeContext)
 	panelNotifyScheduler.Start(runtimeContext)
 	go notificationService.RunControl(runtimeContext, func(ctx context.Context, command notifications.Command) notifications.ControlResult {

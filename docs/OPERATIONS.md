@@ -692,3 +692,15 @@ full/sustained benchmark
 unbounded log/download collection
 KeeneticOS update
 ```
+
+## Independent LAN DNS synchronization (Issue #125)
+
+This optional path uses the existing operator-installed mosdns service and native loopback SOCKS route; it is not an installer or firmware DNS authority. Keep Keenetic local DNS/port53 and the previously qualified native profile unchanged. Native XKeen continues to own component/geodata updates and its cron.
+
+The panel synchronizes applied unconditional routing domain decisions and tagged VPN DoH resolvers after native jobs and through a bounded minute observer. Pending sets and unknown panel operations defer synchronization. The panel lease serializes panel operations only; source hashes are rechecked around export to reject visible external drift. Panel downtime leaves DNS running with its last successful generation; changes made by native cron are synchronized on the next panel startup.
+
+Before a new panel delivery retain the current panel binary and fixed mosdns config/owned generations locally with mode0600/0700. The service writes `panel-generation-<digest16>` lists, `panel-manifest.json`, one `panel-previous.json` configuration and one interrupted `panel-operation.json` receipt. It cleans only recognizable obsolete owned list generations, retaining current and previous. It never writes native Xray/XKeen files, downloads databases, or restarts Xray.
+
+A failed DNS activation remains visible in the DNS card. Check and synchronize inspects an interrupted operation: exact native-derived config/list bytes, a distinct running mosdns process and readiness can complete it without another restart. Otherwise it remains unconfirmed. Do not replay an unknown native Apply or reinstall XKeen to repair this state. Restore the locally retained previous DNS configuration through the fixed service path only after inspecting current files/process and the original receipt.
+
+DIRECT DNS remains independent of Xray. VPN-routed DNS intentionally has no DIRECT fallback. Native IP/protocol/port conditions are not equivalent DNS classifications; IPv6, all-provider outages and reboot behavior require separate live qualification and must not be inferred from normal DNS readiness.

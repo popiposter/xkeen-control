@@ -26,6 +26,7 @@ import { IconPlus, IconLink, IconRefresh, IconPencil, IconPower, IconTrash, Icon
 import { NativeQualitySection } from './native-quality.jsx'
 import { NativeXkeenStatus, NativeXkeenSection } from './native-xkeen.jsx'
 import { NativeConfigSection } from './native-config.jsx'
+import { SplitDNSSection } from './split-dns.jsx'
 import { NativeTransferSection } from './native-transfer.jsx'
 import { SystemPanelSection, useSystemPanelController } from './system-panel.jsx'
 
@@ -448,6 +449,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     {section === 'nodes' && <NodeWorkspace measurements={measurements} nodes={registryNodes} subscriptions={nodes.subscriptions || []} performance={performance} manualOverride={status.balancer?.override || ''} benchmarkRunning={Boolean(status.benchmark?.controlPlane?.running)} csrf={session.csrfToken} onRefresh={onRefresh} onPerformanceRefresh={onPerformanceRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} manualLifecycleBlocked={manualLifecycleBlocked} selectionAvailable={Boolean(status.xray?.apiReachable && status.balancer?.effective)} />}
     {<div hidden={section !== 'performance'}><NativeQualitySection onStatusChange={setQuality} csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} busy={performanceOwnerBusy || lifecycleBlocked} nodesByTag={nodesByTag} workingEdits={configWorking} onReadback={qualityReadback} onNativeJob={receiveNativeJob} onOpenConsole={openComponents} onInspectConfigs={openRouting} /></div>}
     {section === 'components' && <NativeXkeenSection facts={status.native} onRefresh={onRefresh} onOpenSystem={() => setSection('system')} csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} jobNotification={nativeConfigJob?.csrfToken === session.csrfToken ? nativeConfigJob.job : null} />}
+    {section === 'dns' && <SplitDNSSection csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} readbackKey={configReadback} />}
     {(['components', 'routing', 'dns', 'configs'].includes(section) || configVisited) && <div hidden={!['routing', 'dns', 'configs'].includes(section)}><NativeConfigSection csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} onWorkingChange={setConfigWorking} readbackKey={configReadback} scopeFile={section === 'dns' ? '02_dns.json' : section === 'routing' ? '05_routing.json' : ''} focusFile={section === 'dns' ? '02_dns.json' : section === 'routing' ? '05_routing.json' : ''} onOpenConsole={openComponents} onNativeJob={receiveNativeJob} /></div>}
     {section === 'backup' && <NativeTransferSection csrfToken={session.csrfToken} api={api} download={download} onRefresh={onRefresh} onUnauthorized={onUnauthorized} onStaged={() => setConfigReadback((key) => key + 1)} onInspectConfigs={openRouting} />}
     {section === 'system' && <SystemPanelSection controller={systemPanelController} status={status} />}
