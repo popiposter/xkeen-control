@@ -252,6 +252,9 @@ export class FeatureCompleteModel {
         return this.recordProjection(route, { nodes: this.performance.nodes.map(nodeProjection), manual: allowlist(this.performance.manual, ['state', 'phase']), adaptive: allowlist(this.performance.adaptive, ['state']) })
       case '/api/v1/config-summary':
         return this.recordProjection(route, { routing: {}, dns: {}, observatory: {} })
+      case '/api/v1/dns/split':
+        if (entry.method !== 'GET') this.issues.push('LAN DNS status must be read-only')
+        return this.recordProjection(route, { state: 'unconfigured', running: false, entries: 0, conditionalRules: 0 })
       case '/api/v1/xkeen/config/workspace':
         if (entry.method !== 'GET') this.issues.push('Native workspace must be read-only')
         return json(route, { digest: 'a'.repeat(64), documents: { '02_dns.json': {}, '05_routing.json': {} }, pending: null, targets: [{ tag: 'direct', kind: 'outbound' }] })
