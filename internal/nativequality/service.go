@@ -85,6 +85,12 @@ func (s *Service) Read() Status {
 		for _, cost := range costs {
 			byMatch[cost.Match] = cost.Value
 		}
+		for i := range value.Progress.Candidates {
+			candidate := &value.Progress.Candidates[i]
+			if candidate.Valid {
+				candidate.QualityScore = 100 / math.Sqrt(byMatch["^"+regexp.QuoteMeta(candidate.Tag)+"$"])
+			}
+		}
 		for i, tag := range c1.NativeQualityRanking(s.result, costs) {
 			value.Ranking = append(value.Ranking, RankedNode{Tag: tag, Rank: i + 1, Cost: byMatch["^"+regexp.QuoteMeta(tag)+"$"]})
 		}

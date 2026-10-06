@@ -8,7 +8,7 @@ import (
 
 func TestComparisonDueThrottlesRefreshAndManualStarts(t *testing.T) {
 	now := time.Now()
-	if got := comparisonDue(now, now.Add(2*time.Minute), now.Add(-time.Hour)); !got.Equal(now.Add(5 * time.Hour)) {
+	if got := comparisonDue(now, now.Add(2*time.Minute), now.Add(-30*time.Minute)); !got.Equal(now.Add(30 * time.Minute)) {
 		t.Fatal("refresh bypassed minimum comparison interval")
 	}
 	if got := comparisonDue(now, now.Add(2*time.Minute), time.Time{}); !got.Equal(now.Add(2 * time.Minute)) {
@@ -16,6 +16,9 @@ func TestComparisonDueThrottlesRefreshAndManualStarts(t *testing.T) {
 	}
 	if got := comparisonDue(now, now.Add(-time.Minute), now.Add(-7*time.Hour)); !got.Equal(now) {
 		t.Fatal("overdue comparison not eligible")
+	}
+	if got := comparisonDue(now, now.Add(2*time.Minute), now.Add(-2*time.Hour)); !got.Equal(now.Add(2 * time.Minute)) {
+		t.Fatal("subscription update delayed until periodic six-hour run")
 	}
 }
 

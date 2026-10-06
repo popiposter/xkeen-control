@@ -69,7 +69,18 @@ func NativeQualityCosts(result AdaptiveResult, now time.Time, pool []string) ([]
 		values[tag] = 100
 	}
 	for _, candidate := range valid {
-		logQuality := 0.75*(math.Log(candidate.DownloadBPS)-math.Log(bestDown)) + 0.25*(math.Log(candidate.UploadBPS)-math.Log(bestUp)) - math.Log(adaptiveHealthPenalty(candidate.HealthPenalty))
+		if candidate.Metrics != nil {
+			bestDown = math.Min(bestDown, 100e6/8)
+			bestUp = math.Min(bestUp, 30e6/8)
+		}
+	}
+	for _, candidate := range valid {
+		down, up := candidate.DownloadBPS, candidate.UploadBPS
+		if candidate.Metrics != nil {
+			down = math.Min(down, 100e6/8)
+			up = math.Min(up, 30e6/8)
+		}
+		logQuality := 0.75*(math.Log(down)-math.Log(bestDown)) + 0.25*(math.Log(up)-math.Log(bestUp)) - math.Log(adaptiveHealthPenalty(candidate.HealthPenalty)) - math.Log(detailedQualityPenalty(candidate.Metrics))
 		cost := math.Exp(math.Min(-2*logQuality, math.Log(100)))
 		values[candidate.Tag] = clampFloat(cost, 1, 100)
 	}

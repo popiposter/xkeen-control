@@ -13,6 +13,20 @@ async function open(page) {
   await expect(page.getByText('Speed test', { exact: true })).toBeVisible()
 }
 
+test('detailed scheduled results expose full metrics and unavailable loaded measurements', async ({page}) => {
+  const model=await mountFeatureCompleteDashboard(page)
+  model.quality=complete()
+  model.quality.progress.candidates[0].qualityScore=82
+  model.quality.progress.candidates[0].metrics={idle:{samples:8,medianMs:23,p95Ms:41,jitterMs:3},downloadLatency:{samples:5,medianMs:40,p95Ms:70,jitterMs:6},uploadLatency:{samples:0},download:{samples:5,medianBps:1e6,p10Bps:8e5,p90Bps:12e5,shortSamples:true},upload:{samples:3,medianBps:1e6,p10Bps:9e5,p90Bps:11e5},requests:20,failures:1}
+  await open(page)
+  await expect(page.getByText(/same detailed test runs every six hours/)).toBeVisible()
+  await page.getByText('Quality 82/100 · Full metrics',{exact:true}).click()
+  await expect(page.getByText('41.0 ms',{exact:true})).toBeVisible()
+  await expect(page.getByText(/19\/20 successful \(95.0%\)/)).toBeVisible()
+  await expect(page.getByRole('cell',{name:'Uploading',exact:true}).locator('..')).toContainText('—')
+  expect(featureCompleteRequests(model,'/api/v1/performance/quality/start','POST')).toEqual([])
+})
+
 test('changed subscription generation explains stale recommendation without applying or retesting', async ({ page }) => {
   const model = await mountFeatureCompleteDashboard(page)
   model.quality = { ...complete(), canStage: false, stageReason: 'configuration-changed' }

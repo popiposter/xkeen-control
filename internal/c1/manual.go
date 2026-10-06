@@ -523,6 +523,12 @@ func finitePositive(value float64) bool {
 
 type fixedMeasurementTransport struct {
 	roundTripper http.RoundTripper
+	close        func()
+}
+
+func newDetailedMeasurementTransport() *fixedMeasurementTransport {
+	transport := &http.Transport{Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: ProbeAddress}), MaxIdleConns: 2, MaxIdleConnsPerHost: 2, MaxConnsPerHost: 2, IdleConnTimeout: 15 * time.Second}
+	return &fixedMeasurementTransport{roundTripper: transport, close: transport.CloseIdleConnections}
 }
 
 // fixedManualTransport is retained as a compatibility alias for the Slice D
@@ -605,7 +611,9 @@ func (t *fixedMeasurementTransport) request(ctx context.Context, method, rawURL 
 		request.ContentLength = contentLength
 	}
 	request.Header.Set("Accept-Encoding", "identity")
-	request.Header.Set("Connection", "close")
+	if t.close == nil {
+		request.Header.Set("Connection", "close")
+	}
 	client, closeTransport := t.client()
 	response, err := client.Do(request)
 	if err != nil {
