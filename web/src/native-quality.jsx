@@ -5,6 +5,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter }
 import { Alert, AlertTitle, AlertDescription } from './components/ui/alert.jsx'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from './components/ui/table.jsx'
 import { Badge } from './components/ui/badge.jsx'
+import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './components/ui/dialog.jsx'
 
 const rate = (value) => Number.isFinite(value) && value > 0 ? `${(value * 8 / 1e6).toFixed(1)} Mbps` : '—'
 const milliseconds = (value) => Number.isFinite(value) && value >= 0 ? `${value.toFixed(1)} ms` : '—'
@@ -12,8 +13,10 @@ const milliseconds = (value) => Number.isFinite(value) && value >= 0 ? `${value.
 function QualityDetails({ node, cost }) {
   const m = node.metrics
   if (!m) return <span className="text-muted-foreground">No detailed measurements</span>
-  return <details><summary className="cursor-pointer text-primary">{Number.isFinite(node.qualityScore) && node.qualityScore > 0 ? `Quality ${node.qualityScore.toFixed(0)}/100 · ` : ''}Full metrics{cost ? ` · weight ${cost.toFixed(2)}` : ''}</summary>
-    <div className="mt-3 grid min-w-64 gap-3 text-sm">
+  return <Dialog><DialogTrigger className="cursor-pointer text-primary">{Number.isFinite(node.qualityScore) && node.qualityScore > 0 ? `Quality ${node.qualityScore.toFixed(0)}/100 · ` : ''}Full metrics{cost ? ` · weight ${cost.toFixed(2)}` : ''}</DialogTrigger>
+    <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+    <DialogHeader><DialogTitle>Node quality measurements</DialogTitle><DialogDescription>Detailed measurements through this node to Cloudflare. Quality score {node.qualityScore > 0 ? `${node.qualityScore.toFixed(0)}/100` : 'unavailable'}; ranking also considers idle latency.</DialogDescription></DialogHeader>
+    <div className="grid min-w-0 gap-3 whitespace-normal text-sm">
       {m.failureCode && <p role="alert">Measurement failed during {m.failurePhase || 'transfer'}: {m.failureCode === 'provider-http-status' ? `test provider returned HTTP ${m.httpStatus}` : m.failureCode === 'timeout-or-cancelled' ? 'request timed out or was cancelled' : m.failureCode === 'insufficient-samples' ? 'not enough latency samples' : 'transfer was incomplete'}. This does not by itself prove the node is offline.</p>}
       <Table><TableHeader><TableRow><TableHead>Latency</TableHead><TableHead>Median</TableHead><TableHead>p95</TableHead><TableHead>Jitter</TableHead><TableHead>Samples</TableHead></TableRow></TableHeader><TableBody>{[['Idle', m.idle], ['Downloading', m.downloadLatency], ['Uploading', m.uploadLatency]].map(([label, metric]) => <TableRow key={label}><TableCell>{label}</TableCell><TableCell>{metric?.samples ? milliseconds(metric.medianMs) : '—'}</TableCell><TableCell>{metric?.samples ? milliseconds(metric.p95Ms) : '—'}</TableCell><TableCell>{metric?.samples >= 2 ? milliseconds(metric.jitterMs) : '—'}</TableCell><TableCell>{metric?.samples || 0}</TableCell></TableRow>)}</TableBody></Table>
       <Table><TableHeader><TableRow><TableHead>Throughput</TableHead><TableHead>Median</TableHead><TableHead>p10–p90</TableHead><TableHead>Samples</TableHead></TableRow></TableHeader><TableBody>{[['Download', m.download], ['Upload', m.upload]].map(([label, metric]) => <TableRow key={label}><TableCell>{label}</TableCell><TableCell>{rate(metric?.medianBps)}</TableCell><TableCell>{rate(metric?.p10Bps)} – {rate(metric?.p90Bps)}</TableCell><TableCell>{metric?.samples || 0}{metric?.shortSamples && ' · short transfers'}</TableCell></TableRow>)}</TableBody></Table>
@@ -21,7 +24,8 @@ function QualityDetails({ node, cost }) {
       {[['Download',m.download],['Upload',m.upload]].map(([label,metric])=>metric?.measurements?.length>0 && <details key={label}><summary className="cursor-pointer">{label}: all transfer samples</summary><Table><TableHeader><TableRow><TableHead>Size</TableHead><TableHead>Duration</TableHead><TableHead>Speed</TableHead></TableRow></TableHeader><TableBody>{metric.measurements.map((sample,i)=><TableRow key={i}><TableCell>{(sample.bytes/1048576).toFixed(0)} MiB</TableCell><TableCell>{milliseconds(sample.durationMs)}</TableCell><TableCell>{rate(sample.bps)}</TableCell></TableRow>)}</TableBody></Table></details>)}
       <p className="text-muted-foreground">Warm-up is excluded from speed results. Quality is relative to this sample; higher is better. It accounts for speed, failures, jitter, loaded latency growth and speed variation. Speed benefit saturates above 100 Mbps download / 30 Mbps upload; ranking also uses latency. Short transfers or fewer than two loaded samples limit confidence. Results describe the router-to-Cloudflare path at measurement time.</p>
     </div>
-  </details>
+    </DialogContent>
+  </Dialog>
 }
 const stageReasons = {
   'configuration-changed': 'Subscriptions or configuration changed after this test. Run a fresh speed test before applying a recommendation.',
