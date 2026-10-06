@@ -7,6 +7,17 @@ ID. Notifications and control have separate switches. Replacing credentials
 disables control. Credentials and the user/chat allowlist stay in the root-only
 notification authority and are excluded from portable backups.
 
+The operator must first open the bot's private chat and press Start. Test delivery
+then verifies that the configured chat is reachable. When Telegram is blocked on
+the router's direct connection, set `XKEEN_CONTROL_TELEGRAM_SOCKS_ADDR` in the
+panel service environment to the existing native Xray numeric loopback SOCKS
+endpoint (for example `127.0.0.1:5310`). Restart only the panel. Both notifications
+and the control receiver use this transport; there is no direct fallback or
+environment-proxy discovery. Public Telegram destination validation and TLS
+verification remain mandatory. XKeen scripts, router interception and Xray
+configuration are unchanged. With Xray unavailable, this VPN transport is also
+unavailable; Telegram is not an independent outage notification channel.
+
 | Command | Behavior |
 | --- | --- |
 | `/help` | Show the fixed command list. |
@@ -16,8 +27,11 @@ notification authority and are excluded from portable backups.
 | `/refresh` | Queue enabled subscriptions on the existing bounded refresher. |
 
 Commands take no arguments. Only fresh ordinary messages from the configured
-user in the configured chat are accepted (120-second TTL). Forwarded messages,
-anonymous senders, bots, edited messages and other command text are ignored.
+user in the configured chat are accepted (120-second TTL).
+Messages may be at most five seconds ahead of the router clock to tolerate small
+clock differences; larger future timestamps remain rejected.
+Forwarded messages, anonymous senders, bots, edited messages and other command
+text are ignored.
 Startup/credential changes discard queued commands using a nonblocking backlog
 read before normal long polling. The [Telegram Bot API](https://core.telegram.org/bots/api#getupdates)
 offset then advances in RAM and resets after an idle freshness window, so a new

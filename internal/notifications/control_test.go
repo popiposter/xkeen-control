@@ -63,6 +63,47 @@ func TestControlAuthenticatesFreshExactCommands(t *testing.T) {
 		t.Fatal("fixed refresh unavailable")
 	}
 }
+func TestControlClockSkewBoundaries(t *testing.T) {
+	_, value, _ := controlFixture(t)
+	now := time.Unix(1000, 0)
+	for _, test := range []struct {
+		delta    int64
+		accepted bool
+	}{{-121, false}, {-120, true}, {0, true}, {2, true}, {5, true}, {6, false}} {
+		u := updateFixture(t, 10, "/status")
+		u.Message.Date = now.Unix() + test.delta
+		if got := botCommand(u, value, now) == StatusCommand; got != test.accepted {
+			t.Fatalf("clock delta %d: accepted=%v", test.delta, got)
+		}
+	}
+}
+
+func TestControlRepliesWithRouterClockBehindTelegram(t *testing.T) {
+	s, value, epoch := controlFixture(t)
+	sends := 0
+	s.transport.client.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+		var body struct {
+			Text string `json:"text"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Text != controlText(StatusCommand, Running) {
+			t.Fatal("incorrect status reply")
+		}
+		sends++
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"ok":true}`))}, nil
+	})
+	u := updateFixture(t, 10, "/status")
+	u.Message.Date += 2
+	s.consume(context.Background(), value, epoch, u, func(context.Context, Command) ControlResult { return Running })
+	persisted, state := readAuthority(s.path)
+	if sends != 1 || state != "configured" || persisted.LastUpdateID != u.ID {
+		t.Fatal("fresh command lost instead of replied")
+	}
+	s.consume(context.Background(), value, epoch, u, func(context.Context, Command) ControlResult { t.Fatal("command replayed"); return Unknown })
+	if sends != 1 {
+		t.Fatal("reply replayed")
+	}
+}
+
 func TestControlPersistsBeforeEffectAndNeverReplaysAcrossRestart(t *testing.T) {
 	s, value, epoch := controlFixture(t)
 	calls := 0

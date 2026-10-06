@@ -78,7 +78,9 @@ type botUpdate struct {
 
 func botCommand(update botUpdate, value authority, now time.Time) Command {
 	m := update.Message
-	if update.ID <= 0 || update.ID >= 1<<63-1 || m == nil || m.From.Bot || len(m.Forward) != 0 || len(m.SenderChat) != 0 || strconv.FormatInt(m.From.ID, 10) != value.AllowedUserID || strconv.FormatInt(m.Chat.ID, 10) != value.ChatID || m.Date > now.Unix() || now.Unix()-m.Date > 120 {
+	// Telegram and router clocks need not agree to the second. Small positive
+	// skew must not discard a live long-poll command as a future message.
+	if update.ID <= 0 || update.ID >= 1<<63-1 || m == nil || m.From.Bot || len(m.Forward) != 0 || len(m.SenderChat) != 0 || strconv.FormatInt(m.From.ID, 10) != value.AllowedUserID || strconv.FormatInt(m.Chat.ID, 10) != value.ChatID || m.Date > now.Unix()+5 || now.Unix()-m.Date > 120 {
 		return ""
 	}
 	switch Command(m.Text) {
@@ -185,7 +187,10 @@ func (s *Service) consume(ctx context.Context, snapshot authority, epoch uint64,
 // A fresh receiver drops queued commands before listening. Poll offsets live in
 // RAM; only accepted operator commands cause a bounded persistent watermark write.
 func (s *Service) RunControl(ctx context.Context, handler ControlHandler) {
-	poller := newTelegramWithTimeout(25 * time.Second)
+	poller, err := newTelegramWithSOCKS(25*time.Second, s.socksAddress)
+	if err != nil {
+		return // Constructor validates the endpoint; never fall back to direct.
+	}
 	var token, chat, user string
 	var generation uint64
 	offset := int64(-1)

@@ -79,9 +79,20 @@ type Service struct {
 	transport    *telegram
 	status       Status
 	controlEpoch uint64
+	socksAddress string
 }
 
 func NewService() *Service { return &Service{path: DefaultPath, transport: newTelegram()} }
+
+// NewServiceWithSOCKS opts Telegram delivery and control into the same native
+// loopback SOCKS transport. Empty address preserves direct transport.
+func NewServiceWithSOCKS(address string) (*Service, error) {
+	transport, err := newTelegramWithSOCKS(requestTimeout, address)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{path: DefaultPath, transport: transport, socksAddress: address}, nil
+}
 
 // NewServiceForTest selects only a synthetic local authority, never a provider URL.
 func NewServiceForTest(path string) *Service { return &Service{path: path, transport: newTelegram()} }

@@ -201,7 +201,11 @@ func main() {
 	})
 	collector.SetBuildInfo(buildinfo.Current())
 	updateManager := panelupdate.NewManager(panelupdate.Config{Current: buildinfo.Current(), Lifecycle: panelLifecycle})
-	notificationService := notifications.NewService()
+	notificationService, err := notifications.NewServiceWithSOCKS(os.Getenv("XKEEN_CONTROL_TELEGRAM_SOCKS_ADDR"))
+	if err != nil {
+		log.Print("invalid Telegram loopback SOCKS configuration")
+		os.Exit(2)
+	}
 	panelNotifyScheduler := panelupdate.NewNotifyScheduler(panelupdate.NotifySchedulerConfig{
 		Manager: updateManager,
 		Send:    notificationService.Send,
