@@ -18,7 +18,7 @@ Measure each diagnostic candidate through its fixed Xray probe route. Stock XKee
 
 - REQ-001: Sample up to 12 successful enabled candidates in fresh Observatory RTT order, within max(300ms,2*bestRTT), capped at750ms; allow18 attempts and select6.
 - REQ-002: Measure idle median/p95/jitter, loaded download/upload latency/jitter, repeated throughput median/p10/p90, request failures and sample counts. Missing metrics are unavailable, never zero loss.
-- REQ-003: Exclude warm-up from throughput; use repeated size ramp-up. Per-node ceiling72MiB/60s; whole run864MiB/720s plus3s cleanup. Failed transfers consume budget.
+- REQ-003: Exclude warm-up from throughput; use repeated size ramp-up with provider-accepted blocks up to8MiB. Per-node ceiling72MiB/60s; whole run864MiB/720s plus3s cleanup. Failed transfers consume budget; expose only safe phase/code/HTTP status diagnostics.
 - REQ-004: Run detailed diagnostics every6h and after successful subscription refresh, including no-op. Coalesce refreshes for2min; minimum1h between automatic starts, including manual starts. Busy/pending retries10min.
 - REQ-005: Penalize failures, jitter, loaded-delay growth and throughput variability. Throughput benefit saturates above100Mbps down/30Mbps up. Keep native leastLoad selection/failover and explicit Apply.
 - SEC-001: Fixed provider URLs, isolated probe route, bounded RAM results; no raw errors, secrets, arbitrary endpoints, UDP-loss claim or live service restart during measurement.
@@ -32,10 +32,10 @@ Measure each diagnostic candidate through its fixed Xray probe route. Stock XKee
 
 | Task | Description | Completed | Date |
 | --- | --- | --- | --- |
-| TASK-001 | Add internal/c1/detailed_quality.go with bounded repeated transfers and concurrent latency probes; integrate AdaptiveRunner only for native broad samples | No | |
-| TASK-002 | Extend secretless candidate metrics and native_quality.go costs | No | |
-| TASK-003 | Change internal/nativequality/schedule.go refresh coalescing and detailed scheduled runs | No | |
-| TASK-004 | Update web/src/native-quality.jsx metrics, budget, schedule and explanatory details | No | |
+| TASK-001 | Add internal/c1/detailed_quality.go with bounded repeated transfers and concurrent latency probes; integrate AdaptiveRunner only for native broad samples | Yes | 2026-10-06 |
+| TASK-002 | Extend secretless candidate metrics and native_quality.go costs | Yes | 2026-10-06 |
+| TASK-003 | Change internal/nativequality/schedule.go refresh coalescing and detailed scheduled runs | Yes | 2026-10-06 |
+| TASK-004 | Update web/src/native-quality.jsx metrics, budget, schedule and explanatory details | Yes | 2026-10-06 |
 
 ### Implementation Phase 2
 

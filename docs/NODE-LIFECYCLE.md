@@ -72,7 +72,7 @@ the global best among unmeasured nodes.
 Existing bounded diagnostics temporarily target each candidate and clean their
 owned temporary diagnostic state; they do not replace the production selection.
 Detailed diagnostics warm up download and upload with1MiB each, then measure8 idle
-HTTP response delays. Download repeats4MiB three times, then16MiB twice; upload
+HTTP response delays. Download repeats4MiB three times, then8MiB four times; upload
 repeats2MiB three times, then8MiB twice. After three measurements a direction stops
 if the latest transfer lasted>=1s. A candidate has a72MiB reservation and60s deadline;
 the generation has864MiB/720s plus existing3s cleanup. Failed transfers reserve the

@@ -11,6 +11,9 @@ import (
 // QualityMetrics describes HTTP response timings through the isolated outbound.
 // Request failure ratio is deliberately not called UDP packet loss.
 type QualityMetrics struct {
+	FailureCode     string              `json:"failureCode,omitempty"`
+	FailurePhase    string              `json:"failurePhase,omitempty"`
+	HTTPStatus      int                 `json:"httpStatus,omitempty"`
 	Idle            LatencyDistribution `json:"idle"`
 	DownloadLatency LatencyDistribution `json:"downloadLatency"`
 	UploadLatency   LatencyDistribution `json:"uploadLatency"`
@@ -87,6 +90,7 @@ func (e *adaptiveExecution) runDetailed(ctx context.Context) error {
 	}
 	m := &QualityMetrics{}
 	e.metrics = m
+	m.FailurePhase = "warm-up"
 	// Warm up each direction; these bytes count but rates do not.
 	for _, transfer := range []func(context.Context, int64) (ManualTransfer, error){t.Download, t.Upload} {
 		if _, err := e.detailedTransfer(ctx, MiB, transfer); err != nil {
@@ -99,20 +103,25 @@ func (e *adaptiveExecution) runDetailed(ctx context.Context) error {
 	}
 	m.Idle = latencyDistribution(idle)
 	if len(idle) < 4 {
+		m.FailurePhase = "idle-latency"
+		m.FailureCode = "insufficient-samples"
 		return errors.New("insufficient idle samples")
 	}
 	var err error
-	m.Download, m.DownloadLatency, err = e.detailedDirection(ctx, t, []int64{4 * MiB, 4 * MiB, 4 * MiB, 16 * MiB, 16 * MiB}, t.Download)
+	m.FailurePhase = "download"
+	m.Download, m.DownloadLatency, err = e.detailedDirection(ctx, t, []int64{4 * MiB, 4 * MiB, 4 * MiB, 8 * MiB, 8 * MiB, 8 * MiB, 8 * MiB}, t.Download)
 	if err != nil {
 		return err
 	}
 	e.downloadBPS = m.Download.MedianBPS
+	m.FailurePhase = "upload"
 	m.Upload, m.UploadLatency, err = e.detailedDirection(ctx, t, []int64{2 * MiB, 2 * MiB, 2 * MiB, 8 * MiB, 8 * MiB}, t.Upload)
 	if err != nil {
 		return err
 	}
 	e.downloadBPS = m.Download.MedianBPS
 	e.uploadBPS = m.Upload.MedianBPS
+	m.FailurePhase = ""
 	return nil
 }
 
@@ -126,6 +135,14 @@ func (e *adaptiveExecution) detailedTransfer(ctx context.Context, payload int64,
 	e.metrics.Requests++
 	if err != nil || r.Bytes != payload || r.Duration <= 0 {
 		e.metrics.Failures++
+		e.metrics.FailureCode = "incomplete-transfer"
+		if stage.Err() != nil {
+			e.metrics.FailureCode = "timeout-or-cancelled"
+		}
+		if r.HTTPStatus != 0 {
+			e.metrics.FailureCode = "provider-http-status"
+			e.metrics.HTTPStatus = r.HTTPStatus
+		}
 		return r, errors.New("incomplete detailed transfer")
 	}
 	return r, nil
@@ -163,7 +180,7 @@ func (e *adaptiveExecution) detailedDirection(ctx context.Context, t ManualMeasu
 		e.metrics.Failures += local.Failures
 		points = append(points, observed...)
 		if err != nil {
-			return RateDistribution{}, latencyDistribution(points), err
+			return rateDistribution(measurements, rates, short), latencyDistribution(points), err
 		}
 		if payload != previousPayload {
 			rates = nil
@@ -179,7 +196,11 @@ func (e *adaptiveExecution) detailedDirection(ctx context.Context, t ManualMeasu
 			break
 		}
 	}
-	return RateDistribution{Measurements: measurements, Samples: len(rates), MedianBPS: percentile(rates, .5), P10BPS: percentile(rates, .1), P90BPS: percentile(rates, .9), ShortSamples: short}, latencyDistribution(points), nil
+	return rateDistribution(measurements, rates, short), latencyDistribution(points), nil
+}
+
+func rateDistribution(measurements []DetailedTransferSample, rates []float64, short bool) RateDistribution {
+	return RateDistribution{Measurements: measurements, Samples: len(rates), MedianBPS: percentile(rates, .5), P10BPS: percentile(rates, .1), P90BPS: percentile(rates, .9), ShortSamples: short}
 }
 
 func detailedQualityPenalty(m *QualityMetrics) float64 {

@@ -63,8 +63,9 @@ type BandwidthMeasurementTransport interface {
 // measured from the local request/response path and never represent a
 // caller-supplied payload or endpoint.
 type ManualTransfer struct {
-	Bytes    int64
-	Duration time.Duration
+	HTTPStatus int
+	Bytes      int64
+	Duration   time.Duration
 }
 
 // MeasurementTransfer is the neutral name used by new internal callers. Keep
@@ -566,7 +567,7 @@ func (t *fixedMeasurementTransport) Download(ctx context.Context, payload int64)
 	defer closeTransport()
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return ManualTransfer{Duration: time.Since(started)}, errors.New("fixed download response status is not 200")
+		return ManualTransfer{Duration: time.Since(started), HTTPStatus: response.StatusCode}, errors.New("fixed download response status is not 200")
 	}
 	bytesRead, readErr := io.Copy(io.Discard, io.LimitReader(response.Body, payload))
 	duration := time.Since(started)
@@ -590,7 +591,7 @@ func (t *fixedMeasurementTransport) Upload(ctx context.Context, payload int64) (
 	defer response.Body.Close()
 	duration := time.Since(started)
 	if response.StatusCode != http.StatusOK {
-		return ManualTransfer{Duration: duration}, errors.New("fixed upload response status is not 200")
+		return ManualTransfer{Duration: duration, HTTPStatus: response.StatusCode}, errors.New("fixed upload response status is not 200")
 	}
 	responseBytes, readErr := io.Copy(io.Discard, io.LimitReader(response.Body, manualUploadResponseLimit+1))
 	if readErr != nil {

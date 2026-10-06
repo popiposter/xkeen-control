@@ -23,7 +23,7 @@ func TestDetailedWarmupAndRepeatedTransfers(t *testing.T) {
 	if err := e.runDetailed(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if e.bytes != 68*MiB || e.metrics.Idle.Samples != 8 || e.metrics.Download.Samples != 2 || e.metrics.Upload.Samples != 2 || e.metrics.Failures != 0 || len(e.metrics.Download.Measurements) != 5 || e.metrics.Download.P90BPS != e.metrics.Download.P10BPS {
+	if e.bytes != 68*MiB || e.metrics.Idle.Samples != 8 || e.metrics.Download.Samples != 4 || e.metrics.Upload.Samples != 2 || e.metrics.Failures != 0 || len(e.metrics.Download.Measurements) != 7 || e.metrics.Download.P90BPS != e.metrics.Download.P10BPS {
 		t.Fatalf("missing repeated evidence: %+v bytes=%d", e.metrics, e.bytes)
 	}
 }
@@ -33,6 +33,26 @@ func TestDetailedFailedTransferChargesFullReservation(t *testing.T) {
 	e := &adaptiveExecution{transport: stub}
 	if e.runDetailed(context.Background()) == nil || e.bytes != MiB || e.metrics.Failures != 1 {
 		t.Fatal("failed transfer not counted", e)
+	}
+}
+
+type limitedProviderTransport struct{ adaptiveTransportStub }
+
+func (s *limitedProviderTransport) Download(ctx context.Context, payload int64) (ManualTransfer, error) {
+	if payload > 8*MiB {
+		return ManualTransfer{HTTPStatus: 403}, errors.New("synthetic provider rejects large blocks")
+	}
+	return s.adaptiveTransportStub.Download(ctx, payload)
+}
+func TestDetailedProviderLimitAndSafeFailureEvidence(t *testing.T) {
+	tx := &limitedProviderTransport{adaptiveTransportStub: adaptiveTransportStub{duration: 300 * time.Millisecond, failedDownload: -1, failedUpload: -1}}
+	e := &adaptiveExecution{transport: tx}
+	if err := e.runDetailed(context.Background()); err != nil || e.metrics.Download.Samples != 4 {
+		t.Fatal("supported provider limit rejected", err, e.metrics)
+	}
+	e.metrics = &QualityMetrics{FailurePhase: "download"}
+	if _, err := e.detailedTransfer(context.Background(), 16*MiB, tx.Download); err == nil || e.metrics.HTTPStatus != 403 || e.metrics.FailureCode != "provider-http-status" {
+		t.Fatal("provider error lost", e.metrics)
 	}
 }
 
