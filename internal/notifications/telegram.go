@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/netip"
 	"time"
+
+	"golang.org/x/net/proxy"
 )
 
 const telegramHost = "api.telegram.org"
@@ -27,16 +29,47 @@ func newTelegram() *telegram {
 	return newTelegramWithTimeout(requestTimeout)
 }
 func newTelegramWithTimeout(timeout time.Duration) *telegram {
+	t, _ := newTelegramWithSOCKS(timeout, "")
+	return t
+}
+
+// Only an explicit numeric loopback SOCKS endpoint is accepted. Environment
+// proxies and direct fallback are intentionally excluded from VPN transport.
+func newTelegramWithSOCKS(timeout time.Duration, address string) (*telegram, error) {
+	dial, err := telegramTransportDial(address, net.DefaultResolver.LookupIPAddr)
+	if err != nil {
+		return nil, err
+	}
 	transport := &http.Transport{
 		Proxy:               nil, // Deliberately ignores HTTP(S)_PROXY environment variables.
-		DialContext:         telegramDial(net.DefaultResolver.LookupIPAddr, (&net.Dialer{Timeout: requestTimeout}).DialContext),
+		DialContext:         dial,
 		TLSClientConfig:     &tls.Config{ServerName: telegramHost, MinVersion: tls.VersionTLS12},
 		TLSHandshakeTimeout: requestTimeout, ResponseHeaderTimeout: timeout,
 		DisableKeepAlives: true, MaxResponseHeaderBytes: maxResponseBytes,
 	}
 	return &telegram{client: &http.Client{Transport: transport, Timeout: timeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return Error("provider-rejected") },
-	}}
+	}}, nil
+}
+
+func telegramTransportDial(address string, lookup lookupIP) (dialIP, error) {
+	dial := dialIP((&net.Dialer{Timeout: requestTimeout}).DialContext)
+	if address != "" {
+		endpoint, err := netip.ParseAddrPort(address)
+		if err != nil || !endpoint.Addr().IsLoopback() || endpoint.Addr().Zone() != "" || endpoint.Port() == 0 {
+			return nil, Error("unsafe-destination")
+		}
+		socks, err := proxy.SOCKS5("tcp", address, nil, &net.Dialer{Timeout: requestTimeout})
+		if err != nil {
+			return nil, Error("unsafe-destination")
+		}
+		contextDialer, ok := socks.(proxy.ContextDialer)
+		if !ok {
+			return nil, Error("unsafe-destination")
+		}
+		dial = contextDialer.DialContext
+	}
+	return telegramDial(lookup, dial), nil
 }
 
 func telegramDial(lookup lookupIP, dial dialIP) func(context.Context, string, string) (net.Conn, error) {

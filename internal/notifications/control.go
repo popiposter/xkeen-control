@@ -185,7 +185,10 @@ func (s *Service) consume(ctx context.Context, snapshot authority, epoch uint64,
 // A fresh receiver drops queued commands before listening. Poll offsets live in
 // RAM; only accepted operator commands cause a bounded persistent watermark write.
 func (s *Service) RunControl(ctx context.Context, handler ControlHandler) {
-	poller := newTelegramWithTimeout(25 * time.Second)
+	poller, err := newTelegramWithSOCKS(25*time.Second, s.socksAddress)
+	if err != nil {
+		return // Constructor validates the endpoint; never fall back to direct.
+	}
 	var token, chat, user string
 	var generation uint64
 	offset := int64(-1)
