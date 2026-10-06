@@ -152,7 +152,7 @@ func (s *Service) appliedRanking() []RankedNode {
 	values := map[string]float64{}
 	for _, tag := range pool {
 		for _, cost := range costs {
-			if cost.Regexp && cost.Match == "^"+regexp.QuoteMeta(tag)+"$" && cost.Value >= 1 && cost.Value <= 100 && !math.IsNaN(cost.Value) {
+			if cost.Regexp && cost.Match == "^"+regexp.QuoteMeta(tag)+"$" && cost.Value >= 1 && cost.Value <= 400 && !math.IsNaN(cost.Value) {
 				if _, exists := values[tag]; exists {
 					return nil
 				}
@@ -384,6 +384,10 @@ func (s *Service) Stage(ctx context.Context, digest string) (string, error) {
 		if selectedSet[cost.Match] {
 			selectedCosts = append(selectedCosts, cost)
 		}
+	}
+	selectedCosts, err = c1.NativeQualityPreferredCosts(selectedCosts, selected)
+	if err != nil {
+		return "", ErrUnavailable
 	}
 	strategy := struct {
 		Type     string `json:"type"`

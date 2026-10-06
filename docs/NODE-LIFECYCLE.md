@@ -113,6 +113,13 @@ navigation. The Stage API alone remains save-only.
 
 The recommendation uses leastLoad, expected1, maxRTT750ms, up to six exact tag
 costs and selectors, preserving the existing fallback; no automatic override.
+The measured leader keeps its quality cost; other selected nodes receive four
+times their measured cost (native range1–400). Ordinary RTT therefore has a
+twofold preference margin against backup nodes on the measured baseline. Quality
+scores remain measurement-only; the static preference is applied only with the
+recommendation. It is not hysteresis or a minimum hold time: substantial degradation
+can still change the winner. Dead/maxRTT filtering and fallback remain native,
+and the ordinary30s probe interval is unchanged.
 Native Xray excludes dead/noncandidate/too-slow nodes
 and orders eligible nodes by its RTT-deviation metric multiplied by sqrt(cost),
 with average RTT and health tie-breaks. Ordinary Observatory supplies delay as that

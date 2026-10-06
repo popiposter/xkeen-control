@@ -84,6 +84,23 @@ func TestStageBroadSampleRestrictsOnlySelectorAndCostsAndKeepsFutureSampleBroad(
 		t.Fatal("invalid saved JSONC")
 	}
 	selected := doc.Routing.Balancers[0].Selector
+	baseCosts, err := c1.NativeQualityCosts(result, result.CompletedAt, pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseByMatch := map[string]float64{}
+	for _, cost := range baseCosts {
+		baseByMatch[cost.Match] = cost.Value
+	}
+	for _, cost := range doc.Routing.Balancers[0].Strategy.Settings.Costs {
+		expected := baseByMatch[cost.Match]
+		if cost.Match != "^proxy-01$" {
+			expected *= 4
+		}
+		if cost.Value != expected {
+			t.Fatal("saved native preference lost", cost, expected)
+		}
+	}
 	actualOutbounds, readErr := os.ReadFile(filepath.Join(dir, "04_outbounds.json"))
 	if len(selected) != 6 || selected[0] != "proxy-01" || selected[5] != "proxy-06" || len(doc.Routing.Balancers[0].Strategy.Settings.Costs) != 6 || readErr != nil || string(actualOutbounds) != string(encoded) || !strings.Contains(after.Documents["05_routing.json"].Text, `"fallbackTag":"blocked"`) || !strings.Contains(after.Documents["05_routing.json"].Text, "/*keep*/") {
 		t.Fatal("wrong selected pool or unrelated write", selected)
