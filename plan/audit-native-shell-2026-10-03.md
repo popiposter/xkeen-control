@@ -1,3 +1,5 @@
+> Historical implementation/audit record. Current behavior and remaining work are in [plan index](README.md) and [ROADMAP](../docs/ROADMAP.md). Chronological checkpoints below are not current runtime state or permission to replay operations.
+
 # Аудит: возврат к лёгкой оболочке XKeen
 
 Дата: 2026-10-03. Авторитетное решение оператора: штатный XKeen — основа;

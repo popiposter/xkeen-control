@@ -1,123 +1,86 @@
-# xkeen-control
+<div align="center">
 
-**A lightweight control panel for Keenetic routers running XKeen + Xray.**
+# XKeen Control
 
-Manage VPN nodes and subscriptions, understand what Xray is doing, keep the active proxy stable, run bounded performance checks, and apply changes transactionally — from one small Go binary with an embedded web UI.
+### Ваш VPN на Keenetic — наглядно, в браузере
 
-> **Current release:** signed stable [v0.3.1](https://github.com/popiposter/xkeen-control/releases/tag/v0.3.1) uses stock XKeen commands and native configuration editors, with optional independent LAN DNS synchronization. See [Native contract](docs/NATIVE-XKEEN.md) and [ROADMAP](docs/ROADMAP.md). Published artifact verification and development-router acceptance are distinct from signed release installation.
+Узлы, подписки, маршрутизация и штатные команды XKeen в одной лёгкой панели.
 
-## Why this project
+[![Stable release](https://img.shields.io/github/v/release/popiposter/xkeen-control?label=stable&color=2563eb)](https://github.com/popiposter/xkeen-control/releases/latest)
+[![Platform](https://img.shields.io/badge/Keenetic-linux%2Farm64-10b981)](docs/QUICKSTART-RU.md)
+[![UI](https://img.shields.io/badge/UI-React%20%2B%20shadcn%2Fui-8b5cf6)](docs/UI-DESIGN.md)
 
-XKeen and Xray are powerful, but operating a real router usually means editing files over SSH, remembering command flags, interpreting raw runtime state and being careful not to break routing during updates.
+[Установить](#установка) · [Быстрый старт](docs/QUICKSTART-RU.md) · [Документация](docs/README.md) · [Релизы](https://github.com/popiposter/xkeen-control/releases) · [Задачи](https://github.com/popiposter/xkeen-control/issues)
 
-`xkeen-control` adds a purpose-built management layer without turning Keenetic into a general-purpose server:
+</div>
 
-- native Xray selection and failover, without a panel selection supervisor;
-- bounded speed measurements and an explicit balanced-pool recommendation;
-- typed VPN node and subscription management with preview/apply/rollback;
-- bounded diagnostics with high-churn state in RAM/`/tmp`;
-- clear runtime visibility for native, override and effective selection;
-- transactional Xray activation with validation, readiness checks and rollback;
-- signed public releases with bounded bootstrap and panel update/rollback;
-- one pre-built Go binary + embedded React UI, with no Go/Node toolchain on the router;
-- loopback or one exact trusted-LAN/management-VPN listener, never wildcard/WAN.
+---
 
-## Native ownership and capabilities
+**XKeen работает штатно. Панель работает рядом.** Она вызывает встроенные команды, помогает редактировать конфиги Xray и показывает состояние VPN. Скрипты XKeen, его установщик и расписания остаются под управлением самого XKeen.
 
-XKeen owns its installation, service, components and native update schedules. The panel invokes allowlisted native commands, showing their console output and prompts when needed; it does not patch XKeen code or replace its cron engine.
+## Что можно делать
 
-Native JSON/JSONC editors provide text and graphical modes, drafts, full Xray validation, a shared pending configuration indicator, explicit restart, discard and optional previous configuration restore. Routing includes installed geodata categories, membership search and first-match examples. Optional installed LAN DNS follows native domain routing and geodata; unchanged synchronization avoids restart. Operator-router DNS and a separate bounded Xray outage test passed; IPv6, reboot and all-provider failure remain unqualified.
+| | Возможности |
+| --- | --- |
+| 🌍 **Узлы и подписки** | Добавлять VLESS/REALITY, обновлять подписки, включать и отключать узлы, видеть страну, здоровье и результаты измерений. Ручное отключение сохраняется после обновления; WL, Россия и Беларусь выключены по умолчанию. |
+| ⚡ **Качество соединения** | Проверять скорость кандидатов с актуальной задержкой, получать сбалансированный пул до шести узлов и явно применять рекомендацию. Дальнейший выбор и failover выполняет Xray. |
+| 🧭 **Маршрутизация** | Направлять домены, IP, категории geodata и другие типы правил через VPN, напрямую или в блокировку. Искать категории в установленных базах и видеть порядок правил. |
+| 📝 **Конфиги** | Переключаться между формой и текстом с подсветкой JSON/JSONC, форматировать, отменять правки, сохранять черновик. Общий набор изменений проходит проверку Xray и применяется одним явным перезапуском. |
+| 🛠️ **Штатный XKeen** | Запускать сервисные команды, обновление компонентов и настройку расписаний. Видеть исходный консольный вывод и отвечать на интерактивные вопросы. |
+| 🛡️ **DNS** | Редактировать DNS Xray. При отдельно установленном LAN-резолвере синхронизировать доменную политику: DIRECT независимо от Xray, VPN через VPN без прямого fallback. |
+| 📦 **Перенос настроек** | Создавать зашифрованный экспорт, проверять импорт и сопоставлять интерфейсы перед применением. |
+| 🔔 **Telegram** | Подключать уведомления и ограниченное управление для одного разрешённого пользователя и чата. |
 
-`/opt/etc/xkeen-control/secrets/nodes.json` stores VPN nodes and subscriptions privately. Only managed outbounds are generated from it; unrelated native fields and outbounds are preserved. Enabled subscriptions refresh periodically. Manually disabled nodes remain disabled on refresh; WL, Russia and Belarus profiles default to disabled. Native Xray remains the selection owner; panel adaptive overrides are disabled.
+Светлая и тёмная темы, адаптивный интерфейс, запоминаемая авторизация. На роутере — один готовый Go-бинарник со встроенным интерфейсом; Go, Node и Docker там не нужны.
 
-The manual speed test samples up to 12 healthy enabled nodes within a current latency threshold, replacing failed attempts with the next eligible node (18 attempts / 288 MiB / six minutes maximum). It recommends up to six balanced nodes. Apply recommendation saves the pool through the native editor and restarts XKeen once; success requires independent applied-state readback. A subscription/configuration change invalidates an older recommendation. A ranking is not a persistent pin: Xray continues choosing using live health and configured weights.
+## Установка
 
-Portable encrypted configuration transfer supports validation, explicit interface mapping and staging without automatic restart. Telegram notifications and restricted single-user native commands are optional and disabled until configured. Actual bot credentials and second-router transfer acceptance are separate from local fixture evidence.
+Нужны **Keenetic с `linux/arm64`, Entware в `/opt` и уже установленный штатный XKeen с Xray**. Сначала установите XKeen его официальным способом и проверьте обычную работу. Панель не устанавливает и не исправляет его компоненты самостоятельно.
 
-The panel keeps authentication, origin/CSRF protection, bounded private data handling and its signed self-updater. No Go/Node toolchain runs on the router.
-
-## Installation
-
-Stable `v0.3.1` is published and independently signature/asset verified. Install stock XKeen through its official installation procedure first, then install the panel alongside it. The panel never patches XKeen or installs a second component updater. Upgrading historical appliance panel generations is outside the native contract. Optional independent LAN DNS requires its separately configured resolver and router DNS profile; the panel does not install them automatically.
-
-For an Entware/Open Package-ready `linux/arm64` Keenetic, the published release-specific installer is:
+Установка опубликованного стабильного **0.3.1**:
 
 ```sh
 sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.3.1/install.sh)"
 ```
 
-The installer is bounded: it never performs blanket `opkg upgrade`, never installs/repairs XKeen or Xray, and preserves existing auth/listener/node/Xray/XKeen/routing/DNS/Observatory state. Missing XKeen/Xray/configuration is reported as Setup Mode rather than triggering an opaque upstream installer.
+Первый пароль панели генерируется и выводится в терминал установщика. Панель по умолчанию слушает `127.0.0.1:8787`. Для первого входа можно открыть SSH-туннель с компьютера:
 
-Existing managed installs use the installed binary's pinned-signature self-update path. The qualified legacy C.1 install has a narrow fingerprint-gated adoption path; historical `v0.1.1` was production-qualified through legacy → adoption → exact rollback → re-adoption. Current signed `v0.2.0` adds the qualified D.1 typed appliance adoption and backup/restore boundary.
-
-For the native generation, see [Native contract](docs/NATIVE-XKEEN.md). [Releases](docs/RELEASES.md), [Operations](docs/OPERATIONS.md) and [Fresh Keenetic](docs/FRESH-KEENETIC.md) retain explicitly historical qualification records.
-
-The historical repository `popiposter/xkeen-keenetic` is private quarantine/history only. `popiposter/xkeen-control` is the public source/release authority; ordinary qualification runs locally and the protected manual GitHub workflow is reserved for releases. Old Git history must never be imported here.
-
-## Product roadmap
-
-| Slice | Goal |
-| --- | --- |
-| **D / #2 — done** | Public signed releases, one-command bootstrap, setup mode, transactional panel self-update/rollback |
-| **D.1 / #3 — done** | Production-qualified local typed appliance state, portable backup/import/export, optional encrypted VPN-secret backup |
-| **D.2 / #4 — source-only** | Component lifecycle, bounded policy and typed Setup source delivered; not deployed |
-| **D.3 / #5 — done source-only** | Routing, DNS/Observatory, bounded Performance, System/Panel and final Dashboard integration are complete in source; not deployed |
-| **E / #99 — active source work** | Outbound notifications, management-VPN guidance and final private-management attack-surface hardening |
-
-The authoritative sequence is always [ROADMAP.md](docs/ROADMAP.md).
-
-## Security model
-
-This repository and public releases are **secretless**. Router-specific credentials remain local. Never put production VLESS URLs, UUIDs, REALITY key material, subscription tokens, passwords, SSH credentials or secret-bearing backups into issues, PRs, qualification logs or release artifacts.
-
-The panel is for trusted management access only; direct WAN exposure and generic shell/file-manager APIs are out of scope.
-
-Read [SECURITY.md](SECURITY.md) before production or release work.
-
-## Development
-
-The fast proportional local check is:
-
-```powershell
-pwsh -NoProfile -File scripts/dev-check.ps1
+```sh
+ssh -L 8787:127.0.0.1:8787 root@<адрес-роутера>
 ```
 
-The final exact-HEAD local gate for code/build changes is:
+Затем откройте **http://localhost:8787**. Для постоянного доступа настройте один доверенный LAN-адрес панели. Не публикуйте её в WAN.
 
-```powershell
-pwsh -NoProfile -File scripts/dev-check.ps1 -Full
+> Установщик относится к панели. Независимый LAN DNS требует отдельно настроенного резолвера и DNS-профиля Keenetic. Старые appliance/takeover-установки не входят в текущий контракт совместимости.
+
+## Первые пять минут
+
+1. **Добавьте подписку или ключи** в Nodes. Проверьте включённые узлы.
+2. **Настройте правила** в Routing и DNS. Сохраните конфиги и примените общий набор изменений.
+3. **Запустите тест скорости**. Он проверяет расширенную выборку, а не только действующий пул; примените свежую рекомендацию, если результат подходит.
+4. **Проверьте Overview**: сервисы, активный пул и текущее состояние соединения.
+5. **Сохраните зашифрованную копию** перед дальнейшими настройками.
+
+Рейтинг теста не закрепляет первый узел навсегда. Xray продолжает выбирать внутри применённого пула по живому состоянию и настройкам балансировки. Изменение подписок или конфигов делает старую рекомендацию неактуальной.
+
+## Как устроено
+
+```mermaid
+flowchart LR
+    Browser[Браузер] --> Panel[XKeen Control]
+    Panel --> Commands[Штатные команды XKeen]
+    Panel --> Config[Конфиги Xray]
+    Commands --> XKeen[XKeen: сервисы и обновления]
+    Config --> Xray[Xray: маршрутизация и выбор узла]
+    XKeen --> Xray
 ```
 
-It covers the current Go tests/vet/race checks, frontend install/check/build/audit, Linux `arm64` build and host diff hygiene. See [Development](docs/DEVELOPMENT.md).
+Выключение панели не выключает работающий Xray. Обновление подписок и синхронизация DNS, которые выполняет панель, возобновляются при её запуске; DNS-резолвер продолжает обслуживать последний успешный набор правил.
 
-Agents should start at [AGENTS.md](AGENTS.md).
+## Документация и развитие
 
-## Documentation
+Начните с [быстрого старта](docs/QUICKSTART-RU.md) или [каталога документации](docs/README.md). Для разработчиков: [сборка и проверки](docs/DEVELOPMENT.md), [архитектура](docs/ARCHITECTURE.md), [план развития](docs/ROADMAP.md).
 
-| Need | Read |
-| --- | --- |
-| Architecture / invariants | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| Roadmap / sequencing | [docs/ROADMAP.md](docs/ROADMAP.md) |
-| Control-plane runtime/API | [docs/CONTROL-PLANE.md](docs/CONTROL-PLANE.md) |
-| Releases/bootstrap/update | [docs/RELEASES.md](docs/RELEASES.md) |
-| Build/test | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) |
-| Production operations | [docs/OPERATIONS.md](docs/OPERATIONS.md) |
-| Fresh router / restore | [docs/FRESH-KEENETIC.md](docs/FRESH-KEENETIC.md) |
-| Security | [SECURITY.md](SECURITY.md) |
-| Agent workflow | [AGENTS.md](AGENTS.md) |
+Стабильный 0.3.1 опубликован после ревью, полного прогона 106 браузерных тестов и независимой проверки семи подписанных файлов. Проверки публикации и development-установки не означают, что подписанный 0.3.1 уже установлен на операторском роутере. Оставшиеся аппаратные проверки вынесены в отдельные [задачи](docs/ROADMAP.md).
 
-Detailed implementation architecture lives in the active GitHub issue rather than being duplicated across every document.
-
-## Private management
-
-Use an operator-managed VPN to the router or an SSH tunnel to the loopback
-listener for remote administration. A management VPN/private interface must use
-one exact server-listed private IPv4 or ULA IPv6 address. Connect with that numeric
-address and the listener port; bracket IPv6. `localhost` with the same port is
-accepted only for a loopback listener (for example, an SSH tunnel on port 8787).
-An omitted HTTP port is valid only when the listener actually uses port 80.
-
-Never bind directly to WAN or open a WAN firewall rule. Hostname/wildcard binds
-are unavailable. VPN, firewall and DDNS configuration remain operator-managed;
-the panel offers read-only guidance and no automation for these facilities.
-This source hardening does not change the production-qualified `v0.2.0` baseline.
+Нашли проблему? [Создайте issue](https://github.com/popiposter/xkeen-control/issues/new) с версией, шагами и обезличенной ошибкой. Не прикладывайте ссылки подписок, VPN-ключи, пароли, приватные консольные логи или архивы настроек. Подробнее — [SECURITY.md](SECURITY.md).

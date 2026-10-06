@@ -1,6 +1,6 @@
 # Security
 
-> **Active implementation:** [Native XKeen contract](docs/NATIVE-XKEEN.md) governs Issue #121 on clean Entware. Older panel migration/recovery compatibility is not required. Historical behavior below is not the new installation authority.
+> **Current product:** [Native XKeen contract](docs/NATIVE-XKEEN.md) governs the delivered native-shell generation. Legacy D.1/appliance adoption sections below retain historical security contracts; they are not current APIs or installation procedures. General secret, management, authentication, release and private-console boundaries remain active.
 
 `xkeen-control` is designed so the source repository, issues/PRs, qualification logs and release artifacts can be public **without containing router credentials**.
 

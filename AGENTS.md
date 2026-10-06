@@ -1,13 +1,13 @@
 # AGENTS.md
 
-> **Active implementation:** [Native XKeen contract](docs/NATIVE-XKEEN.md) governs Issue #121 on clean Entware. Older panel migration/recovery compatibility is not required. Historical behavior below is not the new installation authority.
+> **Current product:** [Native XKeen contract](docs/NATIVE-XKEEN.md) governs the delivered native-shell generation. Stable v0.3.1 is published; remaining hardware acceptance is tracked in [ROADMAP](docs/ROADMAP.md). Historical appliance migration/recovery is not current installation authority.
 
 > **2026-10-03 operator revision:** XKeen code stays unmodified. Use its supported
 > commands and edit native configuration only. No dispatcher/init/hook/module
 > patches, native admission/profile workers or second component updater. Follow
 > [v2 plan](plan/architecture-native-shell-v2.md); the panel lease serializes only
-> panel operations, not external CLI/cron. Historical D.1 appliance authority below
-> does not govern the new native config editors.
+> panel operations, not external CLI/cron. Historical D.1 appliance authority in
+> archived documentation does not govern native config editors.
 
 This is the mandatory entry point for coding/review agents in this repository.
 
@@ -43,7 +43,7 @@ If code, issue and an authority document conflict, stop broad implementation, de
 
 - Git, public issues/PRs, qualification logs and release artifacts are secretless. Never commit or print production VLESS URLs, UUIDs, REALITY keys, short IDs, subscription URLs/tokens, passwords, SSH credentials or secret-bearing backups.
 - `/opt/etc/xkeen-control/secrets/nodes.json` is the authoritative production node/subscription registry. Active `04_outbounds.json` is generated runtime output, not a second authority.
-- After a successful typed D.1 `appliance adopt`, `/opt/etc/xkeen-control/config/appliance.json` is the local authority for supported non-secret appliance policy; deterministic managed `02_dns.json`, `05_routing.json` and `07_observatory.json` derive from it, while `04_outbounds.json` derives from `/opt/etc/xkeen-control/secrets/nodes.json`. Before adoption, an existing router retains the explicit repository-derived/legacy policy boundary; adoption must prove compatibility and fail closed on unknown/manual drift. Node-only mutations must not silently regenerate unrelated appliance policy.
+- Native configuration files are edited through fixed data-config IDs and full Xray validation. There is no active appliance-policy twin or takeover path. Managed outbounds derive from the private node registry; preserve unrelated native configuration. Node-only mutations must not silently regenerate routing/DNS/other policy.
 - High-churn/transient state belongs in RAM or `/tmp`; persistent router writes must be explicit and bounded.
 - No generic shell, PTY, command runner, file manager or arbitrary raw-config API.
   The active native contract permits an authenticated command-bound console for
@@ -122,4 +122,4 @@ Confirm the issue is closed/completed, update `docs/ROADMAP.md` and master issue
 
 ## 8. Current direction
 
-Do not memorize sequencing from this file; `docs/ROADMAP.md` is the sole sequencing/status authority. Distinguish source-only delivered slices from the production-qualified `v0.2.0` generation.
+Do not memorize sequencing from this file; `docs/ROADMAP.md` is the sole sequencing/status authority. Distinguish source/local, development-router, public-release and signed-installation evidence. Historical v0.2.0 qualification never implies acceptance of the current generation.

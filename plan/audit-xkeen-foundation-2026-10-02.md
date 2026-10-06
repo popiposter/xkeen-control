@@ -1,3 +1,5 @@
+> Historical implementation/audit record. Current behavior and remaining work are in [plan index](README.md) and [ROADMAP](../docs/ROADMAP.md). Chronological checkpoints below are not current runtime state or permission to replay operations.
+
 # Аудит: панель поверх штатного XKeen
 
 Дата: 2026-10-02. Исследованный исходник панели: `8adff1e00e89515b37aac1d7d6e7e1df924a9143` (beta.5). Это аудит и предложение изменения архитектуры, не отчёт о готовой переработке или успешно установленном VPN.

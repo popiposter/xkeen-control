@@ -1,3 +1,5 @@
+> Historical implementation/audit record. Current behavior and remaining work are in [plan index](README.md) and [ROADMAP](../docs/ROADMAP.md). Chronological checkpoints below are not current runtime state or permission to replay operations.
+
 # Unified panel UI and native configuration forms
 
 Issue121 / existing Draft PR122. Operator requested an audit of every screen,

@@ -1,6 +1,6 @@
 # Native XKeen contract — graphical shell
 
-Active Issue #121 contract, revised by the operator on 2026-10-03.
+Current native contract, revised by the operator on 2026-10-03 and delivered through Issue #121. Stable0.3.1 is published; remaining acceptance is tracked in [ROADMAP](ROADMAP.md).
 The [v2 implementation plan](../plan/architecture-native-shell-v2.md) and
 [source audit](../plan/audit-native-shell-2026-10-03.md) replace the earlier
 native admission/update architecture. Old qualification records remain historical.

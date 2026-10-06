@@ -1,3 +1,5 @@
+> Historical implementation/audit record. Current behavior and remaining work are in [plan index](README.md) and [ROADMAP](../docs/ROADMAP.md). Chronological checkpoints below are not current runtime state or permission to replay operations.
+
 # Test, build and release audit
 
 Scope: Issue121, scripts at b6cfef5. Independent review by a separate reviewer;

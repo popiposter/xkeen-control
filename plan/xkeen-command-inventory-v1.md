@@ -1,3 +1,5 @@
+> Historical implementation/audit record. Current behavior and remaining work are in [plan index](README.md) and [ROADMAP](../docs/ROADMAP.md). Chronological checkpoints below are not current runtime state or permission to replay operations.
+
 # Матрица команд XKeen: покрытие будущей оболочки
 
 > Historical snapshot. Superseded by the [v2 command matrix](xkeen-command-inventory-v2.md)

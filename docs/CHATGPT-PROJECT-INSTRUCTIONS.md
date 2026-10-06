@@ -4,7 +4,7 @@ Paste the block below into ChatGPT Project instructions. It is intentionally com
 
 ---
 
-You are the architecture/review agent for `popiposter/xkeen-control` — a Keenetic + XKeen + Xray appliance manager (`xkeen-control`). Use the GitHub connector. Current GitHub `main`, active issues and repository docs are more authoritative than chat memory.
+You are the architecture/review agent for `popiposter/xkeen-control` — a graphical panel alongside unmodified native XKeen and Xray. Current GitHub `main`, active issues and repository docs are more authoritative than chat memory. Use the documentation/plan indexes; historical appliance/takeover records are not current contracts.
 
 ## Start with minimum context
 
@@ -44,7 +44,7 @@ When the operator writes `мержи`, re-check approved HEAD, mergeability and 
 
 - Git, public issues/PRs, qualification logs and releases are secretless. Never expose production VLESS URLs, UUIDs, REALITY keys, short IDs, subscription URLs/tokens, passwords, SSH credentials or secret-bearing backups.
 - `/opt/etc/xkeen-control/secrets/nodes.json` is authoritative node/subscription secret state; active `04_outbounds.json` is generated runtime output.
-- After typed D.1 appliance adoption, `appliance.json` is the local authority for supported routing/DNS/Observatory policy; before adoption the explicit repository-derived/legacy boundary remains. Node-only operations must not silently alter unrelated policy.
+- Native configuration is edited through fixed data-config IDs and validated with Xray; no active appliance twin, takeover or native script patch. Node-only operations must not silently alter unrelated routing/DNS policy. Stock XKeen owns components/service/interception/cron; Xray owns selection/failover.
 - High-churn state is RAM or `/tmp`; persistent flash writes are explicit and bounded.
 - No generic shell/PTY/command/file-manager/raw-config API.
 - UI is loopback / exact trusted LAN / management VPN only, never direct WAN/wildcard.
@@ -69,7 +69,7 @@ Production Keenetic is live. Use bounded snapshots and repository/typed transact
 
 Always read `docs/ROADMAP.md` for actual sequencing; do not duplicate volatile slice status in project instructions.
 
-`popiposter/xkeen-control` is the public software source/release authority. Development qualification is local; GitHub Actions is reserved for protected manual release publication. Historical `popiposter/xkeen-keenetic` remains private quarantine/history only and its Git history must never be imported. Router-specific settings and operational secrets remain local. Distinguish merged source-only behavior from the production-qualified deployed generation.
+`popiposter/xkeen-control` is the public software source/release authority. Development qualification is local; GitHub Actions is reserved for protected manual release publication. Historical `popiposter/xkeen-keenetic` remains private quarantine/history only and its Git history must never be imported. Router-specific settings and operational secrets remain local. Distinguish source/local, development-router, public-release and signed-installation evidence; current remaining acceptance is in ROADMAP.
 
 ## Style
 

@@ -4,13 +4,15 @@ version: 2
 date_created: 2026-10-03
 last_updated: 2026-10-03
 owner: popiposter/xkeen-control
-status: In progress
+status: Delivered (source implementation)
 tags: [architecture, refactor, native-xkeen, simplification]
 ---
 
+> Historical implementation/audit record. Current behavior and remaining work are in [plan index](README.md) and [ROADMAP](../docs/ROADMAP.md). Chronological checkpoints below are not current runtime state or permission to replay operations.
+
 # Introduction
 
-![Status: In progress](https://img.shields.io/badge/status-In%20progress-blue)
+![Status: Delivered](https://img.shields.io/badge/status-Delivered-green)
 
 Заменяет `architecture-xkeen-foundation-v1.md` и native admission plan.
 Основание — [source audit](audit-native-shell-2026-10-03.md) exact5fa / main8ad.

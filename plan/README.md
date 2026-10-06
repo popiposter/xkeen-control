@@ -1,0 +1,20 @@
+# Plans and implementation records
+
+Current sequencing is [ROADMAP](../docs/ROADMAP.md), not the latest paragraph of an old implementation log.
+
+## Delivered / reference
+
+| Document | Status |
+| --- | --- |
+| [Native shell v2](architecture-native-shell-v2.md) | Source implementation delivered in stable0.3.x; chronological checkpoints historical, remaining hardware acceptance #133–135 |
+| [Native command matrix](xkeen-command-inventory-v2.md) | Upstream-pinned reference; installed feature discovery still applies |
+| [Native quality](native-quality-selection.md) | Delivered expanded-sample/recommendation specification; Xray owns selection |
+| [Routing workspace](feature-routing-workspace-1.md) | Completed |
+| [LAN DNS integration](feature-native-split-dns-1.md) | Completed; optional installed resolver prerequisite |
+| [Independent DNS infrastructure](infrastructure-independent-dns-1.md) | Historical operator installation/acceptance; static exports superseded by integration |
+
+## Historical / superseded
+
+Foundation v1, native admission v1, command inventory v1 and dated audits retain decision history. They do not authorize native code patches, takeover, generic repair or resuming disabled workers. UI/availability/DNS planning snapshots are superseded by current product docs where their checkpoints differ. The old evidence subtree contains synthetic/source comparison records, not current production readiness.
+
+New work gets a focused issue and updates this index only when sequencing or delivered behavior changes. Avoid accumulating a new plan for every corrective commit.
