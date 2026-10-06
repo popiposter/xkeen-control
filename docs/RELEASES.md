@@ -71,7 +71,7 @@ Release `v0.1.1` completed this flow on source `8f15246099538426ef08163b832c3aa6
 
 `scripts/install.sh` requires root, `/opt`, Entware `opkg`, `linux/arm64` and bounded free space. It installs only explicitly missing prerequisites, never performs blanket `opkg upgrade`, never changes node/Xray/XKeen/routing/DNS/Observatory policy and never automates the upstream interactive component installer. Missing XKeen/Xray/configuration is a healthy Setup Mode state.
 
-The currently qualified release-specific invocation is:
+The published release-specific invocation is:
 
 ```sh
 sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.3.1/install.sh)"

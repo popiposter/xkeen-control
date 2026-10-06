@@ -40,7 +40,7 @@ The panel keeps authentication, origin/CSRF protection, bounded private data han
 
 Stable `v0.3.1` is published and independently signature/asset verified. Install stock XKeen through its official installation procedure first, then install the panel alongside it. The panel never patches XKeen or installs a second component updater. Upgrading historical appliance panel generations is outside the native contract. Optional independent LAN DNS requires its separately configured resolver and router DNS profile; the panel does not install them automatically.
 
-For an Entware/Open Package-ready `linux/arm64` Keenetic, the currently production-qualified release-specific installer is:
+For an Entware/Open Package-ready `linux/arm64` Keenetic, the published release-specific installer is:
 
 ```sh
 sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.3.1/install.sh)"

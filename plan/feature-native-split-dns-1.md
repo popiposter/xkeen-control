@@ -4,13 +4,13 @@ version: 1
 date_created: 2026-10-06
 last_updated: 2026-10-06
 owner: xkeen-control
-status: 'In progress'
+status: 'Completed'
 tags: [feature, dns, native]
 ---
 
 # Introduction
 
-![Status: In progress](https://img.shields.io/badge/status-In%20progress-yellow)
+![Status: Completed](https://img.shields.io/badge/status-Completed-green)
 
 Issue #125 integrates the already-installed standard mosdns resolver. XKeen remains unmodified; the panel derives DNS domain data from native configuration and installed geodata. Source baseline is main `8140c9cda51ca9bf703d3a7965f4595f2c69445a`. Earlier live resolver qualification is recorded in Draft PR124; this plan does not replay its installation or outage test.
 
