@@ -794,3 +794,9 @@ change implies a release, router access or live qualification.
 - Build/test: [`DEVELOPMENT.md`](DEVELOPMENT.md)
 - Production operations: [`OPERATIONS.md`](OPERATIONS.md)
 - Security: [`../SECURITY.md`](../SECURITY.md)
+
+## Independent LAN DNS status
+
+Issue #125 adds authenticated `GET /api/v1/dns/split` with sanitized state, process/readiness confirmation, entry/conditional-rule counts, last synchronization and a fixed safe message. `POST /api/v1/dns/split/sync` requires session, CSRF and exactly an empty JSON object; it uses the shared panel lease and a 40-second bound. No arbitrary file, URL or command arguments are accepted. Absent optional resolver reports `unconfigured`; unsupported or interrupted installed integration reports attention required.
+
+The DNS section separates LAN DNS status from internal Xray configuration. Saved pending settings keep the active DNS generation until verified Apply. Synchronization is also triggered by successful native jobs and bounded source-change observation; it never replays a native command. See the [native contract](NATIVE-XKEEN.md#optional-independent-lan-dns-integration-issue-125).

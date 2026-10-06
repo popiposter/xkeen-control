@@ -3,6 +3,7 @@
 package xkeen
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"github.com/popiposter/xkeen-control/internal/authority"
@@ -179,6 +180,38 @@ func TestNativeJobExitPreservesBackgroundService(t *testing.T) {
 			data, err := os.ReadFile(marker)
 			if err != nil || string(data) != "survived" {
 				t.Fatalf("background service signalled: %q %v", data, err)
+			}
+		})
+	}
+}
+
+func TestNativeCompletionCallbackKeepsCommandResultAndLease(t *testing.T) {
+	for _, exit := range []string{"0", "3"} {
+		t.Run(exit, func(t *testing.T) {
+			jobs := testNativeJobs(t, "exit "+exit+"\n")
+			called := false
+			jobs.AfterCommand = func(ctx context.Context, action string) {
+				called = true
+				if action != "status" || ctx.Err() != nil {
+					t.Error("bad callback")
+				}
+				if release, err := jobs.Lease.TryAcquire(); err == nil {
+					release()
+					t.Error("native lease escaped before derived synchronization")
+				}
+				// A DNS failure is projected separately; it cannot rewrite native exit.
+			}
+			started, err := jobs.Start("owner", CommandRequest{Action: "status"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			final := waitNativeJob(t, jobs, started.ID)
+			if exit == "0" {
+				if !called || final.State != "completed" || final.ExitCode == nil || *final.ExitCode != 0 {
+					t.Fatal(final, called)
+				}
+			} else if called || final.State != "failed" {
+				t.Fatal(final, called)
 			}
 		})
 	}

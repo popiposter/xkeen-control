@@ -23,6 +23,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/performancepolicy"
 	"github.com/popiposter/xkeen-control/internal/release"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
+	"github.com/popiposter/xkeen-control/internal/splitdns"
 	panelupdate "github.com/popiposter/xkeen-control/internal/update"
 	"github.com/popiposter/xkeen-control/internal/xkeen"
 )
@@ -91,6 +92,7 @@ type Server struct {
 	nativeJobs          *xkeen.Jobs
 	nativeConfig        *xkeen.ConfigEditor
 	geodata             *geodatareader.Reader
+	splitDNS            *splitdns.Service
 	updates             panelupdate.Service
 	notifications       *notifications.Service
 	backup              BackupService
@@ -120,6 +122,7 @@ type Config struct {
 	NativeJobs        *xkeen.Jobs
 	NativeConfig      *xkeen.ConfigEditor
 	Geodata           *geodatareader.Reader
+	SplitDNS          *splitdns.Service
 	Updates           panelupdate.Service
 	Notifications     *notifications.Service
 	Backup            BackupService
@@ -133,7 +136,7 @@ func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, native: config.Native, nativeJobs: config.NativeJobs, nativeConfig: config.NativeConfig, geodata: config.Geodata, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, nativeTransfer: config.NativeTransfer, nativeQuality: config.NativeQuality, performancePolicy: config.PerformancePolicy, listener: config.Listener, transferPreviewGate: make(chan struct{}, 1)}
+	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, native: config.Native, nativeJobs: config.NativeJobs, nativeConfig: config.NativeConfig, geodata: config.Geodata, splitDNS: config.SplitDNS, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, nativeTransfer: config.NativeTransfer, nativeQuality: config.NativeQuality, performancePolicy: config.PerformancePolicy, listener: config.Listener, transferPreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +160,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/xkeen",
 		"/api/v1/xkeen/commands", "/api/v1/xkeen/jobs/start", "/api/v1/xkeen/jobs/read", "/api/v1/xkeen/jobs/input", "/api/v1/xkeen/jobs/resize", "/api/v1/xkeen/jobs/cancel", "/api/v1/xkeen/jobs/resolve", "/api/v1/xkeen/config", "/api/v1/xkeen/config/save", "/api/v1/xkeen/config/workspace", "/api/v1/xkeen/config/text", "/api/v1/xkeen/config/draft", "/api/v1/xkeen/config/document", "/api/v1/xkeen/config/example", "/api/v1/xkeen/config/save-set", "/api/v1/xkeen/config/apply", "/api/v1/xkeen/config/inspect", "/api/v1/xkeen/config/restore-saved", "/api/v1/xkeen/config/restore-previous",
 		"/api/v1/geodata", "/api/v1/geodata/query", "/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary",
+		"/api/v1/dns/split", "/api/v1/dns/split/sync",
 
 		"/api/v1/performance/policy", "/api/v1/performance/policy/preview", "/api/v1/performance/policy/apply", "/api/v1/performance/policy/cancel",
 		"/api/v1/panel/listener", "/api/v1/panel/listener/preview", "/api/v1/panel/listener/apply", "/api/v1/panel/listener/cancel",
@@ -202,6 +206,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
+	case "/api/v1/dns/split", "/api/v1/dns/split/sync":
+		s.handleSplitDNS(w, r)
 	case "/api/v1/performance/quality", "/api/v1/performance/quality/start", "/api/v1/performance/quality/stage", "/api/v1/performance/quality/apply":
 		s.handleNativeQuality(w, r)
 	case "/api/v1/xkeen/transfer/preview", "/api/v1/xkeen/transfer/stage", "/api/v1/xkeen/transfer/cancel":

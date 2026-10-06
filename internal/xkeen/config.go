@@ -26,11 +26,24 @@ type ConfigEditor struct {
 	DraftDir     string
 	ProcRoot     string
 	RegistryPath string
+	// Optional derived-data validation; never changes a running DNS service.
+	ValidateDerived func(context.Context, map[string][]byte) error
 }
 
 type ConfigSnapshot struct {
 	Digest string
 	files  map[string][]byte
+}
+
+// NativeDocuments is internal/private integration input, never a status response.
+func (s ConfigSnapshot) NativeDocuments() map[string][]byte {
+	files := map[string][]byte{}
+	for name, data := range s.files {
+		if name != registryConfigID {
+			files[name] = append([]byte(nil), data...)
+		}
+	}
+	return files
 }
 
 // Snapshot retains bounded native bytes locally; HTTP projections are typed.
