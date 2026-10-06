@@ -53,36 +53,51 @@ It is not an exact30s failover guarantee. The panel displays these native result
 
 The Performance action can start a comparison manually. A RAM-only scheduler also
 runs after10min startup and every6h. Successful manual/automatic subscription refresh
-(including no-op) requests a comparison after2min; notifications coalesce and no
-automatic start happens within6h of any previous manual/automatic comparison start.
+(including no-op) requests a detailed comparison after2min; notifications coalesce and no
+automatic start happens within1h of any previous manual/automatic comparison start.
 Busy, pending or unavailable conditions defer10min; an admitted failed measurement
-still consumes the6h slot. Maximum automatic transfer budget576MiB/day in a continuous
-run; panel restarts reset the RAM schedule. No automatic Stage, Apply, native restart
+still consumes the1h slot. A regular four-run day has a ceiling3456MiB; frequent
+subscription refreshes can request up to24runs/day, ceiling20736MiB. Actual transfer
+use is usually smaller; panel restarts reset the RAM schedule. No automatic Stage, Apply, native restart
 or override: results are a recommendation. Manual Apply recommendation uses the
 same editor and native restart job directly from the test screen.
 Eligible nodes need fresh native observations (<=2min), alive and RTT<=750ms.
-Manual tests additionally require RTT <= max(300ms, twice the lowest fresh RTT),
+Detailed tests additionally require RTT <= max(300ms, twice the lowest fresh RTT),
 capped at750ms. Sample all enabled managed outbounds, not only the current selected
 pool: up to12successful measurements /18attempts in fresh RTT/tag order. Failed
-measurements use the next eligible candidate. Automatic tests retain6successes /
-12attempts and the absolute750ms ceiling. This bounded sample is not proof of
+measurements use the next eligible candidate. Button and automatic tests share
+the same detailed measurement path. This bounded sample is not proof of
 the global best among unmeasured nodes.
 
 Existing bounded diagnostics temporarily target each candidate and clean their
 owned temporary diagnostic state; they do not replace the production selection.
-Download stages1/3/4/8MiB (max16), upload1/3/4MiB (max8),8s per stage,30s per node;
-each direction stops once a complete stage lasts>=1s. Aggregate complete byte/time
-rates require>=250ms; incomplete transfers fail. Manual tests have288MiB/360s,
-automatic tests144MiB/180s, plus existing3s cleanup. All failed bytes count. Replacements
+Detailed diagnostics warm up download and upload with1MiB each, then measure8 idle
+HTTP response delays. Download repeats4MiB three times, then8MiB four times; upload
+repeats2MiB three times, then8MiB twice. After three measurements a direction stops
+if the latest transfer lasted>=1s. A candidate has a72MiB reservation and60s deadline;
+the generation has864MiB/720s plus existing3s cleanup. Failed transfers reserve the
+entire requested payload, including upload bytes that cannot be confirmed. Replacements
 stop at that ceiling; at least two valid results may form an explicitly partial
 recommendation. The action is named Run speed test. Download then upload; do not infer packet loss from
-HTTP failures. Unique retained native observations contribute failure-frequency and
+HTTP failures. One concurrent sampler per transfer measures loaded latency, up to32
+attempts and200ms spacing, joined before diagnostic route cleanup. Timings are HTTP
+response delays through each outbound, not ICMP. A per-candidate HTTP keep-alive
+session avoids repeated handshakes after warm-up. Median/p95/jitter and sample counts
+are retained for idle/download/upload latency; throughput median/p10/p90 use repeats
+of the largest completed size, with all size/duration/rate samples available in Performance. Short
+transfer flags are retained. Missing loaded metrics stay unavailable. Unique retained native observations contribute failure-frequency and
 median absolute RTT-deviation penalties after sufficient successful observations.
 
 Rank up to six valid measured nodes by RTT * sqrt(cost), matching ordinary native
 leastLoad's tradeoff. Costs avoid double RTT weighting:
-Q = (down/bestDown)^0.75 * (up/bestUp)^0.25 / healthPenalty;
-cost = clamp(1/Q^2,1,100). The selected six receive exact tag costs and become the
+Detailed throughput saturates at100Mbps down/30Mbps up. Let failure be the failed
+HTTP request fraction, growth=max(loaded p95)-idle median, jitter the largest
+observed jitter, variation=max((p90-p10)/median) across throughput directions.
+measurementPenalty=1+min(9,5*failure+max(0,growth)/200+jitter/100+variation/2).
+Q = (down/bestDown)^0.75 * (up/bestUp)^0.25 / healthPenalty / measurementPenalty;
+cost = clamp(1/Q^2,1,100). Performance displays quality100/sqrt(cost), a relative
+sample score rather than Cloudflare AIM, and expandable full metrics for each node.
+Ranking also uses measured idle median RTT. The selected six receive exact tag costs and become the
 balancer selector; other enabled nodes remain loaded and broadly observed for the
 next test. Reject prefix collisions with any other outbound. At least two valid
 measurements and age<=30min are required. Stage consumes the recommendation,
@@ -98,6 +113,13 @@ navigation. The Stage API alone remains save-only.
 
 The recommendation uses leastLoad, expected1, maxRTT750ms, up to six exact tag
 costs and selectors, preserving the existing fallback; no automatic override.
+The measured leader keeps its quality cost; other selected nodes receive four
+times their measured cost (native range1–400). Ordinary RTT therefore has a
+twofold preference margin against backup nodes on the measured baseline. Quality
+scores remain measurement-only; the static preference is applied only with the
+recommendation. It is not hysteresis or a minimum hold time: substantial degradation
+can still change the winner. Dead/maxRTT filtering and fallback remain native,
+and the ordinary30s probe interval is unchanged.
 Native Xray excludes dead/noncandidate/too-slow nodes
 and orders eligible nodes by its RTT-deviation metric multiplied by sqrt(cost),
 with average RTT and health tie-breaks. Ordinary Observatory supplies delay as that

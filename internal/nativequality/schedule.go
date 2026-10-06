@@ -6,6 +6,7 @@ import (
 )
 
 const qualityCadence = 6 * time.Hour
+const refreshQualityMinimum = time.Hour
 
 // Schedule only runs bounded measurements. It never stages config, restarts the
 // native service or changes selection. Refresh notifications are coalesced.
@@ -26,7 +27,7 @@ func (s *Schedule) NotifyRefresh() {
 }
 
 func comparisonDue(now, requested, lastStarted time.Time) time.Time {
-	if earliest := lastStarted.Add(qualityCadence); !lastStarted.IsZero() && requested.Before(earliest) {
+	if earliest := lastStarted.Add(refreshQualityMinimum); !lastStarted.IsZero() && requested.Before(earliest) {
 		requested = earliest
 	}
 	if requested.Before(now) {
@@ -66,7 +67,7 @@ func (s *Schedule) Run(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			if s.service.start(ctx, false) != nil {
+			if s.service.start(ctx, true) != nil {
 				next = now.Add(10 * time.Minute)
 			} else {
 				next = now.Add(qualityCadence)

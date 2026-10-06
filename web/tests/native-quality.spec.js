@@ -13,6 +13,33 @@ async function open(page) {
   await expect(page.getByText('Speed test', { exact: true })).toBeVisible()
 }
 
+test('detailed scheduled results expose full metrics and unavailable loaded measurements', async ({page}) => {
+  const model=await mountFeatureCompleteDashboard(page)
+  model.quality=complete()
+  model.quality.progress.candidates[0].qualityScore=82
+  model.quality.progress.candidates[0].metrics={idle:{samples:8,medianMs:23,p95Ms:41,jitterMs:3},downloadLatency:{samples:5,medianMs:40,p95Ms:70,jitterMs:6},uploadLatency:{samples:0},download:{samples:5,medianBps:1e6,p10Bps:8e5,p90Bps:12e5,shortSamples:true},upload:{samples:3,medianBps:1e6,p10Bps:9e5,p90Bps:11e5},requests:20,failures:1}
+  model.quality.progress.candidates.push({tag:'proxy-failed',valid:false,metrics:{failureCode:'provider-http-status',failurePhase:'download',httpStatus:403,requests:12,failures:1}})
+  model.quality.progress.candidates[1].metrics={failureCode:'provider-http-status',failurePhase:'download',httpStatus:403,requests:12,failures:1}
+  await open(page)
+  await expect(page.getByText(/same detailed test runs every six hours/)).toBeVisible()
+  const rows=page.getByRole('row')
+  await expect(rows.nth(1)).toContainText('#1')
+  await expect(rows.nth(2)).toContainText('#2')
+  await expect(page.getByRole('cell',{name:'Unavailable',exact:true})).toHaveCount(0)
+  await page.getByText('Quality 82/100 · Full metrics',{exact:true}).click()
+  await expect(page.getByText('41.0 ms',{exact:true})).toBeVisible()
+  await expect(page.getByText(/19\/20 successful \(95.0%\)/)).toBeVisible()
+  await expect(page.getByRole('cell',{name:'Uploading',exact:true}).locator('..')).toContainText('—')
+  const dialog=page.getByRole('dialog')
+  const bounds=await dialog.evaluate(el=>{const r=el.getBoundingClientRect();return {left:r.left,right:r.right,width:window.innerWidth}})
+  expect(bounds.left).toBeGreaterThanOrEqual(0);expect(bounds.right).toBeLessThanOrEqual(bounds.width)
+  await dialog.getByRole('button',{name:'Close',exact:true}).click()
+  await page.getByText('Unsuccessful measurements (1)',{exact:true}).click()
+  await page.getByText('Full metrics',{exact:true}).last().click()
+  await expect(page.getByText(/test provider returned HTTP 403/)).toBeVisible()
+  expect(featureCompleteRequests(model,'/api/v1/performance/quality/start','POST')).toEqual([])
+})
+
 test('changed subscription generation explains stale recommendation without applying or retesting', async ({ page }) => {
   const model = await mountFeatureCompleteDashboard(page)
   model.quality = { ...complete(), canStage: false, stageReason: 'configuration-changed' }
@@ -75,4 +102,18 @@ test('idle quality view has no recurring comparison reads or bandwidth tests', a
   await page.clock.runFor(10_000)
   expect(featureCompleteRequests(model, '/api/v1/performance/quality', 'GET')).toHaveLength(1)
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
+})
+
+
+test('Overview uses latest quality ranks rather than different saved pool order', async ({page}) => {
+  const model=await mountFeatureCompleteDashboard(page)
+  model.nodes=[{...model.nodes[0],outboundTag:'proxy-a',name:'Ranked A',displayName:'Ranked A',enabled:true},{...model.nodes[0],id:'b'.repeat(32),outboundTag:'proxy-b',name:'Ranked B',displayName:'Ranked B',enabled:true}]
+  model.quality={...complete(),appliedRanking:[{tag:'proxy-a',rank:1},{tag:'proxy-b',rank:2}]}
+  await open(page)
+  await (await revealNavigation(page)).getByRole('button',{name:'Overview',exact:true}).click()
+  await expect(page.getByText('Latest quality ranking',{exact:true})).toBeVisible()
+  await expect(page.getByText(/saved pool differs from this latest recommendation/)).toBeVisible()
+  const rows=page.getByRole('row')
+  await expect(rows.nth(1)).toContainText('#1')
+  await expect(rows.nth(1)).toContainText('Ranked B')
 })

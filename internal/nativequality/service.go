@@ -85,6 +85,12 @@ func (s *Service) Read() Status {
 		for _, cost := range costs {
 			byMatch[cost.Match] = cost.Value
 		}
+		for i := range value.Progress.Candidates {
+			candidate := &value.Progress.Candidates[i]
+			if candidate.Valid {
+				candidate.QualityScore = 100 / math.Sqrt(byMatch["^"+regexp.QuoteMeta(candidate.Tag)+"$"])
+			}
+		}
 		for i, tag := range c1.NativeQualityRanking(s.result, costs) {
 			value.Ranking = append(value.Ranking, RankedNode{Tag: tag, Rank: i + 1, Cost: byMatch["^"+regexp.QuoteMeta(tag)+"$"]})
 		}
@@ -146,7 +152,7 @@ func (s *Service) appliedRanking() []RankedNode {
 	values := map[string]float64{}
 	for _, tag := range pool {
 		for _, cost := range costs {
-			if cost.Regexp && cost.Match == "^"+regexp.QuoteMeta(tag)+"$" && cost.Value >= 1 && cost.Value <= 100 && !math.IsNaN(cost.Value) {
+			if cost.Regexp && cost.Match == "^"+regexp.QuoteMeta(tag)+"$" && cost.Value >= 1 && cost.Value <= 400 && !math.IsNaN(cost.Value) {
 				if _, exists := values[tag]; exists {
 					return nil
 				}
@@ -378,6 +384,10 @@ func (s *Service) Stage(ctx context.Context, digest string) (string, error) {
 		if selectedSet[cost.Match] {
 			selectedCosts = append(selectedCosts, cost)
 		}
+	}
+	selectedCosts, err = c1.NativeQualityPreferredCosts(selectedCosts, selected)
+	if err != nil {
+		return "", ErrUnavailable
 	}
 	strategy := struct {
 		Type     string `json:"type"`

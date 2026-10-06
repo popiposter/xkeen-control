@@ -107,3 +107,24 @@ func TestQualityRejectsInvalidHealthEvidence(t *testing.T) {
 		}
 	}
 }
+
+func TestPreferredCostsReduceNoiseWithoutRemovingBackups(t *testing.T) {
+	costs := []NativeQualityCost{{true, "^proxy-a$", 2}, {true, "^proxy-b$", 3}, {true, "^proxy-c$", 100}}
+	out, err := NativeQualityPreferredCosts(costs, []string{"proxy-a", "proxy-b", "proxy-c"})
+	if err != nil || len(out) != 3 || out[0].Value != 2 || out[1].Value != 12 || out[2].Value != 400 {
+		t.Fatal(out, err)
+	}
+	if costs[1].Value != 3 {
+		t.Fatal("measurement costs mutated")
+	}
+	// A small RTT fluctuation no longer beats the measured leader; a major
+	// slowdown still can. Dead/maxRTT filtering is still Xray's responsibility.
+	if !(170*math.Sqrt(out[0].Value) < 150*math.Sqrt(out[1].Value)) || !(700*math.Sqrt(out[0].Value) > 150*math.Sqrt(out[1].Value)) {
+		t.Fatal("preference margin lost")
+	}
+	for _, pool := range [][]string{{"proxy-a"}, {"proxy-a", "proxy-a"}, {"proxy-a", "proxy-missing"}} {
+		if _, err := NativeQualityPreferredCosts(costs, pool); err == nil {
+			t.Fatal("invalid pool admitted", pool)
+		}
+	}
+}

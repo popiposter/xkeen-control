@@ -23,6 +23,13 @@ type adaptiveTransportStub struct {
 	block          <-chan struct{}
 }
 
+func (s *adaptiveTransportStub) Latency(ctx context.Context) (time.Duration, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return 50 * time.Millisecond, nil
+}
+
 func (s *adaptiveTransportStub) Download(ctx context.Context, payload int64) (ManualTransfer, error) {
 	index := s.record("download-" + formatInt64(payload))
 	if index == 0 && s.started != nil {

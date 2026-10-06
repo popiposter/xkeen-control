@@ -69,7 +69,18 @@ func NativeQualityCosts(result AdaptiveResult, now time.Time, pool []string) ([]
 		values[tag] = 100
 	}
 	for _, candidate := range valid {
-		logQuality := 0.75*(math.Log(candidate.DownloadBPS)-math.Log(bestDown)) + 0.25*(math.Log(candidate.UploadBPS)-math.Log(bestUp)) - math.Log(adaptiveHealthPenalty(candidate.HealthPenalty))
+		if candidate.Metrics != nil {
+			bestDown = math.Min(bestDown, 100e6/8)
+			bestUp = math.Min(bestUp, 30e6/8)
+		}
+	}
+	for _, candidate := range valid {
+		down, up := candidate.DownloadBPS, candidate.UploadBPS
+		if candidate.Metrics != nil {
+			down = math.Min(down, 100e6/8)
+			up = math.Min(up, 30e6/8)
+		}
+		logQuality := 0.75*(math.Log(down)-math.Log(bestDown)) + 0.25*(math.Log(up)-math.Log(bestUp)) - math.Log(adaptiveHealthPenalty(candidate.HealthPenalty)) - math.Log(detailedQualityPenalty(candidate.Metrics))
 		cost := math.Exp(math.Min(-2*logQuality, math.Log(100)))
 		values[candidate.Tag] = clampFloat(cost, 1, 100)
 	}
@@ -109,4 +120,39 @@ func NativeQualityRanking(result AdaptiveResult, costs []NativeQualityCost) []st
 		tags = append(tags, candidate.Tag)
 	}
 	return tags
+}
+
+// NativeQualityPreferredCosts adds a static preference margin to the measured
+// leader. Ordinary Observatory and native dead/maxRTT filtering remain unchanged.
+// This is not hysteresis: Xray may still choose a backup when conditions warrant.
+func NativeQualityPreferredCosts(costs []NativeQualityCost, selected []string) ([]NativeQualityCost, error) {
+	if len(selected) < 2 || len(selected) > AdaptiveMaxCandidates {
+		return nil, errors.New("invalid preferred pool")
+	}
+	matches := make(map[string]bool, len(selected))
+	for _, tag := range selected {
+		if !validTag(tag) || matches["^"+regexp.QuoteMeta(tag)+"$"] {
+			return nil, errors.New("invalid preferred pool")
+		}
+		matches["^"+regexp.QuoteMeta(tag)+"$"] = true
+	}
+	leader := "^" + regexp.QuoteMeta(selected[0]) + "$"
+	var result []NativeQualityCost
+	for _, cost := range costs {
+		if !matches[cost.Match] {
+			continue
+		}
+		if !cost.Regexp || !finitePositive(cost.Value) || cost.Value < 1 || cost.Value > 100 {
+			return nil, errors.New("invalid measured cost")
+		}
+		delete(matches, cost.Match)
+		if cost.Match != leader {
+			cost.Value *= 4
+		}
+		result = append(result, cost)
+	}
+	if len(matches) != 0 {
+		return nil, errors.New("incomplete preferred pool")
+	}
+	return result, nil
 }

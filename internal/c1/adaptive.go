@@ -24,8 +24,8 @@ const (
 	NativeQualityMaxAttempts            = 12
 	NativeQualityBroadCandidates        = 12
 	NativeQualityBroadAttempts          = 18
-	NativeQualityBroadBytes             = 288 * MiB
-	NativeQualityBroadWallTime          = 360 * time.Second
+	NativeQualityBroadBytes             = 864 * MiB
+	NativeQualityBroadWallTime          = 720 * time.Second
 	AdaptiveMaxGenerationBytes          = 144 * MiB
 	AdaptiveMaxGenerationWallTime       = 180 * time.Second
 	AdaptiveMaximumRTTMS                = 750
@@ -85,6 +85,7 @@ type AdaptiveGeneration struct {
 }
 
 type AdaptiveCandidateResult struct {
+	Metrics       *QualityMetrics
 	Tag           string
 	RTTMS         int64
 	DownloadBPS   float64
@@ -119,12 +120,14 @@ type AdaptiveResult struct {
 // AdaptiveCandidateStatus is the only per-candidate material exposed by the
 // authenticated performance projection.
 type AdaptiveCandidateStatus struct {
-	Tag         string  `json:"tag"`
-	RTTMS       int64   `json:"rttMs"`
-	DownloadBPS float64 `json:"downloadBps"`
-	UploadBPS   float64 `json:"uploadBps"`
-	Score       float64 `json:"score"`
-	Valid       bool    `json:"valid"`
+	QualityScore float64         `json:"qualityScore,omitempty"`
+	Metrics      *QualityMetrics `json:"metrics,omitempty"`
+	Tag          string          `json:"tag"`
+	RTTMS        int64           `json:"rttMs"`
+	DownloadBPS  float64         `json:"downloadBps"`
+	UploadBPS    float64         `json:"uploadBps"`
+	Score        float64         `json:"score"`
+	Valid        bool            `json:"valid"`
 }
 
 // AdaptivePerformanceStatus is bounded, RAM-only status for the scheduled
@@ -264,11 +267,26 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 			break
 		}
 
-		candidateContext, cancelCandidate := context.WithTimeout(generationContext, AdaptiveWorkTimeout)
+		workTimeout := AdaptiveWorkTimeout
+		if generation.NativeQuality && generation.BroadSample {
+			workTimeout = 60 * time.Second
+		}
+		candidateContext, cancelCandidate := context.WithTimeout(generationContext, workTimeout)
 		execution := &adaptiveExecution{transport: transport}
+		if generation.NativeQuality && generation.BroadSample {
+			if fixed, ok := transport.(*fixedMeasurementTransport); ok && fixed.roundTripper == nil {
+				execution.transport = newDetailedMeasurementTransport()
+			}
+		}
 		probeErr := r.Probe.WithTarget(candidateContext, AdaptiveMode, input.Tag, func(probeContext context.Context) error {
+			if generation.NativeQuality && generation.BroadSample {
+				return execution.runDetailed(probeContext)
+			}
 			return execution.run(probeContext)
 		})
+		if fixed, ok := execution.transport.(*fixedMeasurementTransport); ok && fixed.close != nil {
+			fixed.close()
+		}
 		candidateErr := candidateContext.Err()
 		cancelCandidate()
 
@@ -296,6 +314,7 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 		}
 
 		candidate := AdaptiveCandidateResult{
+			Metrics:       execution.metrics,
 			Tag:           input.Tag,
 			RTTMS:         input.RTTMS,
 			HealthPenalty: input.HealthPenalty,
@@ -303,6 +322,9 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 			UploadBPS:     execution.uploadBPS,
 			Valid:         probeErr == nil && candidateErr == nil && finitePositive(execution.downloadBPS) && finitePositive(execution.uploadBPS),
 			ErrorCode:     classifyAdaptiveCandidateError(probeErr, candidateErr, execution),
+		}
+		if execution.metrics != nil && execution.metrics.Idle.MedianMS > 0 {
+			candidate.RTTMS = int64(math.Ceil(execution.metrics.Idle.MedianMS))
 		}
 		if candidate.Valid {
 			result.AggregateBytes += execution.bytes
@@ -351,6 +373,7 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 }
 
 type adaptiveExecution struct {
+	metrics     *QualityMetrics
 	transport   BandwidthMeasurementTransport
 	bytes       int64
 	downloadBPS float64
@@ -425,10 +448,12 @@ func (e *adaptiveExecution) runDirection(ctx context.Context, stages []int64, tr
 
 func adaptiveCanAdmitCandidate(ctx context.Context, aggregateBytes int64, budgets ...int64) bool {
 	limit := int64(AdaptiveMaxGenerationBytes)
+	reservation := AdaptiveMaxDownloadBytes + AdaptiveMaxUploadBytes
 	if len(budgets) > 0 && budgets[0] == NativeQualityBroadBytes {
 		limit = NativeQualityBroadBytes
+		reservation = 72 * MiB
 	}
-	if aggregateBytes < 0 || aggregateBytes+AdaptiveMaxDownloadBytes+AdaptiveMaxUploadBytes > limit {
+	if aggregateBytes < 0 || aggregateBytes+reservation > limit {
 		return false
 	}
 	deadline, ok := ctx.Deadline()
@@ -516,6 +541,7 @@ func adaptiveResultStatuses(results []AdaptiveCandidateResult, limits ...int) []
 			break
 		}
 		item := AdaptiveCandidateStatus{Tag: safeTag(candidate.Tag), RTTMS: positiveInt64(candidate.RTTMS), Valid: candidate.Valid}
+		item.Metrics = candidate.Metrics
 		if finitePositive(candidate.DownloadBPS) {
 			item.DownloadBPS = candidate.DownloadBPS
 		}
