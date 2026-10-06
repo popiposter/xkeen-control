@@ -78,7 +78,9 @@ type botUpdate struct {
 
 func botCommand(update botUpdate, value authority, now time.Time) Command {
 	m := update.Message
-	if update.ID <= 0 || update.ID >= 1<<63-1 || m == nil || m.From.Bot || len(m.Forward) != 0 || len(m.SenderChat) != 0 || strconv.FormatInt(m.From.ID, 10) != value.AllowedUserID || strconv.FormatInt(m.Chat.ID, 10) != value.ChatID || m.Date > now.Unix() || now.Unix()-m.Date > 120 {
+	// Telegram and router clocks need not agree to the second. Small positive
+	// skew must not discard a live long-poll command as a future message.
+	if update.ID <= 0 || update.ID >= 1<<63-1 || m == nil || m.From.Bot || len(m.Forward) != 0 || len(m.SenderChat) != 0 || strconv.FormatInt(m.From.ID, 10) != value.AllowedUserID || strconv.FormatInt(m.Chat.ID, 10) != value.ChatID || m.Date > now.Unix()+5 || now.Unix()-m.Date > 120 {
 		return ""
 	}
 	switch Command(m.Text) {

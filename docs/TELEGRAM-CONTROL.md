@@ -27,8 +27,11 @@ unavailable; Telegram is not an independent outage notification channel.
 | `/refresh` | Queue enabled subscriptions on the existing bounded refresher. |
 
 Commands take no arguments. Only fresh ordinary messages from the configured
-user in the configured chat are accepted (120-second TTL). Forwarded messages,
-anonymous senders, bots, edited messages and other command text are ignored.
+user in the configured chat are accepted (120-second TTL).
+Messages may be at most five seconds ahead of the router clock to tolerate small
+clock differences; larger future timestamps remain rejected.
+Forwarded messages, anonymous senders, bots, edited messages and other command
+text are ignored.
 Startup/credential changes discard queued commands using a nonblocking backlog
 read before normal long polling. The [Telegram Bot API](https://core.telegram.org/bots/api#getupdates)
 offset then advances in RAM and resets after an idle freshness window, so a new
