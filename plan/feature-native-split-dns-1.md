@@ -4,13 +4,13 @@ version: 1
 date_created: 2026-10-06
 last_updated: 2026-10-06
 owner: xkeen-control
-status: 'In progress'
+status: 'Completed'
 tags: [feature, dns, native]
 ---
 
 # Introduction
 
-![Status: In progress](https://img.shields.io/badge/status-In%20progress-yellow)
+![Status: Completed](https://img.shields.io/badge/status-Completed-green)
 
 Issue #125 integrates the already-installed standard mosdns resolver. XKeen remains unmodified; the panel derives DNS domain data from native configuration and installed geodata. Source baseline is main `8140c9cda51ca9bf703d3a7965f4595f2c69445a`. Earlier live resolver qualification is recorded in Draft PR124; this plan does not replay its installation or outage test.
 
@@ -44,9 +44,9 @@ Issue #125 integrates the already-installed standard mosdns resolver. XKeen rema
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-005 | Commit exact clean candidate; run one `scripts/dev-check.ps1 -Full`, verify actual ARM64 artifact and update one Draft PR/Issue125 evidence. Depends on TASK-004. | No | Pending |
-| TASK-006 | Take bounded current panel/DNS rollback snapshots, deliver unique new panel binary, independently verify native configs/registry/auth/core/init preservation and DNS generation/process/readiness. Depends on TASK-005 PASS. | No | Pending |
-| TASK-007 | Check live DNS card and unchanged synchronization without restart; fresh DIRECT/VPN queries, sanitize results. Do not repeat prior Xray Stop/Start. Record limitations and Draft review state. Depends on TASK-006. | No | Pending |
+| TASK-005 | Commit exact clean candidate; run one `scripts/dev-check.ps1 -Full`, verify actual ARM64 artifact and update one Draft PR/Issue125 evidence. Depends on TASK-004. | Yes | 2026-10-06 |
+| TASK-006 | Take bounded current panel/DNS rollback snapshots, deliver unique new panel binary, independently verify native configs/registry/auth/core/init preservation and DNS generation/process/readiness. Depends on TASK-005 PASS. | Yes | 2026-10-06 |
+| TASK-007 | Check live DNS card and unchanged synchronization without restart; fresh DIRECT/VPN queries, sanitize results. Do not repeat prior Xray Stop/Start. Record limitations and Draft review state. Depends on TASK-006. | Yes | 2026-10-06 |
 
 ## 3. Alternatives
 
@@ -89,3 +89,7 @@ Issue #125 integrates the already-installed standard mosdns resolver. XKeen rema
 - [Native shell v2](architecture-native-shell-v2.md)
 - [Operations](../docs/OPERATIONS.md)
 - [mosdns v5.3.4 domain matcher](https://github.com/IrineSistiana/mosdns/blob/v5.3.4/pkg/matcher/domain/matcher.go)
+
+## Completion evidence
+
+Issue125 completed in reviewed PR126. Exact c861 FULL106/ARM and independent development-router DNS/native-preservation/no-op acceptance passed. Stable v0.3.1 subsequently published from exact6e62d620630f5994b00acb2dfb60cbd690b44bcd after reviewed build/test corrections, final FULL and protected run37427370603; fresh public asset verification passed. Signed release installation, reboot/IPv6/all-provider acceptance are not claimed. See docs/RELEASES.md and Issue125/ledger4 public evidence.

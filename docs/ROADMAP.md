@@ -4,43 +4,45 @@ This is the sequencing/status authority. The active GitHub issue is the detailed
 
 ## Current direction — native XKeen implementation
 
-### Active revision — 2026-10-03
+### Active revision — 2026-10-06
 
-The operator stopped the invasive native admission implementation and redefined
-the panel as a lightweight graphical shell over **unmodified XKeen code**.
-The [new contract](NATIVE-XKEEN.md), [source audit](../plan/audit-native-shell-2026-10-03.md)
-and [v2 plan](../plan/architecture-native-shell-v2.md) supersede v1 sequencing and
-shared-admission requirements below. Issue #121 / Draft PR122 remain active.
-The [complete native command matrix](../plan/xkeen-command-inventory-v2.md) maps
-69 dispatcher branches to panel workflows. Interactive actions use a native
-command-bound console; parameterized actions use forms/buttons with optional output.
+The panel is a graphical shell over **unmodified XKeen code**. The
+[native contract](NATIVE-XKEEN.md), [source audit](../plan/audit-native-shell-2026-10-03.md)
+and [v2 plan](../plan/architecture-native-shell-v2.md) supersede invasive v1
+admission/profile workers. Stock XKeen owns components, interception and cron.
+The [command matrix](../plan/xkeen-command-inventory-v2.md) maps native commands to
+forms/buttons and a private command-bound console.
 
-The native-shell v2 is now installed as development source `f405162` (2026-10-04):
-stock native XKeen, command-bound jobs/console, native Form/Text editors with
-pending/apply/optional restore, installed-geodata browser and rule examples,
-subscription refresh, encrypted native transfer and optional Telegram control.
-Exact local FULL passed with 104 browser cases and actual ARM64 artifact;
-independent replacement preserved native process/files, registry and auth.
-Same-router encrypted export/validated preview/Cancel and selective routing
-readback passed. These are development milestones, not a signed release.
+Stable `v0.3.0` was published from `8140c9c`; stable
+[v0.3.1](https://github.com/popiposter/xkeen-control/releases/tag/v0.3.1) is now
+published from exact reviewed `6e62d620630f5994b00acb2dfb60cbd690b44bcd`.
+PR122 and PR126 are merged; Issue125 DNS integration is completed. PR128 fixed
+a transitive build dependency advisory; PR130 fixed inconsistent mock readback.
+The final exact-main FULL passed 106 browser cases, Go/race/helpers,
+frontend/embed, audit zero and an actual ARM64 artifact. Protected run37427370603
+build and publish passed, followed by independent fresh seven-public-asset
+pinned-key/signature/manifest/checksum verification. See [release evidence](RELEASES.md).
 
-The obsolete component/Setup/appliance APIs and tests have been retired.
-Stable `v0.3.0` release preparation is the next step; it is not published yet.
-Keep useful native validation, auth, nodes, config rollback and this panel's
-signed updater. Real Telegram acceptance needs
-private bot credentials (currently unconfigured); second-router transfer and
-unproxied LAN DNS/VPN/outage acceptance need their respective hardware contours.
-Native Xray remains the active selection owner; panel adaptive override stays
-optional and disabled without demonstrated benefit. The
-[v2 plan](../plan/architecture-native-shell-v2.md) records evidence boundaries.
+Native v2 includes command jobs/console, Form/Text config editors with shared
+pending/Apply/optional previous restore, installed-geodata routing search,
+subscriptions, balanced speed-pool recommendation, encrypted native transfer
+and optional Telegram control. Native Xray owns selection/failover; the retired
+panel selection override stays disabled. A fresh broad sample and six-node
+recommendation Apply were independently verified before stable0.3.0; earlier
+stale recommendation rejection remains separate historical evidence.
 
-The latest manual speed sample completed with eight attempts, seven successful
-measurements and six recommendations. A scheduled subscription update after
-completion changed the registry/outbounds and native process, so the older
-recommendation was correctly rejected as stale; its Apply was not submitted.
-This is not a successful live broad-pool Apply claim. Stable release review must
-retain that boundary, plus the unqualified LAN/outage, bot and second-router
-acceptance contours.
+The operator router runs the accepted development DNS integration: 87,663 domain
+entries, four ordered decisions and ten conditional traffic rules; native files,
+auth and process were preserved. Fresh DIRECT/VPN/local/ad queries and unchanged
+Sync without DNS/Xray restart passed. A separate earlier bounded Xray outage test
+proved direct/local DNS availability without VPN-to-DIRECT fallback. Signed
+v0.3.1 installation is not claimed by development delivery or publication.
+
+Issue121 stays open for remaining acceptance boundaries: real Telegram requires
+operator credentials, second-router transfer needs another router, and reboot,
+IPv6, all-provider outage and broader LAN failover remain unqualified. Optional
+mosdns is separately installed; the panel derives data from native routing and
+installed geodata, without a second downloader or native script patch.
 
 ### Historical 2026-10-02 direction and checkpoints
 
