@@ -1,3 +1,5 @@
+> Historical implementation/audit record. Current behavior and remaining work are in [plan index](README.md) and [ROADMAP](../docs/ROADMAP.md). Chronological checkpoints below are not current runtime state or permission to replay operations.
+
 # Native lifecycle and DNS audit — 2026-10-02
 
 Issue #121. Installed development checkpoint: b330e559e69199f4f3afa5c5e4f90b7e21aba939.

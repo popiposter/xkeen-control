@@ -1,3 +1,5 @@
+> Historical implementation/audit record. Current behavior and remaining work are in [plan index](README.md) and [ROADMAP](../docs/ROADMAP.md). Chronological checkpoints below are not current runtime state or permission to replay operations.
+
 # Native domain routing and DNS policy v1
 
 Issue #121, next bounded design for TASK-017/026. Source investigation only;

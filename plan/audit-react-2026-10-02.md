@@ -1,3 +1,5 @@
+> Historical implementation/audit record. Current behavior and remaining work are in [plan index](README.md) and [ROADMAP](../docs/ROADMAP.md). Chronological checkpoints below are not current runtime state or permission to replay operations.
+
 # React audit and component strategy
 
 Issue #121; source reviewed: `c97852426d0f2b04999545ac7ab90fb7dc0e734e`.

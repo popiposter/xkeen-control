@@ -1,3 +1,5 @@
+> Historical implementation/audit record. Current behavior and remaining work are in [plan index](README.md) and [ROADMAP](../docs/ROADMAP.md). Chronological checkpoints below are not current runtime state or permission to replay operations.
+
 # Native panel usability refresh — Issue #121
 
 Scope: the operator's eight-screen visual audit on 2026-10-04. XKeen scripts,

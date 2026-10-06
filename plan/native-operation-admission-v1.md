@@ -1,3 +1,5 @@
+> Historical implementation/audit record. Current behavior and remaining work are in [plan index](README.md) and [ROADMAP](../docs/ROADMAP.md). Chronological checkpoints below are not current runtime state or permission to replay operations.
+
 # Native operation admission v1 — isolated protocol
 
 > **Deprecated 2026-10-03:** the operator forbids modifying XKeen code. Do not

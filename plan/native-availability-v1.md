@@ -1,3 +1,5 @@
+> Historical implementation/audit record. Current behavior and remaining work are in [plan index](README.md) and [ROADMAP](../docs/ROADMAP.md). Chronological checkpoints below are not current runtime state or permission to replay operations.
+
 # Native late-crash availability
 
 Issue #121 follow-up under the [native contract](../docs/NATIVE-XKEEN.md) and

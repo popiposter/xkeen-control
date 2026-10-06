@@ -8,6 +8,8 @@ status: "Deprecated"
 tags: [architecture, refactor, xkeen, routing, reliability]
 ---
 
+> Historical implementation/audit record. Current behavior and remaining work are in [plan index](README.md) and [ROADMAP](../docs/ROADMAP.md). Chronological checkpoints below are not current runtime state or permission to replay operations.
+
 # Introduction
 
 > **Deprecated 2026-10-03:** operator revised the contract to an unmodified native

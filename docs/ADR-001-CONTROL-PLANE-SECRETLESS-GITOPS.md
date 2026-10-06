@@ -1,5 +1,7 @@
 # ADR-001 — Secretless control plane foundation
 
+> Historical decision record. Secretless public source/private registry principles remain active; appliance/component/supervisor architecture below is superseded by [native architecture](ARCHITECTURE.md). Current software distribution is signed Releases; native configuration is edited locally without an appliance-policy twin.
+
 Status: **Accepted foundation; distribution/config-authority direction evolved after C.1.**
 
 Slice A was production-validated before the fresh-source repository migration. The foundational decisions below remain active. The original idea that router-specific non-secret desired state would later be applied from Git was superseded by Issues #2–#5: public software Releases + local typed appliance state + portable backup + managed component lifecycle + visual configuration.
