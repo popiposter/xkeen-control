@@ -4,7 +4,7 @@
 
 Manage VPN nodes and subscriptions, understand what Xray is doing, keep the active proxy stable, run bounded performance checks, and apply changes transactionally — from one small Go binary with an embedded web UI.
 
-> **Active development:** Issue #121 uses stock XKeen commands and native configuration editors. The development panel is installed and qualified on the operator router; signed `v0.2.0` below describes the historical generation. See [Native contract](docs/NATIVE-XKEEN.md) and [ROADMAP](docs/ROADMAP.md).
+> **Current release:** signed stable [v0.3.1](https://github.com/popiposter/xkeen-control/releases/tag/v0.3.1) uses stock XKeen commands and native configuration editors, with optional independent LAN DNS synchronization. See [Native contract](docs/NATIVE-XKEEN.md) and [ROADMAP](docs/ROADMAP.md). Published artifact verification and development-router acceptance are distinct from signed release installation.
 
 ## Why this project
 
@@ -26,7 +26,7 @@ XKeen and Xray are powerful, but operating a real router usually means editing f
 
 XKeen owns its installation, service, components and native update schedules. The panel invokes allowlisted native commands, showing their console output and prompts when needed; it does not patch XKeen code or replace its cron engine.
 
-Native JSON/JSONC editors provide text and graphical modes, drafts, full Xray validation, a shared pending configuration indicator, explicit restart, discard and optional previous configuration restore. Routing includes installed geodata categories, membership search and first-match examples. DNS configuration is editable; independent LAN DNS/outage behavior still requires qualification.
+Native JSON/JSONC editors provide text and graphical modes, drafts, full Xray validation, a shared pending configuration indicator, explicit restart, discard and optional previous configuration restore. Routing includes installed geodata categories, membership search and first-match examples. Optional installed LAN DNS follows native domain routing and geodata; unchanged synchronization avoids restart. Operator-router DNS and a separate bounded Xray outage test passed; IPv6, reboot and all-provider failure remain unqualified.
 
 `/opt/etc/xkeen-control/secrets/nodes.json` stores VPN nodes and subscriptions privately. Only managed outbounds are generated from it; unrelated native fields and outbounds are preserved. Enabled subscriptions refresh periodically. Manually disabled nodes remain disabled on refresh; WL, Russia and Belarus profiles default to disabled. Native Xray remains the selection owner; panel adaptive overrides are disabled.
 
@@ -38,12 +38,12 @@ The panel keeps authentication, origin/CSRF protection, bounded private data han
 
 ## Installation
 
-The native-shell generation is being prepared for stable `v0.3.0`; it is not published yet. Install stock XKeen through its official installation procedure first, then install the panel alongside it. The panel never patches XKeen or installs a second component updater. Upgrading older panel generations is outside this release's supported compatibility contract. The command below installs the historical `v0.2.0`, not the new native-shell candidate.
+Stable `v0.3.1` is published and independently signature/asset verified. Install stock XKeen through its official installation procedure first, then install the panel alongside it. The panel never patches XKeen or installs a second component updater. Upgrading historical appliance panel generations is outside the native contract. Optional independent LAN DNS requires its separately configured resolver and router DNS profile; the panel does not install them automatically.
 
 For an Entware/Open Package-ready `linux/arm64` Keenetic, the currently production-qualified release-specific installer is:
 
 ```sh
-sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.2.0/install.sh)"
+sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.3.1/install.sh)"
 ```
 
 The installer is bounded: it never performs blanket `opkg upgrade`, never installs/repairs XKeen or Xray, and preserves existing auth/listener/node/Xray/XKeen/routing/DNS/Observatory state. Missing XKeen/Xray/configuration is reported as Setup Mode rather than triggering an opaque upstream installer.
