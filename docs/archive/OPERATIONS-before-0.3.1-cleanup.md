@@ -247,7 +247,7 @@ historical live-trial protocol regardless of current source sequencing.
 
 The existing Setup Preview/Apply may recognize the pinned historical lifecycle
 and the two closed geodata aliases described in
-[CONTROL-PLANE.md](../CONTROL-PLANE.md#phase-g--typed-setup-takeoverconvergence-source-boundary).
+[historical CONTROL-PLANE.md](CONTROL-PLANE-before-0.3.1-cleanup.md#phase-g--typed-setup-takeoverconvergence-source-boundary).
 Recognition does not permit executing a foreign lifecycle or deleting links by
 hand. Unknown source edits, other aliases, manual/partial policy and competing
 writers continue to block admission.
