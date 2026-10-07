@@ -63,6 +63,24 @@ func TestControlAuthenticatesFreshExactCommands(t *testing.T) {
 		t.Fatal("fixed refresh unavailable")
 	}
 }
+
+func TestNativeUpdatesExplainLocalConfirmationWithoutPromisingSuccess(t *testing.T) {
+	for _, command := range []Command{UpdateXkeen, UpdateXray, UpdateGeodata} {
+		text := controlText(command, Accepted)
+		if !strings.Contains(text, "panel console") || !strings.Contains(text, "Telegram cannot answer") || !strings.Contains(text, "unknown outcome") || !strings.Contains(text, "acceptance is not success") {
+			t.Fatal(command, text)
+		}
+		if strings.Contains(text, "auto") || strings.Contains(text, "private") {
+			t.Fatal(text)
+		}
+	}
+	_, value, _ := controlFixture(t)
+	for _, text := range []string{"1", "yes", "/update_xkeen auto", "/update_xkeen 1"} {
+		if botCommand(updateFixture(t, 10, text), value, time.Now()) != "" {
+			t.Fatal("prompt answer admitted", text)
+		}
+	}
+}
 func TestControlPersistsBeforeEffectAndNeverReplaysAcrossRestart(t *testing.T) {
 	s, value, epoch := controlFixture(t)
 	calls := 0

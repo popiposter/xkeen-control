@@ -16,6 +16,11 @@ This is the current sequencing/status authority. Issues contain detailed task co
 
 ## Remaining acceptance
 
+[#140 stock XKeen 2.1 transition](https://github.com/popiposter/xkeen-control/issues/140)
+has a dedicated compatibility candidate and [transition contract](XKEEN-2.1-TRANSITION.md).
+Hardware update/full rollback remain unqualified; the local adapter candidate
+does not transfer earlier native acceptance to 2.1. Existing #137/#139 work stays separate.
+
 | Task | Current boundary | Prerequisite |
 | --- | --- | --- |
 | [#133 LAN routing/DNS/failover](https://github.com/popiposter/xkeen-control/issues/133) | Development/native DNS and a separate stopped-Xray DNS test passed; wider client/failure behavior remains NOTRUN. Signed0.3.1 installation is not claimed. | Independent client path and bounded authorized baseline/rollback |

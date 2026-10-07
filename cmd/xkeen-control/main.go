@@ -180,6 +180,7 @@ func main() {
 		Pending: func() bool { exists, err := nativeConfig.HasSavedChanges(); return exists || err != nil },
 	}
 	nativeConfig.ValidateDerived = dnsIntegration.Validate
+	nativeJobs.ConfigureUpdateInspection(xkeen.Discovery{})
 	nativeJobs.AfterCommand = func(ctx context.Context, action string) {
 		switch action {
 		case "start", "restart", "update-geodata", "update-xkeen", "update-xray", "geodata-sources":

@@ -9,6 +9,15 @@ import { Field, FieldLabel } from '@/components/ui/field'
 
 const NativeConsole = lazy(() => import('./native-console.jsx'))
 
+function NativeUpdateReadback({ job }) {
+  if (job.action !== 'update-xkeen' || job.state === 'running') return null
+  const result = job.update
+  const identity = (value) => value ? `${value.version} (${value.channel}${value.buildTimestamp ? `, ${value.buildTimestamp}` : ''})` : 'unavailable'
+  return <div className="rounded-md border p-3 text-sm" role="status">
+    <p>{result?.change === 'changed' ? 'XKeen release identity changed.' : result?.change === 'unchanged' ? 'XKeen release identity unchanged. The command may have been declined or found no update.' : 'XKeen release readback unavailable. Inspect the installation before another change.'}</p>
+    {result && <><p>Before: {identity(result.before)} → After: {identity(result.after)}</p><p>Xray process: {result.xrayProcess}. This does not verify native firewall, DNS or VPN reachability.</p></>}
+  </div>
+}
 
 export function NativeCommands({ csrfToken, onUnauthorized, onRefresh, jobNotification }) {
   const [catalog, setCatalog] = useState([])
@@ -170,6 +179,7 @@ export function NativeCommands({ csrfToken, onUnauthorized, onRefresh, jobNotifi
       {notice && <p role="status">{notice}</p>}
       {unknown && job && <div className="flex flex-col gap-2"><p>Review the console and current XKeen status before enabling another change. This does not repeat the interrupted command.</p><Button variant="outline" onClick={() => refresh.current?.()}>Refresh current status</Button><Button variant="outline" disabled={pending} onClick={resolveInspection}>I inspected XKeen; allow new actions</Button></div>}
       {job && <div className="flex flex-wrap items-center gap-2"><span>{job.action}: {job.state}</span><Button variant="outline" onClick={openConsole}><IconTerminal2 data-icon="inline-start" />Console output</Button>{job.state === 'running' && <Button variant="outline" onClick={cancel}>Interrupt command</Button>}</div>}
+      {job && <NativeUpdateReadback job={job} />}
       {consoleOpen && job && <Suspense fallback={<p>Loading console…</p>}><NativeConsole key={job.id} chunk={chunk} interactive={job.interactive && job.state === 'running' && !inputFault} onInput={input} onResize={resize} onCancel={cancel} onReady={() => setConsoleReady(true)} onConsumed={() => consumed.current?.()} /></Suspense>}
     </CardContent>
   </Card>

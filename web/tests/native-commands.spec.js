@@ -64,6 +64,26 @@ test('waits for existing-job discovery and never starts a command on navigation'
   expect(model.starts).toHaveLength(1)
 })
 
+for (const scenario of [
+  { name: 'declined or no update', change: 'unchanged', process: 'running', text: 'XKeen release identity unchanged.' },
+  { name: 'release changed but service stopped', change: 'changed', process: 'stopped', text: 'XKeen release identity changed.' },
+  { name: 'unavailable readback', change: 'unknown', process: 'unknown', text: 'XKeen release readback unavailable.' },
+]) {
+  test(`completed XKeen update keeps independent ${scenario.name} observations`, async ({ page }) => {
+    const model = await mountNativeCommands(page)
+    const before = { version: '2.0.1', channel: 'beta' }
+    const after = scenario.change === 'unknown' ? undefined : scenario.change === 'changed' ? { version: '2.1', channel: 'stable', buildTimestamp: '2026-10-06 10:58:45 MSK' } : before
+    model.job = { id: 'd'.repeat(32), action: 'update-xkeen', state: 'completed', interactive: true, exitCode: 0, output: '', cursor: 0, truncated: false, update: { before, after, change: scenario.change, xrayProcess: scenario.process } }
+    await page.getByRole('button', { name: 'Overview', exact: true }).click()
+    await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+    await expect(page.getByText(scenario.text, { exact: false })).toBeVisible()
+    await expect(page.getByText(`Xray process: ${scenario.process}.`, { exact: false })).toBeVisible()
+    await expect(page.getByText('This does not verify native firewall, DNS or VPN reachability.', { exact: false })).toBeVisible()
+    if (scenario.change === 'changed') await expect(page.getByText('After: 2.1 (stable, 2026-10-06 10:58:45 MSK)', { exact: false })).toBeVisible()
+    expect(model.starts).toEqual([])
+  })
+}
+
 test('delayed lazy console preserves every output chunk and is read-only for status', async ({ page }) => {
   let release
   const loaded = new Promise((resolve) => { release = resolve })
