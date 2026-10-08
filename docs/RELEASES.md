@@ -42,7 +42,7 @@ release-manifest.sig
 SHA256SUMS
 ```
 
-Issue150's subsequent dual-platform candidate retains all those names and the
+Merged Issue150/PR151's subsequent dual-platform candidate retains all those names and the
 ARM64 schema1 manifest, adding exactly `xkeen-control-linux-mipsle`,
 `release-manifest-mipsle.json`, `release-manifest-mipsle.sig` (ten public files).
 Each platform has its own signed four-artifact manifest; init/installer/updater
@@ -56,7 +56,7 @@ This candidate is not published0.4.0 and does not authorize a MIPS install yet.
 
 Only protected manual Release publishes: explicit version/channel/current-reviewed-main SHA, full read-only build gate, deterministic handoff, source-pinned public-key match, protected signing, verified draft re-download and final main recheck. Signing keys/router credentials never enter build qualification. Actions artifacts/raw main are not install authority. Panel Ed25519 trust does not imply signing of upstream native XKeen/component updates.
 
-Independent host verification builds `cmd/xkeen-release` from exact released source, runs verify-pinned-key, verify, verify-assets and `sha256sum -c SHA256SUMS` on fresh exact seven downloads. Bound retrieval to10minutes/128MiB; compare source/version/channel/epoch/linux/arm64/compatibility. Never bypass signature or manually repair failed publication.
+Independent host verification builds `cmd/xkeen-release` from exact released source, runs verify-pinned-key, then verify and verify-assets for each published architecture, and `sha256sum -c SHA256SUMS` on fresh downloads of the exact public set. For a dual-platform release this means ten downloads, both signatures/four-artifact manifests, equal source/version/channel/epoch/compatibility and linux/arm64 plus linux/mipsle identity. Bound retrieval to10minutes/128MiB. Historical ARM64 releases through0.4.0 require their seven files. Never bypass signature or manually repair failed publication.
 
 ## History
 

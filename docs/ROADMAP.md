@@ -35,9 +35,9 @@ does not certify fresh installation or client/outage behavior.
 ## Remaining acceptance
 
 [#150 MIPS panel delivery](https://github.com/popiposter/xkeen-control/issues/150)
-prepares signed panel-only support for existing Ultra KN1810/KeeneticOS5.1.7/
-Entware mipsel-3.4. Source implementation, emulation, publication and operator
-hardware installation are separate gates. Stable0.4.0 remains ARM64-only;
+delivered panel-only source support for existing Ultra KN1810/KeeneticOS5.1.7/
+Entware mipsel-3.4 in merged [PR151](https://github.com/popiposter/xkeen-control/pull/151).
+Independent source review and clean local FULL passed at `94cd622f852df4621135d47b93efc5fa03976cac`, including static soft-float ELF checks, emulated startup/platform fixtures and real unsigned assembly. The merged source tree is identical. Signed publication and operator hardware installation remain NOTRUN and separate gates. Stable0.4.0 remains ARM64-only;
 guided fresh setup is not expanded. Existing native config/watchdog are preserved
 by panel bootstrap; competing external writers need inspection before Apply.
 

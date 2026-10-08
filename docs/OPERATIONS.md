@@ -22,7 +22,7 @@ Historical [operator DNS qualification](qualification/independent-split-dns-2026
 
 Use only signed public GitHub Releases. Check the exact stable candidate in System/Releases; one approved Apply is a handoff, followed by independent version/source/channel, PID/executable/health and native-preservation verification. If ambiguous, inspect receipts; do not replay. Keep a bounded previous panel and config snapshot. [Release contract](RELEASES.md) describes signatures and public verification.
 
-For publication: exact reviewed remote main, available version/tag, protected Release workflow exactly once, both build/publish success, fresh independent seven-asset pinned-key/signature/manifest/size/hash/SHA256SUMS verification. A failed workflow is not repaired with a manual tag/Release or retried without a fresh corrected-source decision.
+For publication: exact reviewed remote main, available version/tag, protected Release workflow exactly once, both build/publish success, fresh independent pinned-key/signature/manifest/size/hash/SHA256SUMS verification. The dual-platform release has exactly ten public files and two signed platform manifests; ARM64 releases through0.4.0 retain their exact seven-file contract. Verify the published set and both platforms as described in [Releases](RELEASES.md). A failed workflow is not repaired with a manual tag/Release or retried without a fresh corrected-source decision.
 
 ## Operational evidence
 
