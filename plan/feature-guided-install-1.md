@@ -4,20 +4,24 @@ version: 2
 date_created: 2026-10-08
 last_updated: 2026-10-08
 owner: xkeen-control
-status: Planned
+status: Source delivered; hardware acceptance pending
 tags: [installation, bootstrap, native, dns, routing]
 ---
 
 # Introduction
 
-![Status: Planned](https://img.shields.io/badge/status-Planned-blue)
+![Status: Source delivered](https://img.shields.io/badge/status-Source%20delivered-green)
 
 [Issue145](https://github.com/popiposter/xkeen-control/issues/145) specifies the
 actual installer product requested by the operator: one clear terminal entry,
 private subscription/node input at the beginning, a reference configuration and
 automatic connection of **the entire HOME network** after readiness checks.
-This is the implementation contract, not an available installer or hardware
-qualification. Stable0.3.1 has no setup CLI. The earlier [Issue143 design](https://github.com/popiposter/xkeen-control/issues/143)
+This is the implementation record for signed stable0.4.0, merged in PR147 and
+independently source/release-qualified; fresh hardware acceptance remains
+[NOTRUN in Issue148](https://github.com/popiposter/xkeen-control/issues/148).
+[Release identities and evidence](../docs/RELEASES.md) are immutable and separate
+from later documentation commits. Requirements outside the initial capability
+matrix, including firmware5.2 token support, remain future scope. The earlier [Issue143 design](https://github.com/popiposter/xkeen-control/issues/143)
 remains installation research; its GUI-first provisioning and selectable-client
 default are superseded here for this explicit fresh-install mode.
 
@@ -38,10 +42,10 @@ a precise inspect-only result before mutation, rather than a success message.
 
 ## 1. Requirements & Constraints
 
-- **REQ-001**: A release-owned `install.sh --setup` mode is the proposed single
+- **REQ-001**: A release-owned `install.sh --setup` mode is the single
   entry point. Keep the current panel-only installation route distinct. The
   published installer must select its own qualified panel release, including
-  its setup CLI; do not invoke unpublished setup commands in stable0.3.1.
+  its setup CLI. First published version: stable0.4.0; stable0.3.1 has no such mode.
 - **REQ-002**: Target a genuinely fresh supported ARM64 Keenetic with Entware,
   direct Internet/DNS and private management. Preflight root, free storage,
   installed/tool selection, model/firmware capability and empty native/panel/DNS
@@ -141,7 +145,8 @@ a precise inspect-only result before mutation, rather than a success message.
 
 ### Initial setup ownership and restart recovery
 
-These are proposed requirements for implementation, not delivered safeguards.
+These are implemented source invariants; source fixtures and publication proof
+do not establish fresh hardware/interruption acceptance.
 All phases below are sequential. The launcher first checks lock capability and
 acquires an exclusive kernel `flock` on the fixed root-owned non-symlink inode
 `/opt/var/lock/xkeen-control/initial-setup.lock`; keep the inode stable, validate its parent,
@@ -288,8 +293,8 @@ there is no guessed uninstall, full-config replay or receipt deletion.
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-011 | Run focused adverse fixtures, independent exact-source review, final clean-HEAD Docker/Linux FULL and changed release assembly/trust checks. Publish a runnable setup command only after protected signed release contains the implemented mode/CLI; development artifact is not the published installer. | Focused pass; exact review/FULL ledger in [PR147](https://github.com/popiposter/xkeen-control/pull/147); unpublished | 2026-10-08 |
-| TASK-012 | On actual fresh supported hardware test subscription → full configuration → one activation → all HOME readback → unproxied LAN DIRECT/VPN/local names/cold DNS/failure/recovery → scoped rollback. Current operator router is not a fresh test target; preserve NOTRUN if hardware is unavailable. | No | — |
+| TASK-011 | Run focused adverse fixtures, independent exact-source review, final clean-HEAD Docker/Linux FULL and changed release assembly/trust checks. Publish a runnable setup command only after protected signed release contains the implemented mode/CLI; development artifact is not the published installer. | Exact review/local FULL in [PR147](https://github.com/popiposter/xkeen-control/pull/147); stable0.4.0 protected FULL/public verification PASS; hardware #148 NOTRUN | 2026-10-08 |
+| TASK-012 | On actual fresh supported hardware test subscription → full configuration → one activation → all HOME readback → unproxied LAN DIRECT/VPN/local names/cold DNS/failure/recovery → scoped rollback. Current operator router is not a fresh test target; preserve NOTRUN if hardware is unavailable. | NOTRUN, tracked in [#148](https://github.com/popiposter/xkeen-control/issues/148) | — |
 
 ## 3. Alternatives
 
@@ -320,8 +325,8 @@ there is no guessed uninstall, full-config replay or receipt deletion.
   SHA256 `82d80a1a21606fca0bc6b65ac6f90d30cff6bb4a19a6ab6a246cf247dbb78bc0`.
   Extracted executable identity and actual service readiness are additional checks.
 - **DEP-004**: Same-release signed panel artifact with setup CLI, one qualified
-  stable Xray version and required native geodata. Do not advertise current0.3.1
-  as containing this new mode. Recheck mutable upstream information per release.
+  stable Xray version and required native geodata. Stable0.4.0 contains this mode;
+  historical0.3.1 does not. Recheck mutable upstream information per release.
 - **DEP-005**: Official firmware CLI describes `ip policy <id>`, policy-context
   `description xkeen` and `permit global <wan>`, hotspot-context
   `policy <home> <id>`, DNS-proxy-context `filter profile <id>` /
@@ -334,10 +339,10 @@ there is no guessed uninstall, full-config replay or receipt deletion.
 ## 5. Files
 
 - **FILE-001**: `scripts/install.sh`, release assembly/fixtures and installer
-  documentation and panel-owned init — proposed release-owned `--setup`, deferred
-  daemon start and receipt/shared-lock startup guard, not implemented here.
+  documentation and panel-owned init — release-owned `--setup`, deferred
+  daemon start and receipt/shared-lock startup guard.
 - **FILE-002**: `cmd/xkeen-control/main.go`, new `internal/setup` and
-  `internal/keenetic/setup.go` — proposed root-only setup and fixed firmware adapter.
+  `internal/keenetic/setup.go` — root-only setup and fixed firmware adapter.
 - **FILE-003**: `internal/xkeen` config pending/transfer/jobs, `internal/nodes`
   parser/fetcher/renderer/store, `internal/splitdns` — existing owners to reuse.
 - **FILE-004**: Public RU selective policy prepared in PR144; fixed private

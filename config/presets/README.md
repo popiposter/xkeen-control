@@ -1,6 +1,6 @@
 # Reference traffic profiles
 
-`ru-selective-v1.json` is the public reference for Issue [143](https://github.com/popiposter/xkeen-control/issues/143), derived from the operator's running stock 2.1 routing on 2026-10-08. It contains **12 traffic rules**, in their observed first-match order. The explicit guided fresh setup in Issue145 composes this fragment with destination integration into one fully validated candidate. It is not a complete Xray configuration and must not be copied directly. Published v0.3.1 does not include guided setup.
+`ru-selective-v1.json` is the public reference for Issue [143](https://github.com/popiposter/xkeen-control/issues/143), derived from the operator's running stock 2.1 routing on 2026-10-08. It contains **12 traffic rules**, in their observed first-match order. The explicit guided fresh setup in Issue145, published in stable0.4.0, composes this fragment with destination integration into one fully validated candidate. It is not a complete Xray configuration and must not be copied directly.
 
 Order: explicit force-proxy; private networks and names DIRECT; vulnerable UDP BLOCK; ads/telemetry BLOCK; QUIC for selected VPN services BLOCK; BitTorrent DIRECT; selected domain categories VPN; Russian domains DIRECT; selected service IPs VPN; ReFilter IPs VPN; everything else DIRECT. Explicit force-proxy precedes the torrent exception. Protocol sniffing cannot guarantee detection of encrypted torrents. QUIC fallback is scoped to the VPN service domains and does not disable all UDP.
 

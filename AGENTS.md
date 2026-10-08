@@ -1,6 +1,6 @@
 # AGENTS.md
 
-> **Current product:** [Native XKeen contract](docs/NATIVE-XKEEN.md) governs the delivered native-shell generation. Stable v0.3.1 is published; remaining hardware acceptance is tracked in [ROADMAP](docs/ROADMAP.md). Historical appliance migration/recovery is not current installation authority.
+> **Current product:** [Native XKeen contract](docs/NATIVE-XKEEN.md) governs the delivered native-shell generation and explicit guided fresh setup. Stable v0.4.0 is published; remaining hardware acceptance is tracked in [ROADMAP](docs/ROADMAP.md). Historical appliance migration/recovery is not current installation authority.
 
 > **2026-10-03 operator revision:** XKeen code stays unmodified. Use its supported
 > commands and edit native configuration only. No dispatcher/init/hook/module
