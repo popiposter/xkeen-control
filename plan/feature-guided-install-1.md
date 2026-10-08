@@ -143,8 +143,8 @@ a precise inspect-only result before mutation, rather than a success message.
 
 These are proposed requirements for implementation, not delivered safeguards.
 All phases below are sequential. The launcher first checks lock capability and
-acquires an exclusive kernel `flock` on a fixed root-owned non-symlink lock inode
-under `/opt/var/lock/xkeen-control`; keep the inode stable, validate its parent,
+acquires an exclusive kernel `flock` on the fixed root-owned non-symlink inode
+`/opt/var/lock/xkeen-control/initial-setup.lock`; keep the inode stable, validate its parent,
 and never unlink it as stale. Concurrent setup/recovery fails busy. The same
 exclusive lock covers launcher provisioning and the setup CLI handoff without
 an unlocked gap. Normal daemon startup holds a shared lock for its entire
@@ -212,7 +212,7 @@ no implicit cleanup/reinstall, full config replay or guessed native downgrade.
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-001 | Review Issue145 and this plan; update native/architecture/security authorities to authorize only the initial empty-path dispatcher delivery and fixed HOME writer. Preserve current delivered behavior statements. Reuse PR144 environment correction and reference profile without losing its evidence boundary. | Contract prepared; review pending | 2026-10-08 |
+| TASK-001 | Review Issue145 and this plan; update native/architecture/security authorities to authorize only the initial empty-path dispatcher delivery and fixed HOME writer. Preserve current delivered behavior statements. Reuse PR144 environment correction and reference profile without losing its evidence boundary. | Contract prepared; implementation authority update pending | 2026-10-08 |
 | TASK-002 | Add `internal/keenetic/setup.go` with bounded fixed read-only firmware discovery and typed dedicated-policy/DNS plans. Establish exact model/firmware CLI transport, context grammar, HOME membership/overrides and scoped inverse commands. No caller-supplied command, endpoint or JSON body. | No | — |
 
 ### Implementation Phase 2
