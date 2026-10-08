@@ -2,6 +2,7 @@ package xkeen
 
 import (
 	"context"
+	"regexp"
 	"strings"
 )
 
@@ -40,11 +41,13 @@ func (d Discovery) updateSnapshot(ctx context.Context) updateSnapshot {
 	_, installed := d.read("opt/sbin/xkeen", maxNativeSource)
 	variables, state := d.read("opt/sbin/.xkeen/01_info/01_info_variable.sh", 64<<10)
 	if installed == CapabilityAvailable && state == CapabilityAvailable {
-		version := literalAssignment(variables, "xkeen_current_version", `[0-9]+(?:\.[0-9]+){1,3}`)
-		channel := strings.ToLower(literalAssignment(variables, "xkeen_build", `Stable|Beta|Dev`))
-		if version != "" && channel != "" {
+		version, versionOK := updateIdentityAssignment(variables, "xkeen_current_version", `[0-9]+(?:\.[0-9]+){1,3}`)
+		channel, channelOK := updateIdentityAssignment(variables, "xkeen_build", `Stable|Beta|Dev`)
+		build, buildOK := updateIdentityAssignment(variables, "build_timestamp", `(?:[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [A-Z0-9+:-]{1,16})?`)
+		if versionOK && channelOK && buildOK && version != "" && channel != "" {
 			snapshot.release = &NativeRelease{Version: version, Channel: channel,
-				BuildTimestamp: literalAssignment(variables, "build_timestamp", `[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} [A-Z0-9+:-]{1,16}`)}
+				BuildTimestamp: build}
+			snapshot.release.Channel = strings.ToLower(channel)
 		}
 	}
 	init, state := d.read("opt/etc/init.d/S05xkeen", maxNativeSource)
@@ -76,6 +79,32 @@ func (d Discovery) updateSnapshot(ctx context.Context) updateSnapshot {
 	}
 	snapshot.xrayProcess = "stopped"
 	return snapshot
+}
+
+// Identity observations accept the stock literal assignment format only. Count
+// unsupported assignments too: a later malformed value must not leave an earlier
+// valid value looking authoritative. Missing optional build stamps are allowed.
+func updateIdentityAssignment(data []byte, name, allowed string) (string, bool) {
+	assignment := regexp.MustCompile(`(?:^|[^A-Za-z0-9_])` + regexp.QuoteMeta(name) + `[ \t]*=`)
+	literal := regexp.MustCompile(`^` + regexp.QuoteMeta(name) + `="(` + allowed + `)"[ \t]*(?:#[^\r\n]*)?\r?$`)
+	count := 0
+	value := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		matches := assignment.FindAllStringIndex(line, 2)
+		if len(matches) == 0 {
+			continue
+		}
+		count += len(matches)
+		parsed := literal.FindStringSubmatch(line)
+		if count != 1 || parsed == nil {
+			return "", false
+		}
+		value = parsed[1]
+	}
+	return value, true
 }
 
 func updateResult(before, after updateSnapshot) *NativeUpdateResult {

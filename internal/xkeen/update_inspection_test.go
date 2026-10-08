@@ -61,3 +61,32 @@ func TestUpdateProcessObservationDoesNotTurnUnavailableIntoStopped(t *testing.T)
 		t.Fatal("unknown observation contains unsupported facts", string(encoded))
 	}
 }
+
+func TestUpdateIdentityRejectsUnsupportedReassignments(t *testing.T) {
+	const baseline = "xkeen_current_version=\"2.1\"\nxkeen_build=\"Stable\"\nbuild_timestamp=\"2026-10-06 10:58:45 MSK\"\n"
+	for _, field := range []string{"xkeen_current_version", "xkeen_build", "build_timestamp"} {
+		for _, suffix := range []string{"=\"bogus\"", "='bogus'", "=\"$(private-command)\"", "=bogus", " = bogus"} {
+			for _, prefix := range []string{"", "  ", "export ", "true; "} {
+				t.Run(field+prefix+suffix, func(t *testing.T) {
+					d := nativeFixture(t)
+					writeNativeFixture(t, d, "opt/sbin/.xkeen/01_info/01_info_variable.sh", baseline+prefix+field+suffix+"\n")
+					snapshot := d.updateSnapshot(context.Background())
+					if snapshot.release != nil {
+						t.Fatal("ambiguous installed identity was published", snapshot.release)
+					}
+					result := updateResult(updateSnapshot{release: &NativeRelease{Version: "2.1", Channel: "stable"}}, snapshot)
+					if result.Change != "unknown" || result.After != nil {
+						t.Fatal("ambiguous identity became a verified update result", result)
+					}
+				})
+			}
+		}
+	}
+	for _, build := range []string{"", "build_timestamp=\"\"\n", "# build_timestamp='ignored'\n"} {
+		d := nativeFixture(t)
+		writeNativeFixture(t, d, "opt/sbin/.xkeen/01_info/01_info_variable.sh", "xkeen_current_version=\"2.1\"\nxkeen_build=\"Stable\"\n"+build)
+		if got := d.updateSnapshot(context.Background()); got.release == nil || got.release.BuildTimestamp != "" {
+			t.Fatal("missing or empty stock build stamp rejected", got)
+		}
+	}
+}

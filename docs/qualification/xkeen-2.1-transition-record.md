@@ -72,6 +72,15 @@ regenerates init/cron, registers native lists/control/status and may restart the
 service. A successful code restore is therefore not complete state recovery.
 Neither `.old` staging nor a backup command's exit zero is adequate evidence.
 
+The previously inspected Beta source `68eca60fedf03957952d1f8b44bfdd98f8a282e5`
+does expose supported [`-ri`](https://github.com/jameszeroX/XKeen/blob/68eca60fedf03957952d1f8b44bfdd98f8a282e5/scripts/xkeen):
+it migrates settings from the current init, regenerates init and restarts a running
+core. Native init then generates its hook. This establishes a candidate public
+regeneration command, not a qualified full rollback. It neither reconstructs
+the root crontab nor restores saved pre-update settings; for example, the removed
+`udp_flush` assignment cannot be recovered from a regenerated 2.1 init. Verify
+the exact installed old source and private baseline before testing this path.
+
 The disposable-contour record must identify:
 
 1. The exact copy native restore will select, and verified dispatcher/module
