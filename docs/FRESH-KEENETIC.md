@@ -19,7 +19,7 @@ Prepare direct Internet/DNS, ARM64 Entware, free storage and private management 
 ```sh
 export PATH="/opt/bin:/opt/sbin:${PATH:-/usr/sbin:/usr/bin:/sbin:/bin}"
 opkg update
-opkg install curl tar
+opkg install curl tar jq
 command -v tar
 tar --version
 ```
@@ -33,7 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/jameszeroX/XKeen/2.1/install.sh -o 
 sh /tmp/xkeen-install.sh --legacy 2.1
 ```
 
-Run the second line only after successful download. This is not an existing-router update/reinstall procedure. The official launcher verifies the asset; independently read back the installed identity. `--stable` instead selects the latest stable at execution time and needs fresh compatibility review if that version changes.
+Run the second line only after successful download. This is not an existing-router update/reinstall procedure. Tagged2.1's launcher **attempts** GitHub asset-digest verification but can continue with a warning when `jq`, the API/digest or `sha256sum` is unavailable. Install `jq` beforehand, check SHA-256 tooling/API availability and inspect the actual verification result; a skipped check remains NOT VERIFIED, never an integrity PASS. Independently verify the release digest/payload before accepting the installation. Installed version readback alone does not replace that check. `--stable` instead selects the latest stable at execution time and needs fresh compatibility review if that version changes.
 
 Choose **Xray only** in its native menu. Review the core version instead of assuming the latest entry is stable/qualified. Install geodata referenced by the selected policy, choose native schedule/autostart explicitly and keep clients on ordinary direct Internet while configuration is incomplete. Firmware5.2 needs the private RCI token in protected `/opt/etc/xkeen/xkeen.json`, following [upstream instructions](https://github.com/jameszeroX/XKeen/wiki/Порядок-установки); token creation is an explicit administrator action. Older firmware does not acquire that requirement automatically.
 
