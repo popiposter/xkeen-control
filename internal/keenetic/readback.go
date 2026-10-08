@@ -92,38 +92,64 @@ func (r record) rootValue(key string) (string, error) {
 }
 
 func (a *Adapter) checkInterfaces(ctx context.Context, s Snapshot) error {
+	_, err := a.interfaceNames(ctx, s)
+	return err
+}
+
+// Resolve live aliases only after checking canonical IDs, uniqueness and the
+// selected interfaces against the complete configuration and live attributes.
+func (a *Adapter) interfaceNames(ctx context.Context, s Snapshot) (map[string]string, error) {
 	b, e := a.run(ctx, interfaces, "")
 	if e != nil {
-		return ErrCapability
+		return nil, ErrCapability
 	}
 	rs, e := records(b, "interface")
 	if e != nil {
-		return e
+		return nil, e
 	}
+	names := map[string]string{}
+	ids := map[string]bool{}
 	home, wan := false, false
 	for _, r := range rs {
 		id, e := r.rootValue("id")
 		if e != nil || !interfaceID.MatchString(id) {
-			return ErrCapability
+			return nil, ErrCapability
 		}
 		alias, e := r.rootValue("interface-name")
-		if e != nil || alias != r.name {
-			return ErrCapability
+		if e != nil || alias != r.name || !interfaceID.MatchString(alias) || ids[id] {
+			return nil, ErrCapability
+		}
+		ids[id] = true
+		for _, name := range []string{id, alias} {
+			if prior, ok := names[name]; ok && prior != id {
+				return nil, ErrCapability
+			}
+			names[name] = id
 		}
 		if id != s.Home && id != s.WAN {
 			continue
 		}
+		configuredAlias := id
+		for _, l := range s.config {
+			w := l.words
+			if len(w) == 4 && w[0] == "interface" && w[1] == id && w[2] == "rename" {
+				configuredAlias = strings.Trim(w[3], `"`)
+			}
+		}
+		if alias != configuredAlias {
+			return nil, ErrCapability
+		}
 		state, e := r.rootValue("state")
 		if e != nil || state != "up" {
-			return ErrCapability
+			return nil, ErrCapability
 		}
 		connected, e := r.rootValue("connected")
 		if e != nil || connected != "yes" {
-			return ErrCapability
+			return nil, ErrCapability
 		}
 		if id == s.Home {
 			if home {
-				return ErrCapability
+				return nil, ErrCapability
 			}
 			home = true
 			found := false
@@ -134,19 +160,19 @@ func (a *Adapter) checkInterfaces(ctx context.Context, s Snapshot) error {
 				}
 			}
 			if !found {
-				return ErrCapability
+				return nil, ErrCapability
 			}
 		} else {
 			if wan {
-				return ErrCapability
+				return nil, ErrCapability
 			}
 			wan = true
 		}
 	}
 	if !home || !wan {
-		return ErrCapability
+		return nil, ErrCapability
 	}
-	return nil
+	return names, nil
 }
 
 func (a *Adapter) VerifyPolicy(ctx context.Context, p Plan, assigned bool) error {
@@ -156,6 +182,10 @@ func (a *Adapter) VerifyPolicy(ctx context.Context, p Plan, assigned bool) error
 	s, e := a.current(ctx)
 	if e != nil {
 		return e
+	}
+	names, e := a.interfaceNames(ctx, s)
+	if e != nil {
+		return ErrUnknown
 	}
 	want := s.Policies[p.PolicyID]
 	if want.Description != "xkeen" || want.WAN != p.WAN {
@@ -211,7 +241,7 @@ func (a *Adapter) VerifyPolicy(ctx context.Context, p Plan, assigned bool) error
 		inRoute := false
 		destination, iface, rejecting := "", "", ""
 		check := func() {
-			if destination == "0.0.0.0/0" && iface == p.WAN && rejecting == "no" {
+			if destination == "0.0.0.0/0" && names[iface] == p.WAN && rejecting == "no" {
 				defaultRoute = true
 			}
 		}

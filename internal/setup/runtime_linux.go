@@ -126,98 +126,127 @@ func verifyScope(ctx context.Context, mark uint32) error {
 		if e != nil {
 			return ErrState
 		}
-		if verifyTable(b, mark) != nil {
+		count, e := scopedTable(b, mark)
+		if e != nil {
 			return ErrState
 		}
-		for _, line := range strings.Split(string(b), "\n") {
-			w := strings.Fields(line)
-			if len(w) < 4 || w[0] != "-A" || w[1] != "PREROUTING" {
-				continue
-			}
-			jump, foundMark := "", uint64(0)
-			connmark := false
-			for i := 2; i+1 < len(w); i++ {
-				switch w[i] {
-				case "-j", "-g":
-					jump = w[i+1]
-				case "-m":
-					connmark = connmark || w[i+1] == "connmark"
-				case "--mark":
-					if strings.Contains(w[i+1], "/") {
-						parts := strings.Split(w[i+1], "/")
-						mask, e := strconv.ParseUint(parts[1], 0, 32)
-						if e != nil || mask != 0xffffffff {
-							return ErrState
-						}
-					}
-					foundMark, _ = strconv.ParseUint(strings.SplitN(w[i+1], "/", 2)[0], 0, 32)
-				}
-			}
-			if jump == "xkeen" {
-				seen++
-				if !connmark || foundMark != uint64(mark) {
-					return ErrState
-				}
-			}
-		}
+		seen |= count
 	}
-	if seen == 0 {
+	if seen != 3 { // both TCP and UDP must have positively scoped interception
 		return ErrState
 	}
 	return nil
 }
 
 func verifyTable(b []byte, mark uint32) error {
+	_, err := scopedTable(b, mark)
+	return err
+}
+
+// Only this stock rule grammar can prove coverage. Extra predicates (source,
+// input interface, negated mark/ports, etc.) cannot prove all-HOME interception
+// or exemption. Stock's ! --ctstate INVALID is the one supported negation.
+func stockScopeRule(w []string, mark uint32) (proto, ports string, err error) {
+	seen := map[string]bool{}
+	modules := map[string]bool{}
+	markText, state := "", ""
+	for i := 2; i < len(w); {
+		key := w[i]
+		if key == "!" {
+			if i+2 >= len(w) || w[i+1] != "--ctstate" || w[i+2] != "INVALID" || !modules["conntrack"] || seen["--ctstate"] {
+				return "", "", ErrState
+			}
+			seen["--ctstate"] = true
+			state = "!INVALID"
+			i += 3
+			continue
+		}
+		if i+1 >= len(w) || seen[key] && key != "-m" {
+			return "", "", ErrState
+		}
+		value := w[i+1]
+		seen[key] = true
+		switch key {
+		case "-m":
+			if modules[value] || value != "connmark" && value != "conntrack" && value != "multiport" && value != "comment" && value != "tcp" && value != "udp" {
+				return "", "", ErrState
+			}
+			modules[value] = true
+		case "-p":
+			proto = value
+		case "--mark":
+			markText = value
+		case "--dports":
+			ports = value
+		case "--comment":
+			if !modules["comment"] || strings.Trim(value, `"`) != "xkeen_rule" {
+				return "", "", ErrState
+			}
+		case "-j":
+			if value != "RETURN" && value != "xkeen" || i+2 != len(w) {
+				return "", "", ErrState
+			}
+		default:
+			return "", "", ErrState
+		}
+		i += 2
+	}
+	parts := strings.Split(markText, "/")
+	n, e := strconv.ParseUint(parts[0], 0, 32)
+	if e != nil || mark == 0 || n != uint64(mark) || len(parts) > 2 || !modules["connmark"] || !seen["-j"] || proto != "tcp" && proto != "udp" {
+		return "", "", ErrState
+	}
+	if len(parts) == 2 {
+		mask, e := strconv.ParseUint(parts[1], 0, 32)
+		if e != nil || mask != 0xffffffff {
+			return "", "", ErrState
+		}
+	}
+	if modules["conntrack"] && state != "!INVALID" || modules["comment"] && !seen["--comment"] || modules["multiport"] != seen["--dports"] || modules["tcp"] && proto != "tcp" || modules["udp"] && proto != "udp" {
+		return "", "", ErrState
+	}
+	return proto, ports, nil
+}
+
+func scopedTable(b []byte, mark uint32) (int, error) {
 	returns := map[string]bool{}
+	count := 0
 	for _, line := range strings.Split(string(b), "\n") {
 		w := strings.Fields(line)
 		if len(w) < 4 || w[0] != "-A" || w[1] != "PREROUTING" {
 			continue
 		}
-		jump, proto, ports, markText := "", "", "", ""
-		connmark := false
-		dscp := false
+		jump := ""
 		for i := 2; i+1 < len(w); i++ {
-			switch w[i] {
-			case "-j", "-g":
+			if w[i] == "-j" || w[i] == "-g" {
 				jump = w[i+1]
-			case "-p":
-				proto = w[i+1]
-			case "--dports":
-				ports = w[i+1]
-			case "--mark":
-				markText = w[i+1]
-			case "-m":
-				connmark = connmark || w[i+1] == "connmark"
-				dscp = dscp || w[i+1] == "dscp"
 			}
 		}
-		marked := false
-		if connmark {
-			parts := strings.Split(markText, "/")
-			n, e := strconv.ParseUint(parts[0], 0, 32)
-			marked = e == nil && n == uint64(mark)
-			if len(parts) > 1 {
-				mask, e := strconv.ParseUint(parts[1], 0, 32)
-				marked = marked && e == nil && mask == 0xffffffff
-			}
+		if jump != "RETURN" && !strings.HasPrefix(jump, "xkeen") {
+			continue
 		}
-		if jump == "RETURN" && marked && (proto == "tcp" || proto == "udp") {
-			found, e := excludedPort([]byte(strings.ReplaceAll(ports, ",", "\n")))
-			if e != nil {
-				return ErrState
+		proto, ports, e := stockScopeRule(w, mark)
+		if jump == "RETURN" {
+			if e == nil {
+				found, e := excludedPort([]byte(strings.ReplaceAll(ports, ",", "\n")))
+				if e != nil {
+					return 0, ErrState
+				}
+				returns[proto] = returns[proto] || found
 			}
-			returns[proto] = returns[proto] || found
+			continue
 		}
-		if strings.HasPrefix(jump, "xkeen") {
-			if jump != "xkeen" || dscp || !marked || !returns[proto] {
-				return ErrState
-			}
+		if e != nil || jump != "xkeen" || ports != "" || !returns[proto] {
+			return 0, ErrState
+		}
+		if proto == "tcp" {
+			count |= 1
+		} else {
+			count |= 2
 		}
 	}
-	return nil
+	return count, nil
 }
-
 func dnsAnswer(ctx context.Context, address string) error {
 	name, _ := dnsmessage.NewName("example.com.")
 	query := dnsmessage.Message{Header: dnsmessage.Header{ID: 0x145, RecursionDesired: true}, Questions: []dnsmessage.Question{{Name: name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET}}}

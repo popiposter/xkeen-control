@@ -50,7 +50,30 @@ func TestInterceptionRequiresPolicyMarkAndPriorDNSReturn(t *testing.T) {
 	if verifyTable([]byte(good), 0xffffad00) != nil {
 		t.Fatal("scoped return rejected")
 	}
-	for _, s := range []string{strings.Replace(good, "53,10085", "10085", 1), strings.Replace(good, "--mark 0xffffad00 -j", "--mark 0xffffaa00 -j", 1), strings.Replace(good, "-m connmark --mark 0xffffad00 -j", "-m dscp --dscp 63 -j", 1), good + "-A PREROUTING -p tcp -m dscp --dscp 61 -j xkeen_force\n"} {
+	stock := strings.ReplaceAll(good, "-m connmark", "-m conntrack ! --ctstate INVALID -m connmark")
+	stock = strings.ReplaceAll(stock, "-j", "-m comment --comment \"xkeen_rule\" -j")
+	if verifyTable([]byte(stock), 0xffffad00) != nil {
+		t.Fatal("stock conntrack negation rejected")
+	}
+	if protocols, err := scopedTable([]byte(stock), 0xffffad00); err != nil || protocols != 1 {
+		t.Fatal("TCP-only rules claimed UDP coverage")
+	}
+	if protocols, err := scopedTable([]byte(stock+strings.ReplaceAll(stock, "tcp", "udp")), 0xffffad00); err != nil || protocols != 3 {
+		t.Fatal("stock TCP/UDP coverage rejected")
+	}
+	for _, s := range []string{
+		strings.Replace(good, "53,10085", "10085", 1),
+		strings.Replace(good, "--mark 0xffffad00 -j", "--mark 0xffffaa00 -j", 1),
+		strings.Replace(good, "-m connmark --mark 0xffffad00 -j", "-m dscp --dscp 63 -j", 1),
+		good + "-A PREROUTING -p tcp -m dscp --dscp 61 -j xkeen_force\n",
+		strings.Replace(good, "--mark 0xffffad00 -j", "! --mark 0xffffad00 -j", 1),
+		strings.Replace(good, "--dports", "! --dports", 1),
+		strings.Replace(good, "--mark", "! --mark", 1),
+		strings.Replace(good, "-j xkeen", "-s 192.0.2.1 -j xkeen", 1),
+		strings.Replace(good, "-j RETURN", "-i eth0 -j RETURN", 1),
+		strings.Replace(good, "-j xkeen", "-m multiport --dports 443 -j xkeen", 1),
+		strings.Replace(good, "--mark 0xffffad00 -j", "--mark 0xffffad00/0xffffff00 -j", 1),
+	} {
 		if verifyTable([]byte(s), 0xffffad00) == nil {
 			t.Fatal("unsafe interception accepted")
 		}

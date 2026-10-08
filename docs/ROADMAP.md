@@ -25,8 +25,9 @@ source implementation of initial stock bootstrap, private source import, a full
 reference generation, typed firmware assignment and interrupted-setup fencing.
 The first adapter is restricted to the observed KN1811/5.01.C.6.0-1 CLI family;
 unsupported topology/schema stops before provisioning. Stock commands remain
-installation/update owners. Independent final-source review and exact FULL are
-pending; published availability and fresh hardware acceptance remain pending.
+installation/update owners. [PR147](https://github.com/popiposter/xkeen-control/pull/147)
+records independent exact-source review and exact FULL evidence separately.
+Published availability and fresh hardware acceptance remain pending.
 
 ## Remaining acceptance
 

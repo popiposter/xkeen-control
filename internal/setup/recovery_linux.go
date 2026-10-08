@@ -165,6 +165,7 @@ func Abort(ctx context.Context, out io.Writer) error {
 	if e != nil || actual.Hash != intent.AfterHash {
 		return ErrState
 	}
+	var stoppedEditor *xkeen.ConfigEditor
 	if r.Phase == "policy" {
 		for _, p := range []string{"/opt/sbin/xkeen", "/opt/sbin/_xkeen", "/opt/sbin/.xkeen", "/opt/sbin/xray"} {
 			if _, e := os.Lstat(p); !os.IsNotExist(e) {
@@ -196,10 +197,14 @@ func Abort(ctx context.Context, out io.Writer) error {
 		if facts.XrayRunning || facts.Installation != xkeen.CapabilityAvailable {
 			return ErrState
 		}
+		stoppedEditor = editor
 	} else {
 		return ErrState
 	}
-	if _, e = firmware.RestoreOwned(ctx, base.Before, base.Plan, intent.AfterHash, persistFirmware); e != nil {
+	if e = restoreAfterStop(ctx, stoppedEditor, r.Generation, func() error {
+		_, err := firmware.RestoreOwned(ctx, base.Before, base.Plan, intent.AfterHash, persistFirmware)
+		return err
+	}); e != nil {
 		return e
 	}
 	r.Phase = "aborted"
@@ -211,4 +216,14 @@ func Abort(ctx context.Context, out io.Writer) error {
 	}
 	fmt.Fprintln(out, "Собственные изменения политики и DNS отменены и сохранены. Неполная установка остаётся заблокированной; компоненты не переустанавливались.")
 	return nil
+}
+
+// The display-only discovery boolean is not positive process absence. Keep
+// the existing editor's two-sided process/generation readback immediately
+// before the first firmware inverse; unavailable readback never calls restore.
+func restoreAfterStop(ctx context.Context, editor *xkeen.ConfigEditor, generation string, restore func() error) error {
+	if editor != nil && editor.VerifySetupStopped(ctx, generation) != nil {
+		return ErrState
+	}
+	return restore()
 }

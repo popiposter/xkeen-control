@@ -29,7 +29,7 @@ const policyTree = `           policy, name = Policy1, description = xkeen:
                route4:
                     route:
                        destination: 0.0.0.0/0
-                         interface: ISP0
+                         interface: Internet
                          rejecting: no
                table6: 0
                route6:
@@ -76,6 +76,24 @@ func TestObservedTextFamilyAliasesAndHexPolicy(t *testing.T) {
 	mark, e := a.Mark(context.Background(), p, true)
 	if e != nil || mark != 0xffffad00 {
 		t.Fatal("bare hex policy mark", e)
+	}
+	for _, live := range []string{
+		strings.ReplaceAll(interfaceTree, `"Internet"`, `"Other"`),
+		interfaceTree + "Interface, name = \"Internet\"\n                id: ISP1\n    interface-name: Internet\n",
+		interfaceTree + "Interface, name = \"ISP0\"\n                id: ISP1\n    interface-name: ISP0\n",
+	} {
+		a.run = func(ctx context.Context, c command, x string) ([]byte, error) {
+			if c == running {
+				return []byte(cfg), nil
+			}
+			if c == interfaces {
+				return []byte(live), nil
+			}
+			return prior(ctx, c, x)
+		}
+		if a.VerifyPolicy(context.Background(), p, true) == nil {
+			t.Fatal("unknown or ambiguous live WAN alias admitted")
+		}
 	}
 }
 func TestFreshRefusesHostOverridesMultipleHomeAndUnsavedState(t *testing.T) {

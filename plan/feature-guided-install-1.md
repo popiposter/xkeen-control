@@ -288,7 +288,7 @@ there is no guessed uninstall, full-config replay or receipt deletion.
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-011 | Run focused adverse fixtures, independent exact-source review, final clean-HEAD Docker/Linux FULL and changed release assembly/trust checks. Publish a runnable setup command only after protected signed release contains the implemented mode/CLI; development artifact is not the published installer. | Focused pass; exact review/FULL pending; unpublished | 2026-10-08 |
+| TASK-011 | Run focused adverse fixtures, independent exact-source review, final clean-HEAD Docker/Linux FULL and changed release assembly/trust checks. Publish a runnable setup command only after protected signed release contains the implemented mode/CLI; development artifact is not the published installer. | Focused pass; exact review/FULL ledger in [PR147](https://github.com/popiposter/xkeen-control/pull/147); unpublished | 2026-10-08 |
 | TASK-012 | On actual fresh supported hardware test subscription → full configuration → one activation → all HOME readback → unproxied LAN DIRECT/VPN/local names/cold DNS/failure/recovery → scoped rollback. Current operator router is not a fresh test target; preserve NOTRUN if hardware is unavailable. | No | — |
 
 ## 3. Alternatives
