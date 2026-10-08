@@ -163,6 +163,16 @@ Successful typed `appliance adopt` establishes the local non-secret appliance au
 
 ## Qualification and diagnostics
 
+Guided fresh setup under Issue #145 may deliver only the fixed verified official
+stock dispatcher into provably empty destinations, then invoke one supported
+native auto installation. It may use a fixed typed destination-scoped firmware
+writer; no caller-supplied command/RCI body is admitted. Setup inputs remain
+private and use existing parser/fetch protections. A bounded root-only durable
+setup receipt and kernel setup/daemon coordination fence incomplete setup before
+normal workers start. These do not serialize native init or external CLI/cron.
+Existing/partial paths, unsafe storage and unknown outcomes block progression;
+no automatic reinstall, native replay or full firmware configuration restore.
+
 - Tests use synthetic fixtures only.
 - Workflows must never dump complete environments or production configuration.
 - Router SSH credentials/private keys must never be mounted into local qualification or release jobs.

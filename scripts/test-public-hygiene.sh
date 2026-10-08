@@ -13,11 +13,15 @@ if printf '%s\n' "$tracked" | grep -E '(^|/)(nodes\.json|04_outbounds\.json|secr
 fi
 
 if git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-	if git -C "$ROOT" grep -n -I -E 'BEGIN (OPENSSH|RSA|EC|ED25519) PRIVATE KEY|vless://[^[:space:]]+@[^[:space:]]+' -- ':!internal/nodes/parser_test.go' ':!internal/nodes/subscription_test.go' ':!internal/httpapi/mutation_test.go' ':!scripts/test-public-hygiene.sh' >/dev/null 2>&1; then
+	# These explicitly reviewed URL fixtures use reserved example endpoints and
+	# synthetic identities. Private keys have no fixture exemption anywhere.
+	if git -C "$ROOT" grep -n -I -E 'BEGIN (OPENSSH|RSA|EC|ED25519) PRIVATE KEY' >/dev/null 2>&1 ||
+	   git -C "$ROOT" grep -n -I -E 'vless://[^[:space:]]+@[^[:space:]]+' -- ':!internal/nodes/parser_test.go' ':!internal/nodes/subscription_test.go' ':!internal/httpapi/mutation_test.go' ':!internal/setup/candidate_test.go' ':!scripts/test-public-hygiene.sh' >/dev/null 2>&1; then
 		echo "unexpected private key or production VLESS literal" >&2
 		exit 1
 	fi
-elif grep -R -n -I -E --exclude-dir=.git --exclude-dir=node_modules --exclude='parser_test.go' --exclude='subscription_test.go' --exclude='mutation_test.go' --exclude='test-public-hygiene.sh' 'BEGIN (OPENSSH|RSA|EC|ED25519) PRIVATE KEY|vless://[^[:space:]]+@[^[:space:]]+' "$ROOT" >/dev/null 2>&1; then
+elif grep -R -n -I -E --exclude-dir=.git --exclude-dir=node_modules 'BEGIN (OPENSSH|RSA|EC|ED25519) PRIVATE KEY' "$ROOT" >/dev/null 2>&1 ||
+     grep -R -n -I -E --exclude-dir=.git --exclude-dir=node_modules --exclude='parser_test.go' --exclude='subscription_test.go' --exclude='mutation_test.go' --exclude='candidate_test.go' --exclude='test-public-hygiene.sh' 'vless://[^[:space:]]+@[^[:space:]]+' "$ROOT" >/dev/null 2>&1; then
 	echo "unexpected private key or production VLESS literal" >&2
 	exit 1
 fi

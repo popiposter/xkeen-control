@@ -14,6 +14,21 @@ This is the current sequencing/status authority. Issues contain detailed task co
 - Encrypted native transfer and restricted optional Telegram control.
 - Signed panel self-update, private listener and session persistence.
 
+## Setup implementation in review
+
+[#145 guided fresh installation](https://github.com/popiposter/xkeen-control/issues/145)
+extends [#143 research](https://github.com/popiposter/xkeen-control/issues/143): one
+entrypoint privately requests a subscription/node, prepares the reference and
+independent DNS, then activates the entire discovered HOME network after readiness.
+The [implementation contract](../plan/feature-guided-install-1.md) governs the
+source implementation of initial stock bootstrap, private source import, a full
+reference generation, typed firmware assignment and interrupted-setup fencing.
+The first adapter is restricted to the observed KN1811/5.01.C.6.0-1 CLI family;
+unsupported topology/schema stops before provisioning. Stock commands remain
+installation/update owners. [PR147](https://github.com/popiposter/xkeen-control/pull/147)
+records independent exact-source review and exact FULL evidence separately.
+Published availability and fresh hardware acceptance remain pending.
+
 ## Remaining acceptance
 
 | Task | Current boundary | Prerequisite |

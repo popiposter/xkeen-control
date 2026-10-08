@@ -47,6 +47,7 @@ fi
 grep -Fq 'release-assets.githubusercontent.com' "$ROOT/scripts/install.sh"
 
 bash "$ROOT/scripts/test-release-git-trust.sh"
+sh "$ROOT/scripts/test-panel-init-path.sh"
 bash "$ROOT/scripts/test-bootstrap.sh"
 bash "$ROOT/scripts/test-updater.sh"
 bash "$ROOT/scripts/test-legacy-reconcile.sh"

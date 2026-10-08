@@ -28,6 +28,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/panellistener"
 	"github.com/popiposter/xkeen-control/internal/performancepolicy"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
+	initialsetup "github.com/popiposter/xkeen-control/internal/setup"
 	"github.com/popiposter/xkeen-control/internal/splitdns"
 	panelupdate "github.com/popiposter/xkeen-control/internal/update"
 	"github.com/popiposter/xkeen-control/internal/webassets"
@@ -38,7 +39,22 @@ import (
 const defaultListenAddress = panellistener.DefaultAddress
 
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "setup" {
+		if err := runSetupCommand(os.Args[2:]); err != nil {
+			log.Print(err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "native" {
+		if len(os.Args) > 2 && os.Args[2] == "attach-stopped" {
+			close, err := initialsetup.Normal()
+			if err != nil {
+				log.Print(err)
+				os.Exit(1)
+			}
+			defer close()
+		}
 		if err := runNativeCommand(os.Args[2:], os.Stdout, xkeen.Discovery{}); err != nil {
 			log.Print(err)
 			os.Exit(1)
@@ -59,6 +75,12 @@ func main() {
 		return
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "password" {
+		close, err := initialsetup.Normal()
+		if err != nil {
+			log.Print(err)
+			os.Exit(1)
+		}
+		defer close()
 		if len(os.Args) != 3 {
 			log.Print("usage: xkeen-control password {init|change|bootstrap}")
 			os.Exit(2)
@@ -79,6 +101,12 @@ func main() {
 		return
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "self-update" {
+		close, err := initialsetup.Normal()
+		if err != nil {
+			log.Print(err)
+			os.Exit(1)
+		}
+		defer close()
 		if err := runSelfUpdateCommand(os.Args[2:]); err != nil {
 			log.Print(err)
 			os.Exit(1)
@@ -86,6 +114,12 @@ func main() {
 		return
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "nodes" {
+		close, err := initialsetup.Normal()
+		if err != nil {
+			log.Print(err)
+			os.Exit(1)
+		}
+		defer close()
 		if err := runNodesCommand(os.Args[2:]); err != nil {
 			log.Print(err)
 			os.Exit(1)
@@ -96,6 +130,12 @@ func main() {
 		log.Print("unsupported panel command; use native, nodes, password, version or self-update")
 		os.Exit(2)
 	}
+	closeSetupGuard, err := initialsetup.Normal()
+	if err != nil {
+		log.Print(err)
+		os.Exit(1)
+	}
+	defer closeSetupGuard()
 
 	listenerFile := getenv("XKEEN_CONTROL_LISTEN_FILE", panellistener.DefaultFilePath)
 	listenerResolution, err := panellistener.ResolveStartup(os.Getenv("XKEEN_CONTROL_LISTEN"), listenerFile)

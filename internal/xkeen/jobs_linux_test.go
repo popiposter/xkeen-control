@@ -23,6 +23,18 @@ func testNativeJobs(t *testing.T, script string) *Jobs {
 	return NewJobs(path, authority.NewLease())
 }
 
+func TestNativeJobsPreferEntwareToolsRegardlessOfParentPath(t *testing.T) {
+	t.Setenv("PATH", "/opt/usr/bin:/usr/bin:/bin")
+	m := testNativeJobs(t, "[ \"$1\" = -status ] || exit 9\ncase \"$PATH\" in /opt/bin:/opt/sbin:*) ;; *) exit 8;; esac\n[ \"$XKEEN_FOREGROUND\" = 1 ] || exit 7\n")
+	v, err := m.Start("owner", CommandRequest{Action: "status"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := waitNativeJob(t, m, v.ID); result.State != "completed" {
+		t.Fatal("native child inherited firmware-first tool lookup")
+	}
+}
+
 func TestNativeUpdateConsoleCanAnswerConditionalPrompt(t *testing.T) {
 	m := testNativeJobs(t, "[ \"$1\" = -ug ] || exit 9\nprintf 'Answer: '\nread -r answer\nprintf 'Got:%s' \"$answer\"\n")
 	v, err := m.Start("owner", CommandRequest{Action: "update-geodata"})

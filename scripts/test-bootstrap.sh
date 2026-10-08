@@ -56,6 +56,12 @@ case "${1:-} ${2:-}" in
 		printf '%s\n' bootstrap-required > "$root/opt/etc/xkeen-control/auth/bootstrap-required"
 		printf '%s\n' bootstrap >> "$root/bootstrap-calls"
 		;;
+	"setup run")
+		[ ! -e "$root/opt/etc/xkeen-control" ] || exit 4
+		# Launcher owns an uninterrupted exclusive inode already at dispatch.
+		if flock -n -x "$root/opt/var/lock/xkeen-control/initial-setup.lock" true; then exit 5; fi
+		printf '%s\n' setup-run >> "$root/setup-calls"
+		;;
 	"nodes validate")
 		jq -e '.schemaVersion == 1 and (.generation | type == "string" and length > 0)' "${XKEEN_NODES_PATH:?}" >/dev/null
 		;;
@@ -150,11 +156,12 @@ chmod 755 "$fakebin/opkg" "$fakebin/uname" "$fakebin/df" "$fakebin/curl"
 
 run_installer() {
 	root="$1"
+	shift
 	PATH="$fakebin:$PATH" \
 	XKEEN_CONTROL_TEST_MODE=1 \
 	XKEEN_CONTROL_TEST_ROOT="$root" \
 	XKEEN_CONTROL_FIXTURE_DIR="$fixture" \
-	sh "$installer"
+	sh "$installer" "$@"
 }
 
 setup_legacy_root() {
@@ -186,6 +193,17 @@ setup_managed_root() {
 	chmod 755 "$root/opt/sbin/xkeen-control" "$root/opt/etc/init.d/S99xkeen-control" "$root/opt/libexec/xkeen-control-updater"
 	printf '%s\n' existing-auth-hash > "$root/opt/etc/xkeen-control/auth/password.bcrypt"
 }
+
+setup_root="$tmp/guided-root"
+mkdir -p "$setup_root/opt" "$setup_root/tmp"
+run_installer "$setup_root" --setup >/dev/null
+[ "$(cat "$setup_root/setup-calls")" = setup-run ]
+[ ! -e "$setup_root/opt/etc/xkeen-control" ]
+[ ! -e "$setup_root/opt/sbin/xkeen-control" ]
+if run_installer "$setup_root" --setup-panel >/dev/null 2>&1; then
+	echo 'internal setup placement accepted without owner FD' >&2; exit 1
+fi
+[ ! -e "$setup_root/opt/sbin/xkeen-control" ]
 
 run_installer "$testroot" >/dev/null
 

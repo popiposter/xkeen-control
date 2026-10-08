@@ -8,6 +8,47 @@ import (
 	"strings"
 )
 
+// VerifySetupRuntime is readback for the explicit initial setup owner. It does
+// not clear pending state, replay a native action or replace InspectApplied.
+func (e *ConfigEditor) VerifySetupRuntime(ctx context.Context, expected string) error {
+	s, e1 := e.Snapshot(ctx)
+	if e1 != nil || s.Digest != expected {
+		return ErrConfig
+	}
+	if e.validateSet(ctx, s) != nil {
+		return ErrConfig
+	}
+	p, e1 := e.configProcess(ctx)
+	if e1 != nil || p == "" {
+		return ErrConfig
+	}
+	again, e1 := e.Snapshot(ctx)
+	p2, e2 := e.configProcess(ctx)
+	if e1 != nil || e2 != nil || again.Digest != expected || p2 != p {
+		return ErrConfig
+	}
+	return nil
+}
+
+// VerifySetupStopped requires positive process absence, not a missing comm or
+// an unavailable /proc read, on both sides of exact saved-generation readback.
+func (e *ConfigEditor) VerifySetupStopped(ctx context.Context, expected string) error {
+	s, err := e.Snapshot(ctx)
+	if err != nil || s.Digest != expected {
+		return ErrConfig
+	}
+	p, err := e.configProcess(ctx)
+	if err != nil || p != "" {
+		return ErrConfig
+	}
+	again, err := e.Snapshot(ctx)
+	p2, e2 := e.configProcess(ctx)
+	if err != nil || e2 != nil || p2 != "" || again.Digest != expected {
+		return ErrConfig
+	}
+	return nil
+}
+
 // Empty means positive absence. Read/resource/multiple-process ambiguity is an
 // error. A comm/name-only observation is never accepted as successful Apply.
 func (e *ConfigEditor) configProcess(ctx context.Context) (string, error) {

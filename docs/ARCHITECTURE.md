@@ -14,6 +14,16 @@ Stable v0.3.1 is published; [release verification](RELEASES.md) and [remaining a
 
 The panel never patches native dispatcher/init/hooks/modules or installs a second component updater. Its lease serializes panel operations only; it does not lock external native CLI or cron.
 
+Issue #145 authorizes the [guided fresh setup](../plan/feature-guided-install-1.md)
+implementation as a separate explicit terminal entry. Initial verified stock
+dispatcher delivery is restricted to empty destinations; one supported native
+auto install owns components. A fixed firmware writer prepares an unassigned
+policy before native activation, then assigns all HOME only after validation.
+Setup defers normal panel startup and hands off through a protected durable
+receipt and kernel process lock. Config pending/jobs/registry/DNS retain their
+existing owners; no native patch, generic command API or second updater exists.
+Published installer availability and fresh hardware qualification remain separate.
+
 ## State and configuration
 
 `/opt/etc/xkeen-control/secrets/nodes.json` is the private node/subscription authority. Managed `04_outbounds.json` entries derive from it; unrelated native fields/outbounds are preserved. Native config files are edited through fixed config IDs, not an appliance-policy twin or arbitrary filesystem API.
