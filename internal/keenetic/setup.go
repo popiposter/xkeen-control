@@ -21,7 +21,10 @@ var (
 	ErrUnknown    = errors.New("firmware result unknown; inspect without replay")
 	identifier    = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,63}$`)
 	interfaceID   = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]{0,48}(?:/[A-Za-z0-9_.-]{1,14})?$`)
-	ansi          = regexp.MustCompile(`\x1b\[[0-9;]*[Km]`)
+	// Aliases are data-only readback names and may start with a digit. Commands
+	// always use the separately validated canonical interface ID.
+	interfaceAlias = regexp.MustCompile(`^[A-Za-z0-9_./-]{1,64}$`)
+	ansi           = regexp.MustCompile(`\x1b\[[0-9;]*[Km]`)
 )
 
 type command uint8
@@ -144,7 +147,7 @@ func project(lines []configLine) (Snapshot, error) {
 		w := l.words
 		if len(w) == 4 && w[0] == "interface" && w[2] == "rename" {
 			name := strings.Trim(w[3], `"`)
-			if !interfaceID.MatchString(name) {
+			if !interfaceAlias.MatchString(name) {
 				return Snapshot{}, ErrCapability
 			}
 			if old, ok := aliases[name]; ok && old != w[1] {

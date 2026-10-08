@@ -22,6 +22,11 @@ Interface, name = "Internet"
     interface-name: Internet
              state: up
          connected: yes
+Interface, name = "0-SyntheticWiFi"
+                id: WifiMaster0/AccessPoint0
+    interface-name: 0-SyntheticWiFi
+             state: down
+         connected: no
 `
 const policyTree = `           policy, name = Policy1, description = xkeen:
                  mark: ffffad00
@@ -94,6 +99,20 @@ func TestObservedTextFamilyAliasesAndHexPolicy(t *testing.T) {
 		if a.VerifyPolicy(context.Background(), p, true) == nil {
 			t.Fatal("unknown or ambiguous live WAN alias admitted")
 		}
+	}
+}
+
+func TestDigitLeadingAliasInCompleteConfiguration(t *testing.T) {
+	a, _ := fixture(t)
+	prior := a.run
+	a.run = func(ctx context.Context, c command, x string) ([]byte, error) {
+		if c == running || c == startup {
+			return []byte(freshConfig + "interface WifiMaster0/AccessPoint0\n    rename 0-SyntheticWiFi\n!\n"), nil
+		}
+		return prior(ctx, c, x)
+	}
+	if _, err := a.Discover(context.Background()); err != nil {
+		t.Fatal("data-only digit-leading alias rejected", err)
 	}
 }
 func TestFreshRefusesHostOverridesMultipleHomeAndUnsavedState(t *testing.T) {

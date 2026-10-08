@@ -116,7 +116,7 @@ func (a *Adapter) interfaceNames(ctx context.Context, s Snapshot) (map[string]st
 			return nil, ErrCapability
 		}
 		alias, e := r.rootValue("interface-name")
-		if e != nil || alias != r.name || !interfaceID.MatchString(alias) || ids[id] {
+		if e != nil || alias != r.name || !interfaceAlias.MatchString(alias) || ids[id] {
 			return nil, ErrCapability
 		}
 		ids[id] = true
