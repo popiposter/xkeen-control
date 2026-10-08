@@ -9,6 +9,7 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { documentField, editDocumentField, formatDocument, inspectDocument } from './native-config-document'
 import { NativeConfigForm } from './native-config-form'
 import { splitDNSDocuments } from './native-dns-policy'
+import { configRequestTimeout } from './native-request-budget'
 import { Disclosure } from './ui'
 
 const TextEditor = lazy(() => import('./native-config-text.jsx'))
@@ -64,7 +65,7 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, on
 
   async function request(path, body) {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), body ? 60_000 : 10_000)
+    const timer = setTimeout(() => controller.abort(), configRequestTimeout(path, body))
     requests.current.add(controller)
     try {
       const endpoint = path === 'geodata' || path === 'geodata/query' ? `/api/v1/${path}` : `/api/v1/xkeen/${path.startsWith('jobs/') ? path : `config/${path}`}`

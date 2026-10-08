@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { ActionHint } from './status-ui'
 import { commandDetails } from './native-command-details'
+import { commandRequestTimeout } from './native-request-budget'
 import { Input } from '@/components/ui/input'
 import { Field, FieldLabel } from '@/components/ui/field'
 
@@ -41,7 +42,7 @@ export function NativeCommands({ csrfToken, onUnauthorized, onRefresh, jobNotifi
   const request = useCallback(async (path, body) => {
     const epoch = generation.current
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 10_000)
+    const timeout = setTimeout(() => controller.abort(), commandRequestTimeout(path, body))
     requests.current.add(controller)
     try {
     const response = await fetch(`/api/v1/xkeen/${path}`, { method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal, headers: body === undefined ? {} : { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken }, body: body === undefined ? undefined : JSON.stringify(body) })

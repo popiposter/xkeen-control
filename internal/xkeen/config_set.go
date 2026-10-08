@@ -64,7 +64,7 @@ func (e *ConfigEditor) validateSet(ctx context.Context, candidate ConfigSnapshot
 			return ErrConfig
 		}
 	}
-	validateCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	validateCtx, cancel := context.WithTimeout(ctx, e.validationTimeout())
 	defer cancel()
 	command := exec.CommandContext(validateCtx, e.XrayBinary, "run", "-test", "-confdir", tmp)
 	for _, entry := range os.Environ() {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/popiposter/xkeen-control/internal/authority"
+	"github.com/popiposter/xkeen-control/internal/validationbudget"
 )
 
 const maxJobOutput = 256 << 10
@@ -183,7 +184,7 @@ func (m *Jobs) startWithPolicy(owner string, r CommandRequest, editor *ConfigEdi
 		return JobView{}, ErrJob
 	}
 	if editor != nil {
-		prepareCtx, prepareCancel := context.WithTimeout(context.Background(), 50*time.Second)
+		prepareCtx, prepareCancel := context.WithTimeout(context.Background(), editor.validationTimeout()+validationbudget.PreparationMargin)
 		err := editor.beginApply(prepareCtx, baseline, j.id)
 		prepareCancel()
 		if err != nil {

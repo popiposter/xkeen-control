@@ -194,6 +194,62 @@ setup_managed_root() {
 	printf '%s\n' existing-auth-hash > "$root/opt/etc/xkeen-control/auth/password.bcrypt"
 }
 
+# Existing incompatible tools must fail before downloads, placement or setup
+# directory creation; replacement of an existing jq is never automatic.
+real_stat="$(command -v stat)"
+for bad_tool in stat jq; do
+	bad_root="$tmp/bad-$bad_tool"
+	mkdir -p "$bad_root/opt" "$bad_root/tmp"
+	printf '#!/bin/sh\nexit 1\n' > "$fakebin/$bad_tool"
+	chmod 755 "$fakebin/$bad_tool"
+	for mode in panel setup; do
+		if [ "$mode" = setup ]; then args=--setup; else args=; fi
+		if run_installer "$bad_root" $args > "$tmp/bad-tool-output" 2>&1; then
+			echo "incompatible $bad_tool accepted" >&2; exit 1
+		fi
+		if [ "$bad_tool" = stat ]; then grep -q coreutils-stat "$tmp/bad-tool-output"; else grep -q jq-full "$tmp/bad-tool-output"; fi
+		[ ! -e "$bad_root/curl-calls" ]
+		[ ! -e "$bad_root/opt/sbin" ]
+		[ ! -e "$bad_root/opt/var" ]
+	done
+	rm "$fakebin/$bad_tool"
+done
+
+# Model a missing stat with a deliberately bounded PATH. opkg may install only
+# the exact missing prerequisite, then incompatible existing jq stops the run.
+missing_bin="$tmp/missing-bin"
+missing_root="$tmp/missing-stat"
+mkdir -p "$missing_bin" "$missing_root/opt" "$missing_root/tmp"
+for tool in id grep awk sha256sum; do ln -s "$(command -v "$tool")" "$missing_bin/$tool"; done
+for tool in uname df curl; do cp "$fakebin/$tool" "$missing_bin/$tool"; done
+printf '#!/bin/sh\nexit 1\n' > "$missing_bin/jq"
+cat > "$missing_bin/opkg" <<'EOF_MISSING_OPKG'
+#!/bin/sh
+printf '%s\n' "$*" >> "$XKEEN_CONTROL_TEST_ROOT/opkg-calls"
+case "$*" in
+  update) exit 0;;
+  'install coreutils-stat') /bin/cp "$XKEEN_FIXTURE_STAT" "$XKEEN_FIXTURE_BIN/stat"; exit 0;;
+  *) exit 1;;
+esac
+EOF_MISSING_OPKG
+chmod 755 "$missing_bin/jq" "$missing_bin/opkg"
+if PATH="$missing_bin" XKEEN_CONTROL_TEST_MODE=1 XKEEN_CONTROL_TEST_ROOT="$missing_root" \
+  /bin/sh "$installer" --setup > "$tmp/missing-setup-output" 2>&1; then
+	echo 'setup admitted missing stat' >&2; exit 1
+fi
+grep -q 'Entware stat' "$tmp/missing-setup-output"
+[ ! -e "$missing_root/opkg-calls" ]
+[ ! -e "$missing_root/opt/var" ]
+if PATH="$missing_bin" XKEEN_FIXTURE_STAT="$real_stat" XKEEN_FIXTURE_BIN="$missing_bin" \
+  XKEEN_CONTROL_TEST_MODE=1 XKEEN_CONTROL_TEST_ROOT="$missing_root" \
+  /bin/sh "$installer" > "$tmp/missing-output" 2>&1; then
+	echo 'incompatible jq accepted after missing stat' >&2; exit 1
+fi
+grep -q jq-full "$tmp/missing-output"
+[ "$(cat "$missing_root/opkg-calls")" = "$(printf 'update\ninstall coreutils-stat')" ]
+[ ! -e "$missing_root/curl-calls" ]
+[ ! -e "$missing_root/opt/sbin" ]
+
 setup_root="$tmp/guided-root"
 mkdir -p "$setup_root/opt" "$setup_root/tmp"
 run_installer "$setup_root" --setup >/dev/null

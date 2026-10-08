@@ -51,6 +51,22 @@ The MIPS binary SHA256 is
 `3d16a7975ba0d52b9d6f7081189af8f3915282efb60ed0be247dddc5892bf9b5`.
 Keep private credentials and backup contents out of chat/public evidence.
 
+## Validation and prerequisite repair in source (#154)
+
+The source repair under #154 gives linux/mipsle full Xray validation 120 seconds
+and configured Apply preparation 125 seconds; other targets retain 45/50 seconds.
+Node transactions allow 375 seconds on MIPS (300 elsewhere), with activation and
+rollback each retaining 120 seconds. Validation writes and configured start/restart
+wait up to 150 seconds in the UI; lost responses require inspection, never replay.
+These changes do not amend published0.4.1 bytes or establish hardware acceptance.
+
+Bootstrap checks selected stat -c metadata and jq buildinfo/regex functionality
+before downloads or placement. Missing stat maps to coreutils-stat; an existing
+incompatible stat requires explicit prerequisite repair. Existing jq without regex
+is refused with a jq-full instruction; automatic removal/force-overwrite is not
+allowed. A functional existing jq is accepted regardless of package name. Guided
+setup still requires preinstalled tools and remains ARM64-only.
+
 ## Before configuring nodes or routing
 
 Panel-managed profiles use the private node registry; unmanaged native outbounds

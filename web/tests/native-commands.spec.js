@@ -43,6 +43,26 @@ async function mountNativeCommands(page, { output = 'Native result\r\n', bootstr
   return model
 }
 
+test('configured start waits through preparation without replaying', async ({ page }) => {
+  await mountNativeCommands(page)
+  await page.route('**/api/v1/xkeen/commands', (route) => route.fulfill({ json: [{ action: 'start', label: 'Start service', interactive: false }] }))
+  await page.getByRole('button', { name: 'Overview', exact: true }).click()
+  await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Start service', exact: true })).toBeEnabled()
+  await page.clock.install()
+  let pendingRoute
+  let starts = 0
+  await page.route('**/api/v1/xkeen/jobs/start', (route) => { starts++; pendingRoute = route })
+  await page.getByRole('button', { name: 'Start service', exact: true }).click()
+  await page.getByRole('button', { name: 'Run native command', exact: true }).click()
+  await expect.poll(() => starts).toBe(1)
+  await page.clock.fastForward(70_000)
+  await expect(page.getByRole('button', { name: 'Run native command', exact: true })).toBeDisabled()
+  await pendingRoute.fulfill({ status: 202, json: { id: 'c'.repeat(32), action: 'start', state: 'completed', interactive: false, output: '', cursor: 0, truncated: false } })
+  await expect(page.getByText('start: completed', { exact: true })).toBeVisible()
+  expect(starts).toBe(1)
+})
+
 test('waits for existing-job discovery and never starts a command on navigation', async ({ page }) => {
   let release
   const bootstrap = new Promise((resolve) => { release = resolve })

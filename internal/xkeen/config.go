@@ -11,6 +11,7 @@ import (
 
 	"github.com/popiposter/xkeen-control/internal/authority"
 	"github.com/popiposter/xkeen-control/internal/configjson"
+	"github.com/popiposter/xkeen-control/internal/validationbudget"
 )
 
 var ErrConfig = errors.New("native configuration unavailable or changed")
@@ -26,8 +27,17 @@ type ConfigEditor struct {
 	DraftDir     string
 	ProcRoot     string
 	RegistryPath string
+	// Optional bounded test/integration override; production uses the built target.
+	ValidationTimeout time.Duration
 	// Optional derived-data validation; never changes a running DNS service.
 	ValidateDerived func(context.Context, map[string][]byte) error
+}
+
+func (e *ConfigEditor) validationTimeout() time.Duration {
+	if e.ValidationTimeout > 0 {
+		return e.ValidationTimeout
+	}
+	return validationbudget.Candidate
 }
 
 type ConfigSnapshot struct {

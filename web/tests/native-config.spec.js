@@ -57,6 +57,23 @@ async function mountEditor(page) {
   return { model, writes, original, state, documents }
 }
 
+test('slow validation write survives old 60s timer and retains busy ownership', async ({ page }) => {
+  const { state } = await mountEditor(page)
+  await page.clock.install()
+  let pendingRoute
+  let writes = 0
+  await page.route('**/api/v1/xkeen/config/text', (route) => { writes++; pendingRoute = route })
+  await page.getByLabel('DNS address family', { exact: true }).selectOption('UseIPv4')
+  await page.getByRole('button', { name: 'Save configuration', exact: true }).click()
+  await expect.poll(() => writes).toBe(1)
+  await page.clock.fastForward(70_000)
+  await expect(page.getByRole('button', { name: 'Save configuration', exact: true })).toBeDisabled()
+  await expect(page.getByText('Saved and validated. Apply when ready.')).not.toBeVisible()
+  await pendingRoute.fulfill({ json: { digest: state.digest, saved: true, restartRequired: true } })
+  await expect(page.getByRole('status').filter({ hasText: 'Saved and validated' })).toBeVisible()
+  expect(writes).toBe(1)
+})
+
 test('Form/Text share edits, formatting and undo without saving or restarting', async ({ page }) => {
   const { model, writes } = await mountEditor(page)
   await page.getByLabel('DNS address family', { exact: true }).selectOption('UseIPv4')
