@@ -7,7 +7,7 @@
 Первый поддержанный вариант: **Ultra KN-1811 / KeeneticOS5.01.C.6.0-1 / linux/arm64**, рабочий Entware `/opt`, один private IPv4 bridge и один WAN, без уже установленных XKeen/панели/резолвера и host/custom DNS-исключений. Нужны `curl`, `jq`, `sha256sum`, `flock`, `stat`, `opkg`, 128 MiB свободной памяти и места. [Полная матрица и восстановление](FRESH-KEENETIC.md).
 
 ```sh
-sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.0/install.sh)" -- --setup
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.0/install.sh) && sh -c "$xkeen_installer" -- --setup
 ```
 
 По запросу вставьте подписку или VLESS-узел. GNU tar, stock XKeen2.1/Xray, панель и независимый DNS готовятся установщиком; эталон RU selective включает torrent DIRECT. Вся HOME-сеть подключается после проверок VPN/DNS и сохранения политики/автозапуска. Откройте домашний URL панели из итогового сообщения; первый пароль указан в терминале. Приватную ссылку не добавляйте в команду.
@@ -19,7 +19,7 @@ Fresh hardware/LAN/IPv6/отказ upstream ещё не прошли отдел�
 Для Keenetic linux/arm64 с Entware и уже работающим штатным XKeen/Xray:
 
 ```sh
-sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.0/install.sh)"
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.0/install.sh) && sh -c "$xkeen_installer"
 ```
 
 Этот режим не создаёт HOME policy/DNS и не применяет эталон. Первый пароль выводится в терминал; существующий пароль сохраняется. Default listener — `127.0.0.1:8787`; откройте туннель с компьютера:

@@ -18,7 +18,7 @@
 Выполните из root SSH-сессии на поддержанном новом роутере:
 
 ```sh
-sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.0/install.sh)" -- --setup
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.0/install.sh) && sh -c "$xkeen_installer" -- --setup
 ```
 
 По запросу вставьте одну ссылку на подписку или поддержанный VLESS-узел. Ввод скрыт; ссылка не передаётся в argv/env и публичные логи. Не добавляйте её в команду. Пустой или ошибочный источник, недоступные зависимости и неизвестное состояние не разрешают подключение HOME.

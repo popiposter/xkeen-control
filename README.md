@@ -42,7 +42,7 @@
 Первый поддержанный вариант: **Ultra KN-1811, KeeneticOS 5.01.C.6.0-1, `linux/arm64`** с рабочим Entware `/opt`, одним домашним IPv4 bridge и одним WAN. XKeen, панель и LAN-резолвер ещё не установлены; нет host-исключений и custom DNS-профилей. Нужны `curl`, `jq`, `sha256sum`, `flock`, `stat` и не менее 128 MiB свободной памяти и места в `/opt`. Другие модели, прошивки и топологии этот режим пока не поддерживает.
 
 ```sh
-sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.0/install.sh)" -- --setup
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.0/install.sh) && sh -c "$xkeen_installer" -- --setup
 ```
 
 Установщик приватно запросит подписку или VLESS-узел, проверит/установит GNU tar, подготовит штатный XKeen 2.1, Xray, панель и mosdns. Он создаёт политику доступа и DNS-профиль через фиксированные команды Keenetic, применяет эталон RU selective и подключает всю HOME-сеть после проверок VPN/DNS и сохранения настроек. Ссылку вводите по запросу, не добавляйте в команду. [Порядок и восстановление установки](docs/FRESH-KEENETIC.md).
@@ -52,7 +52,7 @@ sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/downloa
 Для Keenetic `linux/arm64` с Entware и работающим штатным XKeen/Xray установите только панель:
 
 ```sh
-sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.0/install.sh)"
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.0/install.sh) && sh -c "$xkeen_installer"
 ```
 
 Этот режим сохраняет существующие настройки и не создаёт HOME-политику или эталон. Для уже управляемой панели используйте подписанное обновление в System → Panel. `--setup` поверх существующей установки запускать не нужно.
