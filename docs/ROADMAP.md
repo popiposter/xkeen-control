@@ -4,7 +4,7 @@ This is the current sequencing/status authority. Issues contain detailed task co
 
 ## Delivered
 
-**Stable0.4.0 published and independently verified.** Native-shell implementation #121/PR122, DNS integration #125/PR126 and guided fresh setup #145/PR147 are delivered. PR128/130 corrected release dependency/fixture gates; [release evidence](RELEASES.md) binds the exact source and public bytes.
+**Stable0.4.1 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, DNS integration #125/PR126, guided fresh setup #145/PR147 and MIPS panel delivery #150/PR151 are delivered. PR128/130 corrected release dependency/fixture gates; [release evidence](RELEASES.md) binds the exact source and public bytes.
 
 - Stock XKeen owns installation, components/interception, service and cron; its code stays unmodified.
 - Native jobs/private console, Form/Text config editors and shared pending/Apply/Discard/previous restore.
@@ -27,8 +27,8 @@ The first adapter is restricted to the observed KN1811/5.01.C.6.0-1 CLI family;
 unsupported topology/schema stops before provisioning. Stock commands remain
 installation/update owners. [PR147](https://github.com/popiposter/xkeen-control/pull/147)
 records independent exact-source review and exact FULL evidence separately.
-Stable0.4.0 includes the installer/CLI; protected hosted FULL and independent
-seven-public-asset verification passed. Fresh hardware acceptance remains
+Stable0.4.1 retains the installer/CLI; protected hosted FULL and independent
+ten-public-asset/both-signature verification passed. Fresh hardware acceptance remains
 [NOTRUN](https://github.com/popiposter/xkeen-control/issues/148). Source delivery
 does not certify fresh installation or client/outage behavior.
 
@@ -37,8 +37,7 @@ does not certify fresh installation or client/outage behavior.
 [#150 MIPS panel delivery](https://github.com/popiposter/xkeen-control/issues/150)
 delivered panel-only source support for existing Ultra KN1810/KeeneticOS5.1.7/
 Entware mipsel-3.4 in merged [PR151](https://github.com/popiposter/xkeen-control/pull/151).
-Independent source review and clean local FULL passed at `94cd622f852df4621135d47b93efc5fa03976cac`, including static soft-float ELF checks, emulated startup/platform fixtures and real unsigned assembly. The merged source tree is identical. Signed publication and operator hardware installation remain NOTRUN and separate gates. Stable0.4.0 remains ARM64-only;
-guided fresh setup is not expanded. Existing native config/watchdog are preserved
+Independent source review and clean local FULL passed at `94cd622f852df4621135d47b93efc5fa03976cac`, including static soft-float ELF checks, emulated startup/platform fixtures and real unsigned assembly. The PR151 merge tree is identical. Separately reviewed source `68d7ed356980897fc921001375b24cf2af10b90c` passed protected hosted FULL and signed0.4.1 publication; exact ten files, both signatures and published MIPS emulated version verified. Operator hardware installation/RSS/auth/PTY/native preservation remain NOTRUN. Stable0.4.0 remains ARM64-only; guided fresh setup is not expanded. Existing native config/watchdog are preserved
 by panel bootstrap; competing external writers need inspection before Apply.
 
 | Task | Current boundary | Prerequisite |
