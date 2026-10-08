@@ -531,3 +531,37 @@ binary_before=$(sha256sum "$mipsroot/opt/sbin/xkeen-control")
 if run_mips_updater "$mipsroot" rollback >/dev/null 2>&1; then echo 'MIPS restored foreign previous generation' >&2; exit 1; fi
 [ "$binary_before" = "$(sha256sum "$mipsroot/opt/sbin/xkeen-control")" ]
 echo 'MIPS install/rollback/failure/preservation/foreign-previous fixtures passed'
+
+# Exercise the production uname/Entware probe branch under a /tmp-only root.
+# Nonzero probe status cannot be hidden by otherwise matching partial stdout.
+cat > "$fakebin/uname" <<'EOF_MIPS_UNAME'
+#!/bin/sh
+printf '%s\n' mips
+EOF_MIPS_UNAME
+chmod 755 "$fakebin/uname"
+for probe_exit in 0 22; do
+    mipsroot="$tmp/mips-probe-$probe_exit"
+    setup_generation "$mipsroot"
+    mkdir -p "$mipsroot/opt/bin"
+    cat > "$mipsroot/opt/bin/opkg" <<'EOF_MIPS_OPKG'
+#!/bin/sh
+[ "${1:-}" = print-architecture ] || exit 77
+printf '%s\n' 'arch all 100' 'arch mipsel-3.4 150'
+exit "${FIXTURE_ARCH_EXIT:-0}"
+EOF_MIPS_OPKG
+    chmod 755 "$mipsroot/opt/bin/opkg"
+    mv "$mipsroot/tmp/xkeen-control/panel-update/xkeen-control-linux-arm64" "$mipsroot/tmp/xkeen-control/panel-update/xkeen-control-linux-mipsle"
+    binary_before=$(sha256sum "$mipsroot/opt/sbin/xkeen-control")
+    if PATH="$fakebin:$PATH" EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
+        FIXTURE_ARCH_EXIT="$probe_exit" XKEEN_CONTROL_TEST_MODE=1 XKEEN_CONTROL_TEST_ARCH=probe \
+        XKEEN_CONTROL_TEST_ROOT="$mipsroot" sh "$ROOT/scripts/xkeen-control-updater" install >/dev/null 2>&1; then
+        [ "$probe_exit" = 0 ] || { echo 'failed MIPS updater probe admitted' >&2; exit 1; }
+        [ -f "$mipsroot/opt/etc/xkeen-control/previous/panel/xkeen-control-linux-mipsle" ]
+    else
+        [ "$probe_exit" = 22 ] || { echo 'valid MIPS updater probe refused' >&2; exit 1; }
+        [ "$binary_before" = "$(sha256sum "$mipsroot/opt/sbin/xkeen-control")" ]
+        [ ! -e "$mipsroot/opt/etc/xkeen-control/previous/panel" ]
+        [ -f "$mipsroot/tmp/xkeen-control/panel-update/xkeen-control-linux-mipsle" ]
+    fi
+done
+echo 'MIPS updater production ABI probe success/nonzero-partial-output fixtures passed'

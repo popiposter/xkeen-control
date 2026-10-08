@@ -75,7 +75,8 @@ case "$(uname -m)" in
 	mips|mipsel|mipsle)
 		# uname does not establish MIPS byte order/ABI. Admit only the observed
 		# Entware soft-float little-endian target, never guess from its spelling.
-		opkg print-architecture | grep -Eq '^arch mipsel-3\.4(_kn)? [0-9]+$' || fail "unsupported MIPS Entware target"
+		entware_architectures="$(opkg print-architecture)" || fail "unable to determine MIPS Entware target"
+		printf '%s\n' "$entware_architectures" | grep -Eq '^arch mipsel-3\.4(_kn)? [0-9]+$' || fail "unsupported MIPS Entware target"
 		ARCHITECTURE=mipsle ;;
 	*) fail "unsupported architecture" ;;
 esac

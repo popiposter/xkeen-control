@@ -394,6 +394,7 @@ cat > "$fakebin/opkg" <<'EOF_MIPS_OPKG'
 #!/bin/sh
 if [ "${1:-}" = print-architecture ]; then
     printf '%s\n' 'arch all 100' "arch ${FIXTURE_ENTWARE_ARCH:-mipsel-3.4} 150"
+    exit "${FIXTURE_ARCH_EXIT:-0}"
 else
     echo unexpected-package-mutation >&2; exit 77
 fi
@@ -419,6 +420,10 @@ for target in mips-3.4 mipsel-3.4-hardfloat unknown; do
     if FIXTURE_ENTWARE_ARCH="$target" run_installer "$refused" >/dev/null 2>&1; then echo 'unknown MIPS ABI admitted' >&2; exit 1; fi
     [ ! -e "$refused/curl-calls" ] && [ ! -e "$refused/opt/etc" ] && [ ! -e "$refused/opt/var" ]
 done
+refused="$tmp/mips-partial-probe-refused"
+mkdir -p "$refused/opt" "$refused/tmp"
+if FIXTURE_ARCH_EXIT=22 run_installer "$refused" >/dev/null 2>&1; then echo 'failed MIPS probe with matching stdout admitted' >&2; exit 1; fi
+[ ! -e "$refused/curl-calls" ] && [ ! -e "$refused/opt/etc" ] && [ ! -e "$refused/opt/var" ]
 refused="$tmp/mips-setup-refused"
 mkdir -p "$refused/opt" "$refused/tmp"
 if run_installer "$refused" --setup >/dev/null 2>&1; then echo 'MIPS setup admitted' >&2; exit 1; fi

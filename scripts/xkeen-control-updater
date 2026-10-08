@@ -42,13 +42,14 @@ fail() { echo "ERROR: panel updater rejected operation" >&2; exit 1; }
 action="${1:-}"
 case "$action" in install|adopt|rollback|rebind) ;; *) fail ;; esac
 
-if [ "$TEST_MODE" = 1 ]; then
+if [ "$TEST_MODE" = 1 ] && [ "${XKEEN_CONTROL_TEST_ARCH:-arm64}" != probe ]; then
 	ARCHITECTURE="${XKEEN_CONTROL_TEST_ARCH:-arm64}"
 else
 	case "$(uname -m)" in
 		aarch64|arm64) ARCHITECTURE=arm64 ;;
 		mips|mipsel|mipsle)
-			/opt/bin/opkg print-architecture | grep -Eq '^arch mipsel-3\.4(_kn)? [0-9]+$' || fail
+			entware_architectures="$("${ROOT_PREFIX}/opt/bin/opkg" print-architecture)" || fail
+			printf '%s\n' "$entware_architectures" | grep -Eq '^arch mipsel-3\.4(_kn)? [0-9]+$' || fail
 			ARCHITECTURE=mipsle ;;
 		*) fail ;;
 	esac
