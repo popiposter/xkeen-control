@@ -26,6 +26,8 @@ tar --version
 
 The selected tar must be GNU tar from `/opt/bin`; installing the package alone is insufficient if `/opt/usr/bin/tar` (BusyBox) wins PATH. The source correction in #142 is not yet published in0.3.1; inspect the installed panel environment independently. Official XKeen handles its remaining dependencies. No Go/Node runs on the router.
 
+On firmware5.2, prepare the private RCI token in protected `/opt/etc/xkeen/xkeen.json` **before launching bootstrap**, following [upstream instructions](https://github.com/jameszeroX/XKeen/wiki/Порядок-установки). Native initialization can exit on401/403 before reaching the installation menu. Token creation is an explicit administrator action; older firmware does not acquire this requirement automatically.
+
 The official interactive bootstrap can be pinned to the verified2.1 release on an empty destination:
 
 ```sh
@@ -35,7 +37,7 @@ sh /tmp/xkeen-install.sh --legacy 2.1
 
 Run the second line only after successful download. This is not an existing-router update/reinstall procedure. Tagged2.1's launcher **attempts** GitHub asset-digest verification but can continue with a warning when `jq`, the API/digest or `sha256sum` is unavailable. Install `jq` beforehand, check SHA-256 tooling/API availability and inspect the actual verification result; a skipped check remains NOT VERIFIED, never an integrity PASS. Independently verify the release digest/payload before accepting the installation. Installed version readback alone does not replace that check. `--stable` instead selects the latest stable at execution time and needs fresh compatibility review if that version changes.
 
-Choose **Xray only** in its native menu. Review the core version instead of assuming the latest entry is stable/qualified. Install geodata referenced by the selected policy, choose native schedule/autostart explicitly and keep clients on ordinary direct Internet while configuration is incomplete. Firmware5.2 needs the private RCI token in protected `/opt/etc/xkeen/xkeen.json`, following [upstream instructions](https://github.com/jameszeroX/XKeen/wiki/Порядок-установки); token creation is an explicit administrator action. Older firmware does not acquire that requirement automatically.
+Choose **Xray only** in its native menu. Review the core version instead of assuming the latest entry is stable/qualified. Install geodata referenced by the selected policy, choose native schedule/autostart explicitly and keep clients on ordinary direct Internet while configuration is incomplete.
 
 The documented `xkeen -i auto cores=xray` assumes the dispatcher already exists. Tagged2.1 `install.sh` ends with interactive `xkeen -i` and does not forward `auto`/core arguments. Do not advertise `install.sh --stable cores=xray` as a fully automatic fresh installation or run a second full installation to automate the first. A future zero-question flow needs a supported upstream bootstrap interface.
 
