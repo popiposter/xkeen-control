@@ -40,6 +40,12 @@ local operators may view its private console, answer conditional native update
 prompts, interrupt it or inspect an unknown outcome. Telegram cannot answer
 prompts or submit arbitrary shell/config input. An unknown job is never replayed.
 
+XKeen 2.1 adds a confirmation to ordinary `-uk`. Update acceptance replies
+explicitly direct the operator to the panel console. No `-uk auto` or automatic
+answer is injected; an unanswered prompt times out with an unknown outcome.
+Release identity and Xray process observations are available in the panel,
+separate from process completion and client traffic health.
+
 Qualification uses synthetic provider fixtures, real local native-process fixtures
 and mocked browser APIs. Live bot acceptance requires an operator-configured
 private token/user/chat; no message is sent merely by visiting settings.

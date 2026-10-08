@@ -52,6 +52,10 @@ panel geodata scheduler. Script/core/geodata updates use native `-uk`/`-ux`/`-ug
 Native local backups use its commands. Portable transfer contains configuration
 and private managed data, not executables or blind restoration of router state.
 
+[XKeen 2.1 transition](XKEEN-2.1-TRANSITION.md) records pinned upstream identity,
+new confirmation semantics, independent update readback and the full rollback
+gate. Adapter compatibility does not imply a qualified router transition.
+
 Read-only dashboard discovery reads bounded files/process observations; it does
 not secretly execute a command that may self-heal packages or change the system.
 Capabilities are feature-specific. Unfamiliar arguments/dialogue disable only that

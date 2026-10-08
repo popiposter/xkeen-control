@@ -5,7 +5,7 @@ export const commandDetails = {
   restart: [IconRefresh, 'Reload all saved Xray configurations by restarting XKeen. Active connections may reconnect.'],
   status: [IconActivity, 'Inspect the current native service state. Does not restart or apply configuration.'],
   'test-xray': [IconShieldCheck, 'Run the native Xray configuration validator and show its output. Does not apply settings.'],
-  'update-xkeen': [IconRefresh, 'Run the official XKeen script update workflow. Follow its native prompts in the console.'],
+  'update-xkeen': [IconRefresh, 'Update XKeen from its selected channel and answer confirmations in the console. For a stable release, choose Stable with the channel command first. Check release readback afterward; exit zero can also mean cancellation or no update.'],
   'update-xray': [IconRefresh, 'Run the native core updater for the selected version, or let XKeen choose automatically. The service may restart.'],
   'update-geodata': [IconMap, 'Update the installed geodata through XKeen. Native prompts and results appear in the console.'],
   'geodata-sources': [IconMap, 'Choose which geodata sources XKeen installs and updates using its native menu.'],

@@ -23,15 +23,16 @@ var ErrJob = errors.New("native job unavailable")
 // JobView is a PRIVATE session-bound console response, not a status projection.
 // Completed means process exit, never verified tunnel health.
 type JobView struct {
-	ID                 string `json:"id"`
-	Action             string `json:"action"`
-	State              string `json:"state"`
-	Interactive        bool   `json:"interactive"`
-	ExitCode           *int   `json:"exitCode,omitempty"`
-	Output             string `json:"output"` // base64 preserves partial UTF-8/ANSI bytes
-	Cursor             int64  `json:"cursor"`
-	Truncated          bool   `json:"truncated"`
-	ConfigurationState string `json:"configurationState,omitempty"`
+	ID                 string              `json:"id"`
+	Action             string              `json:"action"`
+	State              string              `json:"state"`
+	Interactive        bool                `json:"interactive"`
+	ExitCode           *int                `json:"exitCode,omitempty"`
+	Output             string              `json:"output"` // base64 preserves partial UTF-8/ANSI bytes
+	Cursor             int64               `json:"cursor"`
+	Truncated          bool                `json:"truncated"`
+	ConfigurationState string              `json:"configurationState,omitempty"`
+	Update             *NativeUpdateResult `json:"update,omitempty"`
 }
 
 type nativeJob struct {
@@ -46,6 +47,8 @@ type nativeJob struct {
 	lastActivity             time.Time
 	configEditor             *ConfigEditor
 	configurationState       string
+	updateBefore             updateSnapshot
+	update                   *NativeUpdateResult
 }
 
 // Jobs retains just one bounded job. Closing a browser never cancels its process.
@@ -60,6 +63,7 @@ type Jobs struct {
 	startTerminal   func(*exec.Cmd, bool) (*os.File, error)
 	checkInstalled  bool
 	inspectRecovery func(context.Context) error
+	inspectUpdate   func(context.Context) updateSnapshot
 	// Runs with the same panel lease after native exit/readback. It may sync own
 	// derived data, but must never replay a native command or change its exit state.
 	AfterCommand func(context.Context, string)
@@ -172,6 +176,11 @@ func (m *Jobs) start(owner string, r CommandRequest, editor *ConfigEditor, basel
 			release()
 			return JobView{}, err
 		}
+	}
+	if j.action == "update-xkeen" && m.inspectUpdate != nil {
+		readCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
+		j.updateBefore = m.inspectUpdate(readCtx)
+		done()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), spec.limit)
 	command := exec.Command(m.Binary, args...)
@@ -291,6 +300,18 @@ func (m *Jobs) run(ctx context.Context, j *nativeJob, release func()) {
 		// Only independent recovery/readback may reopen panel mutations.
 		m.Lease.Block()
 	}
+	var update *NativeUpdateResult
+	if j.action == "update-xkeen" && m.inspectUpdate != nil {
+		after := updateSnapshot{xrayProcess: "unknown"}
+		// An interrupted native writer may still be active. Do not attach a
+		// transient after-snapshot to an unknown/inspected operation as proof.
+		if state != "unknown" {
+			readCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
+			after = m.inspectUpdate(readCtx)
+			done()
+		}
+		update = updateResult(j.updateBefore, after)
+	}
 	if state == "completed" && (j.configEditor == nil || configurationState == "applied") && m.AfterCommand != nil {
 		readCtx, done := context.WithTimeout(context.Background(), 40*time.Second)
 		m.AfterCommand(readCtx, j.action)
@@ -299,10 +320,14 @@ func (m *Jobs) run(ctx context.Context, j *nativeJob, release func()) {
 	m.mu.Lock()
 	j.state = state
 	j.configurationState = configurationState
+	j.update = update
 	if m.saveReceipt(j) != nil {
 		j.state = "unknown"
 		state = "unknown"
 		m.Lease.Block()
+		if j.update != nil {
+			j.update = updateResult(j.updateBefore, updateSnapshot{xrayProcess: "unknown"})
+		}
 	}
 	if state != "unknown" {
 		code := 0
@@ -332,7 +357,7 @@ func (m *Jobs) view(j *nativeJob, cursor int64) JobView {
 		n = 32768
 	}
 	start := cursor - j.base
-	return JobView{ID: j.id, Action: j.action, State: j.state, Interactive: j.interactive, ExitCode: j.exit, Output: base64.StdEncoding.EncodeToString(j.output[start : start+n]), Cursor: cursor + n, Truncated: truncated, ConfigurationState: j.configurationState}
+	return JobView{ID: j.id, Action: j.action, State: j.state, Interactive: j.interactive, ExitCode: j.exit, Output: base64.StdEncoding.EncodeToString(j.output[start : start+n]), Cursor: cursor + n, Truncated: truncated, ConfigurationState: j.configurationState, Update: j.update}
 }
 func (m *Jobs) Read(owner, id string, cursor int64) (JobView, error) {
 	m.mu.Lock()

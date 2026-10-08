@@ -134,6 +134,9 @@ func controlText(command Command, result ControlResult) string {
 	case Stopped:
 		return "XKeen engine: stopped."
 	case Accepted:
+		if command == UpdateXkeen || command == UpdateXray || command == UpdateGeodata {
+			return "Native update accepted. Open the panel console to answer any confirmation prompts; Telegram cannot answer them. An unanswered prompt times out with an unknown outcome. Inspect final state in the panel; acceptance is not success."
+		}
 		return "Native command accepted. Inspect final state and console in the panel; acceptance is not success."
 	case Refused:
 		return "Command refused: operation busy, pending configuration or unavailable command. Inspect the panel."

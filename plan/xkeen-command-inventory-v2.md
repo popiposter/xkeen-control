@@ -1,16 +1,33 @@
 # Все команды XKeen: матрица использования в панели
 
-Дата: 2026-10-03. Проверенный upstream:
-[`68eca60fedf03957952d1f8b44bfdd98f8a282e5`](https://github.com/jameszeroX/XKeen/blob/68eca60fedf03957952d1f8b44bfdd98f8a282e5/scripts/xkeen).
-Dispatcher SHA256 `0dbf2ea4cf9f92186b7e69f29198ff4c007d9dc34fc2dd197127bee3c5329c52`;
-скачанные bytes сверены с GitHub Contents API этого commit.
-Источники: dispatcher, [справочник](https://github.com/jameszeroX/XKeen/blob/68eca60fedf03957952d1f8b44bfdd98f8a282e5/docs/commands.md),
+Дата: 2026-10-07. Проверенный upstream: **2.1 Stable**,
+[`c4b0fb5b956b4f70bf1b8e4a2e0eec452d61ebd1`](https://github.com/jameszeroX/XKeen/blob/c4b0fb5b956b4f70bf1b8e4a2e0eec452d61ebd1/scripts/xkeen).
+Dispatcher SHA256 `66a00579938cbb9ff9fa4f595636481f3aa528380af8e79f6861b811998c434c`;
+bytes release archive сопоставлены с pinned source (детали в
+[переходе на 2.1](../docs/XKEEN-2.1-TRANSITION.md)).
+Источники: dispatcher, [справочник](https://github.com/jameszeroX/XKeen/blob/c4b0fb5b956b4f70bf1b8e4a2e0eec452d61ebd1/docs/commands.md),
 native choice/cron/ports/delay/backup/diagnostic и SB control modules того же commit.
 
 **69 верхнеуровневых ветвей основного dispatcher, 74 написания флагов с aliases.**
 Предварительные 70 совпадений включали startup classifier `-restart|-start|-stop`
 до основного цикла; эта строка не является дополнительной командой.
 Матрица — source-backed план, не проверка installed router и не запуск команд.
+
+## Дельта 2.1
+
+От предыдущего pin `68eca60fedf03957952d1f8b44bfdd98f8a282e5` — девять commits;
+набор флагов не изменился. Обычный `-uk` теперь запрашивает подтверждение;
+отказ и отсутствие обновления завершаются с кодом 0. Панель оставляет PTY,
+не передаёт новый `-uk auto` и отдельно читает release identity до/после.
+`-uk auto` существует только в новом upstream; это не поддержанный параметр
+panel API и не способ перехода со старого dispatcher.
+
+Beta/Dev `-uk` выбирает dev archive: для Stable нужен отдельный штатный
+`-channel` и readback, затем `-uk`. Geodata menus используют `choice_menu`;
+EOF означает отказ. Embedded `udp_flush` удалён: native TProxy/Hybrid hook
+очищает соответствующий UDP conntrack без переключателя. Патчи native scripts
+для возврата прежнего поведения запрещены. RCI token, killswitch, DSCP61,
+`xkeen_full`, provider routing и download verification уже были в предыдущем pin.
 
 ## Представление
 
@@ -38,7 +55,7 @@ Native output доступен для всех запущенных из UI jobs
 |---|---|---|---|
 | `-i`, `-install`; `-i auto` | Расширенная | Терминал для обычной установки; форма + кнопка для `auto` | Только fresh bootstrap отдельного router. В auto доступны `cores=xray/mihomo/all/none`, `geo=on/off`, `geoipset=on/off`, `cron=on/off`, `autostart=on/off`, `xray=vX.Y.Z`, `mihomo=vX.Y.Z`. XKeen сам устанавливает; прежнюю установку не replay |
 | `-io` | Расширенная | Терминал: offline prerequisites/настройка | Offline native install. Нужны заранее доставленные official files; панель не становится installer/file manager |
-| `-uk` | Основная | Кнопка «Обновить XKeen», раскрываемый output | Native script update в текущем канале; native backup/registration/exec его ответственность. После — version/service/config observations |
+| `-uk`; upstream `-uk auto` | Основная | Терминал: подтверждение обновления, затем native dialogue; панель запускает обычный `-uk` | Native script update в текущем канале; для перехода Beta/Dev → Stable сначала `-channel`. `auto` не передаётся панелью. После — independent version/build/process/config observations; exit0 допускает отказ/no-op |
 | `-ux`, `-ux auto`, `-ux vX.Y.Z` | Основная | Кнопка «Последняя» с `auto`; форма версии; терминал для `-ux` без параметров | Установка/обновление Xray; native выбор версии и сохранение configs. Проверить version/config/service после native операции |
 | `-um`, `-um auto`, `-um vX.Y.Z` | Mihomo | Аналогично Xray | Native Mihomo update/install; не нужен для текущего Xray-only режима |
 | `-uy` | Mihomo | Кнопка + output | Native Yq install/update для Mihomo, без собственного downloader |
