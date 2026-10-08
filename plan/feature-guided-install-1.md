@@ -1,6 +1,6 @@
 ---
 goal: One guided fresh-router installation with private subscription input and entire HOME activation
-version: 1
+version: 2
 date_created: 2026-10-08
 last_updated: 2026-10-08
 owner: xkeen-control
@@ -79,13 +79,17 @@ a precise inspect-only result before mutation, rather than a success message.
   names. Use fixed fresh-only binary/init/config paths, loopback readiness15354
   and, when needed, one exact trusted HOME IP listener. Firmware retains LAN53
   and local names. Inspect native53 interception before using supported excluded
-  port commands; those commands can already restart Xray. The firmware public DNS
+  port commands; those commands can already restart Xray and require REQ-010 plus
+  the complete validated staged graph. Count that restart as the activation;
+  never follow it with a redundant Apply restart. The firmware public DNS
   engine is global: require it already absent/public and check unrelated profiles
   before provisioning. A conflicting engine is an explicit pre-mutation
   unsupported result, not an excuse to change guest/non-HOME DNS.
 - **REQ-008**: Before HOME activation independently check full native config,
   executable/confdir/process identity, enabled pool, API/probe and real DIRECT/VPN
-  DNS. Prepare dedicated policy/DNS objects without assigning clients early.
+  DNS and actual policy-scoped interception. The unassigned dedicated policy
+  precedes native provisioning under REQ-010; prepare the dedicated DNS profile
+  before HOME assignment.
   Assign HOME last, read back actual segment/host assignments, then save firmware.
   Local process/TCP checks do not become independent LAN packet acceptance.
 - **REQ-009**: `autostart=off` is staging only. After validated runtime/DNS and
@@ -95,6 +99,22 @@ a precise inspect-only result before mutation, rather than a success message.
   distinct from configured startup; unknown startup readiness prevents Ready.
   No router reboot is needed for source/fixture checks, and no extra restart is
   introduced solely to enable autostart.
+- **REQ-010**: Before native provisioning, create the dedicated unassigned
+  policy with discovered usable WAN. Independently read back its unique
+  case-insensitive `xkeen` description, actual valid policy mark/table and no
+  assigned clients; save and verify persisted prerequisites before any possible
+  activation. Recheck policy identity immediately before EVERY start/restart-
+  capable native command, including installation and excluded-port implicit
+  restart. Missing, inaccessible, changed or unknown policy forbids dispatch;
+  stock missing-policy fallback must never activate interception for all clients.
+  Verify the running interception actually uses that policy before HOME binding.
+- **REQ-011**: Initial setup runs while the normal panel daemon is deferred.
+  One fixed kernel-backed setup/daemon lock and one bounded durable root-only
+  setup receipt enforce the startup handoff described below. Existing owners
+  share one ordinary lease inside the setup CLI process. A separate CLI lease
+  cannot exclude a daemon; neither mechanism locks external native CLI/cron.
+  Initial native cron is explicitly off and remains off in this mode; external
+  writers must be quiescent. No native init/hook/dispatcher patch is permitted.
 - **SEC-001**: No native script patches, `expect`, generic command/file/RCI API,
   second component updater, router toolchain, blanket `opkg upgrade`, reboot,
   automatic credential rotation, wildcard/WAN listener or secret-bearing public
@@ -119,6 +139,72 @@ a precise inspect-only result before mutation, rather than a success message.
 
 ## 2. Implementation Steps
 
+### Initial setup ownership and restart recovery
+
+These are proposed requirements for implementation, not delivered safeguards.
+All phases below are sequential. The launcher first checks lock capability and
+acquires an exclusive kernel `flock` on a fixed root-owned non-symlink lock inode
+under `/opt/var/lock/xkeen-control`; keep the inode stable, validate its parent,
+and never unlink it as stale. Concurrent setup/recovery fails busy. The same
+exclusive lock covers launcher provisioning and the setup CLI handoff without
+an unlocked gap. Normal daemon startup holds a shared lock for its entire
+lifetime and rechecks the receipt while holding it. No PID file, directory lock
+or RAM lease substitutes for this process exclusion.
+
+Before the first firmware/component mutation, atomically persist and sync the
+bounded root-only `/opt/etc/xkeen-control/state/initial-setup.json` receipt in a
+validated root-only parent. Include schema, qualified release/source identity,
+phase, scoped object identities, safe hashes and references to existing config
+pending/job receipts; never subscription URLs, node credentials or raw config.
+Private scoped snapshots use separate bounded protected storage. The receipt
+records initial progress; it is not a second config transaction journal.
+
+| Persisted state | Permitted owner and next action |
+| --- | --- |
+| Absent | Ordinary existing installations may start the normal daemon under its shared lock. Fresh setup requires fresh preflight and exclusive lock, then writes its receipt before mutation. |
+| Incomplete / unknown / aborted | Normal panel init and Go startup refuse normal operation. Explicit root-only setup inspect/recovery may acquire the exclusive lock; no automatic native replay or fresh reinstall. |
+| Malformed / unreadable / unsafe | Fail closed before normal worker/HTTP startup; explicit bounded root-only inspection and verified recovery only. Never treat this as absence or delete the receipt automatically. |
+| Completed and structurally valid | Normal daemon may start under the shared lock; recheck receipt and existing config recovery fences. Completed records independently confirmed saved configuration, not daemon health or independent LAN acceptance. |
+
+Extend the panel-owned `S99xkeen-control` startup guard and Go startup before
+HTTP routes, subscription refresher, DNS observer, Telegram/native jobs and any
+normal registry/config writer. The setup branch of `scripts/install.sh` must
+defer its current unconditional init start; no environment bypass or second
+lease against a live daemon. Reuse the existing config/jobs/registry/splitdns
+owners and their one same-process ordinary lease in root-only setup operations.
+
+The current config Apply path starts its own Restart. A port-exemption job must
+not be treated as an already supported config Apply: extend the existing
+`ConfigEditor`/jobs integration with a fixed setup-only action binding that calls
+the existing `beginApply` before dispatch and `finishApply` after it, recording
+the same saved digest, job id and before-process identity. This is a typed
+extension of the existing lifecycle owner, never a second activation journal or
+arbitrary action argument. Missing/unknown linkage blocks completion. Test this
+binding and `InspectApplied` recovery before admitting the restart-capable path.
+
+Policy/WAN and DNS prerequisites must be saved and read back without HOME
+assignment before enabling native autostart. Record that prerequisite save
+separately from the final HOME save. Unknown persistence stops progression.
+Panel guards do not stop stock native init on reboot; native can boot only with
+already persisted scoping/DNS prerequisites. Do not claim the panel lock fences
+external CLI, native cron or firmware operators.
+
+After full config/runtime/DNS checks, persisted startup checks, scoped HOME
+readback and final firmware save, independently verify saved state and require
+no pending/unknown config or firmware outcome. Durably promote the receipt to
+completed, stop setup mutation owners and release the exclusive lock, then
+start the normal daemon which takes its shared lock. Report Ready only after
+daemon executable/version/health and worker startup readback. Crash after
+completion but before daemon startup permits normal startup, never setup replay.
+
+Crash before completion, partial HOME/save or uncertain Apply requires explicit
+root-only typed inspect/recovery under the exclusive lock. Inspect actual state
+and existing config pending/job receipts; use `ConfigEditor.InspectApplied` for
+uncertain activation, not another native command. Scoped inverses use only
+unchanged own effects and existing config recovery owners. Abort retains a
+blocked receipt until independently verified recovery establishes completion;
+no implicit cleanup/reinstall, full config replay or guessed native downgrade.
+
 ### Implementation Phase 1
 
 - GOAL-001: Establish the reviewed fresh bootstrap and firmware contract before
@@ -136,9 +222,9 @@ a precise inspect-only result before mutation, rather than a success message.
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-003 | Add explicit `--setup` dispatch in `scripts/install.sh`, bounded initial setup receipts and Russian phase output. Check freshness before changing packages/files; install only standard required dependencies and verify actual GNU tar selection. Preserve panel-only mode. Download/run usage retains terminal input and checks download success. | No | — |
-| TASK-004 | Implement fixed official native2.1 dispatcher/module bootstrap into empty destinations with strict archive/hash checks and unknown-result fencing. Execute one stock `-i auto` with reviewed stable Xray version, explicit geodata/cron options and autostart off. Existing installs/partial native results are inspected, never overwritten/replayed. | No | — |
-| TASK-005 | Deliver same-release verified panel through current release installer owner. Extend `cmd/xkeen-control/main.go` with fixed root-only `setup` phase operations, no credential arguments. Add bounded initial pinned mosdns provisioning; refuse existing/unowned resolver paths. | No | — |
+| TASK-003 | Add explicit `--setup` dispatch in `scripts/install.sh`, fixed kernel lock, durable initial setup receipt and Russian phase output. Check freshness/capabilities/private source before mutations; write receipt before the first component/firmware change. Create/read back/save the dedicated unassigned xkeen policy with usable WAN and actual mark under REQ-010, before TASK-004. Install only standard required dependencies and verify actual GNU tar selection. Preserve panel-only mode. Download/run usage retains terminal input and checks download success. | No | — |
+| TASK-004 | Implement fixed official native2.1 dispatcher/module bootstrap into empty destinations with strict archive/hash checks and unknown-result fencing. Require verified persisted unassigned policy before dispatch. Execute one stock `-i auto` with reviewed stable Xray version, explicit geodata, cron=off and autostart=off. Existing installs/partial native results are inspected, never overwritten/replayed. | No | — |
+| TASK-005 | Deliver same-release verified panel through current release installer owner with setup-only deferred daemon start. Extend panel-owned init and `cmd/xkeen-control/main.go` with the fixed shared-lock/receipt startup guards and root-only `setup` phase operations, no credential arguments. Transfer the launcher exclusive lock to CLI without a gap. Add bounded initial pinned mosdns provisioning; refuse existing/unowned resolver paths. No normal panel workers run during setup. | No | — |
 
 ### Implementation Phase 3
 
@@ -146,8 +232,8 @@ a precise inspect-only result before mutation, rather than a success message.
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-006 | Add `internal/setup` orchestration and tests. Import private subscription/node with existing parser/fetcher/canonical registry. Compose destination attachment, public reference and DNS transports; Preview/Stage via `ConfigEditor.PreviewTransferUnderLease` and `StageTransferUnderLease`, including registry/outbounds consistency and splitdns derived validation. No competing transaction or early per-node Apply. | No | — |
-| TASK-007 | Prepare mosdns through existing splitdns compilation/service owner. Validate the full native set, perform one explicit supported native activation using current jobs/config Apply receipt, then inspect exact process/config/API/probe and DIRECT/VPN DNS. Lost/uncertain results become inspect-only phase outcomes; do not repeat native commands automatically. | No | — |
+| TASK-006 | Add `internal/setup` orchestration and tests. Construct existing config/jobs/registry/splitdns owners with one same-process ordinary lease while normal daemon remains deferred. Import private subscription/node with existing parser/fetcher/canonical registry. Compose destination attachment, public reference and DNS transports; Preview/Stage via `ConfigEditor.PreviewTransferUnderLease` and `StageTransferUnderLease`, including registry/outbounds consistency and splitdns derived validation. No competing transaction or early per-node Apply. | No | — |
+| TASK-007 | Prepare mosdns through existing splitdns compilation/service owner. Validate the full staged native set and recheck persisted policy/mark before every possible activation. Perform one explicit supported activation using existing jobs/config outcome owners. If necessary port-exemption changes restart native, stage the full candidate first, count that restart as the activation and inspect it without redundant Apply. Verify exact process/config/API/probe, actual policy-scoped interception and DIRECT/VPN DNS. Lost/uncertain results become inspect-only phase outcomes; use existing InspectApplied rather than repeating native commands. | No | — |
 
 ### Implementation Phase 4
 
@@ -156,9 +242,9 @@ a precise inspect-only result before mutation, rather than a success message.
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-008 | Apply only the verified typed CLI plan: dedicated xkeen-described policy permits discovered usable WAN; custom exclusive DNS profile forwards to tested mosdns address/port. Snapshot original assignments/engine/owned object absence privately and verify drift before each mutation. Reject unsupported transport/schema rather than guessing RCI POST. | No | — |
-| TASK-009 | Confirm global DNS engine absent/public and unaffected non-HOME profiles before mutation. After runtime readiness enable/read back supported native autostart and verify mosdns/panel configured startup; then assign HOME policy and DNS, including supported host overrides or a precise pre-mutation unsupported result. Read back objects/segment/hosts and actual routing table/resolver path, then `system configuration save`. Keep guest/WAN/management/default policy outside scope. Scoped rollback restores only unchanged own effects; no full running-config replay. | No | — |
-| TASK-010 | Report final installed/configured state, panel access/password, native/DNS/component versions, enabled-node count and LAN verification boundary. Successful router-side provisioning is distinct from fresh independent-client acceptance. Normal subsequent subscription refresh uses existing panel, not setup again. | No | — |
+| TASK-008 | Revalidate the unassigned dedicated xkeen policy created in TASK-003; provision the custom exclusive DNS profile forwarding to tested mosdns address/port. Persist/read back policy/DNS prerequisites without assigning HOME before enabling native autostart. Use the verified typed CLI plan and private scoped snapshots; check drift before every mutation. Reject unsupported transport/schema rather than guessing RCI POST. | No | — |
+| TASK-009 | Confirm global DNS engine absent/public and unaffected non-HOME profiles before mutation. After runtime and persisted prerequisite readiness enable/read back supported native autostart and verify mosdns/panel configured startup guards; then assign HOME policy and DNS, including supported host overrides or a precise pre-mutation unsupported result. Read back objects/segment/hosts and actual routing table/resolver path, then `system configuration save` and saved-state readback. Keep guest/WAN/management/default policy outside scope. Scoped rollback restores only unchanged own effects; no full running-config replay. | No | — |
+| TASK-010 | Require no pending/unknown outcomes; independently verify saved configuration/startup and durably complete setup receipt. Stop setup owners, release exclusive lock, start normal daemon under shared lock and verify its identity/health/workers before Ready. Report panel access/password, native/DNS/component versions, enabled-node count and LAN verification boundary. Successful router-side provisioning is distinct from fresh independent-client acceptance. Normal subsequent refresh uses existing panel, not setup again. | No | — |
 
 ### Implementation Phase 5
 
@@ -212,7 +298,8 @@ a precise inspect-only result before mutation, rather than a success message.
 ## 5. Files
 
 - **FILE-001**: `scripts/install.sh`, release assembly/fixtures and installer
-  documentation — proposed release-owned `--setup` mode, not implemented here.
+  documentation and panel-owned init — proposed release-owned `--setup`, deferred
+  daemon start and receipt/shared-lock startup guard, not implemented here.
 - **FILE-002**: `cmd/xkeen-control/main.go`, new `internal/setup` and
   `internal/keenetic/setup.go` — proposed root-only setup and fixed firmware adapter.
 - **FILE-003**: `internal/xkeen` config pending/transfer/jobs, `internal/nodes`
@@ -243,6 +330,20 @@ a precise inspect-only result before mutation, rather than a success message.
 - **TEST-006**: Fresh hardware and unproxied HOME clients, DIRECT/VPN/local DNS,
   cold-cache stop/failure/recovery and scoped rollback. Fixtures/process reads
   never stand in for independent LAN acceptance; current target remains NOTRUN.
+- **TEST-007**: Missing/inaccessible/duplicate-description/changed policy or mark
+  forbids native install/start/restart, including excluded-port implicit restart.
+  Complete candidate precedes any necessary restart; no redundant Apply. Verify
+  actual scoped interception before HOME. Interrupt before/after policy creation,
+  prerequisite save and native activation; no fallback for all clients.
+- **TEST-008**: Competing setup/daemon startup, init restart/direct Go startup,
+  CLI crash/router reboot, unsafe receipt/lock path, partial HOME/save/completion,
+  crash after completion before daemon startup and uncertain Apply. Assert no
+  normal registry/config/native/DNS observer/refresh writes before completion;
+  kernel lock is continuous across launcher/CLI and daemon retains shared lock.
+  Explicit inspect/recovery reuses existing pending/job owners with no replay.
+  Absent receipt preserves ordinary existing installation startup. Native boot
+  after autostart enable uses already saved policy/DNS prerequisites; guards do
+  not claim to control native init or external writers.
 
 ## 7. Risks & Assumptions
 
