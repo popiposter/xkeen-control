@@ -3,9 +3,28 @@
 package setup
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestFreshRefusesDeletedComponentsAndUnknownProcReadback(t *testing.T) {
+	root := t.TempDir()
+	if noRunningComponents(root, 1) != nil {
+		t.Fatal("empty synthetic process set")
+	}
+	dir := filepath.Join(root, "222")
+	if os.Mkdir(dir, 0700) != nil || os.WriteFile(filepath.Join(dir, "comm"), []byte("synthetic\n"), 0600) != nil || os.Symlink("/opt/sbin/xray (deleted)", filepath.Join(dir, "exe")) != nil {
+		t.Fatal("fixture")
+	}
+	if noRunningComponents(root, 1) == nil {
+		t.Fatal("deleted running component admitted")
+	}
+	if noRunningComponents(filepath.Join(root, "unavailable"), 1) == nil {
+		t.Fatal("unknown process view was absence")
+	}
+}
 
 func TestStockCommentOnlyPortsAndMalformedRanges(t *testing.T) {
 	stock := "# Порты\n#80\n#443\n#596:599\n"

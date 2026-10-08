@@ -24,6 +24,9 @@ func fresh() error {
 	if os.Geteuid() != 0 || runtime.GOARCH != "arm64" {
 		return ErrUnsupported
 	}
+	if noRunningComponents("/proc", os.Getpid()) != nil {
+		return ErrState
+	}
 	for _, p := range []string{
 		"/opt/sbin/xkeen", "/opt/sbin/_xkeen", "/opt/sbin/.xkeen", "/opt/sbin/xray", "/opt/sbin/mihomo", "/opt/sbin/mosdns", "/opt/sbin/xkeen-control",
 		"/opt/etc/xkeen", "/opt/etc/xray", "/opt/etc/mihomo", "/opt/etc/mosdns", "/opt/etc/xkeen-control",
@@ -53,6 +56,54 @@ func fresh() error {
 	}
 	if available < 128<<10 {
 		return ErrUnsupported
+	}
+	return nil
+}
+
+func noRunningComponents(root string, own int) error {
+	d, e := os.Open(root)
+	if e != nil {
+		return ErrState
+	}
+	defer d.Close()
+	entries, e := d.ReadDir(4097)
+	if e != nil && e != io.EOF || len(entries) > 4096 {
+		return ErrState
+	}
+	for _, entry := range entries {
+		pid, e := strconv.Atoi(entry.Name())
+		if e != nil || pid == own {
+			continue
+		}
+		dir := filepath.Join(root, entry.Name())
+		f, e := os.Open(filepath.Join(dir, "comm"))
+		if os.IsNotExist(e) {
+			continue
+		}
+		if e != nil {
+			return ErrState
+		}
+		b, e := io.ReadAll(io.LimitReader(f, 1025))
+		f.Close()
+		if e != nil || len(b) > 1024 {
+			return ErrState
+		}
+		switch strings.TrimSpace(string(b)) {
+		case "xray", "mihomo", "mosdns", "xkeen-control", "xkeen", "S05xkeen":
+			return ErrState
+		}
+		exe, e := os.Readlink(filepath.Join(dir, "exe"))
+		if os.IsNotExist(e) {
+			continue
+		}
+		if e != nil { // Kernel threads have no executable; other read failures stay unknown.
+			return ErrState
+		}
+		exe = strings.TrimSuffix(exe, " (deleted)")
+		switch exe {
+		case "/opt/sbin/xray", "/opt/sbin/mihomo", "/opt/sbin/mosdns", "/opt/sbin/xkeen-control":
+			return ErrState
+		}
 	}
 	return nil
 }
