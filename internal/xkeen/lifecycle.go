@@ -66,7 +66,7 @@ func (l Lifecycle) runForeground(ctx context.Context, action LifecycleAction, en
 		binary = "/opt/sbin/xkeen"
 	}
 	command := exec.Command(binary, args...)
-	for _, entry := range env {
+	for _, entry := range withEntwarePath(env) {
 		if !strings.HasPrefix(entry, "XKEEN_FOREGROUND=") {
 			command.Env = append(command.Env, entry)
 		}

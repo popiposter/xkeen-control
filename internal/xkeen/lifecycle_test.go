@@ -70,3 +70,17 @@ func TestNativeInitLifecycleUsesServiceArgumentsOnly(t *testing.T) {
 		t.Fatal("rejected configuration executed")
 	}
 }
+
+func TestNativeLifecyclePrefersEntwareTools(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("native process fixture requires Linux")
+	}
+	binary := filepath.Join(t.TempDir(), "xkeen")
+	script := "#!/bin/sh\ncase \"$PATH\" in /opt/bin:/opt/sbin:*) ;; *) exit 8;; esac\n[ \"$XKEEN_FOREGROUND\" = 1 ] || exit 9\n"
+	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := (Lifecycle{Binary: binary}).runForeground(context.Background(), Start, []string{"PATH=/opt/usr/bin:/usr/bin:/bin", "XKEEN_FOREGROUND=0"}); err != nil {
+		t.Fatal("native lifecycle inherited firmware-first tool lookup", err)
+	}
+}

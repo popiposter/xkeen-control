@@ -13,6 +13,13 @@ Current sequencing is [ROADMAP](../docs/ROADMAP.md), not the latest paragraph of
 | [LAN DNS integration](feature-native-split-dns-1.md) | Completed; optional installed resolver prerequisite |
 | [Independent DNS infrastructure](infrastructure-independent-dns-1.md) | Historical operator installation/acceptance; static exports superseded by integration |
 
+## Planned
+
+[Fresh-router setup](feature-fresh-router-setup-1.md) (#143) specifies ownership,
+order, firmware policy preflight, reference-profile Preview, optional DNS setup
+and guided composition. Current delivery is the manual route; wizard and fresh
+hardware qualification remain unimplemented/NOTRUN.
+
 ## Historical / superseded
 
 Foundation v1, native admission v1, command inventory v1 and dated audits retain decision history. They do not authorize native code patches, takeover, generic repair or resuming disabled workers. UI/availability/DNS planning snapshots are superseded by current product docs where their checkpoints differ. The old evidence subtree contains synthetic/source comparison records, not current production readiness.

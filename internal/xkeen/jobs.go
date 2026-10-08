@@ -175,7 +175,7 @@ func (m *Jobs) start(owner string, r CommandRequest, editor *ConfigEditor, basel
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), spec.limit)
 	command := exec.Command(m.Binary, args...)
-	for _, e := range os.Environ() {
+	for _, e := range withEntwarePath(os.Environ()) {
 		if !strings.HasPrefix(e, "XKEEN_FOREGROUND=") && !strings.HasPrefix(e, "XKEEN_GATE_") && !strings.HasPrefix(e, "TERM=") {
 			command.Env = append(command.Env, e)
 		}

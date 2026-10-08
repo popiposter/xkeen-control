@@ -16,6 +16,21 @@ This is the current sequencing/status authority. Issues contain detailed task co
 
 ## Remaining acceptance
 
+[#140 stock2.1 transition](https://github.com/popiposter/xkeen-control/issues/140):
+development router updated with official payload/config preservation checks and
+Running/API/probe/DNS readback. Initial panel attempt failed safely on BusyBox tar;
+GNU tar invocation succeeded, then an explicit Start was needed. Disposable full
+rollback and wider independent LAN acceptance remain NOTRUN by operator decision;
+this does not qualify signed installation of the separate panel candidate.
+
+[#142 tool lookup](https://github.com/popiposter/xkeen-control/issues/142) corrects
+Entware precedence in native jobs/lifecycle/panel startup, with bounded installed
+init qualification separately from a release. [#143 fresh setup](https://github.com/popiposter/xkeen-control/issues/143)
+has a [planned implementation](../plan/feature-fresh-router-setup-1.md) and a proposed
+[reference policy](../config/presets/README.md). Current installation still requires
+native XKeen first. The wizard, typed firmware preflight and DNS provisioning are
+not delivered; no fresh-router hardware acceptance is claimed.
+
 | Task | Current boundary | Prerequisite |
 | --- | --- | --- |
 | [#133 LAN routing/DNS/failover](https://github.com/popiposter/xkeen-control/issues/133) | Development/native DNS and a separate stopped-Xray DNS test passed; wider client/failure behavior remains NOTRUN. Signed0.3.1 installation is not claimed. | Independent client path and bounded authorized baseline/rollback |

@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+# Installed Entware tools (not firmware BusyBox applets) own native commands.
+PATH="/opt/bin:/opt/sbin:${PATH:-/usr/sbin:/usr/bin:/sbin:/bin}"
+export PATH
+
 BIN="${XKEEN_CONTROL_BIN:-/opt/sbin/xkeen-control}"
 PIDFILE="${XKEEN_CONTROL_PIDFILE:-/opt/var/run/xkeen-control.pid}"
 LOG="${XKEEN_CONTROL_LOG:-/tmp/xkeen-control.log}"
