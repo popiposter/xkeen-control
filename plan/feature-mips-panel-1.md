@@ -31,9 +31,9 @@ tags: [feature, packaging, mips]
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-001 | Add fixed artifact/manifest names in `internal/release/platform.go`; extend `BuildManifest`, `Manifest.Validate`, `VerifyCandidate` in `internal/release/manifest.go` with architecture-specific exact sets. ✅ | 2026-10-08 |
-| TASK-002 | Extend `Client.Check`/`FetchCandidate` in `internal/release/client.go` with fixed runtime selection and synthetic test injection; reject cross-platform manifests. Extend `cmd/xkeen-release/main.go` with explicit manifest/verification architecture. ✅ | 2026-10-08 |
-| TASK-003 | Use the current client's binary name for previous generation admission in `internal/update/manager.go`; test MIPS rollback/candidate selection. ✅ | 2026-10-08 |
+| TASK-001 | Add fixed artifact/manifest names in `internal/release/platform.go`; extend `BuildManifest`, `Manifest.Validate`, `VerifyCandidate` in `internal/release/manifest.go` with architecture-specific exact sets. | ✅ | 2026-10-08 |
+| TASK-002 | Extend `Client.Check`/`FetchCandidate` in `internal/release/client.go` with fixed runtime selection and synthetic test injection; reject cross-platform manifests. Extend `cmd/xkeen-release/main.go` with explicit manifest/verification architecture. | ✅ | 2026-10-08 |
+| TASK-003 | Use the current client's binary name for previous generation admission in `internal/update/manager.go`; test MIPS rollback/candidate selection. | ✅ | 2026-10-08 |
 
 ### Implementation Phase 2
 
@@ -41,10 +41,10 @@ tags: [feature, packaging, mips]
 
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
-| TASK-004 | Select platform in `scripts/install.sh` using uname plus fixed Entware architecture confirmation; choose suffixed MIPS manifests and binary. Reject MIPS setup/legacy adoption before writes. Verify exact shared checksum set while downloading only current-platform assets. ✅ | 2026-10-08 |
-| TASK-005 | Select fixed binary name in `scripts/xkeen-control-updater` for snapshot/install/recovery/rollback; add synthetic MIPS lifecycle coverage in `scripts/test-updater.sh`. ✅ | 2026-10-08 |
-| TASK-006 | Build both binaries in `scripts/build-control-plane.sh`, `scripts/dev-check.sh` and `scripts/release-build.sh`; inspect ELF and softfloat Go metadata off-router. Add bootstrap/build fixtures. ✅ | 2026-10-08 |
-| TASK-007 | Extend `.github/workflows/release.yml` to hand off both unsigned manifests/binaries, sign both, verify equal provenance/exact ten assets, re-download and validate both before publishing. Preserve protected environment separation and final-main check. ✅ | 2026-10-08 |
+| TASK-004 | Select platform in `scripts/install.sh` using uname plus fixed Entware architecture confirmation; choose suffixed MIPS manifests and binary. Reject MIPS setup/legacy adoption before writes. Verify exact shared checksum set while downloading only current-platform assets. | ✅ | 2026-10-08 |
+| TASK-005 | Select fixed binary name in `scripts/xkeen-control-updater` for snapshot/install/recovery/rollback; add synthetic MIPS lifecycle coverage in `scripts/test-updater.sh`. | ✅ | 2026-10-08 |
+| TASK-006 | Build both binaries in `scripts/build-control-plane.sh`, `scripts/dev-check.sh` and `scripts/release-build.sh`; inspect ELF and softfloat Go metadata off-router. Add bootstrap/build fixtures. | ✅ | 2026-10-08 |
+| TASK-007 | Extend `.github/workflows/release.yml` to hand off both unsigned manifests/binaries, sign both, verify equal provenance/exact ten assets, re-download and validate both before publishing. Preserve protected environment separation and final-main check. | ✅ | 2026-10-08 |
 
 ### Implementation Phase 3
 

@@ -8,10 +8,21 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 )
+
+func TestProductionClientUsesCurrentExecutablePlatform(t *testing.T) {
+	want := ""
+	if runtime.GOOS == "linux" && (runtime.GOARCH == "arm64" || runtime.GOARCH == "mipsle") {
+		want = runtime.GOARCH
+	}
+	if got := NewClient().Architecture(); got != want {
+		t.Fatalf("production release architecture = %q, want %q", got, want)
+	}
+}
 
 func TestPlatformCandidateIsolation(t *testing.T) {
 	_, key, err := ed25519.GenerateKey(rand.Reader)
