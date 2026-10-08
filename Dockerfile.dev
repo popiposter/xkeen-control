@@ -20,6 +20,7 @@ RUN apt-get update \
         git \
         jq \
         openssh-client \
+        qemu-user \
     && rm -rf /var/lib/apt/lists/*
 
 # Browser and OS dependencies are image inputs, not per-test setup. Rebuilding

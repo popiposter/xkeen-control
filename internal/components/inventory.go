@@ -410,7 +410,7 @@ func (s *Service) inventoryXray(ctx context.Context) Component {
 	component.Version = signal.Version
 	component.VersionUnknown = false
 	component.Architecture = signal.Architecture
-	if signal.Architecture != "arm64" {
+	if signal.Architecture != "arm64" && signal.Architecture != "mipsle" {
 		component.ReasonCode = "architecture-unsupported"
 		return component
 	}

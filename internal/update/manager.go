@@ -165,8 +165,8 @@ func (m *Manager) Status(_ context.Context) Status {
 		status.ReleaseNotesURL = release.ReleaseNotesURL(m.latest.Version)
 	}
 	status.RollbackVerificationRequired = m.rollbackVerificationRequired
-	if !m.rollbackAdmissionClaimed && !m.rollbackVerificationRequired {
-		_, rollbackErr := os.Stat(filepath.Join(m.paths.PreviousDir, "xkeen-control-linux-arm64"))
+	if !m.rollbackAdmissionClaimed && !m.rollbackVerificationRequired && release.BinaryArtifact(m.client.Architecture()) != "" {
+		_, rollbackErr := os.Stat(filepath.Join(m.paths.PreviousDir, release.BinaryArtifact(m.client.Architecture())))
 		status.RollbackAvailable = rollbackErr == nil
 	}
 	return status
@@ -366,7 +366,11 @@ func (m *Manager) Rollback(ctx context.Context) error {
 		return errors.New("panel rollback is busy")
 	}
 	m.mu.Unlock()
-	if _, err := os.Stat(filepath.Join(m.paths.PreviousDir, "xkeen-control-linux-arm64")); err != nil {
+	binary := release.BinaryArtifact(m.client.Architecture())
+	if binary == "" {
+		return errors.New("release platform is unsupported")
+	}
+	if _, err := os.Stat(filepath.Join(m.paths.PreviousDir, binary)); err != nil {
 		return errors.New("panel rollback is unavailable")
 	}
 	// Claim before lifecycle admission/helper start so concurrent requests cannot

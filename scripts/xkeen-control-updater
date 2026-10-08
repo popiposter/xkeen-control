@@ -42,6 +42,21 @@ fail() { echo "ERROR: panel updater rejected operation" >&2; exit 1; }
 action="${1:-}"
 case "$action" in install|adopt|rollback|rebind) ;; *) fail ;; esac
 
+if [ "$TEST_MODE" = 1 ]; then
+	ARCHITECTURE="${XKEEN_CONTROL_TEST_ARCH:-arm64}"
+else
+	case "$(uname -m)" in
+		aarch64|arm64) ARCHITECTURE=arm64 ;;
+		mips|mipsel|mipsle)
+			/opt/bin/opkg print-architecture | grep -Eq '^arch mipsel-3\.4(_kn)? [0-9]+$' || fail
+			ARCHITECTURE=mipsle ;;
+		*) fail ;;
+	esac
+fi
+case "$ARCHITECTURE" in arm64|mipsle) ;; *) fail ;; esac
+if [ "$action" = adopt ]; then [ "$ARCHITECTURE" = arm64 ] || fail; fi
+BINARY_ASSET="xkeen-control-linux-$ARCHITECTURE"
+
 valid_port() {
 	case "$1" in ''|*[!0-9]*) return 1 ;; esac
 	[ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ] 2>/dev/null
@@ -227,7 +242,7 @@ prepare_adoption_recovery() {
 		case "$phase" in prepared|handoff|restoring|recovered) ;; *) return 1 ;; esac
 		bounded_regular_file "$ADOPTION_RECOVERY/nodes.json" 4194304 || return 1
 		bounded_regular_file "$ADOPTION_RECOVERY/04_outbounds.json" 8388608 || return 1
-		validate_node_pair "$CANDIDATE/xkeen-control-linux-arm64" \
+		validate_node_pair "$CANDIDATE/$BINARY_ASSET" \
 			"$ADOPTION_RECOVERY/nodes.json" "$ADOPTION_RECOVERY/04_outbounds.json" \
 			"$ADOPTION_RECOVERY/.snapshot-rendered" || return 1
 		return 0
@@ -242,7 +257,7 @@ prepare_adoption_recovery() {
 		return 1
 	fi
 	chmod 600 "$ADOPTION_RECOVERY/nodes.json" "$ADOPTION_RECOVERY/04_outbounds.json"
-	if ! validate_node_pair "$CANDIDATE/xkeen-control-linux-arm64" \
+	if ! validate_node_pair "$CANDIDATE/$BINARY_ASSET" \
 		"$ADOPTION_RECOVERY/nodes.json" "$ADOPTION_RECOVERY/04_outbounds.json" \
 		"$ADOPTION_RECOVERY/.snapshot-rendered"; then
 		rm -rf "$ADOPTION_RECOVERY"
@@ -278,14 +293,14 @@ node_snapshot_matches_live() {
 
 reconcile_node_runtime() {
 	XKEEN_NODES_PATH="$NODE_REGISTRY" XKEEN_ACTIVE_OUTBOUNDS="$NODE_OUTBOUNDS" \
-		"$CANDIDATE/xkeen-control-linux-arm64" nodes reconcile-runtime >/dev/null 2>&1
+		"$CANDIDATE/$BINARY_ASSET" nodes reconcile-runtime >/dev/null 2>&1
 }
 
 restore_node_snapshot() {
 	write_adoption_phase restoring || return 1
 	restore_node_file "$ADOPTION_RECOVERY/nodes.json" "$NODE_REGISTRY" || return 1
 	restore_node_file "$ADOPTION_RECOVERY/04_outbounds.json" "$NODE_OUTBOUNDS" || return 1
-	validate_node_pair "$CANDIDATE/xkeen-control-linux-arm64" \
+	validate_node_pair "$CANDIDATE/$BINARY_ASSET" \
 		"$NODE_REGISTRY" "$NODE_OUTBOUNDS" "$ADOPTION_RECOVERY/.current-rendered" || return 1
 }
 
@@ -297,7 +312,7 @@ recover_node_state() {
 		write_adoption_phase recovered
 		return 0
 	fi
-	if validate_node_pair "$CANDIDATE/xkeen-control-linux-arm64" \
+	if validate_node_pair "$CANDIDATE/$BINARY_ASSET" \
 		"$NODE_REGISTRY" "$NODE_OUTBOUNDS" "$ADOPTION_RECOVERY/.current-rendered"; then
 		if reconcile_node_runtime; then
 			write_adoption_phase recovered
@@ -367,7 +382,7 @@ snapshot_generation() {
 	destination_dir="$1"
 	[ -f "$BIN" ] && [ ! -L "$BIN" ] || return 1
 	[ -f "$INIT" ] && [ ! -L "$INIT" ] || return 1
-	cp "$BIN" "$destination_dir/xkeen-control-linux-arm64"
+	cp "$BIN" "$destination_dir/$BINARY_ASSET"
 	cp "$INIT" "$destination_dir/S99xkeen-control"
 	snapshot_helper_state "$HELPER" "$destination_dir" || return 1
 	if [ -e "$STATE/installed-release.json" ] || [ -L "$STATE/installed-release.json" ]; then
@@ -375,7 +390,7 @@ snapshot_generation() {
 		cp "$STATE/installed-release.json" "$destination_dir/installed-release.json"
 		chmod 600 "$destination_dir/installed-release.json"
 	fi
-	chmod 755 "$destination_dir/xkeen-control-linux-arm64" "$destination_dir/S99xkeen-control"
+	chmod 755 "$destination_dir/$BINARY_ASSET" "$destination_dir/S99xkeen-control"
 }
 
 write_marker_from() {
@@ -389,8 +404,8 @@ write_marker_from() {
 }
 
 restore_previous() {
-	[ -f "$PREVIOUS/xkeen-control-linux-arm64" ] || return 1
-	copy_panel "$PREVIOUS/xkeen-control-linux-arm64" "$BIN"
+	[ -f "$PREVIOUS/$BINARY_ASSET" ] || return 1
+	copy_panel "$PREVIOUS/$BINARY_ASSET" "$BIN"
 	copy_panel "$PREVIOUS/S99xkeen-control" "$INIT"
 	restore_helper_state "$PREVIOUS" "$HELPER" || return 1
 	if [ -f "$PREVIOUS/installed-release.json" ]; then
@@ -482,7 +497,7 @@ if [ "$action" = "adopt" ]; then
 	# its existing coordinator-owned lifecycle. Only the signed installer can
 	# place this fixed sentinel in the candidate boundary.
 	[ -f "$CANDIDATE/.legacy-adoption" ] && [ ! -L "$CANDIDATE/.legacy-adoption" ] || fail
-	[ -f "$CANDIDATE/xkeen-control-linux-arm64" ] || fail
+	[ -f "$CANDIDATE/$BINARY_ASSET" ] || fail
 	[ -f "$CANDIDATE/S99xkeen-control" ] || fail
 	[ -f "$CANDIDATE/xkeen-control-updater" ] || fail
 	[ -f "$CANDIDATE/installed-release.json" ] || fail
@@ -506,7 +521,7 @@ if [ "$action" = "adopt" ]; then
 		chmod 700 "$PREVIOUS"
 		snapshot_generation "$PREVIOUS" || { rm -rf "$PREVIOUS"; fail; }
 	else
-		[ -f "$PREVIOUS/xkeen-control-linux-arm64" ] || fail
+		[ -f "$PREVIOUS/$BINARY_ASSET" ] || fail
 		[ -f "$PREVIOUS/S99xkeen-control" ] || fail
 	fi
 	if ! prepare_adoption_recovery; then
@@ -527,7 +542,7 @@ if [ "$action" = "adopt" ]; then
 		*) fail ;;
 	esac
 
-	copy_panel "$CANDIDATE/xkeen-control-linux-arm64" "$BIN"
+	copy_panel "$CANDIDATE/$BINARY_ASSET" "$BIN"
 	copy_panel "$CANDIDATE/S99xkeen-control" "$INIT"
 	copy_panel "$CANDIDATE/xkeen-control-updater" "$HELPER"
 	if start_panel && health && verify_build "$expected_version" "$expected_commit" "$expected_channel" && write_marker_from "$CANDIDATE/installed-release.json"; then
@@ -544,7 +559,7 @@ if [ "$action" = "adopt" ]; then
 fi
 
 if [ "$action" = "install" ]; then
-	[ -f "$CANDIDATE/xkeen-control-linux-arm64" ] || fail
+	[ -f "$CANDIDATE/$BINARY_ASSET" ] || fail
 	[ -f "$CANDIDATE/S99xkeen-control" ] || fail
 	[ -f "$CANDIDATE/xkeen-control-updater" ] || fail
 	[ -f "$CANDIDATE/installed-release.json" ] || fail
@@ -561,7 +576,7 @@ if [ "$action" = "install" ]; then
 		fail
 	fi
 	stop_panel
-	copy_panel "$CANDIDATE/xkeen-control-linux-arm64" "$BIN"
+	copy_panel "$CANDIDATE/$BINARY_ASSET" "$BIN"
 	copy_panel "$CANDIDATE/S99xkeen-control" "$INIT"
 	copy_panel "$CANDIDATE/xkeen-control-updater" "$HELPER"
 	if start_panel && health && verify_build "$expected_version" "$expected_commit" "$expected_channel" && write_marker_from "$CANDIDATE/installed-release.json"; then
@@ -569,7 +584,7 @@ if [ "$action" = "install" ]; then
 		exit 0
 	fi
 	stop_panel
-	if [ -f "$PREVIOUS/xkeen-control-linux-arm64" ]; then
+	if [ -f "$PREVIOUS/$BINARY_ASSET" ]; then
 		restore_previous || { rm -rf "$TEMP" "$CANDIDATE"; fail; }
 	else
 		rm -f "$BIN" "$INIT" "$HELPER" "$STATE/installed-release.json"
@@ -581,12 +596,12 @@ if [ "$action" = "install" ]; then
 	fail
 fi
 
-[ -f "$PREVIOUS/xkeen-control-linux-arm64" ] || fail
+[ -f "$PREVIOUS/$BINARY_ASSET" ] || fail
 rm -rf "$TEMP"
 mkdir -p "$TEMP"
 chmod 700 "$TEMP"
 snapshot_generation "$TEMP" || fail
-mv "$TEMP/xkeen-control-linux-arm64" "$TEMP/current-binary"
+mv "$TEMP/$BINARY_ASSET" "$TEMP/current-binary"
 mv "$TEMP/S99xkeen-control" "$TEMP/current-init"
 if [ -f "$TEMP/xkeen-control-updater" ]; then mv "$TEMP/xkeen-control-updater" "$TEMP/current-helper"; fi
 if [ -f "$TEMP/installed-release.json" ]; then mv "$TEMP/installed-release.json" "$TEMP/current-installed-release.json"; fi

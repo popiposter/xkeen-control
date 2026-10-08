@@ -498,3 +498,36 @@ if PATH="$fakebin:$PATH" \
 fi
 grep -Fq '"version":"1.0.0"' "$failure_root/opt/etc/xkeen-control/state/installed-release.json"
 "$failure_root/opt/sbin/xkeen-control" version --json | jq -e '.version == "1.0.0"' >/dev/null
+
+# Reuse the actual lifecycle owner on the MIPS candidate/previous filenames.
+run_mips_updater() {
+    PATH="$fakebin:$PATH" EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
+    XKEEN_CONTROL_TEST_MODE=1 XKEEN_CONTROL_TEST_ARCH=mipsle XKEEN_CONTROL_TEST_ROOT="$1" \
+    sh "$ROOT/scripts/xkeen-control-updater" "$2"
+}
+for scenario in success failed-candidate; do
+    mipsroot="$tmp/mips-$scenario"
+    setup_generation "$mipsroot"
+    mv "$mipsroot/tmp/xkeen-control/panel-update/xkeen-control-linux-arm64" "$mipsroot/tmp/xkeen-control/panel-update/xkeen-control-linux-mipsle"
+    native_before=$(sha256sum "$mipsroot/opt/etc/xkeen-control/secrets/nodes.json" "$mipsroot/opt/etc/xray/configs/04_outbounds.json")
+    if [ "$scenario" = failed-candidate ]; then
+        make_binary "$mipsroot/tmp/xkeen-control/panel-update/xkeen-control-linux-mipsle" 9.9.9 dddddddddddddddddddddddddddddddddddddddd stable
+        if run_mips_updater "$mipsroot" install >/dev/null 2>&1; then echo 'bad MIPS candidate committed' >&2; exit 1; fi
+    else
+        run_mips_updater "$mipsroot" install >/dev/null
+        "$mipsroot/opt/sbin/xkeen-control" version --json | jq -e '.version == "1.2.3"' >/dev/null
+        [ -f "$mipsroot/opt/etc/xkeen-control/previous/panel/xkeen-control-linux-mipsle" ]
+        [ ! -e "$mipsroot/opt/etc/xkeen-control/previous/panel/xkeen-control-linux-arm64" ]
+        run_mips_updater "$mipsroot" rollback >/dev/null
+    fi
+    "$mipsroot/opt/sbin/xkeen-control" version --json | jq -e '.version == "1.0.0"' >/dev/null
+    [ "$native_before" = "$(sha256sum "$mipsroot/opt/etc/xkeen-control/secrets/nodes.json" "$mipsroot/opt/etc/xray/configs/04_outbounds.json")" ]
+done
+mipsroot="$tmp/mips-foreign-previous"
+setup_generation "$mipsroot"
+mkdir -p "$mipsroot/opt/etc/xkeen-control/previous/panel"
+cp "$mipsroot/opt/sbin/xkeen-control" "$mipsroot/opt/etc/xkeen-control/previous/panel/xkeen-control-linux-arm64"
+binary_before=$(sha256sum "$mipsroot/opt/sbin/xkeen-control")
+if run_mips_updater "$mipsroot" rollback >/dev/null 2>&1; then echo 'MIPS restored foreign previous generation' >&2; exit 1; fi
+[ "$binary_before" = "$(sha256sum "$mipsroot/opt/sbin/xkeen-control")" ]
+echo 'MIPS install/rollback/failure/preservation/foreign-previous fixtures passed'

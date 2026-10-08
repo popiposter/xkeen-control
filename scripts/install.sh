@@ -70,6 +70,24 @@ fi
 command -v opkg >/dev/null 2>&1 || fail "Entware opkg is required"
 [ -w "$OPT_ROOT" ] || fail "/opt is not writable"
 
+case "$(uname -m)" in
+	aarch64|arm64) ARCHITECTURE=arm64 ;;
+	mips|mipsel|mipsle)
+		# uname does not establish MIPS byte order/ABI. Admit only the observed
+		# Entware soft-float little-endian target, never guess from its spelling.
+		opkg print-architecture | grep -Eq '^arch mipsel-3\.4(_kn)? [0-9]+$' || fail "unsupported MIPS Entware target"
+		ARCHITECTURE=mipsle ;;
+	*) fail "unsupported architecture" ;;
+esac
+BINARY_ASSET="xkeen-control-linux-$ARCHITECTURE"
+MANIFEST_ASSET=release-manifest.json
+SIGNATURE_ASSET=release-manifest.sig
+if [ "$ARCHITECTURE" = mipsle ]; then
+	[ "$INSTALL_MODE" = panel ] || fail "guided setup is ARM64-only"
+	MANIFEST_ASSET=release-manifest-mipsle.json
+	SIGNATURE_ASSET=release-manifest-mipsle.sig
+fi
+
 if [ "$INSTALL_MODE" = setup ]; then
 	command -v flock >/dev/null 2>&1 && command -v stat >/dev/null 2>&1 || fail "setup requires flock and stat before bootstrap"
 	# Root-only fixed parents prevent an untrusted rename between checks/open.
@@ -94,11 +112,6 @@ elif [ "$INSTALL_MODE" = panel ] && { [ -e "$STATE_DIR/initial-setup.json" ] || 
 	[ -x "$BIN" ] || fail "incomplete initial setup; use setup inspect"
 	"$BIN" setup guard || fail "initial setup blocks ordinary installation"
 fi
-
-case "$(uname -m)" in
-	aarch64|arm64) ;;
-	*) fail "unsupported architecture; only linux/arm64 is supported" ;;
-esac
 
 free_kb="$(df -Pk "$OPT_ROOT" | awk 'NR == 2 { print $4 }')"
 case "$free_kb" in ''|*[!0-9]*) fail "unable to determine free space" ;; esac
@@ -183,6 +196,7 @@ validate_buildinfo_json() {
 }
 
 legacy_layout() {
+	[ "$ARCHITECTURE" = arm64 ] || return 1
 	[ -f "$BIN" ] && [ -x "$BIN" ] && [ ! -L "$BIN" ] || return 1
 	[ -f "$INIT" ] && [ -x "$INIT" ] && [ ! -L "$INIT" ] || return 1
 	[ ! -e "$STATE_DIR/installed-release.json" ] && [ ! -L "$STATE_DIR/installed-release.json" ] || return 1
@@ -285,21 +299,21 @@ fetch() {
 	esac
 }
 
-fetch release-manifest.json "$TMP_ROOT/release-manifest.json"
-fetch release-manifest.sig "$TMP_ROOT/release-manifest.sig"
+fetch "$MANIFEST_ASSET" "$TMP_ROOT/release-manifest.json"
+fetch "$SIGNATURE_ASSET" "$TMP_ROOT/release-manifest.sig"
 fetch SHA256SUMS "$TMP_ROOT/SHA256SUMS"
-for name in xkeen-control-linux-arm64 S99xkeen-control xkeen-control-updater install.sh; do
+for name in "$BINARY_ASSET" S99xkeen-control xkeen-control-updater install.sh; do
 	fetch "$name" "$TMP_ROOT/assets/$name"
 done
 
-jq -e --arg channel "$CHANNEL" --arg version "$EXPECTED_VERSION" '.schemaVersion == 1 and .product == "xkeen-control" and .version == $version and .channel == $channel and (.sourceCommit | type == "string" and length == 40) and .os == "linux" and .architecture == "arm64" and ((.artifacts | map(.name) | sort) == ["S99xkeen-control", "install.sh", "xkeen-control-linux-arm64", "xkeen-control-updater"])' "$TMP_ROOT/release-manifest.json" >/dev/null || fail "release manifest identity does not match bootstrap policy"
+jq -e --arg channel "$CHANNEL" --arg version "$EXPECTED_VERSION" --arg architecture "$ARCHITECTURE" --arg binary "$BINARY_ASSET" '.schemaVersion == 1 and .product == "xkeen-control" and .version == $version and .channel == $channel and (.sourceCommit | type == "string" and length == 40) and .os == "linux" and .architecture == $architecture and ((.artifacts | map(.name) | sort) == (["S99xkeen-control", "install.sh", $binary, "xkeen-control-updater"] | sort))' "$TMP_ROOT/release-manifest.json" >/dev/null || fail "release manifest identity does not match bootstrap policy"
 
 # First-install trust starts at GitHub HTTPS. Internal manifest, size and hash
 # consistency is checked before any asset is installed; the downloaded panel
 # is not executed to verify its own release signature.
 while IFS="$(printf '\t')" read -r name size hash; do
 	case "$name" in
-		xkeen-control-linux-arm64|S99xkeen-control|xkeen-control-updater|install.sh) ;;
+		"$BINARY_ASSET"|S99xkeen-control|xkeen-control-updater|install.sh) ;;
 		*) fail "release manifest contains an unexpected asset" ;;
 	esac
 	file="$TMP_ROOT/assets/$name"
@@ -316,19 +330,35 @@ sum_count=0
 sum_names=""
 while read -r expected name; do
 	case "$name" in
-		release-manifest.json|release-manifest.sig) file="$TMP_ROOT/$name" ;;
-		xkeen-control-linux-arm64|S99xkeen-control|xkeen-control-updater|install.sh) file="$TMP_ROOT/assets/$name" ;;
+		"$MANIFEST_ASSET") file="$TMP_ROOT/release-manifest.json" ;;
+		"$SIGNATURE_ASSET") file="$TMP_ROOT/release-manifest.sig" ;;
+		"$BINARY_ASSET"|S99xkeen-control|xkeen-control-updater|install.sh) file="$TMP_ROOT/assets/$name" ;;
+		# The global list also covers the other fixed platform. Do not download
+		# or execute it; its signed manifest is verified by release publication.
+		xkeen-control-linux-arm64|xkeen-control-linux-mipsle|release-manifest.json|release-manifest.sig|release-manifest-mipsle.json|release-manifest-mipsle.sig) file="" ;;
 		*) fail "checksum list contains an unexpected file" ;;
 	esac
 	case " $sum_names " in
 		*" $name "*) fail "checksum list contains a duplicate file" ;;
 	esac
-	actual_hash="$(sha256sum "$file" | awk '{print $1}')"
-	[ "$actual_hash" = "$expected" ] || fail "SHA256SUMS verification failed"
+	printf '%s' "$expected" | grep -Eq '^[0-9a-f]{64}$' || fail "invalid checksum"
+	if [ -n "$file" ]; then
+		actual_hash="$(sha256sum "$file" | awk '{print $1}')"
+		[ "$actual_hash" = "$expected" ] || fail "SHA256SUMS verification failed"
+	fi
 	sum_count=$((sum_count + 1))
 	sum_names="$sum_names $name"
 done < "$TMP_ROOT/SHA256SUMS"
-[ "$sum_count" -eq 6 ] || fail "checksum list is incomplete"
+# Legacy ARM64 releases have six entries; dual-platform releases have nine.
+expected_sums='S99xkeen-control install.sh release-manifest.json release-manifest.sig xkeen-control-linux-arm64 xkeen-control-updater'
+if [ "$sum_count" -eq 9 ]; then
+	expected_sums="$expected_sums release-manifest-mipsle.json release-manifest-mipsle.sig xkeen-control-linux-mipsle"
+else
+	[ "$sum_count" -eq 6 ] && [ "$ARCHITECTURE" = arm64 ] || fail "checksum list is incomplete"
+fi
+for name in $expected_sums; do
+	case " $sum_names " in *" $name "*) ;; *) fail "checksum list is incomplete" ;; esac
+done
 
 if [ "$INSTALL_MODE" = setup ]; then
 	[ "$LEGACY_ADOPTION" = 0 ] || fail "setup cannot adopt an existing panel"
@@ -358,7 +388,7 @@ if [ "$LEGACY_ADOPTION" = "1" ]; then
 fi
 
 mkdir -p "$(dirname "$BIN")" "$(dirname "$INIT")" "$(dirname "$UPDATER")"
-cp "$TMP_ROOT/assets/xkeen-control-linux-arm64" "$BIN.new"
+cp "$TMP_ROOT/assets/$BINARY_ASSET" "$BIN.new"
 cp "$TMP_ROOT/assets/S99xkeen-control" "$INIT.new"
 cp "$TMP_ROOT/assets/xkeen-control-updater" "$UPDATER.new"
 chmod 755 "$BIN.new" "$INIT.new" "$UPDATER.new"

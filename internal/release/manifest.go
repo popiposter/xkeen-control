@@ -68,12 +68,19 @@ type Candidate struct {
 }
 
 func BuildManifest(version, commit, channel string, sourceDateEpoch int64, artifactPaths map[string]string) (Manifest, error) {
+	return BuildManifestForArchitecture(version, commit, channel, sourceDateEpoch, SupportedArchitecture, artifactPaths)
+}
+
+func BuildManifestForArchitecture(version, commit, channel string, sourceDateEpoch int64, architecture string, artifactPaths map[string]string) (Manifest, error) {
+	if BinaryArtifact(architecture) == "" {
+		return Manifest{}, errors.New("manifest architecture is unsupported")
+	}
 	if sourceDateEpoch <= 0 {
 		return Manifest{}, errors.New("source date epoch must be positive")
 	}
 	items := make([]Artifact, 0, len(artifactPaths))
 	for name, path := range artifactPaths {
-		if !isRequiredArtifact(name) {
+		if !isRequiredArtifact(architecture, name) {
 			return Manifest{}, fmt.Errorf("unexpected artifact %q", name)
 		}
 		info, err := os.Stat(path)
@@ -92,7 +99,7 @@ func BuildManifest(version, commit, channel string, sourceDateEpoch int64, artif
 	sort.Slice(items, func(a, b int) bool { return items[a].Name < items[b].Name })
 	manifest := Manifest{
 		SchemaVersion: ManifestSchema, Product: Product, Version: version, Channel: channel,
-		SourceCommit: commit, SourceDateEpoch: sourceDateEpoch, OS: SupportedOS, Architecture: SupportedArchitecture,
+		SourceCommit: commit, SourceDateEpoch: sourceDateEpoch, OS: SupportedOS, Architecture: architecture,
 		Artifacts:     items,
 		Compatibility: Compatibility{UpdaterGeneration: UpdaterGeneration, RollbackCompatible: true},
 	}
@@ -103,7 +110,7 @@ func BuildManifest(version, commit, channel string, sourceDateEpoch int64, artif
 }
 
 func (m Manifest) Validate() error {
-	if m.SchemaVersion != ManifestSchema || m.Product != Product || m.OS != SupportedOS || m.Architecture != SupportedArchitecture {
+	if m.SchemaVersion != ManifestSchema || m.Product != Product || m.OS != SupportedOS || BinaryArtifact(m.Architecture) == "" {
 		return errors.New("manifest identity is unsupported")
 	}
 	if !validSemver(m.Version) {
@@ -127,7 +134,7 @@ func (m Manifest) Validate() error {
 	seen := make(map[string]struct{}, len(m.Artifacts))
 	previous := ""
 	for _, item := range m.Artifacts {
-		if !isRequiredArtifact(item.Name) {
+		if !isRequiredArtifact(m.Architecture, item.Name) {
 			return fmt.Errorf("manifest contains unexpected artifact %q", item.Name)
 		}
 		if _, ok := seen[item.Name]; ok {
@@ -142,12 +149,12 @@ func (m Manifest) Validate() error {
 		seen[item.Name] = struct{}{}
 		previous = item.Name
 	}
-	for _, required := range RequiredArtifacts {
+	for _, required := range ArtifactsForArchitecture(m.Architecture) {
 		if _, ok := seen[required]; !ok {
 			return fmt.Errorf("manifest is missing required artifact %q", required)
 		}
 	}
-	if len(seen) != len(RequiredArtifacts) {
+	if len(seen) != len(ArtifactsForArchitecture(m.Architecture)) {
 		return errors.New("manifest contains an unsupported artifact")
 	}
 	return nil
@@ -234,7 +241,7 @@ func VerifyCandidate(candidate Candidate) error {
 	if err := candidate.Manifest.Validate(); err != nil {
 		return err
 	}
-	if len(candidate.Assets) != len(RequiredArtifacts) {
+	if len(candidate.Assets) != len(ArtifactsForArchitecture(candidate.Manifest.Architecture)) {
 		return errors.New("candidate has an unexpected asset set")
 	}
 	for _, item := range candidate.Manifest.Artifacts {
@@ -246,8 +253,8 @@ func VerifyCandidate(candidate Candidate) error {
 	return nil
 }
 
-func isRequiredArtifact(name string) bool {
-	for _, required := range RequiredArtifacts {
+func isRequiredArtifact(architecture, name string) bool {
+	for _, required := range ArtifactsForArchitecture(architecture) {
 		if name == required {
 			return true
 		}

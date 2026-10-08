@@ -18,6 +18,11 @@ Fresh hardware/LAN/IPv6/отказ upstream ещё не прошли отдел�
 
 Для Keenetic linux/arm64 с Entware и уже работающим штатным XKeen/Xray:
 
+**Ultra KN-1810 — MIPS, а не ARM64.** Опубликованный0.4.0 для него не подходит.
+Поддержка панели `mipsle` готовится отдельно в [#150](https://github.com/popiposter/xkeen-control/issues/150);
+см. [подготовку существующего KN1810](MIPS-KEENETIC.md). Не запускайте `--setup`
+и не используйте неподписанную сборку вместо будущего поддержанного релиза.
+
 ```sh
 xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.0/install.sh) && sh -c "$xkeen_installer"
 ```

@@ -9,7 +9,9 @@ COMMIT="${COMMIT:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo dev)}"
 CHANNEL="${CHANNEL:-development}"
 ASSET_DIR="$ROOT/internal/webassets/dist"
 WEB_DIR="$ROOT/web"
-OUTPUT="${OUTPUT:-$ROOT/dist/xkeen-control-linux-arm64}"
+ARCHITECTURE="${ARCHITECTURE:-arm64}"
+case "$ARCHITECTURE" in arm64|mipsle) ;; *) echo 'unsupported build architecture' >&2; exit 2 ;; esac
+OUTPUT="${OUTPUT:-$ROOT/dist/xkeen-control-linux-$ARCHITECTURE}"
 MODE="${1:---build-web}"
 case "$MODE" in --build-web|--embedded) ;; *) echo 'usage: build-control-plane.sh [--build-web|--embedded]' >&2; exit 2 ;; esac
 [ "$#" -le 1 ] || exit 2
@@ -32,7 +34,7 @@ fi
 [ -s "$ASSET_DIR/index.html" ] || { echo 'embedded assets missing' >&2; exit 1; }
 
 mkdir -p "$(dirname -- "$OUTPUT")"
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 "$GO_BIN" build \
+CGO_ENABLED=0 GOOS=linux GOARCH="$ARCHITECTURE" GOMIPS=softfloat "$GO_BIN" build \
   -trimpath -buildvcs=false -ldflags="-s -w -X github.com/popiposter/xkeen-control/internal/buildinfo.Version=$VERSION -X github.com/popiposter/xkeen-control/internal/buildinfo.Commit=$COMMIT -X github.com/popiposter/xkeen-control/internal/buildinfo.Channel=$CHANNEL" \
   -o "$OUTPUT" "$ROOT/cmd/xkeen-control"
 

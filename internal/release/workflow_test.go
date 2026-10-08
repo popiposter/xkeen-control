@@ -23,7 +23,7 @@ func releaseQualificationBoundary(workflow, devCheck string) bool {
 	root := strings.Index(build, "\n          test \"$(id -u)\" -eq 0\n")
 	trust := strings.Index(build, "\n          git config --global --add safe.directory \"$GITHUB_WORKSPACE\"\n")
 	identity := strings.Index(build, "$(git rev-parse HEAD)")
-	tools := strings.Index(build, "\n          apt-get install --yes --no-install-recommends build-essential git jq\n")
+	tools := strings.Index(build, "\n          apt-get install --yes --no-install-recommends build-essential git jq qemu-user\n")
 	handoff := strings.Index(build, "\n      - name: Assemble unsigned deterministic release inputs\n")
 	install := strings.Index(devCheck, "\t\tbash scripts/web-dependencies.sh --clean\n")
 	browser := strings.Index(devCheck, "\t\tnpm --prefix web run test:ui\n")
@@ -35,6 +35,33 @@ func releaseQualificationBoundary(workflow, devCheck string) bool {
 		!strings.Contains(build[root:handoff], "|| true") &&
 		!strings.Contains(devCheck[install:browser+len("\t\tnpm --prefix web run test:ui\n")], "|| true") &&
 		!strings.Contains(publish, "playwright") && !strings.Contains(publish, "test:ui")
+}
+
+func TestDualPlatformReleasePublicationBoundary(t *testing.T) {
+	data, err := os.ReadFile("../../.github/workflows/release.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := strings.ReplaceAll(string(data), "\r\n", "\n")
+	valid := func(w string) bool {
+		_, publish, ok := strings.Cut(w, "\n  publish:\n")
+		return ok && strings.Contains(w, "dist/release/xkeen-control-linux-mipsle\n") &&
+			strings.Contains(w, "dist/release/release-manifest-mipsle.json\n") &&
+			strings.Count(publish, "for architecture in arm64 mipsle; do") == 3 &&
+			strings.Contains(publish, "for manifest in release-manifest release-manifest-mipsle; do") &&
+			strings.Contains(publish, "test \"$a\" = \"$b\"") &&
+			strings.Contains(publish, "verify --architecture \"$architecture\"") &&
+			strings.Contains(publish, "verify-assets --architecture \"$architecture\"") &&
+			strings.Contains(publish, "SHA256SUMS S99xkeen-control install.sh release-manifest.json release-manifest.sig release-manifest-mipsle.json release-manifest-mipsle.sig xkeen-control-linux-arm64 xkeen-control-linux-mipsle xkeen-control-updater | sort")
+	}
+	if !valid(workflow) {
+		t.Fatal("both platform manifests/assets/signatures must be verified before publication")
+	}
+	for _, removed := range []string{"dist/release/xkeen-control-linux-mipsle\n", "test \"$a\" = \"$b\"", "for manifest in release-manifest release-manifest-mipsle; do", "release-manifest-mipsle.sig xkeen-control-linux-arm64", "verify --architecture \"$architecture\""} {
+		if valid(strings.ReplaceAll(workflow, removed, "")) {
+			t.Fatalf("unsafe publication accepted without %q", removed)
+		}
+	}
 }
 
 func TestReleaseQualificationBoundary(t *testing.T) {

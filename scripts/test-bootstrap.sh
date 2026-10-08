@@ -379,3 +379,55 @@ fi
 [ ! -e "$partial_root/opt/libexec/xkeen-control-updater" ]
 [ ! -e "$partial_root/curl-calls" ]
 [ ! -e "$partial_root/tmp/xkeen-control/panel-update" ]
+
+# Platform-specific bootstrap: real native files are represented by immutable
+# synthetic fixtures. No source install/adoption/setup is allowed on MIPS.
+cp "$fixture/xkeen-control-linux-arm64" "$fixture/xkeen-control-linux-mipsle"
+jq '.architecture = "mipsle" | .artifacts |= map(if .name == "xkeen-control-linux-arm64" then .name = "xkeen-control-linux-mipsle" else . end)' "$fixture/release-manifest.json" > "$fixture/release-manifest-mipsle.json"
+cp "$fixture/release-manifest.sig" "$fixture/release-manifest-mipsle.sig"
+(cd "$fixture" && sha256sum xkeen-control-linux-arm64 xkeen-control-linux-mipsle S99xkeen-control xkeen-control-updater install.sh release-manifest.json release-manifest.sig release-manifest-mipsle.json release-manifest-mipsle.sig > SHA256SUMS)
+cat > "$fakebin/uname" <<'EOF_MIPS_UNAME'
+#!/bin/sh
+printf '%s\n' mips
+EOF_MIPS_UNAME
+cat > "$fakebin/opkg" <<'EOF_MIPS_OPKG'
+#!/bin/sh
+if [ "${1:-}" = print-architecture ]; then
+    printf '%s\n' 'arch all 100' "arch ${FIXTURE_ENTWARE_ARCH:-mipsel-3.4} 150"
+else
+    echo unexpected-package-mutation >&2; exit 77
+fi
+EOF_MIPS_OPKG
+chmod 755 "$fakebin/uname" "$fakebin/opkg"
+mipsroot="$tmp/mips-root"
+mkdir -p "$mipsroot/opt/etc/xray/configs" "$mipsroot/opt/etc/xkeen" "$mipsroot/opt/var/spool/cron/crontabs" "$mipsroot/tmp"
+printf '%s\n' native-config-fixture > "$mipsroot/opt/etc/xray/configs/protected-config"
+printf '%s\n' native-watchdog-fixture > "$mipsroot/opt/etc/xkeen/speed_failover_watchdog.sh"
+printf '%s\n' native-cron-fixture > "$mipsroot/opt/var/spool/cron/crontabs/root"
+native_before=$(sha256sum "$mipsroot/opt/etc/xray/configs/protected-config" "$mipsroot/opt/etc/xkeen/speed_failover_watchdog.sh" "$mipsroot/opt/var/spool/cron/crontabs/root")
+run_installer "$mipsroot" >/dev/null
+[ -x "$mipsroot/opt/sbin/xkeen-control" ]
+grep -Fq '/release-manifest-mipsle.json' "$mipsroot/curl-calls"
+grep -Fq '/xkeen-control-linux-mipsle' "$mipsroot/curl-calls"
+if grep -Fq '/xkeen-control-linux-arm64' "$mipsroot/curl-calls"; then echo 'MIPS fetched ARM64 payload' >&2; exit 1; fi
+[ "$native_before" = "$(sha256sum "$mipsroot/opt/etc/xray/configs/protected-config" "$mipsroot/opt/etc/xkeen/speed_failover_watchdog.sh" "$mipsroot/opt/var/spool/cron/crontabs/root")" ]
+run_installer "$mipsroot" >/dev/null
+grep -Fq 'self-update --channel stable --apply' "$mipsroot/self-update-calls"
+for target in mips-3.4 mipsel-3.4-hardfloat unknown; do
+    refused="$tmp/refused-$target"
+    mkdir -p "$refused/opt" "$refused/tmp"
+    if FIXTURE_ENTWARE_ARCH="$target" run_installer "$refused" >/dev/null 2>&1; then echo 'unknown MIPS ABI admitted' >&2; exit 1; fi
+    [ ! -e "$refused/curl-calls" ] && [ ! -e "$refused/opt/etc" ] && [ ! -e "$refused/opt/var" ]
+done
+refused="$tmp/mips-setup-refused"
+mkdir -p "$refused/opt" "$refused/tmp"
+if run_installer "$refused" --setup >/dev/null 2>&1; then echo 'MIPS setup admitted' >&2; exit 1; fi
+[ ! -e "$refused/opt/var" ] && [ ! -e "$refused/curl-calls" ]
+# A foreign manifest must not place a panel, even with consistent HTTPS hashes.
+cp "$fixture/release-manifest.json" "$fixture/release-manifest-mipsle.json"
+(cd "$fixture" && sha256sum xkeen-control-linux-arm64 xkeen-control-linux-mipsle S99xkeen-control xkeen-control-updater install.sh release-manifest.json release-manifest.sig release-manifest-mipsle.json release-manifest-mipsle.sig > SHA256SUMS)
+refused="$tmp/mips-foreign-refused"
+mkdir -p "$refused/opt" "$refused/tmp"
+if run_installer "$refused" >/dev/null 2>&1; then echo 'MIPS bootstrap admitted ARM64 manifest' >&2; exit 1; fi
+[ ! -e "$refused/opt/sbin/xkeen-control" ]
+echo 'MIPS bootstrap/preservation/ABI/setup/mismatch fixtures passed'

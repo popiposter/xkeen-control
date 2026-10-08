@@ -63,7 +63,7 @@ jobs:
         run: |
           test "$(id -u)" -eq 0
           apt-get update
-          apt-get install --yes --no-install-recommends build-essential git jq
+          apt-get install --yes --no-install-recommends build-essential git jq qemu-user
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -90,10 +90,12 @@ jobs:
           name: unsigned-release-${{ inputs.source_ref }}
           path: |
             dist/release/xkeen-control-linux-arm64
+            dist/release/xkeen-control-linux-mipsle
             dist/release/S99xkeen-control
             dist/release/xkeen-control-updater
             dist/release/install.sh
             dist/release/release-manifest.json
+            dist/release/release-manifest-mipsle.json
           if-no-files-found: error
           retention-days: 1
 
@@ -131,12 +133,18 @@ jobs:
           path: dist/release
       - name: Verify unsigned manifest binds the handoff assets
         run: |
-          expected="$(printf '%s\n' S99xkeen-control install.sh release-manifest.json xkeen-control-linux-arm64 xkeen-control-updater | sort)"
+          expected="$(printf '%s\n' S99xkeen-control install.sh release-manifest.json release-manifest-mipsle.json xkeen-control-linux-arm64 xkeen-control-linux-mipsle xkeen-control-updater | sort)"
           actual="$(find dist/release -maxdepth 1 -type f -printf '%f\n' | sort)"
           test "$actual" = "$expected" || { echo "unexpected unsigned release asset set" >&2; exit 1; }
-          "$RUNNER_TEMP/xkeen-release" verify-assets \
-            --manifest dist/release/release-manifest.json \
-            --asset-dir dist/release
+          for architecture in arm64 mipsle; do
+            manifest=release-manifest
+            if [ "$architecture" = mipsle ]; then manifest=release-manifest-mipsle; fi
+            "$RUNNER_TEMP/xkeen-release" verify-assets --architecture "$architecture" \
+              --manifest "dist/release/$manifest.json" --asset-dir dist/release
+          done
+          a=$(jq -c '{schemaVersion,product,version,channel,sourceCommit,sourceDateEpoch,os,compatibility}' dist/release/release-manifest.json)
+          b=$(jq -c '{schemaVersion,product,version,channel,sourceCommit,sourceDateEpoch,os,compatibility}' dist/release/release-manifest-mipsle.json)
+          test "$a" = "$b" || { echo 'platform release provenance differs' >&2; exit 1; }
       - name: Require source-pinned production public key
         env:
           RELEASE_SIGNING_PUBLIC_KEY_B64: ${{ secrets.RELEASE_SIGNING_PUBLIC_KEY_B64 }}
@@ -154,19 +162,22 @@ jobs:
           key="$RUNNER_TEMP/release-private.key"
           trap 'rm -f "$key"' EXIT
           printf '%s' "$RELEASE_SIGNING_PRIVATE_KEY_B64" | base64 --decode > "$key"
-          "$RUNNER_TEMP/xkeen-release" sign \
-            --manifest dist/release/release-manifest.json \
-            --key-file "$key" \
-            --output dist/release/release-manifest.sig
+          for manifest in release-manifest release-manifest-mipsle; do
+            "$RUNNER_TEMP/xkeen-release" sign --manifest "dist/release/$manifest.json" \
+              --key-file "$key" --output "dist/release/$manifest.sig"
+          done
           rm -f "$key"
           trap - EXIT
       - name: Verify signature and finalize checksum list
         run: |
-          "$RUNNER_TEMP/xkeen-release" verify \
-            --manifest dist/release/release-manifest.json \
-            --signature dist/release/release-manifest.sig \
-            --public-key-file "$RUNNER_TEMP/release-public.key"
-          (cd dist/release && sha256sum xkeen-control-linux-arm64 S99xkeen-control xkeen-control-updater install.sh release-manifest.json release-manifest.sig > SHA256SUMS)
+          for architecture in arm64 mipsle; do
+            manifest=release-manifest
+            if [ "$architecture" = mipsle ]; then manifest=release-manifest-mipsle; fi
+            "$RUNNER_TEMP/xkeen-release" verify --architecture "$architecture" \
+              --manifest "dist/release/$manifest.json" --signature "dist/release/$manifest.sig" \
+              --public-key-file "$RUNNER_TEMP/release-public.key"
+          done
+          (cd dist/release && sha256sum xkeen-control-linux-arm64 xkeen-control-linux-mipsle S99xkeen-control xkeen-control-updater install.sh release-manifest.json release-manifest.sig release-manifest-mipsle.json release-manifest-mipsle.sig > SHA256SUMS)
       - name: Create non-public draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -192,17 +203,19 @@ jobs:
           published="$RUNNER_TEMP/published"
           mkdir -p "$published"
           gh release download "v${VERSION}" --dir "$published"
-          expected="$(printf '%s\n' SHA256SUMS S99xkeen-control install.sh release-manifest.json release-manifest.sig xkeen-control-linux-arm64 xkeen-control-updater | sort)"
+          expected="$(printf '%s\n' SHA256SUMS S99xkeen-control install.sh release-manifest.json release-manifest.sig release-manifest-mipsle.json release-manifest-mipsle.sig xkeen-control-linux-arm64 xkeen-control-linux-mipsle xkeen-control-updater | sort)"
           actual="$(find "$published" -maxdepth 1 -type f -printf '%f\n' | sort)"
           test "$actual" = "$expected" || { echo "published draft has unexpected asset set" >&2; exit 1; }
           (cd "$published" && sha256sum -c SHA256SUMS)
-          "$RUNNER_TEMP/xkeen-release" verify \
-            --manifest "$published/release-manifest.json" \
-            --signature "$published/release-manifest.sig" \
-            --public-key-file "$RUNNER_TEMP/release-public.key"
-          "$RUNNER_TEMP/xkeen-release" verify-assets \
-            --manifest "$published/release-manifest.json" \
-            --asset-dir "$published"
+          for architecture in arm64 mipsle; do
+            manifest=release-manifest
+            if [ "$architecture" = mipsle ]; then manifest=release-manifest-mipsle; fi
+            "$RUNNER_TEMP/xkeen-release" verify --architecture "$architecture" \
+              --manifest "$published/$manifest.json" --signature "$published/$manifest.sig" \
+              --public-key-file "$RUNNER_TEMP/release-public.key"
+            "$RUNNER_TEMP/xkeen-release" verify-assets --architecture "$architecture" \
+              --manifest "$published/$manifest.json" --asset-dir "$published"
+          done
       - name: Publish only the verified draft
         env:
           GH_TOKEN: ${{ github.token }}
