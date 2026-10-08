@@ -35,10 +35,11 @@ func ValidateVersion(value string) error {
 }
 
 type Client struct {
-	baseURL   string
-	publicKey ed25519.PublicKey
-	http      *http.Client
-	testHost  string
+	architecture string
+	baseURL      string
+	publicKey    ed25519.PublicKey
+	http         *http.Client
+	testHost     string
 }
 
 func NewClient() *Client {
@@ -46,17 +47,22 @@ func NewClient() *Client {
 	if decoded, err := hex.DecodeString(StablePublicKeyHex); err == nil && len(decoded) == ed25519.PublicKeySize {
 		publicKey = decoded
 	}
-	return &Client{baseURL: "https://github.com/popiposter/xkeen-control", publicKey: ed25519.PublicKey(publicKey), http: newHTTPClient("")}
+	return &Client{architecture: runtimeArchitecture(), baseURL: "https://github.com/popiposter/xkeen-control", publicKey: ed25519.PublicKey(publicKey), http: newHTTPClient("")}
 }
 
 // NewClientForTest is only for synthetic HTTP/signature fixtures. It is not
 // used by production constructors and accepts no user-controlled API value.
 func NewClientForTest(baseURL string, publicKey ed25519.PublicKey) *Client {
+	return NewClientForTestArchitecture(baseURL, publicKey, "arm64")
+}
+
+// Explicit platform injection is confined to synthetic fixtures.
+func NewClientForTestArchitecture(baseURL string, publicKey ed25519.PublicKey, architecture string) *Client {
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Host == "" {
 		return &Client{baseURL: "", publicKey: publicKey}
 	}
-	return &Client{baseURL: strings.TrimRight(baseURL, "/"), publicKey: append(ed25519.PublicKey(nil), publicKey...), testHost: parsed.Host, http: newHTTPClient(parsed.Host)}
+	return &Client{architecture: architecture, baseURL: strings.TrimRight(baseURL, "/"), publicKey: append(ed25519.PublicKey(nil), publicKey...), testHost: parsed.Host, http: newHTTPClient(parsed.Host)}
 }
 
 func (c *Client) FetchCandidate(ctx context.Context, channel, version string) (Candidate, error) {
@@ -66,15 +72,19 @@ func (c *Client) FetchCandidate(ctx context.Context, channel, version string) (C
 	if version != "" && !validSemver(strings.TrimPrefix(version, "v")) {
 		return Candidate{}, errors.New("release version is invalid")
 	}
-	manifestBytes, err := c.download(ctx, c.assetURL(channel, version, "release-manifest.json"), maxManifestBody)
+	manifestName, signatureName := ManifestNames(c.Architecture())
+	if manifestName == "" {
+		return Candidate{}, errors.New("release platform is unsupported")
+	}
+	manifestBytes, err := c.download(ctx, c.assetURL(channel, version, manifestName), maxManifestBody)
 	if err != nil {
 		return Candidate{}, err
 	}
 	manifest, err := ParseManifest(manifestBytes)
-	if err != nil || manifest.Channel != channel || (version != "" && strings.TrimPrefix(manifest.Version, "v") != strings.TrimPrefix(version, "v")) {
+	if err != nil || manifest.Architecture != c.Architecture() || manifest.Channel != channel || (version != "" && strings.TrimPrefix(manifest.Version, "v") != strings.TrimPrefix(version, "v")) {
 		return Candidate{}, errors.New("release manifest is not the requested release")
 	}
-	signature, err := c.download(ctx, c.assetURL(channel, version, "release-manifest.sig"), maxSignatureBody)
+	signature, err := c.download(ctx, c.assetURL(channel, manifest.Version, signatureName), maxSignatureBody)
 	if err != nil {
 		return Candidate{}, err
 	}
@@ -84,7 +94,7 @@ func (c *Client) FetchCandidate(ctx context.Context, channel, version string) (C
 	assets := make(map[string][]byte, len(manifest.Artifacts))
 	for _, artifact := range manifest.Artifacts {
 		limit := int64(maxScriptBody)
-		if artifact.Name == "xkeen-control-linux-arm64" {
+		if artifact.Name == BinaryArtifact(c.Architecture()) {
 			limit = maxBinaryBody
 		}
 		contents, err := c.download(ctx, c.assetURL(channel, manifest.Version, artifact.Name), limit)
@@ -107,15 +117,19 @@ func (c *Client) Check(ctx context.Context, channel, version string) (Manifest, 
 	if version != "" && !validSemver(strings.TrimPrefix(version, "v")) {
 		return Manifest{}, errors.New("release version is invalid")
 	}
-	manifestBytes, err := c.download(ctx, c.assetURL(channel, version, "release-manifest.json"), maxManifestBody)
+	manifestName, signatureName := ManifestNames(c.Architecture())
+	if manifestName == "" {
+		return Manifest{}, errors.New("release platform is unsupported")
+	}
+	manifestBytes, err := c.download(ctx, c.assetURL(channel, version, manifestName), maxManifestBody)
 	if err != nil {
 		return Manifest{}, err
 	}
 	manifest, err := ParseManifest(manifestBytes)
-	if err != nil || manifest.Channel != channel || (version != "" && strings.TrimPrefix(manifest.Version, "v") != strings.TrimPrefix(version, "v")) {
+	if err != nil || manifest.Architecture != c.Architecture() || manifest.Channel != channel || (version != "" && strings.TrimPrefix(manifest.Version, "v") != strings.TrimPrefix(version, "v")) {
 		return Manifest{}, errors.New("release manifest is not the requested release")
 	}
-	signature, err := c.download(ctx, c.assetURL(channel, manifest.Version, "release-manifest.sig"), maxSignatureBody)
+	signature, err := c.download(ctx, c.assetURL(channel, manifest.Version, signatureName), maxSignatureBody)
 	if err != nil {
 		return Manifest{}, err
 	}

@@ -240,6 +240,8 @@ func TestXrayVersionParsingIsStrictAndCapabilityIsArchitectureBound(t *testing.T
 		wantCap    Capability
 	}{
 		{name: "valid arm64", output: validXrayVersionOutput, wantArch: "arm64", wantCap: CapabilitySupported},
+		{name: "valid mipsle", output: "Xray 26.7.28 (Xray, Penetrates Everything.)\ngo1.26.0 linux/mipsle\n", wantArch: "mipsle", wantCap: CapabilitySupported},
+		{name: "unsupported big endian", output: "Xray 26.7.28 (Xray, Penetrates Everything.)\ngo1.26.0 linux/mips\n", wantArch: "mips", wantReason: "architecture-unsupported", wantCap: CapabilityUnsupported},
 		{name: "malformed", output: "Xray 1.8.24 (Xray, Penetrates Everything.)\n", wantReason: "version-unparseable", wantCap: CapabilityUnsupported},
 		{name: "unsupported architecture", output: "Xray 1.8.24 (Xray, Penetrates Everything.)\ngo1.24.4 linux/amd64\n", wantArch: "amd64", wantReason: "architecture-unsupported", wantCap: CapabilityUnsupported},
 	}

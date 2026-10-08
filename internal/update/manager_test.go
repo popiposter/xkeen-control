@@ -204,12 +204,63 @@ func TestRollbackStartsHelperOnlyWhenPreviousGenerationExists(t *testing.T) {
 	dir := t.TempDir()
 	lifecycle := &fakeLifecycle{}
 	manager := NewManager(Config{
+		Client:    release.NewClientForTest("http://fixture.invalid", nil),
 		Current:   buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
 		Lifecycle: lifecycle,
 		Paths:     Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: filepath.Join(dir, "previous"), MarkerPath: filepath.Join(dir, "state", "installed-release.json"), PolicyPath: filepath.Join(dir, "state", "update-policy.json"), HelperPath: filepath.Join(dir, "helper")},
 	})
 	if err := manager.Rollback(context.Background()); err == nil {
 		t.Fatal("rollback without previous generation was accepted")
+	}
+}
+
+func TestMIPSRollbackRequiresSamePlatformPreviousGeneration(t *testing.T) {
+	dir := t.TempDir()
+	previous := filepath.Join(dir, "previous")
+	if err := os.MkdirAll(previous, 0700); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(previous, "xkeen-control-linux-arm64")
+	if err := os.WriteFile(foreign, []byte("synthetic previous"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	called := make(chan struct{}, 1)
+	manager := NewManager(Config{
+		Current: buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
+		Client:  release.NewClientForTestArchitecture("http://fixture.invalid", nil, "mipsle"),
+		Paths:   Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: previous, MarkerPath: filepath.Join(dir, "marker"), PolicyPath: filepath.Join(dir, "policy")},
+		RunHelper: func(_ context.Context, action string) error {
+			if action != "rollback" {
+				t.Fatal(action)
+			}
+			called <- struct{}{}
+			return nil
+		},
+	})
+	if manager.Status(context.Background()).RollbackAvailable {
+		t.Fatal("foreign previous generation advertised")
+	}
+	if err := manager.Rollback(context.Background()); err == nil {
+		t.Fatal("foreign rollback admitted")
+	}
+	select {
+	case <-called:
+		t.Fatal("foreign rollback started helper")
+	default:
+	}
+	if err := os.Rename(foreign, filepath.Join(previous, "xkeen-control-linux-mipsle")); err != nil {
+		t.Fatal(err)
+	}
+	if !manager.Status(context.Background()).RollbackAvailable {
+		t.Fatal("same-platform previous generation unavailable")
+	}
+	if err := manager.Rollback(context.Background()); err != nil {
+		t.Fatalf("MIPS rollback = %v", err)
+	}
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("MIPS rollback did not start helper")
 	}
 }
 
@@ -224,6 +275,7 @@ func TestRollbackConsumesHandoffBeforeReturning(t *testing.T) {
 	}
 	helperStarted := make(chan struct{}, 1)
 	manager := NewManager(Config{
+		Client:  release.NewClientForTest("http://fixture.invalid", nil),
 		Current: buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
 		Paths:   Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: previous, MarkerPath: filepath.Join(dir, "state", "installed-release.json"), PolicyPath: filepath.Join(dir, "state", "update-policy.json")},
 		RunHelper: func(_ context.Context, action string) error {
@@ -262,6 +314,7 @@ func TestRollbackReleasesAdmissionAfterLifecycleFailure(t *testing.T) {
 	}
 	lifecycle := &rejectingLifecycle{err: errors.New("synthetic lifecycle busy")}
 	manager := NewManager(Config{
+		Client:    release.NewClientForTest("http://fixture.invalid", nil),
 		Current:   buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
 		Lifecycle: lifecycle,
 		Paths:     Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: previous, MarkerPath: filepath.Join(dir, "state", "installed-release.json"), PolicyPath: filepath.Join(dir, "state", "update-policy.json"), HelperPath: filepath.Join(dir, "helper")},
@@ -291,6 +344,7 @@ func TestRollbackReleasesAdmissionAfterHelperStartFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := NewManager(Config{
+		Client:  release.NewClientForTest("http://fixture.invalid", nil),
 		Current: buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
 		Paths:   Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: previous, MarkerPath: filepath.Join(dir, "state", "installed-release.json"), PolicyPath: filepath.Join(dir, "state", "update-policy.json"), HelperPath: filepath.Join(dir, "missing-helper")},
 	})
@@ -318,6 +372,7 @@ func TestRollbackExcludesConcurrentAdmissionAndPersistsAfterHelperStart(t *testi
 	lifecycle := &blockingLifecycle{entered: make(chan struct{}, 1), release: make(chan struct{})}
 	helperStarted := make(chan struct{}, 1)
 	manager := NewManager(Config{
+		Client:    release.NewClientForTest("http://fixture.invalid", nil),
 		Current:   buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
 		Lifecycle: lifecycle,
 		Paths:     Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: previous, MarkerPath: filepath.Join(dir, "state", "installed-release.json"), PolicyPath: filepath.Join(dir, "state", "update-policy.json")},

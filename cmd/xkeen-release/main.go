@@ -59,13 +59,14 @@ func manifestCommand(args []string) {
 	commit := flags.String("commit", "", "full source commit")
 	channel := flags.String("channel", "", "stable or beta")
 	epoch := flags.Int64("source-date-epoch", 0, "deterministic source epoch")
+	architecture := flags.String("architecture", "arm64", "arm64 or mipsle")
 	var values assetsFlag
 	flags.Var(&values, "asset", "required release asset name=path")
 	_ = flags.Parse(args)
 	if *output == "" || *version == "" || *commit == "" || *channel == "" || len(values) != len(release.RequiredArtifacts) {
 		fatal("manifest arguments are incomplete")
 	}
-	manifest, err := release.BuildManifest(*version, *commit, *channel, *epoch, values)
+	manifest, err := release.BuildManifestForArchitecture(*version, *commit, *channel, *epoch, *architecture, values)
 	if err != nil {
 		fatal(err.Error())
 	}
@@ -116,6 +117,7 @@ func verifyCommand(args []string) {
 	manifestPath := flags.String("manifest", "", "manifest path")
 	signaturePath := flags.String("signature", "", "signature path")
 	keyPath := flags.String("public-key-file", "", "public key path")
+	architecture := flags.String("architecture", "arm64", "expected architecture")
 	_ = flags.Parse(args)
 	if *manifestPath == "" || *signaturePath == "" || *keyPath == "" {
 		fatal("verify arguments are incomplete")
@@ -124,7 +126,7 @@ func verifyCommand(args []string) {
 	if err != nil {
 		fatal("manifest read failed")
 	}
-	if _, err := release.ParseManifest(manifest); err != nil {
+	if parsed, err := release.ParseManifest(manifest); err != nil || parsed.Architecture != *architecture {
 		fatal("manifest is invalid")
 	}
 	signature, err := os.ReadFile(*signaturePath)
@@ -141,6 +143,7 @@ func verifyAssetsCommand(args []string) {
 	flags := flag.NewFlagSet("verify-assets", flag.ExitOnError)
 	manifestPath := flags.String("manifest", "", "manifest path")
 	assetDir := flags.String("asset-dir", "", "directory containing release assets")
+	architecture := flags.String("architecture", "arm64", "expected architecture")
 	_ = flags.Parse(args)
 	if *manifestPath == "" || *assetDir == "" {
 		fatal("verify-assets arguments are incomplete")
@@ -150,7 +153,7 @@ func verifyAssetsCommand(args []string) {
 		fatal("manifest read failed")
 	}
 	manifest, err := release.ParseManifest(manifestBytes)
-	if err != nil {
+	if err != nil || manifest.Architecture != *architecture {
 		fatal("manifest is invalid")
 	}
 	assets := make(map[string][]byte, len(manifest.Artifacts))

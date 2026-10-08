@@ -34,6 +34,13 @@ does not certify fresh installation or client/outage behavior.
 
 ## Remaining acceptance
 
+[#150 MIPS panel delivery](https://github.com/popiposter/xkeen-control/issues/150)
+prepares signed panel-only support for existing Ultra KN1810/KeeneticOS5.1.7/
+Entware mipsel-3.4. Source implementation, emulation, publication and operator
+hardware installation are separate gates. Stable0.4.0 remains ARM64-only;
+guided fresh setup is not expanded. Existing native config/watchdog are preserved
+by panel bootstrap; competing external writers need inspection before Apply.
+
 | Task | Current boundary | Prerequisite |
 | --- | --- | --- |
 | [#133 LAN routing/DNS/failover](https://github.com/popiposter/xkeen-control/issues/133) | Development/native DNS and a separate stopped-Xray DNS test passed; wider client/failure behavior remains NOTRUN. Signed0.4.0 installation is not claimed. | Independent client path and bounded authorized baseline/rollback |

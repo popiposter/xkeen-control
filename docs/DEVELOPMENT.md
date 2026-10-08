@@ -371,6 +371,17 @@ Build/test first, then copy/use only the exact release/artifact/scripts required
 
 Go/Node/build tooling is never installed on Keenetic.
 
+## MIPS panel delivery candidate (Issue150)
+
+The source build supports `ARCHITECTURE=mipsle` alongside the default `arm64`;
+MIPS uses static `CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat`.
+FULL assembles both binaries and checks ELF32/little-endian/EM_MIPS, absence of
+an interpreter and Go softfloat metadata. `scripts/test-mips-binary.sh` executes
+the binary and release/buildinfo fixtures under `qemu-mipsel` from the pinned
+development image. Emulation is separate from KN1810 memory/auth/native PTY/LAN
+acceptance. Existing signed0.4.0 stays ARM64-only; source support never authorizes
+unsigned installation. See [KN1810 preparation](MIPS-KEENETIC.md).
+
 
 Native-shell cleanup retires obsolete component/Setup/appliance restore HTTP tests,
 `internal/restore`, the old appliance/migration CLI and their standalone helper

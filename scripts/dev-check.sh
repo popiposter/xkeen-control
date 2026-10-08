@@ -105,13 +105,12 @@ fi
 if lane_enabled XKEEN_CHECK_ARTIFACT; then
 	echo "== Artifact build =="
 	mkdir -p dist
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
-	  -trimpath \
-	  -buildvcs=false \
-	  -ldflags='-s -w -X github.com/popiposter/xkeen-control/internal/buildinfo.Version=dev -X github.com/popiposter/xkeen-control/internal/buildinfo.Commit=dev -X github.com/popiposter/xkeen-control/internal/buildinfo.Channel=development' \
-	  -o dist/xkeen-control-linux-arm64 \
-	  ./cmd/xkeen-control
-	sha256sum dist/xkeen-control-linux-arm64
+    for architecture in arm64 mipsle; do
+        ARCHITECTURE="$architecture" VERSION=dev COMMIT=dev CHANNEL=development bash scripts/build-control-plane.sh --embedded
+        sha256sum "dist/xkeen-control-linux-$architecture"
+    done
+    bash scripts/test-mips-binary.sh
+
 fi
 
 echo "git diff --check is run by scripts/dev-check.ps1 on the host"

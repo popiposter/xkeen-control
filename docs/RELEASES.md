@@ -30,7 +30,7 @@ Existing managed panel updates use the installed binary's pinned-signature self-
 
 ## Distribution trust
 
-Each release has exactly:
+The published ARM64 releases through0.4.0 have exactly:
 
 ```text
 xkeen-control-linux-arm64
@@ -41,6 +41,18 @@ release-manifest.json
 release-manifest.sig
 SHA256SUMS
 ```
+
+Issue150's subsequent dual-platform candidate retains all those names and the
+ARM64 schema1 manifest, adding exactly `xkeen-control-linux-mipsle`,
+`release-manifest-mipsle.json`, `release-manifest-mipsle.sig` (ten public files).
+Each platform has its own signed four-artifact manifest; init/installer/updater
+are shared. Both signatures, exact assets and equal version/channel/source/epoch/
+compatibility are verified before publication. Existing ARM64 clients retain
+their manifest URLs and artifact contract; new MIPS clients use the fixed
+suffixed URLs and refuse ARM64 manifests/assets. Global SHA256SUMS covers nine
+payload/manifest/signature files. Bootstrap downloads/verifies only its current
+platform's six files while validating the complete checksum-name set.
+This candidate is not published0.4.0 and does not authorize a MIPS install yet.
 
 Only protected manual Release publishes: explicit version/channel/current-reviewed-main SHA, full read-only build gate, deterministic handoff, source-pinned public-key match, protected signing, verified draft re-download and final main recheck. Signing keys/router credentials never enter build qualification. Actions artifacts/raw main are not install authority. Panel Ed25519 trust does not imply signing of upstream native XKeen/component updates.
 
