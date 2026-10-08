@@ -2,6 +2,16 @@
 
 For the current native generation, use [quick start](QUICKSTART-RU.md) and [release installation](RELEASES.md).
 
+Issue145 adds a separate release-owned `--setup` source implementation; it is
+not present in published stable0.3.1. Its order is verified launcher/private
+source → persisted unassigned policy → stock native install (startup off) →
+deferred panel and pinned mosdns → one complete validated generation/start →
+DNS prerequisites/save → startup → HOME assignment/save → normal panel.
+See the [restricted initial capability matrix and recovery contract](../plan/feature-guided-install-1.md).
+Do not replace the operator router's existing installation to simulate fresh
+acceptance. A runnable one-command release example is published only after the
+protected release includes the reviewed/qualified setup CLI and installer.
+
 1. Prepare supported `linux/arm64` Keenetic with working Entware `/opt` and private administrative access.
 2. Install stock XKeen using its official installation procedure. It owns components, interception and cron. Select/configure the intended native mode and client policy; panel installation does not create firmware policy for you.
 3. Verify ordinary Internet access and native configuration before adding the panel.

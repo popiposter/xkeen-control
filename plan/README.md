@@ -13,6 +13,13 @@ Current sequencing is [ROADMAP](../docs/ROADMAP.md), not the latest paragraph of
 | [LAN DNS integration](feature-native-split-dns-1.md) | Completed; optional installed resolver prerequisite |
 | [Independent DNS infrastructure](infrastructure-independent-dns-1.md) | Historical operator installation/acceptance; static exports superseded by integration |
 
+## Planned
+
+[Guided fresh installation](feature-guided-install-1.md) (#145) defines one
+release-owned entrypoint, private subscription/node input, validated reference
+configuration and automatic activation of the entire HOME network. This is a
+proposed implementation contract; no setup mode is delivered in stable0.3.1.
+
 ## Historical / superseded
 
 Foundation v1, native admission v1, command inventory v1 and dated audits retain decision history. They do not authorize native code patches, takeover, generic repair or resuming disabled workers. UI/availability/DNS planning snapshots are superseded by current product docs where their checkpoints differ. The old evidence subtree contains synthetic/source comparison records, not current production readiness.

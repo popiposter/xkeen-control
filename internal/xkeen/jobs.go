@@ -95,6 +95,26 @@ func (m *Jobs) StartConfigured(owner string, request CommandRequest, editor *Con
 	return m.start(owner, request, editor, baseline, nil)
 }
 
+// PrepareSetupDNSExemption is fixed preparation while native is independently
+// confirmed stopped by the root-only setup callback. Stock -ape restarts only a
+// running core; any unexpected process afterwards is fenced by setup, not
+// followed by another start. The complete candidate has already been staged.
+func (m *Jobs) PrepareSetupDNSExemption(stoppedPolicyCheck func(context.Context) error) (JobView, error) {
+	if stoppedPolicyCheck == nil {
+		return JobView{}, ErrConfig
+	}
+	return m.startWithPolicy("initial-setup", CommandRequest{Action: "excluded-ports-add", Parameter: "53"}, nil, "", nil, stoppedPolicyCheck)
+}
+
+// StartSetupConfigs is the alternative when port 53 is already excluded. Both
+// choices retain exactly one deliberate config activation and the same owner.
+func (m *Jobs) StartSetupConfigs(editor *ConfigEditor, baseline string, policyCheck func(context.Context) error) (JobView, error) {
+	if editor == nil || editor.Lease != m.Lease || policyCheck == nil {
+		return JobView{}, ErrConfig
+	}
+	return m.startWithPolicy("initial-setup", CommandRequest{Action: "start"}, editor, baseline, nil, policyCheck)
+}
+
 // Remote jobs have a fixed owner so authenticated local operators can inspect
 // their private console. Telegram itself never reads or answers native output.
 const remoteJobOwner = "telegram-control"
@@ -116,6 +136,10 @@ func jobOwnerAllowed(job *nativeJob, owner string) bool {
 }
 
 func (m *Jobs) start(owner string, r CommandRequest, editor *ConfigEditor, baseline string, unchanged *ConfigEditor) (JobView, error) {
+	return m.startWithPolicy(owner, r, editor, baseline, unchanged, nil)
+}
+
+func (m *Jobs) startWithPolicy(owner string, r CommandRequest, editor *ConfigEditor, baseline string, unchanged *ConfigEditor, policyCheck func(context.Context) error) (JobView, error) {
 	if owner == "" {
 		return JobView{}, ErrJob
 	}
@@ -174,8 +198,24 @@ func (m *Jobs) start(owner string, r CommandRequest, editor *ConfigEditor, basel
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), spec.limit)
+	if policyCheck != nil {
+		if err := policyCheck(ctx); err != nil {
+			cancel()
+			j.state = "failed"
+			m.job = j
+			if editor != nil {
+				j.configurationState = editor.finishApply(context.Background(), j.id, "failed")
+			}
+			if m.saveReceipt(j) != nil {
+				j.state = "unknown"
+				m.Lease.Block()
+			}
+			release()
+			return JobView{}, ErrJob
+		}
+	}
 	command := exec.Command(m.Binary, args...)
-	for _, e := range os.Environ() {
+	for _, e := range withEntwarePath(os.Environ()) {
 		if !strings.HasPrefix(e, "XKEEN_FOREGROUND=") && !strings.HasPrefix(e, "XKEEN_GATE_") && !strings.HasPrefix(e, "TERM=") {
 			command.Env = append(command.Env, e)
 		}

@@ -34,6 +34,48 @@ native admission/update architecture. Old qualification records remain historica
 - Auth/private management, subscriptions, bounded observations/probes, portable
   config export and the signed updater **for this panel only** remain panel functions.
 
+## Guided fresh bootstrap authority
+
+Issue #145 and the [reviewed setup contract](../plan/feature-guided-install-1.md)
+authorize a separate release-owned fresh-only terminal setup implementation.
+Only provably empty destinations may receive the fixed, hash/size/member-verified
+official stock dispatcher/modules, followed by one supported native auto install
+with autostart and cron off. No native code is modified; native remains the
+component installation/update/interception owner. Existing/partial installations
+are inspect-only, never overwritten or automatically replayed.
+
+This explicit all-HOME mode requires a dedicated unassigned, persisted `xkeen`
+policy with verified WAN/actual mark before any possible native activation.
+Fixed typed firmware operations, complete candidate validation and independent
+runtime/DNS/readback precede HOME assignment. This is not a prerequisite added
+to ordinary panel use. Unknown firmware capability or result blocks progression.
+
+Setup defers the normal daemon. A fixed kernel lock, durable protected setup
+receipt and panel init/Go startup guards coordinate initial ownership and
+explicit recovery; existing ConfigEditor/jobs/registry/DNS owners retain their
+transactions. The lock does not fence native init, external CLI or cron. Saved
+policy/DNS prerequisites precede native autostart. Normal daemon starts only
+after verified durable setup completion; interrupted setup is inspect/recovery
+only. Source implementation, published availability and fresh hardware evidence
+must be recorded separately; stable0.3.1 does not contain this installer.
+
+The source adapter currently admits only ARM64 Ultra (KN-1811), firmware
+5.01.C.6.0-1, one private IPv4 bridge and one usable global WAN. Existing HOME
+bindings, any explicit host access/policy entry (including `permit`), DNS filter
+assignments/custom profiles, conflicting engines and unfamiliar grammar refuse
+fresh setup. Aliases normalize to verified canonical IDs; native hexadecimal
+policy marks and kernel HOME ifindex are independently read back. Initial native
+DSCP routing is disabled through supported `-dscp off` to retain policy scoping.
+DNS53 exclusion is prepared while positively stopped, followed by one Start
+through the complete-generation Apply owner; unexpected processes are fenced.
+
+`setup inspect` exposes only bounded phase/evidence fields. Explicit `recover`
+uses existing config/job/DNS inspection owners without native replay and can
+finalize a fully saved HOME phase. `abort` restores only confirmed, unchanged
+firmware effects after verified native stop/autostart-off (or before native
+provisioning). It retains an aborted fence; it never uninstalls/downgrades native
+components. Earlier ambiguous partial states require operator inspection.
+
 ## Native commands and configuration
 
 The adapter uses a fixed executable and validated argv. Interactive actions expose

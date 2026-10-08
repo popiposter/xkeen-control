@@ -1,13 +1,19 @@
 #!/bin/sh
 set -eu
 
+# Installed Entware tools (not firmware BusyBox applets) own native commands.
+PATH="/opt/bin:/opt/sbin:${PATH:-/usr/sbin:/usr/bin:/sbin:/bin}"
+export PATH
+
 BIN="${XKEEN_CONTROL_BIN:-/opt/sbin/xkeen-control}"
 PIDFILE="${XKEEN_CONTROL_PIDFILE:-/opt/var/run/xkeen-control.pid}"
 LOG="${XKEEN_CONTROL_LOG:-/tmp/xkeen-control.log}"
 
 pid_is_control() {
 	pid="$1"
-	ps w 2>/dev/null | awk -v wanted_pid="$pid" -v wanted_bin="$BIN" '$1 == wanted_pid && index($0, wanted_bin) { found = 1 } END { exit found ? 0 : 1 }'
+	# procps needs an explicit all-process selection; minimal router BusyBox
+	# only supports w and already lists all processes.
+	(ps -eo pid,args 2>/dev/null || ps w 2>/dev/null) | awk -v wanted_pid="$pid" -v wanted_bin="$BIN" '$1 == wanted_pid && index($0, wanted_bin) { found = 1 } END { exit found ? 0 : 1 }'
 }
 
 read_pid() {
@@ -21,6 +27,9 @@ read_pid() {
 
 start() {
 	[ -x "$BIN" ] || { echo "xkeen-control binary is not installed: $BIN" >&2; return 1; }
+	# Go repeats this check while retaining its shared process lock for life.
+	# The init check refuses incomplete setup before logs/PID/worker startup.
+	"$BIN" setup guard || return 1
 	if read_pid; then
 		echo "xkeen-control already running: $pid"
 		return 0

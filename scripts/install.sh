@@ -2,6 +2,17 @@
 set -eu
 set -f
 
+INSTALL_MODE=panel
+case "${1:-}" in
+	'') [ "$#" -eq 0 ] || exit 2 ;;
+	--setup) [ "$#" -eq 1 ] || exit 2; INSTALL_MODE=setup ;;
+	--setup-panel) [ "$#" -eq 1 ] || exit 2; INSTALL_MODE=setup-panel ;;
+	*) echo 'usage: install.sh [--setup]' >&2; exit 2 ;;
+esac
+
+PATH="/opt/bin:/opt/sbin:${PATH:-/usr/sbin:/usr/bin:/sbin:/bin}"
+export PATH
+
 # This is the public bootstrap entrypoint. The release URL, repository and
 # asset names are constants; there is deliberately no URL or command input.
 REPO="https://github.com/popiposter/xkeen-control"
@@ -41,15 +52,48 @@ STATE_DIR="${ROOT_DIR}/state"
 BOOTSTRAP_TMP_ROOT="${ROOT_PREFIX}/tmp/xkeen-control/panel-bootstrap"
 UPDATE_TMP_ROOT="${ROOT_PREFIX}/tmp/xkeen-control/panel-update"
 TMP_ROOT="$BOOTSTRAP_TMP_ROOT"
+if [ "$INSTALL_MODE" = setup ]; then TMP_ROOT="${ROOT_PREFIX}/tmp/xkeen-control/guided-bootstrap"; fi
 LEGACY_ADOPTION=0
 
 fail() { echo "ERROR: $1" >&2; exit 1; }
+# The internal deferred branch must have an inherited owner descriptor before
+# dependency installation or destination creation. The verified binary repeats
+# inode/root/receipt validation before placement; this is only an early fence.
+if [ "$INSTALL_MODE" = setup-panel ]; then
+	[ "$(readlink /proc/self/fd/3 2>/dev/null || :)" = /opt/var/lock/xkeen-control/initial-setup.lock ] || fail "setup owner descriptor required"
+	[ -f /opt/etc/xkeen-control/state/initial-setup.json ] && [ ! -L /opt/etc/xkeen-control/state/initial-setup.json ] || fail "setup receipt required"
+fi
 if [ "$TEST_MODE" != "1" ]; then
 	[ "$(id -u)" = "0" ] || fail "root is required"
 fi
 [ -d "$OPT_ROOT" ] || fail "/opt is required"
 command -v opkg >/dev/null 2>&1 || fail "Entware opkg is required"
 [ -w "$OPT_ROOT" ] || fail "/opt is not writable"
+
+if [ "$INSTALL_MODE" = setup ]; then
+	command -v flock >/dev/null 2>&1 && command -v stat >/dev/null 2>&1 || fail "setup requires flock and stat before bootstrap"
+	# Root-only fixed parents prevent an untrusted rename between checks/open.
+	# The Go owner repeats descriptor/inode validation and adopts FD3. Never
+	# unlink this inode or close it across the launcher -> setup handoff.
+	for dir in "$OPT_ROOT" "$OPT_ROOT/var" "$OPT_ROOT/var/lock" "$OPT_ROOT/var/lock/xkeen-control"; do
+		if [ ! -e "$dir" ] && [ ! -L "$dir" ]; then (umask 077; mkdir "$dir") || fail "setup lock directory unavailable"; fi
+		[ -d "$dir" ] && [ ! -L "$dir" ] && [ "$(stat -c %u "$dir")" = 0 ] || fail "unsafe setup lock directory"
+		mode=$(stat -c %a "$dir")
+		case "$mode" in ''|*[!0-7]*) fail "unsafe setup directory mode";; esac
+		[ "$((0$mode & 0022))" -eq 0 ] || fail "writable setup lock directory"
+	done
+	LOCK_PATH="$OPT_ROOT/var/lock/xkeen-control/initial-setup.lock"
+	[ "$(stat -c %a "$OPT_ROOT/var/lock/xkeen-control")" = 700 ] || fail "setup lock directory must be private"
+	if [ -e "$LOCK_PATH" ] || [ -L "$LOCK_PATH" ]; then
+		[ -f "$LOCK_PATH" ] && [ ! -L "$LOCK_PATH" ] && [ "$(stat -c '%u:%a:%h' "$LOCK_PATH")" = 0:600:1 ] || fail "unsafe setup lock file"
+	fi
+	umask 077
+	exec 3>>"$LOCK_PATH"
+	flock -n -x 3 || fail "setup or panel is already running"
+elif [ "$INSTALL_MODE" = panel ] && { [ -e "$STATE_DIR/initial-setup.json" ] || [ -L "$STATE_DIR/initial-setup.json" ]; }; then
+	[ -x "$BIN" ] || fail "incomplete initial setup; use setup inspect"
+	"$BIN" setup guard || fail "initial setup blocks ordinary installation"
+fi
 
 case "$(uname -m)" in
 	aarch64|arm64) ;;
@@ -64,6 +108,7 @@ need_tool() {
 	tool="$1"
 	package="$2"
 	if command -v "$tool" >/dev/null 2>&1; then return 0; fi
+	[ "$INSTALL_MODE" != setup ] || fail "setup download requires Entware $tool before entering the installer"
 	if [ "${UPDATED:-0}" != "1" ]; then
 		opkg update >/dev/null 2>&1 || fail "package index update failed"
 		UPDATED=1
@@ -147,6 +192,7 @@ legacy_layout() {
 }
 
 if [ -e "$BIN" ] || [ -L "$BIN" ]; then
+	[ "$INSTALL_MODE" != setup ] || fail "guided setup requires a fresh router; existing installation is inspect-only"
 	if legacy_layout; then
 		LEGACY_ADOPTION=1
 		TMP_ROOT="$UPDATE_TMP_ROOT"
@@ -204,9 +250,27 @@ case "$CHANNEL" in
 	*) fail "channel must be stable or beta" ;;
 esac
 
+TMP_PARENT="${ROOT_PREFIX}/tmp/xkeen-control"
+if [ ! -e "$TMP_PARENT" ] && [ ! -L "$TMP_PARENT" ]; then
+	(umask 077; mkdir "$TMP_PARENT") || fail "bootstrap temporary parent unavailable"
+fi
+[ -d "$TMP_PARENT" ] && [ ! -L "$TMP_PARENT" ] && [ "$(stat -c %u "$TMP_PARENT")" = 0 ] || fail "unsafe bootstrap temporary parent"
+mode=$(stat -c %a "$TMP_PARENT")
+case "$mode" in ''|*[!0-7]*) fail "unsafe bootstrap temporary mode";; esac
+[ "$((0$mode & 0022))" -eq 0 ] || fail "writable bootstrap temporary parent"
+if [ -e "$TMP_ROOT" ] || [ -L "$TMP_ROOT" ]; then
+	[ -d "$TMP_ROOT" ] && [ ! -L "$TMP_ROOT" ] && [ "$(stat -c %u "$TMP_ROOT")" = 0 ] || fail "unsafe bootstrap temporary directory"
+	mode=$(stat -c %a "$TMP_ROOT")
+	case "$mode" in ''|*[!0-7]*) fail "unsafe bootstrap temporary mode";; esac
+	[ "$((0$mode & 0022))" -eq 0 ] || fail "writable bootstrap temporary directory"
+fi
 rm -rf "$TMP_ROOT"
-mkdir -p "$TMP_ROOT/assets" "$AUTH_DIR" "$STATE_DIR"
-chmod 700 "$TMP_ROOT" "$TMP_ROOT/assets" "$ROOT_DIR" "$AUTH_DIR" "$STATE_DIR"
+mkdir -p "$TMP_ROOT/assets"
+chmod 700 "$TMP_ROOT" "$TMP_ROOT/assets"
+if [ "$INSTALL_MODE" != setup ]; then
+	mkdir -p "$AUTH_DIR" "$STATE_DIR"
+	chmod 700 "$ROOT_DIR" "$AUTH_DIR" "$STATE_DIR"
+fi
 
 fetch() {
 	name="$1"
@@ -266,6 +330,16 @@ while read -r expected name; do
 done < "$TMP_ROOT/SHA256SUMS"
 [ "$sum_count" -eq 6 ] || fail "checksum list is incomplete"
 
+if [ "$INSTALL_MODE" = setup ]; then
+	[ "$LEGACY_ADOPTION" = 0 ] || fail "setup cannot adopt an existing panel"
+	chmod 755 "$TMP_ROOT/assets/xkeen-control-linux-arm64"
+	exec "$TMP_ROOT/assets/xkeen-control-linux-arm64" setup run
+fi
+if [ "$INSTALL_MODE" = setup-panel ]; then
+	chmod 755 "$TMP_ROOT/assets/xkeen-control-linux-arm64"
+	"$TMP_ROOT/assets/xkeen-control-linux-arm64" setup panel-guard || fail "panel installation requires the live initial setup owner"
+fi
+
 if [ "$LEGACY_ADOPTION" = "1" ]; then
 	# The fixed updater owns the legacy quiescence/recovery handoff,
 	# stop/swap/health/rollback. The installer only moves the already-
@@ -292,6 +366,11 @@ mv -f "$BIN.new" "$BIN"
 mv -f "$INIT.new" "$INIT"
 mv -f "$UPDATER.new" "$UPDATER"
 rm -rf "$TMP_ROOT"
+
+if [ "$INSTALL_MODE" = setup-panel ]; then
+	echo "Panel installed with daemon startup deferred to verified setup completion."
+	exit 0
+fi
 
 if [ ! -e "${AUTH_DIR}/password.bcrypt" ]; then
 	XKEEN_CONTROL_AUTH_HASH="${AUTH_DIR}/password.bcrypt" \

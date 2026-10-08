@@ -481,6 +481,78 @@ func (s *Service) Sync(ctx context.Context) error {
 	}
 	return s.ReconcileOwned(ctx)
 }
+
+// InspectOwned confirms an already active generation without activation,
+// restart or filesystem changes. Initial-setup recovery must never use the
+// ordinary reconciler as a substitute for independently observed readiness.
+func (s *Service) InspectOwned(ctx context.Context) error {
+	release, err := s.Lease.TryAcquire()
+	if err != nil {
+		return err
+	}
+	defer release()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.configured() || !safeDirectory(s.Dir) || s.Pending != nil && s.Pending() {
+		return ErrSync
+	}
+	if _, err := os.Lstat(filepath.Join(s.Dir, "panel-operation.json")); !os.IsNotExist(err) {
+		return ErrSync
+	}
+	files, err := s.ReadNative(ctx)
+	if err != nil {
+		return ErrSync
+	}
+	config, err := readRegular(filepath.Join(s.Dir, "config.json"), 8<<20)
+	if err != nil {
+		return ErrSync
+	}
+	plan, err := Compile(ctx, files, config, s.Dir, &geodatareader.Reader{Dir: s.AssetDir})
+	if err != nil {
+		return ErrSync
+	}
+	b, err := readRegular(filepath.Join(s.Dir, "panel-manifest.json"), 64<<10)
+	if err != nil {
+		return ErrSync
+	}
+	var m manifest
+	if json.Unmarshal(b, &m) != nil || m.Digest != plan.Digest || !reflect.DeepEqual(m.Sources, plan.Sources) || !bytes.Equal(config, renderedConfig(plan, s.Dir)) {
+		return ErrSync
+	}
+	id := s.identity(ctx)
+	if id == "" || !s.isReady(ctx) {
+		return ErrSync
+	}
+	for name, data := range plan.Lists {
+		b, err := readRegular(filepath.Join(s.Dir, "panel-generation-"+plan.Digest[:16], name), 16<<20)
+		if err != nil || !bytes.Equal(b, data) {
+			return ErrSync
+		}
+	}
+	for name, digest := range plan.Sources {
+		if strings.HasPrefix(name, "geosite") {
+			actual, err := fileHash(filepath.Join(s.AssetDir, name), geodatareader.MaxFile)
+			if err != nil || actual != digest {
+				return ErrSync
+			}
+		}
+	}
+	fresh, err := s.ReadNative(ctx)
+	if err != nil {
+		return ErrSync
+	}
+	for name, digest := range plan.Sources {
+		if !strings.HasPrefix(name, "geosite") && hash(fresh[name]) != digest {
+			return ErrSync
+		}
+	}
+	current, err := readRegular(filepath.Join(s.Dir, "config.json"), 8<<20)
+	if err != nil || !bytes.Equal(current, config) || s.identity(ctx) != id {
+		return ErrSync
+	}
+	s.status = Status{State: "synced", Running: true, Entries: plan.Entries, Skipped: plan.Skipped, LastSync: m.Synced}
+	return nil
+}
 func (s *Service) cleanupGenerations(active string, previous []byte) {
 	entries, err := os.ReadDir(s.Dir)
 	if err != nil {
