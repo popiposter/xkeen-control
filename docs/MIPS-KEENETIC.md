@@ -1,13 +1,17 @@
-# Existing Ultra KN1810 — panel installation preparation
+# Existing Ultra KN1810 — panel-only installation
 
 Operator baseline for [Issue150](https://github.com/popiposter/xkeen-control/issues/150):
 KeeneticOS5.1.7, `uname -m: mips`, Entware `mipsel-3.4`/`mipsel-3.4_kn`,
 stock XKeen2.0.1 Beta/Xray26.7.28. Reported memory values indicate about249MiB
 RAM/105MiB available and1GiB swap; these are not panel hardware qualification.
 
-Stable0.4.0 is ARM64-only. The source MIPS candidate requires a separately
-reviewed/published signed release before installation. No unsigned binary copy,
-architecture override, signature bypass or modification of0.4.0 assets. Fresh
+Signed stable [0.4.1](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.1)
+includes the MIPS soft-float panel. Source review, hosted FULL, exact ten-file
+public verification, both signatures and actual published MIPS emulated startup
+passed; see [release evidence](RELEASES.md). KN1810 hardware installation,
+RSS/auth/PTY/native preservation and LAN behavior remain NOTRUN. Stable0.4.0
+remains ARM64-only. No unsigned binary copy, architecture override, signature
+bypass or modification of0.4.0 assets. Fresh
 `--setup` remains unsupported for KN1810 and existing installations.
 
 ## Before installing a signed MIPS release
@@ -31,6 +35,21 @@ architecture override, signature bypass or modification of0.4.0 assets. Fresh
    bootstrap password locally. Independently verify version/source/channel,
    PID/executable/health/auth, RSS and unchanged native files/runtime. A successful
    installer exit alone does not establish hardware/network acceptance.
+
+Only after the inventory and protected snapshot above, run the published
+panel-only installer:
+
+```sh
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.1/install.sh) && sh -c "$xkeen_installer"
+```
+
+The initial installer trusts GitHub HTTPS and checks manifest/size/hash consistency;
+installed self-updates verify the pinned Ed25519 signature. Do not confuse these
+trust steps. After installation, `/opt/sbin/xkeen-control version --json` must
+report0.4.1/stable/source `68d7ed356980897fc921001375b24cf2af10b90c`.
+The MIPS binary SHA256 is
+`3d16a7975ba0d52b9d6f7081189af8f3915282efb60ed0be247dddc5892bf9b5`.
+Keep private credentials and backup contents out of chat/public evidence.
 
 ## Before configuring nodes or routing
 

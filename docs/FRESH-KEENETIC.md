@@ -1,6 +1,6 @@
 # Установка на новый Keenetic
 
-Стабильный [0.4.0](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.0) содержит отдельный режим `--setup`: подписка/узел, штатный XKeen и Xray, панель, независимый DNS и эталон RU selective. Он подключает всю HOME-сеть после проверок готовности. Для существующей установки используйте [установку только панели](QUICKSTART-RU.md), без `--setup`.
+Стабильный [0.4.1](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.1) содержит отдельный режим `--setup`: подписка/узел, штатный XKeen и Xray, панель, независимый DNS и эталон RU selective. Он подключает всю HOME-сеть после проверок готовности. Для существующей установки используйте [установку только панели](QUICKSTART-RU.md), без `--setup`. MIPS-пакет панели в0.4.1 не расширяет матрицу fresh setup.
 
 ## Поддержанный начальный вариант
 
@@ -18,7 +18,7 @@
 Выполните из root SSH-сессии на поддержанном новом роутере:
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.0/install.sh) && sh -c "$xkeen_installer" -- --setup
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.1/install.sh) && sh -c "$xkeen_installer" -- --setup
 ```
 
 По запросу вставьте одну ссылку на подписку или поддержанный VLESS-узел. Ввод скрыт; ссылка не передаётся в argv/env и публичные логи. Не добавляйте её в команду. Пустой или ошибочный источник, недоступные зависимости и неизвестное состояние не разрешают подключение HOME.
@@ -52,4 +52,4 @@ xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/release
 
 ## Что уже проверено
 
-Source review, локальный и защищённый hosted FULL, подпись/манифест и семь публичных файлов0.4.0 проверены. Само выполнение fresh setup на аппаратном роутере, независимый LAN/IPv6 и отказ upstream остаются **NOTRUN**, [issue148](https://github.com/popiposter/xkeen-control/issues/148). Публикация не означает установку подписанного релиза на операторский роутер. Для приёмки нужен отдельно авторизованный новый роутер; существующий рабочий роутер не переустанавливается ради теста.
+Source review и защищённый hosted FULL точного источника0.4.1, оба подписанных манифеста и десять публичных файлов проверены; локальный FULL предыдущего PR HEAD учтён отдельно в [релизном отчёте](RELEASES.md). Само выполнение fresh setup на аппаратном роутере, независимый LAN/IPv6 и отказ upstream остаются **NOTRUN**, [issue148](https://github.com/popiposter/xkeen-control/issues/148). Публикация не означает установку подписанного релиза на операторский роутер. Для приёмки нужен отдельно авторизованный новый роутер; существующий рабочий роутер не переустанавливается ради теста.
