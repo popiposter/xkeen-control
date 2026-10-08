@@ -46,7 +46,10 @@ a precise inspect-only result before mutation, rather than a success message.
   direct Internet/DNS and private management. Preflight root, free storage,
   installed/tool selection, model/firmware capability and empty native/panel/DNS
   paths. Symlinks, preexisting files, unknown state and interrupted setup are not
-  fresh. No automatic reinstallation or replacement of an existing resolver.
+  fresh. A separately prepared, validated root-only native RCI token data file
+  alone is the explicit firmware5.2 prerequisite exception; it is preserved and
+  does not permit preexisting dispatcher/modules/core/native config or resolver
+  replacement. No automatic reinstallation of an existing component.
 - **REQ-003**: Read one subscription URL or supported VLESS URI privately from
   terminal/stdin before component mutation. Hide echo and restore terminal mode
   on every exit/signal. Use current subscription fetch/parser/SSRF/size/redirect
@@ -76,12 +79,22 @@ a precise inspect-only result before mutation, rather than a success message.
   names. Use fixed fresh-only binary/init/config paths, loopback readiness15354
   and, when needed, one exact trusted HOME IP listener. Firmware retains LAN53
   and local names. Inspect native53 interception before using supported excluded
-  port commands; those commands can already restart Xray.
+  port commands; those commands can already restart Xray. The firmware public DNS
+  engine is global: require it already absent/public and check unrelated profiles
+  before provisioning. A conflicting engine is an explicit pre-mutation
+  unsupported result, not an excuse to change guest/non-HOME DNS.
 - **REQ-008**: Before HOME activation independently check full native config,
   executable/confdir/process identity, enabled pool, API/probe and real DIRECT/VPN
   DNS. Prepare dedicated policy/DNS objects without assigning clients early.
   Assign HOME last, read back actual segment/host assignments, then save firmware.
   Local process/TCP checks do not become independent LAN packet acceptance.
+- **REQ-009**: `autostart=off` is staging only. After validated runtime/DNS and
+  before HOME assignment/Ready, enable native startup through supported
+  `xkeen -auto on` and independently read back its persisted startup setting.
+  Verify fixed mosdns/panel init startup configuration as well. Running now is
+  distinct from configured startup; unknown startup readiness prevents Ready.
+  No router reboot is needed for source/fixture checks, and no extra restart is
+  introduced solely to enable autostart.
 - **SEC-001**: No native script patches, `expect`, generic command/file/RCI API,
   second component updater, router toolchain, blanket `opkg upgrade`, reboot,
   automatic credential rotation, wildcard/WAN listener or secret-bearing public
@@ -144,7 +157,7 @@ a precise inspect-only result before mutation, rather than a success message.
 | Task | Description | Completed | Date |
 |------|-------------|-----------|------|
 | TASK-008 | Apply only the verified typed CLI plan: dedicated xkeen-described policy permits discovered usable WAN; custom exclusive DNS profile forwards to tested mosdns address/port. Snapshot original assignments/engine/owned object absence privately and verify drift before each mutation. Reject unsupported transport/schema rather than guessing RCI POST. | No | — |
-| TASK-009 | Assign HOME policy and DNS, including supported host overrides or a precise pre-mutation unsupported result. Read back objects/segment/hosts and actual routing table/resolver path, then `system configuration save`. Keep guest/WAN/management/default policy outside scope. Scoped rollback restores only unchanged own effects; no full running-config replay. | No | — |
+| TASK-009 | Confirm global DNS engine absent/public and unaffected non-HOME profiles before mutation. After runtime readiness enable/read back supported native autostart and verify mosdns/panel configured startup; then assign HOME policy and DNS, including supported host overrides or a precise pre-mutation unsupported result. Read back objects/segment/hosts and actual routing table/resolver path, then `system configuration save`. Keep guest/WAN/management/default policy outside scope. Scoped rollback restores only unchanged own effects; no full running-config replay. | No | — |
 | TASK-010 | Report final installed/configured state, panel access/password, native/DNS/component versions, enabled-node count and LAN verification boundary. Successful router-side provisioning is distinct from fresh independent-client acceptance. Normal subsequent subscription refresh uses existing panel, not setup again. | No | — |
 
 ### Implementation Phase 5
@@ -222,7 +235,9 @@ a precise inspect-only result before mutation, rather than a success message.
   pending baseline. One configuration owner and one activation.
 - **TEST-004**: Native exit0 with stopped/wrong executable/confdir, API/probe or
   DNS failure, unknown receipt, all HOME assignments withheld before readiness,
-  host overrides and non-HOME clients, drift before firmware writes/save/rollback.
+  host overrides and non-HOME clients, conflicting global DNS engine, native
+  autostart still off/unknown or missing DNS/panel startup, drift before firmware
+  writes/save/rollback. Token-only5.2 prerequisite does not admit a partial install.
 - **TEST-005**: Same-release bootstrap/CLI availability, strict trust separation,
   release assembly plus exact clean-HEAD supported FULL and independent review.
 - **TEST-006**: Fresh hardware and unproxied HOME clients, DIRECT/VPN/local DNS,
