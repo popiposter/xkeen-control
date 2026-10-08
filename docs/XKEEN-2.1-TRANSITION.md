@@ -81,6 +81,10 @@ transaction guarantee for those side effects.
 
 ## Authorized update sequence
 
+The [qualification record](qualification/xkeen-2.1-transition-record.md) defines
+the baseline, preservation checks and evidence needed for each gate. It is an
+unexecuted operator worksheet, not permission to run an update or rollback.
+
 Live mutation needs a named router/window and a verified rollback baseline under
 #140. Before mutation, inspect exact panel/native/core/firmware identities,
 pending configs/jobs, applicable settings, cron and process/DNS state. Preserve
