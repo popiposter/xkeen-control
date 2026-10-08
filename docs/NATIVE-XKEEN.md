@@ -1,6 +1,6 @@
 # Native XKeen contract — graphical shell
 
-Current native contract, revised by the operator on 2026-10-03 and delivered through Issue #121. Stable0.3.1 is published; remaining acceptance is tracked in [ROADMAP](ROADMAP.md).
+Current native contract, revised by the operator on 2026-10-03 and delivered through Issue #121, with explicit fresh setup from Issue145. Stable0.4.0 is published; remaining acceptance is tracked in [ROADMAP](ROADMAP.md).
 The [v2 implementation plan](../plan/architecture-native-shell-v2.md) and
 [source audit](../plan/audit-native-shell-2026-10-03.md) replace the earlier
 native admission/update architecture. Old qualification records remain historical.
@@ -57,7 +57,8 @@ transactions. The lock does not fence native init, external CLI or cron. Saved
 policy/DNS prerequisites precede native autostart. Normal daemon starts only
 after verified durable setup completion; interrupted setup is inspect/recovery
 only. Source implementation, published availability and fresh hardware evidence
-must be recorded separately; stable0.3.1 does not contain this installer.
+are recorded separately; stable0.4.0 contains this installer, while fresh
+hardware acceptance remains [NOTRUN](https://github.com/popiposter/xkeen-control/issues/148).
 
 The source adapter currently admits only ARM64 Ultra (KN-1811), firmware
 5.01.C.6.0-1, one private IPv4 bridge and one usable global WAN. Existing HOME

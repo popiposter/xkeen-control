@@ -10,7 +10,7 @@ Components and schedules use allowlisted native commands. Interactive prompts re
 
 ## Independent LAN DNS
 
-Optional standard mosdns and a Keenetic DNS profile are installed/configured separately. Keenetic retains LAN port53/local names; VPN DNS uses the existing loopback Xray SOCKS/native pool, DIRECT DoH is independent of Xray. VPN names have no DIRECT fallback. Do not replace all firmware DNS with an Xray-only listener.
+For existing installations, optional standard mosdns and a Keenetic DNS profile are installed/configured separately. The explicit [fresh `--setup` route](FRESH-KEENETIC.md) prepares them only within its restricted capability matrix. Keenetic retains LAN port53/local names; VPN DNS uses the existing loopback Xray SOCKS/native pool, DIRECT DoH is independent of Xray. VPN names have no DIRECT fallback. Do not replace all firmware DNS with an Xray-only listener.
 
 The panel derives domain decisions from native configs and installed geosite files, preserving first-match order. IP/protocol/port/other conditional traffic rules do not become generic DNS rules. Pending sets postpone sync. Native success triggers reconciliation; a minute observer detects visible external source changes while panel runs. Last successful DNS generation continues if the panel stops; startup reconciles afterward.
 

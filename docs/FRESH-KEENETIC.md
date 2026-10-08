@@ -1,25 +1,55 @@
-# Fresh Keenetic installation
+# Установка на новый Keenetic
 
-For the current native generation, use [quick start](QUICKSTART-RU.md) and [release installation](RELEASES.md).
+Стабильный [0.4.0](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.0) содержит отдельный режим `--setup`: подписка/узел, штатный XKeen и Xray, панель, независимый DNS и эталон RU selective. Он подключает всю HOME-сеть после проверок готовности. Для существующей установки используйте [установку только панели](QUICKSTART-RU.md), без `--setup`.
 
-Issue145 adds a separate release-owned `--setup` source implementation; it is
-not present in published stable0.3.1. Its order is verified launcher/private
-source → persisted unassigned policy → stock native install (startup off) →
-deferred panel and pinned mosdns → one complete validated generation/start →
-DNS prerequisites/save → startup → HOME assignment/save → normal panel.
-See the [restricted initial capability matrix and recovery contract](../plan/feature-guided-install-1.md).
-Do not replace the operator router's existing installation to simulate fresh
-acceptance. A runnable one-command release example is published only after the
-protected release includes the reviewed/qualified setup CLI and installer.
+## Поддержанный начальный вариант
 
-1. Prepare supported `linux/arm64` Keenetic with working Entware `/opt` and private administrative access.
-2. Install stock XKeen using its official installation procedure. It owns components, interception and cron. Select/configure the intended native mode and client policy; panel installation does not create firmware policy for you.
-3. Verify ordinary Internet access and native configuration before adding the panel.
-4. Install the release-specific signed panel alongside XKeen. No router Go/Node toolchain or blanket package upgrade.
-5. Read the generated first panel password in the installer terminal. Default management is loopback8787; use a private SSH tunnel or explicitly configured trusted LAN listener.
-6. Add subscriptions/nodes, validate and explicitly Apply config changes. Test the client path independently, not through an unrelated local VPN.
-7. Save an encrypted configuration export; destination-native schedules/client policy are not silently overwritten by transfer.
+- **Ultra KN-1811, KeeneticOS 5.01.C.6.0-1, linux/arm64**.
+- Рабочий Entware `/opt`, доступ из приватной административной сети, обычный Internet/DNS.
+- Один private IPv4 bridge HOME и один рабочий global WAN. Их имена/IP/марка политики обнаруживаются, а не задаются константами.
+- XKeen/Xray, панель и mosdns ещё не установлены; их каталоги/init/updater/hook не заняты. Частичная установка не считается новой.
+- Нет HOME policy bindings, явных host access/policy entries (включая `permit`), custom DNS-профилей/назначений. DNS engine отсутствует либо `public`.
+- Уже доступны `curl`, `jq`, `sha256sum`, `flock`, `stat`, `opkg`; не менее 128 MiB свободного места в `/opt` и MemAvailable. GNU tar проверяется и при необходимости устанавливается после проверки приватного ввода и записи setup-состояния.
 
-Optional LAN DNS requires separately configured standard resolver and native Keenetic DNS profile. The panel does not install this infrastructure automatically. No legacy appliance adoption, takeover or native script patch is required.
+Другие модели, прошивки, несколько private bridges/WAN и KeeneticOS5.2 не входят в первую матрицу. Не удаляйте существующие каталоги или настройки, чтобы обойти отказ preflight. Внешние CLI/cron не должны менять конфигурацию во время setup; его блокировка сериализует только setup и процессы панели.
 
-Router reformat/reboot, unrelated `/opt` deletion, automatic credentials rotation and generic repair are not installation steps here. Prior legacy bootstrap/adoption evidence is retained [in archive](archive/FRESH-KEENETIC-before-0.3.1-cleanup.md). Installation of the current signed release on the operator router remains distinct from development delivery and public signature verification.
+## Команда
+
+Выполните из root SSH-сессии на поддержанном новом роутере:
+
+```sh
+sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.0/install.sh)" -- --setup
+```
+
+По запросу вставьте одну ссылку на подписку или поддержанный VLESS-узел. Ввод скрыт; ссылка не передаётся в argv/env и публичные логи. Не добавляйте её в команду. Пустой или ошибочный источник, недоступные зависимости и неизвестное состояние не разрешают подключение HOME.
+
+## Порядок настройки
+
+1. Проверка свежести, модели/прошивки, ресурсов, инструментов и приватного источника. Setup удерживает одну эксклюзивную kernel-блокировку; защищённое состояние записывается до первого изменения компонентов/firmware.
+2. Создание отдельной неназначенной политики `xkeen` с разрешённым обнаруженным WAN. Её марка, отсутствие назначений и сохранение в startup-config подтверждаются до штатной установки и любой возможной активации.
+3. Проверка GNU tar, проверенная доставка stock XKeen2.1 и одна штатная auto-установка Xray v26.3.27/geodata с autostart/cron off. Native-код остаётся неизменённым. Панель того же подписанного релиза размещается с отложенным запуском; устанавливается mosdns5.3.4.
+4. Один полный набор registry/outbounds/reference routing/Xray DNS проходит существующие Preview/Stage/полную Xray validation. Исключение DNS53 готовится штатной командой только при положительно подтверждённом остановленном Xray; затем выполняется один configured Start через существующий Apply-owner.
+5. Проверка процесса/config/API/native pool, DIRECT/VPN probes, реального DNS и маркированного перехвата TCP/UDP. DIRECT DNS независим от Xray; VPN DNS идёт через native pool без DIRECT fallback. Создание и сохранение собственного DNS-профиля выполняются до включения автозапуска.
+6. Проверка файлов/настроек автозапуска. HOME policy/DNS назначаются последними; running/startup state повторно сверяются. Только затем setup durably завершается, снимает эксклюзивную блокировку и запускает обычную панель с проверкой identity/health.
+
+Политика доступа создаётся через фиксированные команды `/bin/ndmc`, а её существование, WAN и actual mark проверяются отдельно. В поддержанном варианте вручную создавать её в GUI не требуется. Гостевые сегменты и WAN не подключаются к HOME-политике.
+
+Эталон включает BitTorrent DIRECT; явное force-proxy расположено раньше и имеет приоритет. Sniffing не гарантирует распознавание зашифрованных торрентов. [Порядок 12 правил и geodata](../config/presets/README.md).
+
+Первый пароль выводится в терминал. Итог содержит домашний URL панели, версии компонентов и количество активных узлов. Узлы/подписка уже добавлены; последующие обновления выполняются обычными средствами панели и XKeen. Native cron этим режимом автоматически не включается.
+
+## Прерванная установка
+
+Повторный `--setup` не переустанавливает компоненты. Неполное, неизвестное или небезопасное setup-состояние блокирует обычный старт панели, в том числе при загрузке роутера. Сначала выполните только чтение:
+
+```sh
+/opt/sbin/xkeen-control setup inspect
+```
+
+Явный root-only `setup recover` проверяет существующие config/job/DNS outcomes без повтора установки или активации; он может завершить уже полностью сохранённую HOME-фазу. `setup abort` — ограниченный возврат подтверждённых собственных firmware-изменений, без uninstall/downgrade native-компонентов. После native provisioning он требует подтверждённой остановки Xray и autostart off; неизвестный результат или drift запрещают обратные команды. Aborted fence сохраняется. Не удаляйте receipt/lock и не восстанавливайте весь running-config вручную. Если signed binary ещё не размещён, root-only CLI недоступен: ранняя частичная установка требует отдельной операторской проверки.
+
+Подробные границы — в [контракте](../plan/feature-guided-install-1.md) и [native authority](NATIVE-XKEEN.md). Setup не блокирует native init или внешние CLI; durable policy/DNS prerequisites сохраняются до native autostart.
+
+## Что уже проверено
+
+Source review, локальный и защищённый hosted FULL, подпись/манифест и семь публичных файлов0.4.0 проверены. Само выполнение fresh setup на аппаратном роутере, независимый LAN/IPv6 и отказ upstream остаются **NOTRUN**, [issue148](https://github.com/popiposter/xkeen-control/issues/148). Публикация не означает установку подписанного релиза на операторский роутер. Для приёмки нужен отдельно авторизованный новый роутер; существующий рабочий роутер не переустанавливается ради теста.

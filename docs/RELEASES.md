@@ -2,21 +2,29 @@
 
 ## Current release
 
-Signed stable [v0.3.1](https://github.com/popiposter/xkeen-control/releases/tag/v0.3.1), published2026-10-06, from independently reviewed source `6e62d620630f5994b00acb2dfb60cbd690b44bcd`, tree `7858938c560051453a1d3346eb5aa586a7e6eda9`.
+Signed stable [v0.4.0](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.0), published2026-10-08T20:16:53Z, from independently reviewed source `2cda1d36712fa4b4dcf80ef9966358b45323c2d8`, tree `bb978a8e40d78e62a27003636a7626f722b1ba21`, source epoch1791490118.
 
-Exact-main FULL106browser/Go/race/helpers/frontend/embed/audit0/ARM passed. Protected [run37427370603](https://github.com/popiposter/xkeen-control/actions/runs/37427370603) completed build and publish. Fresh unauthenticated download verified the exact seven public assets, pinned Ed25519 key/signature, manifest identity/compatibility/assets and actual `sha256sum -c SHA256SUMS`. ARM64 binary:15,990,944bytes, SHA256 `49b77af3269dc1d2d786ea4de0e618f3c765acd8f6c4aaec516b9cb848b54dc6`.
+Protected [run37837549187](https://github.com/popiposter/xkeen-control/actions/runs/37837549187) completed exact-source hosted FULL (Go/vet/race/helpers/frontend/embed/audit0, unit10/10, Chromium106/106) and signing/publication. Fresh unauthenticated download verified the exact seven public assets with a verifier built from the released source: pinned Ed25519 key/signature, complete manifest identity/compatibility/assets and actual `sha256sum -c SHA256SUMS`. ARM64 binary:16,384,160bytes, SHA256 `6459c41ae72d0f163439a668eddbf8b10569655979a226e29616e04734ae501e`. [Sanitized publication evidence](https://github.com/popiposter/xkeen-control/issues/4#issuecomment-6068324258).
 
-Public verification is not signed-release installation evidence. The operator router's accepted development build and historical DNS outage proof are separate. Earlier run37424360277 failed a synthetic DNS fixture, never published and was not rerun; reviewed fixes preceded the new exact-source freeze.
+The merged release tree equals the independently approved PR147 tree; its prior local FULL remains bound to PR HEAD `bd5d290772e788091c4847c02442e6ca1a308d46`, separately from hosted FULL on the released SHA. Later documentation commits are not the release source. Public verification does not establish signed installation or fresh hardware/LAN/IPv6/failure-fallback acceptance; these remain NOTRUN for0.4.0.
 
 ## Installation
 
-Stock XKeen with Xray and Entware must already be installed. The panel installer does not patch/install/repair native components. Supported package target:`linux/arm64`.
+Supported package target:`linux/arm64`. For an existing stock XKeen/Xray with Entware, install only the panel:
 
 ```sh
-sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.3.1/install.sh)"
+sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.0/install.sh)"
 ```
 
-Initial panel password is generated and printed once; existing authority is preserved. Default listener is loopback8787; use a private tunnel or one explicit trusted LAN address. No WAN/wildcard listener. See [quick start](QUICKSTART-RU.md).
+For a genuinely new supported Ultra KN1811/5.01.C.6.0-1, one private IPv4 bridge/one WAN and no host/custom DNS exceptions, use the explicit guided mode:
+
+```sh
+sh -c "$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.0/install.sh)" -- --setup
+```
+
+It privately imports the source, prepares stock2.1 native components, panel, mosdns and a validated reference generation, then assigns HOME last. [Fresh prerequisites, ordering and interrupted setup](FRESH-KEENETIC.md) govern this restricted route; it never patches native code or reinstalls existing components. Other firmware/model/topology support remains unavailable.
+
+Initial panel password is printed once; existing authority is preserved by panel-only installation. Its default listener is loopback8787; guided setup chooses the exact discovered trusted HOME address. No WAN/wildcard listener. See [quick start](QUICKSTART-RU.md).
 
 Existing managed panel updates use the installed binary's pinned-signature self-update path. Installed marker, helper/layout, resources, lifecycle quiescence and exact candidate checks remain mandatory. No supported migration contract from historical appliance generations; no repair by copying individual secret/runtime files.
 
@@ -40,4 +48,4 @@ Independent host verification builds `cmd/xkeen-release` from exact released sou
 
 ## History
 
-Stable v0.3.0:source `8140c9cda51ca9bf703d3a7965f4595f2c69445a`, protected run37239198359 and independent public verification passed. Stable0.3.1 adds optional LAN DNS synchronization and reviewed build/test fixes. Legacy v0.2.0/D.1 qualification remains historical; [prior detailed release record](archive/RELEASES-before-0.3.1-cleanup.md) retains its separate appliance contract. Immutable released sources never become later documentation HEADs.
+Stable v0.3.0:source `8140c9cda51ca9bf703d3a7965f4595f2c69445a`, protected run37239198359 and independent public verification passed. Stable0.3.1 added optional LAN DNS synchronization and build/test fixes: source `6e62d620630f5994b00acb2dfb60cbd690b44bcd`, protected run37427370603 and independent public verification PASS. Stable0.4.0 adds the restricted guided fresh installer. Legacy v0.2.0/D.1 qualification remains historical; [prior detailed release record](archive/RELEASES-before-0.3.1-cleanup.md) retains its separate appliance contract. Immutable released sources never become later documentation HEADs.
