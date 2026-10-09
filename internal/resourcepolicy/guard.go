@@ -105,17 +105,24 @@ func ReadProc(root string) (Sample, error) {
 	if err != nil {
 		return s, err
 	}
+	foundSwap := false
 	for _, line := range strings.Split(string(b), "\n") {
 		f := strings.Fields(line)
-		if len(f) == 2 && f[0] == "pswpout" {
+		if len(f) > 0 && f[0] == "pswpout" {
+			if foundSwap || len(f) != 2 {
+				return s, ErrTelemetry
+			}
 			s.SwapOut, err = strconv.ParseUint(f[1], 10, 64)
 			if err != nil {
 				return s, ErrTelemetry
 			}
-			s.SwapSource = "vmstat"
-			s.SwapUnitBytes = uint64(os.Getpagesize())
-			return s, nil
+			foundSwap = true
 		}
+	}
+	if foundSwap {
+		s.SwapSource = "vmstat"
+		s.SwapUnitBytes = uint64(os.Getpagesize())
+		return s, nil
 	}
 	s.SwapOut, s.SwapSource, err = readSwapDiskWrites(root)
 	if err != nil {

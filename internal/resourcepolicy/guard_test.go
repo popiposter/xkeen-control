@@ -128,6 +128,15 @@ func TestBoundedProcReader(t *testing.T) {
 	if err != nil || s.Total != 939 || s.Idle != 810 || s.AvailableKiB != 107780 {
 		t.Fatal(s, err)
 	}
+	put("vmstat", "pswpout 100 extra\n")
+	if _, err := ReadProc(dir); !errors.Is(err, ErrTelemetry) {
+		t.Fatal("malformed present pswpout must fail closed", err)
+	}
+	put("vmstat", "pswpout 100\npswpout 101\n")
+	if _, err := ReadProc(dir); !errors.Is(err, ErrTelemetry) {
+		t.Fatal("duplicate pswpout must fail closed", err)
+	}
+	put("vmstat", "pswpout 100\n")
 	put("meminfo", "MemTotal: 254472 kB\nMemFree: 107780 kB\n")
 	if _, err := ReadProc(dir); !errors.Is(err, ErrTelemetry) {
 		t.Fatal("invented available memory", err)
