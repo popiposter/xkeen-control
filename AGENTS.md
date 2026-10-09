@@ -64,7 +64,7 @@ Implementation agents:
 - implement the issue contract rather than inventing a competing architecture;
 - keep unrelated refactors out of the PR;
 - record exact HEAD and exact qualification evidence;
-- never merge their own PR.
+- never self-approve their own PR; merge only under the standing authority and independent review requirements below.
 
 The implementation prompt should normally be only repository + issue number + any execution constraint not already in the issue.
 
@@ -114,7 +114,31 @@ Put concrete findings in the PR with severity (`P1`, `P2`, …), failure mode an
 
 Small obvious safe fixes may be made directly on the PR branch. Architectural changes go back into the issue first.
 
-When clean, record `APPROVED / READY TO MERGE` and mark the PR Ready. Merge only after explicit operator authorization and only if the approved HEAD has not changed.
+When clean, record `APPROVED / READY TO MERGE` and mark the PR Ready. Merge only if the independently approved HEAD has not changed and its required qualification has passed.
+
+### Standing operator authority (2026-10-09)
+
+The operator authorizes agents to run the required local checks (including FULL
+through the documented Process-wait mechanism), merge independently approved and
+qualified PRs, and publish necessary signed releases through the protected Release
+workflow as part of completing requested project work. Do not ask again merely
+to run those checks, merge, choose the appropriate version, or dispatch/publish
+the release. This includes the coordinating agent merging an implementation it
+owns after an independent agent has approved the exact HEAD. A task-specific
+instruction such as "Draft only", "no merge" or "no release" takes precedence.
+
+Keep exact-source review, qualification, immutable version/source inputs, signing,
+artifact verification and post-release documentation/evidence requirements. This
+authority does not permit bypassing failed gates, automatically retrying failed
+or ambiguous release runs, manually repairing tags/assets, or broadening router
+mutation authority. Inspect failures and resolve their cause before proceeding
+under a reviewed plan. Existing explicitly authorized router work retains its
+own scope; release permission alone does not authorize deployment or recovery.
+
+Repository instructions do not override tool approval policies, sandbox rules,
+GitHub environment protection or other platform controls. If such a control
+rejects an action, report the exact blocker; do not treat editing this file as
+permission to bypass it or repeatedly request the same operator confirmation.
 
 ## 7. After merge
 
