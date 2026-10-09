@@ -83,13 +83,52 @@ func acquireLock(path string, exclusive bool) (func(), error) {
 }
 
 func acquireLockFile(path string, exclusive bool) (*os.File, error) {
-	d, err := privateDirectory(filepath.Dir(path), true)
+	return acquireLockFileMode(path, exclusive, true)
+}
+
+func acquireExistingLock(path string, exclusive bool) (func(), error) {
+	f, err := acquireLockFileMode(path, exclusive, false)
+	if err != nil {
+		return nil, err
+	}
+	return func() { _ = f.Close() }, nil
+}
+
+func lockPathMatches(path string, f *os.File) bool {
+	d, err := privateDirectory(filepath.Dir(path), false)
+	if err != nil {
+		return false
+	}
+	defer d.Close()
+	current, err := protectedFile(d, filepath.Base(path), unix.O_RDONLY)
+	if err != nil {
+		return false
+	}
+	defer current.Close()
+	want, err := current.Stat()
+	if err != nil {
+		return false
+	}
+	actual, err := f.Stat()
+	return err == nil && os.SameFile(want, actual)
+}
+
+func acquireLockFileMode(path string, exclusive, create bool) (*os.File, error) {
+	d, err := privateDirectory(filepath.Dir(path), create)
 	if err != nil {
 		return nil, ErrState
 	}
 	defer d.Close()
-	f, err := protectedFile(d, filepath.Base(path), unix.O_RDWR|unix.O_CREAT)
+	flags := unix.O_RDWR
+	if create {
+		flags |= unix.O_CREAT
+	}
+	f, err := protectedFile(d, filepath.Base(path), flags)
 	if err != nil {
+		return nil, ErrState
+	}
+	if !lockPathMatches(path, f) {
+		f.Close()
 		return nil, ErrState
 	}
 	op := unix.LOCK_SH
@@ -101,6 +140,10 @@ func acquireLockFile(path string, exclusive bool) (*os.File, error) {
 		if err == unix.EWOULDBLOCK {
 			return nil, ErrBusy
 		}
+		return nil, ErrState
+	}
+	if !lockPathMatches(path, f) {
+		f.Close()
 		return nil, ErrState
 	}
 	return f, nil

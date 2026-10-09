@@ -99,7 +99,11 @@ func Normal() (func(), error) {
 func Maintenance() (func(), error) { return processAdmission(true) }
 
 func processAdmission(exclusive bool) (func(), error) {
-	l, err := acquireLock(LockPath, exclusive)
+	acquire := acquireLock
+	if exclusive {
+		acquire = acquireExistingLock
+	}
+	l, err := acquire(LockPath, exclusive)
 	if err != nil {
 		return nil, err
 	}

@@ -58,7 +58,7 @@ func TestMaintenanceExcludesLiveProcessesAndCrashReleasesKernelLock(t *testing.T
 				cmd.Wait()
 				t.Fatal(line, err)
 			}
-			if close, err := acquireLock(path, true); !errors.Is(err, ErrBusy) {
+			if close, err := acquireExistingLock(path, true); !errors.Is(err, ErrBusy) {
 				if close != nil {
 					close()
 				}
@@ -73,11 +73,28 @@ func TestMaintenanceExcludesLiveProcessesAndCrashReleasesKernelLock(t *testing.T
 				}
 			}
 			before, _ := os.Lstat(path)
+			if !exclusive {
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				if close, err := acquireExistingLock(path, true); !errors.Is(err, ErrState) {
+					if close != nil {
+						close()
+					}
+					t.Fatal("maintenance recreated deleted live lock", err)
+				}
+				if _, err := os.Lstat(path); !os.IsNotExist(err) {
+					t.Fatal("deleted lock recreated", err)
+				}
+			}
 			if err = cmd.Process.Kill(); err != nil {
 				t.Fatal(err)
 			}
 			_ = cmd.Wait()
-			release, err := acquireLock(path, true)
+			if !exclusive {
+				return
+			}
+			release, err := acquireExistingLock(path, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -87,5 +104,38 @@ func TestMaintenanceExcludesLiveProcessesAndCrashReleasesKernelLock(t *testing.T
 				t.Fatal("lock inode replaced")
 			}
 		})
+	}
+}
+
+func TestMaintenanceMissingAndReplacedLock(t *testing.T) {
+	root := privateTemp(t)
+	for _, path := range []string{filepath.Join(root, "missing.lock"), filepath.Join(root, "missing", "guard.lock")} {
+		if close, err := acquireExistingLock(path, true); !errors.Is(err, ErrState) {
+			if close != nil {
+				close()
+			}
+			t.Fatal("missing admission accepted", err)
+		}
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatal("missing admission created", err)
+		}
+	}
+	path := filepath.Join(root, "guard.lock")
+	f, err := acquireLockFile(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if !lockPathMatches(path, f) {
+		t.Fatal("original identity rejected")
+	}
+	if err := os.Rename(path, path+".old"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if lockPathMatches(path, f) {
+		t.Fatal("replacement identity accepted")
 	}
 }
