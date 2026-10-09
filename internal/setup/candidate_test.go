@@ -112,7 +112,11 @@ func TestOfficialTypicalTemplatePinsAndCompactCandidate(t *testing.T) {
 	}
 	native := map[string][]byte{}
 	for name, pin := range pins {
-		raw, err := os.ReadFile(filepath.Join("testdata/typical-2.1", name))
+		fixture := name
+		if name == "04_outbounds.json" {
+			fixture = "native-outbounds.json"
+		}
+		raw, err := os.ReadFile(filepath.Join("testdata/typical-2.1", fixture))
 		if err != nil || fmt.Sprintf("%x", sha256.Sum256(raw)) != pin {
 			t.Fatal("template drift", name)
 		}
