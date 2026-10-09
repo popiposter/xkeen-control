@@ -19,6 +19,8 @@ var ErrExternalBenchmark = errors.New("native periodic speed test is configured;
 type Sample struct {
 	At                                           time.Time
 	Total, Idle, AvailableKiB, TotalKiB, SwapOut uint64
+	SwapSource                                   string
+	SwapUnitBytes                                uint64
 }
 
 type Guard struct {
@@ -110,24 +112,48 @@ func ReadProc(root string) (Sample, error) {
 			if err != nil {
 				return s, ErrTelemetry
 			}
+			s.SwapSource = "vmstat"
+			s.SwapUnitBytes = uint64(os.Getpagesize())
 			return s, nil
 		}
 	}
-	return s, ErrTelemetry
+	s.SwapOut, s.SwapSource, err = readSwapDiskWrites(root)
+	if err != nil {
+		return s, ErrTelemetry
+	}
+	s.SwapUnitBytes = 512
+	return s, nil
+}
+
+func swapRate(previous, current Sample) (float64, error) {
+	dt := current.At.Sub(previous.At).Seconds()
+	if dt <= 0 || previous.SwapSource != current.SwapSource || current.SwapOut < previous.SwapOut {
+		return 0, ErrTelemetry
+	}
+	unit := current.SwapUnitBytes
+	if unit == 0 {
+		unit = uint64(os.Getpagesize())
+	}
+	if previous.SwapUnitBytes != current.SwapUnitBytes || unit == 0 {
+		return 0, ErrTelemetry
+	}
+	return float64(current.SwapOut-previous.SwapOut) * float64(unit) / dt, nil
 }
 
 func pressure(previous, current Sample, floor uint64, cpuLimit float64) (bool, error) {
-	dt := current.At.Sub(previous.At).Seconds()
-	if dt <= 0 || current.Total <= previous.Total || current.Idle < previous.Idle || current.SwapOut < previous.SwapOut {
+	if current.Total <= previous.Total || current.Idle < previous.Idle {
 		return false, ErrTelemetry
 	}
 	total, idle := current.Total-previous.Total, current.Idle-previous.Idle
 	if idle > total {
 		return false, ErrTelemetry
 	}
+	swapBytesPerSecond, err := swapRate(previous, current)
+	if err != nil {
+		return false, err
+	}
 	cpu := 100 * float64(total-idle) / float64(total)
-	swapBytes := float64(current.SwapOut-previous.SwapOut) * float64(os.Getpagesize())
-	return cpu >= cpuLimit || current.AvailableKiB < floor || swapBytes/dt > float64(MiB), nil
+	return cpu >= cpuLimit || current.AvailableKiB < floor || swapBytesPerSecond > float64(MiB), nil
 }
 
 // Start checks two independent deltas before admitting work. During work it
@@ -169,7 +195,11 @@ func (g *Guard) Start(parent context.Context) (context.Context, func(), error) {
 		if e != nil {
 			return nil, nil, e
 		}
-		if current.AvailableKiB < g.Profile.MemoryFloorKiB() || float64(current.SwapOut-previous.SwapOut)*float64(os.Getpagesize())/current.At.Sub(previous.At).Seconds() > float64(MiB) {
+		swapBytesPerSecond, e := swapRate(previous, current)
+		if e != nil {
+			return nil, nil, e
+		}
+		if current.AvailableKiB < g.Profile.MemoryFloorKiB() || swapBytesPerSecond > float64(MiB) {
 			return nil, nil, ErrPressure
 		}
 		if busy {
