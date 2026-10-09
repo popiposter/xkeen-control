@@ -17,6 +17,43 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func TestFlockCapabilityRefusesBeforeReservation(t *testing.T) {
+	for _, mode := range []string{"missing", "unsupported", "noop"} {
+		t.Run(mode, func(t *testing.T) {
+			d := t.TempDir()
+			os.Chmod(d, 0700)
+			r := validReceipt()
+			m := newFixtureManager(t, Config{Current: r.Previous, Paths: Paths{MarkerPath: filepath.Join(d, "installed-release.json")}})
+			bin := t.TempDir()
+			for _, name := range []string{"sync", "timeout", "true"} {
+				path, e := exec.LookPath(name)
+				if e != nil {
+					t.Fatal(e)
+				}
+				if e = os.Symlink(path, filepath.Join(bin, name)); e != nil {
+					t.Fatal(e)
+				}
+			}
+			if mode != "missing" {
+				code := "1"
+				if mode == "noop" {
+					code = "0"
+				}
+				if e := os.WriteFile(filepath.Join(bin, "flock"), []byte("#!/bin/sh\nexit "+code+"\n"), 0755); e != nil {
+					t.Fatal(e)
+				}
+			}
+			t.Setenv("PATH", bin)
+			if e := m.reserveRecord(r); e == nil {
+				t.Fatal("incompatible flock admitted")
+			}
+			if _, e := os.Lstat(filepath.Join(d, "panel-update-active.json")); !os.IsNotExist(e) {
+				t.Fatal("flock refusal reserved intent", e)
+			}
+		})
+	}
+}
+
 func validReceipt() Receipt {
 	b := buildinfo.Info{Product: "xkeen-control", Version: "1.0.0", SourceCommit: strings.Repeat("a", 40), Channel: "stable"}
 	c := b

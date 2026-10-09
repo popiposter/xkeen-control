@@ -690,3 +690,28 @@ for sequence in delayed intermittent; do
 	jq -e '.phase=="installed-verified" and .verified.version=="1.2.3"' "$case_root/opt/etc/xkeen-control/state/panel-update-result.json" >/dev/null
 done
 echo 'Delayed/intermittent health uses one start and verified terminal receipt fixtures passed'
+
+for capability in missing unsupported noop; do
+	case_root="$tmp/flock-$capability"
+	setup_generation "$case_root"
+	make_listener_init "$case_root/opt/etc/init.d/S99xkeen-control"
+	prepare_update_intent "$case_root" arm64
+	probe_bin="$case_root/tools"
+	mkdir "$probe_bin"
+	for tool in jq sha256sum awk stat timeout sh sync mktemp rm; do ln -s "$(command -v "$tool")" "$probe_bin/$tool"; done
+	ln -s /bin/true "$probe_bin/true"
+	if [ "$capability" != missing ]; then
+		code=1; [ "$capability" != noop ] || code=0
+		printf '#!/bin/sh\nexit %s\n' "$code" > "$probe_bin/flock"
+		chmod 755 "$probe_bin/flock"
+	fi
+	before="$(installed_generation_digest "$case_root" arm64)"
+	if PATH="$probe_bin" XKEEN_CONTROL_TEST_MODE=1 XKEEN_CONTROL_TEST_ROOT="$case_root" /bin/sh "$ROOT/scripts/xkeen-control-updater" install > "$case_root/refusal.log" 2>&1; then
+		echo "incompatible flock $capability admitted" >&2; exit 1
+	fi
+	grep -q 'flock' "$case_root/refusal.log"
+	[ "$before" = "$(installed_generation_digest "$case_root" arm64)" ]
+	[ ! -e "$case_root/listener-start-count" ] && [ ! -e "$case_root/listener-stop-count" ]
+	[ ! -e "$case_root/opt/etc/xkeen-control/state/panel-update-result.json" ]
+done
+echo 'Missing/unsupported/no-op flock refused before service actions'

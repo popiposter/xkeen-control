@@ -295,5 +295,37 @@ func (m *Manager) durabilityReady() error {
 	if exec.CommandContext(ctx, "timeout", "-k", "1", "1", "true").Run() != nil {
 		return errors.New("panel update requires timeout -k support; install coreutils-timeout")
 	}
+	return flockReady()
+}
+
+// This disposable RAM file probes the required descriptor operations; it is
+// never an update lock. The actual owner remains the existing setup inode.
+func flockReady() error {
+	flock, err := exec.LookPath("flock")
+	if err != nil {
+		return errors.New("panel update requires compatible flock descriptor locking")
+	}
+	f, err := os.CreateTemp("/tmp", "xkeen-flock-check-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	g, err := os.Open(f.Name())
+	if err != nil {
+		return err
+	}
+	defer g.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "timeout", "-k", "1", "3", "/bin/sh", "-c", `"$1" -n -x 3 || exit 1
+if "$1" -n -s 4; then exit 1; fi
+"$1" -n -s 3 || exit 1
+"$1" -n -s 4 || exit 1
+if "$1" -n -x 4; then exit 1; fi`, "flock-capability", flock)
+	cmd.ExtraFiles = []*os.File{f, g}
+	if cmd.Run() != nil {
+		return errors.New("panel update requires flock -n -x and shared descriptor semantics")
+	}
 	return nil
 }
