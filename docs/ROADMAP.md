@@ -10,7 +10,8 @@ This is the current sequencing/status authority. Issues contain detailed task co
 - Native jobs/private console, Form/Text config editors and shared pending/Apply/Discard/previous restore.
 - Subscription/node lifecycle, bounded balanced speed recommendations, native Xray selection/failover.
 - Installed geodata category/member search and routing examples.
-- Optional independent LAN DNS synchronization/no-op/inspect-only recovery.
+- Guided fresh setup uses ordinary Keenetic DNS and compact selective routing;
+  legacy independent DNS recovery remains an inspected historical operation.
 - Encrypted native transfer and restricted optional Telegram control.
 - Signed panel self-update, private listener and session persistence.
 
@@ -20,8 +21,9 @@ This is the current sequencing/status authority. Issues contain detailed task co
 
 [#145 guided fresh installation](https://github.com/popiposter/xkeen-control/issues/145)
 extends [#143 research](https://github.com/popiposter/xkeen-control/issues/143): one
-entrypoint privately requests a subscription/node, prepares the reference and
-independent DNS, then activates the entire discovered HOME network after readiness.
+entrypoint privately requests a subscription/node, prepares compact selective
+routing with ordinary Keenetic DNS, then activates the entire discovered HOME
+network after readiness.
 The [implementation contract](../plan/feature-guided-install-1.md) governs the
 source implementation of initial stock bootstrap, private source import, a full
 reference generation, typed firmware assignment and interrupted-setup fencing.
