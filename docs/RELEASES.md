@@ -2,6 +2,21 @@
 
 ## Current release
 
+Signed stable [v0.4.7](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.7), published 2026-10-09T13:32:11Z, from independently reviewed source `2a92e949031850906eb22ca869fcb14a804b7fd4`, tree `534a5c06ca7bb29fd058a9d5a358ce3c1b4db2b2`, source epoch 1791552177.
+
+Protected [run37936693765](https://github.com/popiposter/xkeen-control/actions/runs/37936693765) passed hosted FULL and publication. Independent unauthenticated downloads verified all ten assets, both pinned signatures/manifests, hashes/sizes, static ABI and published MIPS soft-float startup under emulation.
+
+| Binary | Bytes | SHA256 |
+| --- | ---: | --- |
+| linux/arm64 | 16,646,304 | `fe71f42fcbaea5325bccaad08abe235436da21a33199b52cf9bc50daf6abc472` |
+| linux/mipsle soft-float | 19,202,239 | `a67cbf996e7d194c46e09a165a7a221498fb3fdca36bd4e9b72a677ba3b7bef5` |
+
+[PR172](https://github.com/popiposter/xkeen-control/pull/172) delivers #171 branch-specific node transaction proof and durable recovery outcomes. [PR174](https://github.com/popiposter/xkeen-control/pull/174) fixes two asynchronous qualification fixtures without changing production scheduling. Exact source review and local FULL bind `849c0a5b3a75f37a0a96dbe6d957ce69242d3916`; the released merge tree matches. Earlier run37934676894 failed before packaging/publication and remains failed. Later documentation changes do not alter released source.
+
+Signed0.4.7 installation and legacy recovery remain **NOTRUN**. Signed0.4.6 installation and its original verify-existing settlement passed; a later automatic subscription transaction has a different unresolved marker. Old completion evidence cannot settle that marker. Controlled resource/client acceptance remains pending; no failed operation may be replayed.
+
+## Previous stable 0.4.6
+
 Signed stable [v0.4.6](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.6), published 2026-10-09T11:33:07Z, from independently reviewed source `9d1c516cb3744ba7cb4fa4e4585f6e795e51d72e`, tree `762b6bfd56894ab11cce2eedad40edba3c1f4e3f`, source epoch 1791545029.
 
 Protected [run37923703720](https://github.com/popiposter/xkeen-control/actions/runs/37923703720) completed hosted FULL and signing/publication. Independent unauthenticated downloads verified exactly ten assets, both pinned signatures/manifests, all sizes/hashes, nine SHA256SUMS entries, static ABI and published MIPS soft-float startup under qemu.
@@ -13,7 +28,7 @@ Protected [run37923703720](https://github.com/popiposter/xkeen-control/actions/r
 
 [PR169](https://github.com/popiposter/xkeen-control/pull/169) delivers [#168](https://github.com/popiposter/xkeen-control/issues/168): explicit [verify-existing settlement](NODE-RECOVERY.md) without another lifecycle command, durable completion fencing and sanitized failure stages. Independent review/local FULL bind `f09e26614677001c1f232fdeb361d2d757088808`; the released merge tree is identical. Later documentation commits do not change the immutable release source.
 
-Signed0.4.6 installation and verify-existing hardware settlement remain **NOTRUN**. Signed0.4.5 capability checks and installation passed on KN1810; its one node activation failed with retained activation-intent. Later API/VPN/DNS observations do not settle that operation. Controlled resource/client acceptance remains separate. No failed operation may be replayed.
+Signed0.4.6 installation and its original verify-existing settlement subsequently passed [hardware readback](https://github.com/popiposter/xkeen-control/issues/168#issuecomment-6080313195). A later automatic subscription transaction has a different unresolved marker. Resource/client acceptance remains separate.
 
 ## Previous stable 0.4.5
 
@@ -35,13 +50,13 @@ Subsequent signed0.4.5 hardware capability checks and installation passed; node 
 Package targets:`linux/arm64` and `linux/mipsle` soft-float with confirmed Entware `mipsel-3.4`/`mipsel-3.4_kn`. For an existing stock XKeen/Xray with Entware, install only the panel. Existing KN1810 preparation and hardware limits are described in [MIPS Keenetic](MIPS-KEENETIC.md):
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.6/install.sh) && sh -c "$xkeen_installer"
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.7/install.sh) && sh -c "$xkeen_installer"
 ```
 
 For a genuinely new supported Ultra KN1811/5.01.C.6.0-1, one private IPv4 bridge/one WAN and no host/custom DNS exceptions, use the explicit guided mode:
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.6/install.sh) && sh -c "$xkeen_installer" -- --setup
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.7/install.sh) && sh -c "$xkeen_installer" -- --setup
 ```
 
 It privately imports the source, prepares stock2.1 native components, panel, mosdns and a validated reference generation, then assigns HOME last. [Fresh prerequisites, ordering and interrupted setup](FRESH-KEENETIC.md) govern this restricted route; it never patches native code or reinstalls existing components. Other firmware/model/topology support remains unavailable.

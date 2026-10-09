@@ -33,7 +33,7 @@ For publication: exact reviewed remote main, available version/tag, protected Re
 
 ### Durable update outcomes (#162)
 
-Signed [0.4.6](RELEASES.md) retains the following commands and the #162 update
+Signed [0.4.7](RELEASES.md) retains the following commands and the #162 update
 contract introduced in 0.4.4. Published 0.4.3 does not provide them. Signed0.4.5
 capability checks and installation passed on KN1810. Signed0.4.6 installation
 also passed [independent readback](https://github.com/popiposter/xkeen-control/issues/168#issuecomment-6080313195).
