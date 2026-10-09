@@ -3,11 +3,13 @@ package nodes
 import (
 	"context"
 	"errors"
+	"net"
 	"time"
 
 	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
@@ -54,13 +56,38 @@ func (a CommandActivator) WaitReady(ctx context.Context) error {
 }
 
 func waitRoutingReady(ctx context.Context, address string, attempt, backoff time.Duration) error {
-	// One lazy connection for this bounded invocation; retries never spawn Xray.
+	return waitRoutingReadyDial(ctx, address, attempt, backoff, (&net.Dialer{}).DialContext)
+}
+
+// The dial seam is private to transport-deadline fixtures.
+func waitRoutingReadyDial(ctx context.Context, address string, attempt, delay time.Duration, dial func(context.Context, string, string) (net.Conn, error)) error {
+	// Bound transport establishment too: an RPC deadline alone does not stop
+	// gRPC's background dial or HTTP/2 handshake (default connect budget is 20s).
+	transportBackoff := backoff.DefaultConfig
+	transportBackoff.BaseDelay = delay
+	transportBackoff.MaxDelay = attempt
+	transportBackoff.Jitter = 0 // gRPC applies jitter after MaxDelay; never exceed the attempt cap.
 	conn, err := grpc.NewClient("passthrough:///"+address,
+		grpc.WithConnectParams(grpc.ConnectParams{Backoff: transportBackoff, MinConnectTimeout: attempt}),
+		grpc.WithContextDialer(func(transport context.Context, target string) (net.Conn, error) {
+			bounded, cancel := context.WithTimeout(transport, attempt)
+			defer cancel()
+			stop := context.AfterFunc(ctx, cancel)
+			defer stop()
+			if deadline, ok := ctx.Deadline(); ok {
+				var end context.CancelFunc
+				bounded, end = context.WithDeadline(bounded, deadline)
+				defer end()
+			}
+			return dial(bounded, "tcp", target)
+		}),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(8<<20)))
 	if err != nil {
 		return &readinessError{reason: "protocol"}
 	}
+	stopClose := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopClose()
 	defer conn.Close()
 	client := xrayapi.NewRoutingServiceClient(conn)
 	last := "deadline"
@@ -96,7 +123,7 @@ func waitRoutingReady(ctx context.Context, address string, attempt, backoff time
 		default:
 			return &readinessError{reason: "protocol"}
 		}
-		timer := time.NewTimer(backoff)
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()

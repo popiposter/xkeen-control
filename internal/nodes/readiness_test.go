@@ -193,3 +193,101 @@ func TestWaitReadyBoundsResponseSize(t *testing.T) {
 	}
 	assertReadyClosed(t, s)
 }
+
+func TestWaitReadyHangingDialHasAttemptAndPhaseBounds(t *testing.T) {
+	for _, phase := range []time.Duration{80 * time.Millisecond, 500 * time.Millisecond} {
+		t.Run(phase.String(), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), phase)
+			defer cancel()
+			durations := make(chan time.Duration, 16)
+			var running atomic.Int32
+			dial := func(call context.Context, _, _ string) (net.Conn, error) {
+				running.Add(1)
+				start := time.Now()
+				deadline, ok := call.Deadline()
+				if !ok || deadline.After(start.Add(101*time.Millisecond)) {
+					t.Error("dial is not bounded by attempt")
+				}
+				<-call.Done()
+				running.Add(-1)
+				durations <- time.Since(start)
+				return nil, call.Err()
+			}
+			err := waitRoutingReadyDial(ctx, "127.0.0.1:1", 100*time.Millisecond, 20*time.Millisecond, dial)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatal(err)
+			}
+			select {
+			case duration := <-durations:
+				if duration > 300*time.Millisecond {
+					t.Fatal("dial outlived attempt", duration)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("dial not canceled")
+			}
+			// The transport may be finishing cancellation concurrently with Close.
+			deadline := time.NewTimer(time.Second)
+			defer deadline.Stop()
+			for running.Load() != 0 {
+				select {
+				case <-durations:
+				case <-deadline.C:
+					t.Fatal("dial leaked after owner exit")
+				}
+			}
+		})
+	}
+}
+func TestWaitReadySilentHandshakeIsBounded(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		phase, attempt time.Duration
+	}{{"attempt", 600 * time.Millisecond, 80 * time.Millisecond}, {"phase", 100 * time.Millisecond, time.Second}} {
+		t.Run(tt.name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			closed := make(chan time.Duration, 1)
+			go func() {
+				conn, e := listener.Accept()
+				if e != nil {
+					return
+				}
+				defer conn.Close()
+				start := time.Now()
+				_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+				buf := make([]byte, 1024)
+				for {
+					if _, e = conn.Read(buf); e != nil {
+						closed <- time.Since(start)
+						return
+					}
+				}
+			}()
+			ctx, cancel := context.WithTimeout(context.Background(), tt.phase)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- waitRoutingReady(ctx, listener.Addr().String(), tt.attempt, 20*time.Millisecond) }()
+			select {
+			case duration := <-closed:
+				limit := tt.attempt
+				if tt.phase < limit {
+					limit = tt.phase
+				}
+				if duration > limit+250*time.Millisecond {
+					t.Fatal("HTTP/2 handshake outlived bound", duration)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("silent transport not closed")
+			}
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("readiness owner did not exit")
+			}
+		})
+	}
+}
