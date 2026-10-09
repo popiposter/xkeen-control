@@ -197,7 +197,7 @@ setup_managed_root() {
 # Existing incompatible tools must fail before downloads, placement or setup
 # directory creation; replacement of an existing jq is never automatic.
 real_stat="$(command -v stat)"
-for bad_tool in stat jq; do
+for bad_tool in stat jq flock; do
 	bad_root="$tmp/bad-$bad_tool"
 	mkdir -p "$bad_root/opt" "$bad_root/tmp"
 	printf '#!/bin/sh\nexit 1\n' > "$fakebin/$bad_tool"
@@ -207,7 +207,7 @@ for bad_tool in stat jq; do
 		if run_installer "$bad_root" $args > "$tmp/bad-tool-output" 2>&1; then
 			echo "incompatible $bad_tool accepted" >&2; exit 1
 		fi
-		if [ "$bad_tool" = stat ]; then grep -q coreutils-stat "$tmp/bad-tool-output"; else grep -q jq-full "$tmp/bad-tool-output"; fi
+		case "$bad_tool" in stat) grep -q coreutils-stat "$tmp/bad-tool-output";; jq) grep -q jq-full "$tmp/bad-tool-output";; flock) grep -q flock "$tmp/bad-tool-output";; esac
 		[ ! -e "$bad_root/curl-calls" ]
 		[ ! -e "$bad_root/opt/sbin" ]
 		[ ! -e "$bad_root/opt/var" ]
@@ -220,7 +220,8 @@ done
 missing_bin="$tmp/missing-bin"
 missing_root="$tmp/missing-stat"
 mkdir -p "$missing_bin" "$missing_root/opt" "$missing_root/tmp"
-for tool in id grep awk sha256sum; do ln -s "$(command -v "$tool")" "$missing_bin/$tool"; done
+for tool in id grep awk sha256sum sync timeout flock mktemp rm sh; do ln -s "$(command -v "$tool")" "$missing_bin/$tool"; done
+ln -s /bin/true "$missing_bin/true"
 for tool in uname df curl; do cp "$fakebin/$tool" "$missing_bin/$tool"; done
 printf '#!/bin/sh\nexit 1\n' > "$missing_bin/jq"
 cat > "$missing_bin/opkg" <<'EOF_MISSING_OPKG'
@@ -262,6 +263,11 @@ fi
 [ ! -e "$setup_root/opt/sbin/xkeen-control" ]
 
 run_installer "$testroot" >/dev/null
+sh_c_root="$tmp/sh-c-root"
+mkdir -p "$sh_c_root/opt" "$sh_c_root/tmp"
+PATH="$fakebin:$PATH" XKEEN_CONTROL_TEST_MODE=1 XKEEN_CONTROL_TEST_ROOT="$sh_c_root" \
+	XKEEN_CONTROL_FIXTURE_DIR="$fixture" sh -c "$(cat "$installer")" >/dev/null
+[ -x "$sh_c_root/opt/sbin/xkeen-control" ]
 
 [ -x "$testroot/opt/sbin/xkeen-control" ]
 [ -x "$testroot/opt/etc/init.d/S99xkeen-control" ]

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -22,6 +23,27 @@ import (
 	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
+
+func TestUpdateFenceAllowsHealthButRejectsMutation(t *testing.T) {
+	s := New(Config{MutationReady: func() error { return panelupdate.ErrInspectionRequired }})
+	for _, test := range []struct {
+		method, path string
+		status       int
+	}{
+		{http.MethodGet, "/healthz", http.StatusOK},
+		{http.MethodPost, "/api/v1/nodes/import/preview", http.StatusConflict},
+		{http.MethodPost, "/api/v1/xkeen/jobs/start", http.StatusConflict},
+		{http.MethodPost, "/api/v1/update/rollback", http.StatusConflict},
+	} {
+		r := httptest.NewRequest(test.method, "http://127.0.0.1:8787"+test.path, nil)
+		r = r.WithContext(context.WithValue(r.Context(), http.LocalAddrContextKey, &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8787}))
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		if w.Code != test.status {
+			t.Fatalf("%s: %d", test.path, w.Code)
+		}
+	}
+}
 
 func TestNodeActivationErrorsExposeOnlyConfirmedRecoveryState(t *testing.T) {
 	tests := []struct {

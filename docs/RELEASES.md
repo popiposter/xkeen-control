@@ -13,7 +13,9 @@ Protected [run37903102185](https://github.com/popiposter/xkeen-control/actions/r
 
 [PR159](https://github.com/popiposter/xkeen-control/pull/159) delivers hardware-derived diagnostic budgets, resource pressure cancellation, native benchmark conflict reporting and preservation of native routing criteria. [PR160](https://github.com/popiposter/xkeen-control/pull/160) adds explicit offline recovery of coherent interrupted node transactions, with existing process-lock exclusion and durable no-replay fencing. Both received independent source review and local FULL. Final PR160 qualification binds `16900459f250339a352d9480370ada36e366a4f2`; the merged release tree is identical. Frozen-source review and protected hosted FULL separately bind the released merge SHA. Later documentation commits do not change the immutable release source.
 
-Signed 0.4.3 hardware installation, actual node recovery, controlled resource comparison and independent client/DNS/failure acceptance remain **NOTRUN** in this publication record. Issues [#157](https://github.com/popiposter/xkeen-control/issues/157) and [#158](https://github.com/popiposter/xkeen-control/issues/158) remain open for hardware acceptance. Publication/emulation does not establish router success.
+One authorized KN1810 update attempt reached the signed 0.4.3 candidate and then the existing helper rolled back to signed 0.4.2. Installation acceptance **FAILED**; the terminal cause is unknown because the old helper did not retain a durable outcome. Fresh readback confirmed the restored binary and preserved native/configuration state. A transient candidate version is not installation proof. [#162](https://github.com/popiposter/xkeen-control/issues/162) addresses durable outcomes and bounded readiness; do not replay the old update command.
+
+Actual node recovery, controlled resource comparison and independent client/DNS/failure acceptance remain pending. Issues [#157](https://github.com/popiposter/xkeen-control/issues/157) and [#158](https://github.com/popiposter/xkeen-control/issues/158) remain open for hardware acceptance. Publication/emulation does not establish router success.
 
 ## Installation
 

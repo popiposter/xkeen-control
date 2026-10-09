@@ -94,6 +94,22 @@ func acquireExistingLock(path string, exclusive bool) (func(), error) {
 	return func() { _ = f.Close() }, nil
 }
 
+// MaintenanceFile is the same existing process lock used by Maintenance. The
+// update owner may pass this exact open-file-description to its fixed helper;
+// it must downgrade EX to SH before starting a Normal daemon.
+func MaintenanceFile() (*os.File, error) {
+	f, err := acquireLockFileMode(LockPath, true, false)
+	if err != nil {
+		return nil, err
+	}
+	r, err := readReceipt(ReceiptPath)
+	if err != nil || r != nil && r.Phase != "completed" {
+		f.Close()
+		return nil, ErrState
+	}
+	return f, nil
+}
+
 func lockPathMatches(path string, f *os.File) bool {
 	d, err := privateDirectory(filepath.Dir(path), false)
 	if err != nil {

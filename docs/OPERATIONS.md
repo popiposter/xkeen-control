@@ -29,6 +29,64 @@ Use only signed public GitHub Releases. Check the exact stable candidate in Syst
 
 For publication: exact reviewed remote main, available version/tag, protected Release workflow exactly once, both build/publish success, fresh independent pinned-key/signature/manifest/size/hash/SHA256SUMS verification. The dual-platform release has exactly ten public files and two signed platform manifests; ARM64 releases through0.4.0 retain their exact seven-file contract. Verify the published set and both platforms as described in [Releases](RELEASES.md). A failed workflow is not repaired with a manual tag/Release or retried without a fresh corrected-source decision.
 
+### Durable update outcomes (#162)
+
+The following commands require a signed release containing #162; published 0.4.3
+does not provide them. Source implementation is not installation authority.
+
+```sh
+xkeen-control self-update inspect
+xkeen-control self-update inspect-installed
+```
+
+These are read-only. The first reports the durable update receipt; an unresolved
+operation returns an error while retaining its evidence. The second binds the
+fixed installed binary, init, helper and marker in an opaque digest. Neither
+command resumes an operation or proves a transient candidate is installed.
+
+The updater reserves an active intent before staging. It records phases before
+mutations and permits only one transaction. `installed-verified` proves the
+candidate tuple and readiness; `rolled-back-verified` proves restoration but
+means the requested update failed. In generations containing #162,
+`inspection-required`, a retained active intent, or an interrupted phase blocks
+further mutations. Do not remove these files or retry Apply to clear the block.
+
+Candidate startup has a total readiness budget of 30 seconds on ARM64 and
+60 seconds on MIPS, with a separate bounded rollback startup phase. Polling does
+not repeat service start. Acceptance checks the process identity, build, complete
+installed tuple, marker and management health together. These bounds are tested
+limits, not a promise of readiness on every appliance.
+
+Durability requires a verified `sync -f` implementation supporting both files
+and directories. The helper checks this capability before stopping the panel;
+BusyBox `sync` alone may be insufficient. A missing prerequisite is a refusal,
+not permission to skip synchronization or install packages automatically. Bounded
+process checks also require `timeout -k` support. `flock` must support descriptor
+locking, exclusive exclusion and downgrade to a shared lock; command presence
+alone is insufficient. These capabilities are checked before reserving an update
+and again before service shutdown; the bootstrap installer checks its
+prerequisites before placing panel files.
+
+For an affected older helper, use the explicitly approved maintenance delivery
+described in [#162](https://github.com/popiposter/xkeen-control/issues/162).
+Independently verify the signed release tuple before executing its candidate CLI
+from protected RAM storage. Quiesce the old panel and competing update/native
+work, retain the required rollback snapshot, inspect the installed digest using
+that verified CLI, then invoke it once with
+`self-update --maintenance DIGEST --apply VERSION`.
+This entrypoint verifies itself and the helper against the same signed release,
+rechecks the old installed tuple and hands ownership to the existing updater.
+It does not install a helper in advance. Existing setup-lock exclusion and an
+active intent protect cooperating panel processes; external native CLI/cron still
+require operator quiescence. A rollback to an older generation also restores a
+daemon, API and startup background workers that do not understand this intent.
+Account for those writers explicitly during migration qualification; restored
+health is not proof that their mutations are fenced. Inspect an older generation's
+update receipt with the retained verified RAM CLI, not its unsupported old CLI.
+After any outcome, inspect the receipt and actual state before restoring prior
+services. Node recovery is a separate operation and remains blocked until the
+installed generation is established.
+
 ## Operational evidence
 
 [Ledger4](https://github.com/popiposter/xkeen-control/issues/4) retains exact evidence and unknown/no-replay outcomes. Public versions/counts/hashes are sanitized; credentials, raw endpoints/config, cookies, private logs and backups remain local. No opkg upgrade, reboot, sustained benchmark or generic shell repair by default. Historical Gate2/appliance procedures are [archived](archive/OPERATIONS-before-0.3.1-cleanup.md), not current native installation authority.

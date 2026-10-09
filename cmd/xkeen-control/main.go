@@ -43,6 +43,10 @@ import (
 const defaultListenAddress = panellistener.DefaultAddress
 
 func main() {
+	if len(os.Args) > 1 && !updateReadOnlyCommand(os.Args[1:]) && panelupdate.MutationReady() != nil {
+		log.Print(panelupdate.ErrInspectionRequired)
+		os.Exit(1)
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "setup" {
 		if err := runSetupCommand(os.Args[2:]); err != nil {
 			log.Print(err)
@@ -105,6 +109,35 @@ func main() {
 		return
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "self-update" {
+		if len(os.Args) == 3 && os.Args[2] == "inspect-installed" {
+			value, err := panelupdate.InspectInstalled()
+			if err != nil {
+				log.Print(err)
+				os.Exit(1)
+			}
+			_ = json.NewEncoder(os.Stdout).Encode(value)
+			return
+		}
+		if len(os.Args) == 6 && os.Args[2] == "--maintenance" && os.Args[4] == "--apply" {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			if err := panelupdate.ApplyMaintenance(ctx, os.Args[3], os.Args[5]); err != nil {
+				log.Print(err)
+				os.Exit(1)
+			}
+			return
+		}
+		if len(os.Args) == 3 && os.Args[2] == "inspect" {
+			value, err := panelupdate.NewManager(panelupdate.Config{}).Receipt()
+			if value != nil {
+				_ = json.NewEncoder(os.Stdout).Encode(value)
+			}
+			if err != nil {
+				log.Print(err)
+				os.Exit(1)
+			}
+			return
+		}
 		close, err := initialsetup.Normal()
 		if err != nil {
 			log.Print(err)
@@ -210,6 +243,7 @@ func main() {
 	adaptiveRunner.Resources = resources
 	coordinator.SetAdaptiveRunner(adaptiveRunner)
 	authorityLease := authority.NewLease()
+	authorityLease.Admission = panelupdate.MutationReady
 	if nodes.RecoveryNeedsInspection(getenv("XKEEN_NODE_PREVIOUS_DIR", defaultNodePreviousDir)) {
 		authorityLease.Block()
 	}
@@ -281,6 +315,7 @@ func main() {
 	defer qualityService.Stop()
 	nativeTransfer := &nativebackup.Service{Editor: nativeConfig, Nodes: nodeManager, Lease: authorityLease}
 	handler := httpapi.New(httpapi.Config{
+		MutationReady:     panelupdate.MutationReady,
 		Native:            xkeen.Discovery{},
 		NativeJobs:        nativeJobs,
 		Geodata:           &geodatareader.Reader{Dir: getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)},
@@ -329,40 +364,68 @@ func main() {
 	}()
 	// Native Xray owns automatic selection until the panel mode is explicitly qualified.
 	// Automatic subscription refresh is enabled separately from native commands.
-	subscriptionRefresher.Start(runtimeContext)
-	go dnsIntegration.Run(runtimeContext)
-	go qualitySchedule.Run(runtimeContext)
-	panelNotifyScheduler.Start(runtimeContext)
-	go notificationService.RunControl(runtimeContext, func(ctx context.Context, command notifications.Command) notifications.ControlResult {
-		if command == notifications.RefreshSubscriptions {
-			if ctx.Err() == nil && subscriptionRefresher.RequestRefresh() {
-				return notifications.Accepted
+	go func() {
+		// Serve health during verification, but defer background mutation until
+		// the existing updater has durably settled its intent.
+		deadline := time.NewTimer(3 * time.Minute)
+		defer deadline.Stop()
+		for panelupdate.MutationReady() != nil {
+			select {
+			case <-runtimeContext.Done():
+				return
+			case <-deadline.C:
+				return
+			case <-time.After(time.Second):
 			}
-			return notifications.Refused
 		}
-		if command == notifications.StatusCommand {
-			facts := (xkeen.Discovery{}).Inspect(ctx)
-			if facts.XrayRunning {
-				return notifications.Running
+		if runtimeContext.Err() != nil {
+			return
+		}
+		subscriptionRefresher.Start(runtimeContext)
+		go dnsIntegration.Run(runtimeContext)
+		go qualitySchedule.Run(runtimeContext)
+		panelNotifyScheduler.Start(runtimeContext)
+		go notificationService.RunControl(runtimeContext, func(ctx context.Context, command notifications.Command) notifications.ControlResult {
+			if command == notifications.RefreshSubscriptions {
+				if ctx.Err() == nil && subscriptionRefresher.RequestRefresh() {
+					return notifications.Accepted
+				}
+				return notifications.Refused
 			}
-			return notifications.Unknown
-		}
-		actions := map[notifications.Command]string{notifications.StartCommand: "start", notifications.StopCommand: "stop", notifications.RestartCommand: "restart", notifications.UpdateXkeen: "update-xkeen", notifications.UpdateXray: "update-xray", notifications.UpdateGeodata: "update-geodata"}
-		action, ok := actions[command]
-		if !ok || nativeJobs == nil || ctx.Err() != nil {
-			return notifications.Refused
-		}
-		if _, err := nativeJobs.StartRemote(action, nativeConfig); err != nil {
-			return notifications.Refused
-		}
-		return notifications.Accepted
-	})
+			if command == notifications.StatusCommand {
+				facts := (xkeen.Discovery{}).Inspect(ctx)
+				if facts.XrayRunning {
+					return notifications.Running
+				}
+				return notifications.Unknown
+			}
+			actions := map[notifications.Command]string{notifications.StartCommand: "start", notifications.StopCommand: "stop", notifications.RestartCommand: "restart", notifications.UpdateXkeen: "update-xkeen", notifications.UpdateXray: "update-xray", notifications.UpdateGeodata: "update-geodata"}
+			action, ok := actions[command]
+			if !ok || nativeJobs == nil || ctx.Err() != nil {
+				return notifications.Refused
+			}
+			if _, err := nativeJobs.StartRemote(action, nativeConfig); err != nil {
+				return notifications.Refused
+			}
+			return notifications.Accepted
+		})
 
+	}()
 	log.Printf("xkeen-control %s listening on %s", buildinfo.Current().Version, listenAddress)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Print(err)
 		os.Exit(1)
 	}
+}
+
+func updateReadOnlyCommand(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	if len(args) == 2 && (args[0] == "version" && args[1] == "--json" || args[0] == "setup" && (args[1] == "guard" || args[1] == "inspect") || args[0] == "self-update" && (args[1] == "inspect" || args[1] == "inspect-installed")) {
+		return true
+	}
+	return len(args) == 3 && args[0] == "nodes" && args[1] == "recovery" && args[2] == "inspect"
 }
 
 func newNativeJobs(lease *authority.Lease) *xkeen.Jobs {

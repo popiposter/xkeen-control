@@ -25,6 +25,10 @@ CANDIDATE="${ROOT_PREFIX}/tmp/xkeen-control/panel-update"
 TEMP="${ROOT_PREFIX}/tmp/xkeen-control/panel-update-rollback"
 TEMP_HELPER_ABSENT="${TEMP}/.helper-absent"
 STATE="${ROOT_PREFIX}/opt/etc/xkeen-control/state"
+ACTIVE="$STATE/panel-update-active.json"
+RESULT="$STATE/panel-update-result.json"
+SETUP_LOCK="${ROOT_PREFIX}/opt/var/lock/xkeen-control/initial-setup.lock"
+PIDFILE="${ROOT_PREFIX}/opt/var/run/xkeen-control.pid"
 LISTEN_FILE="${ROOT_PREFIX}/opt/etc/xkeen-control/listen-address"
 if [ -n "${XKEEN_CONTROL_LISTEN_FILE:-}" ]; then
 	LISTEN_FILE="$XKEEN_CONTROL_LISTEN_FILE"
@@ -115,11 +119,201 @@ private_health_url() {
 health() {
 	command -v curl >/dev/null 2>&1 || return 1
 	url="$(private_health_url)" || return 1
-	curl --fail --silent --show-error --max-time 10 "$url" >/dev/null 2>&1
+	curl --fail --silent --show-error --max-time 1 "$url" >/dev/null 2>&1
 }
 
 stop_panel() { "$INIT" stop >/dev/null 2>&1 || true; }
-start_panel() { "$INIT" start >/dev/null 2>&1; }
+start_panel() { timeout -k 1 10 "$INIT" start 3>&- 4>&- >/dev/null 2>&1; }
+
+flock_preflight() (
+	command -v flock >/dev/null 2>&1 || return 1
+	probe="$(mktemp /tmp/xkeen-flock-check.XXXXXX)" || return 1
+	trap 'rm -f "$probe"' EXIT
+	exec 3< "$probe" 4< "$probe" || return 1
+	timeout -k 1 3 sh -c '
+		flock -n -x 3 || exit 1
+		if flock -n -s 4; then exit 1; fi
+		flock -n -s 3 || exit 1
+		flock -n -s 4 || exit 1
+		if flock -n -x 4; then exit 1; fi'
+)
+
+# Select and exercise the same executable on both required object kinds before
+# service shutdown. BusyBox sync without -f is not a durability substitute.
+durability_preflight() {
+	command -v timeout >/dev/null 2>&1 && timeout -k 1 1 true || {
+		echo 'ERROR: bounded timeout -k support is required (install coreutils-timeout)' >&2
+		return 1
+	}
+	flock_preflight || { echo 'ERROR: compatible flock descriptor locking is required' >&2; return 1; }
+	SYNC="$(command -v sync)" || return 1
+	if [ "$TEST_MODE" != 1 ] && [ -x /opt/bin/sync ]; then SYNC=/opt/bin/sync; fi
+	"$SYNC" -f "${1:-$ACTIVE}" && "$SYNC" -f "${2:-$STATE}" || {
+		echo 'ERROR: file and directory sync -f support is required (install coreutils-sync)' >&2
+		return 1
+	}
+}
+
+legacy_ready() {
+	[ ! -e "$ACTIVE" ] && [ ! -L "$ACTIVE" ] || return 1
+	if [ -e "$RESULT" ] || [ -L "$RESULT" ]; then
+		[ -f "$RESULT" ] && [ ! -L "$RESULT" ] || return 1
+		jq -e '(.phase=="installed-verified" and .verified==.candidate) or
+		(.phase=="rolled-back-verified" and .verified==(if .action=="rollback" and .reason=="explicit-rollback" then .candidate else .previous end))' "$RESULT" >/dev/null || return 1
+	fi
+	durability_preflight "$BIN" "${BIN%/*}"
+}
+
+installed_digest() (
+	set -- "$BIN" "$INIT" "$HELPER" "$STATE/installed-release.json"
+	digest_lines=""
+	for name in "$BINARY_ASSET" S99xkeen-control xkeen-control-updater installed-release.json; do
+		[ -f "$1" ] && [ ! -L "$1" ] || exit 1
+		[ "$(stat -c %u:%h "$1")" = 0:1 ] || exit 1
+		mode=755; [ "$name" != installed-release.json ] || mode=600
+		[ "$(stat -c %a "$1")" = "$mode" ] || exit 1
+		sum="$(sha256sum "$1")" || exit 1
+		digest_lines="${digest_lines}${sum%% *}  $name
+"
+		shift
+	done
+	printf '%s' "$digest_lines" | sha256sum | awk '{print $1}'
+)
+
+verify_previous() {
+	[ "$(installed_digest)" = "$(jq -er .previousDigest "$ACTIVE")" ] || return 1
+	jq -e --slurpfile marker "$STATE/installed-release.json" '.previous==$marker[0]' "$ACTIVE" >/dev/null || return 1
+	verify_marker "$STATE/installed-release.json"
+}
+
+capture_intent() {
+	[ "$(stat -c %u:%a:%h "$ACTIVE")" = 0:600:1 ] || return 1
+	[ "$(stat -c %u:%a "$STATE")" = 0:700 ] || return 1
+	jq -e --arg action "$action" --arg arch "$ARCHITECTURE" '
+		.schemaVersion==1 and .action==$action and .architecture==$arch and .phase=="prepared" and
+		(.operationId|test("^[0-9a-f]{32}$")) and (.manifestDigest|test("^[0-9a-f]{64}$")) and
+		(.previousDigest|test("^[0-9a-f]{64}$")) and (.verified==null)' "$ACTIVE" >/dev/null || return 1
+	intent_identity="$(stat -c %d:%i "$ACTIVE")" || return 1
+	intent_digest="$(sha256sum "$ACTIVE")" || return 1
+}
+
+own_intent() {
+	[ -f "$ACTIVE" ] && [ ! -L "$ACTIVE" ] &&
+	[ "$(stat -c %d:%i "$ACTIVE")" = "$intent_identity" ] &&
+	[ "$(sha256sum "$ACTIVE")" = "$intent_digest" ]
+}
+
+update_phase() (
+	phase="$1"; reason="${2:-}"
+	phase_input="$ACTIVE"
+	[ ! -f "$RESULT" ] || phase_input="$RESULT"
+	phase_temp="$(mktemp "$STATE/.update-phase.XXXXXX")" || return 1
+	trap 'rm -f "$phase_temp"' EXIT
+	jq --arg phase "$phase" --arg reason "$reason" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		'del(.verified) | .phase=$phase | .reason=$reason | .updatedAt=$now' "$phase_input" > "$phase_temp" || return 1
+	commit_file "$phase_temp" "$RESULT" 600
+)
+
+update_terminal() {
+	update_phase "$1" "${2:-}" || return 1
+	terminal_temp="$(mktemp "$STATE/.update-terminal.XXXXXX")" || return 1
+	jq --slurpfile marker "$STATE/installed-release.json" '.verified=$marker[0]' "$RESULT" > "$terminal_temp" || { rm -f "$terminal_temp"; return 1; }
+	jq -e 'if .phase=="installed-verified" then .action=="install" and .verified==.candidate
+		elif .phase=="rolled-back-verified" then .verified==(if .action=="rollback" and .reason=="explicit-rollback" then .candidate else .previous end)
+		else false end' "$terminal_temp" >/dev/null || { rm -f "$terminal_temp"; return 1; }
+	commit_file "$terminal_temp" "$RESULT" 600 || { rm -f "$terminal_temp"; return 1; }
+	rm -f "$terminal_temp" || return 1
+	own_intent || return 1
+	rm -f "$ACTIVE" || return 1
+	"${SYNC:-sync}" -f "$STATE" || return 1
+}
+
+update_exit() {
+	if [ "${update_resolved:-0}" != 1 ]; then
+		update_phase inspection-required "${update_reason:-unexpected-exit}" || true
+	fi
+}
+
+verify_candidate_tuple() {
+	[ "$(sha256sum "$CANDIDATE/release-manifest.json" | awk '{print $1}')" = "$(jq -r .manifestDigest "$ACTIVE")" ] || return 1
+	for name in "$BINARY_ASSET" S99xkeen-control xkeen-control-updater install.sh; do
+		[ -f "$CANDIDATE/$name" ] && [ ! -L "$CANDIDATE/$name" ] || return 1
+		expected="$(jq -er --arg name "$name" '.artifacts[] | select(.name==$name) | .sha256' "$CANDIDATE/release-manifest.json")" || return 1
+		[ "$(sha256sum "$CANDIDATE/$name" | awk '{print $1}')" = "$expected" ] || return 1
+	done
+}
+
+update_lock() {
+	if [ "$TEST_MODE" = 1 ]; then return 0; fi
+	[ -f "$SETUP_LOCK" ] && [ ! -L "$SETUP_LOCK" ] || return 1
+	[ ! -L "${SETUP_LOCK%/*}" ] && [ "$(stat -c %u:%a "${SETUP_LOCK%/*}")" = 0:700 ] || return 1
+	[ "$(stat -c %a "$SETUP_LOCK")" = 600 ] && [ "$(stat -c %u "$SETUP_LOCK")" = 0 ] || return 1
+	if [ "${XKEEN_CONTROL_UPDATE_LOCK_FD:-}" = 3 ] || [ "${update_lock_held:-0}" = 1 ]; then
+		[ "$(stat -Lc %d:%i /proc/self/fd/3)" = "$(stat -c %d:%i "$SETUP_LOCK")" ] || return 1
+	else
+		exec 3< "$SETUP_LOCK" || return 1
+	fi
+	flock -n -x 3 || return 1
+	[ "$(stat -Lc %d:%i /proc/self/fd/3)" = "$(stat -c %d:%i "$SETUP_LOCK")" ] || return 1
+	update_lock_held=1
+}
+
+update_allow_daemon() {
+	[ "$TEST_MODE" = 1 ] || flock -s 3
+}
+
+daemon_identity() {
+	if [ "$TEST_MODE" = 1 ]; then printf 'fixture\n'; return 0; fi
+	[ -f "$PIDFILE" ] && [ ! -L "$PIDFILE" ] || return 1
+	pid="$(cat "$PIDFILE")" || return 1
+	case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+	[ "$(readlink "/proc/$pid/exe")" = "$BIN" ] || return 1
+	tr '\000' '\n' < "/proc/$pid/cmdline" | awk -v bin="$BIN" 'NR == 1 { valid = ($0 == bin) } END { exit !(valid && NR == 1) }' || return 1
+	start="$(sed 's/.*) //' "/proc/$pid/stat" | awk '{print $20}')" || return 1
+	case "$start" in ''|*[!0-9]*) return 1 ;; esac
+	printf '%s:%s\n' "$pid" "$start"
+}
+
+tuple_matches() {
+	phase_dir="$1"
+	cmp -s "$phase_dir/$BINARY_ASSET" "$BIN" && cmp -s "$phase_dir/S99xkeen-control" "$INIT" && \
+		cmp -s "$phase_dir/xkeen-control-updater" "$HELPER" || return 1
+	for installed in "$BIN" "$INIT" "$HELPER"; do
+		[ ! -L "$installed" ] && [ "$(stat -c %a "$installed")" = 755 ] || return 1
+	done
+	verify_marker "$phase_dir/installed-release.json"
+}
+
+await_ready() {
+	phase_dir="$1"
+	ceiling=30; [ "$ARCHITECTURE" != mipsle ] || ceiling=60
+	if [ -z "${readiness_deadline:-}" ]; then readiness_deadline=$(( $(date +%s) + ceiling )); fi
+	previous_identity=""; stable=0
+	while [ "$(date +%s)" -lt "$readiness_deadline" ]; do
+		if ! identity="$(daemon_identity)"; then
+			pid="$(cat "$PIDFILE" 2>/dev/null)"
+			case "$pid" in ''|*[!0-9]*) update_reason=process-exited; return 1 ;; esac
+			kill -0 "$pid" 2>/dev/null || { update_reason=process-exited; return 1; }
+			stable=0; sleep 1; continue
+		fi
+		if health; then
+			tuple_matches "$phase_dir" || { update_reason=identity-mismatch; return 1; }
+			[ "$(daemon_identity)" = "$identity" ] || { update_reason=identity-mismatch; return 1; }
+			[ "$(date +%s)" -lt "$readiness_deadline" ] || break
+			if [ "$identity" = "$previous_identity" ]; then stable=$((stable + 1)); else stable=1; fi
+			previous_identity="$identity"
+			[ "$stable" -lt 2 ] || return 0
+		else stable=0; fi
+		sleep 1
+	done
+	update_reason=health-timeout
+	return 1
+}
+
+begin_readiness() {
+	ceiling=30; [ "$ARCHITECTURE" != mipsle ] || ceiling=60
+	readiness_deadline=$(( $(date +%s) + ceiling ))
+}
 
 rebind_response_grace() {
 	case "${XKEEN_CONTROL_HANDOFF_DELAY:-1}" in
@@ -225,9 +419,10 @@ write_adoption_phase() {
 	phase="$1"
 	case "$phase" in prepared|handoff|restoring|recovered) ;; *) return 1 ;; esac
 	[ -d "$ADOPTION_RECOVERY" ] && [ ! -L "$ADOPTION_RECOVERY" ] || return 1
-	printf '%s\n' "$phase" > "$ADOPTION_RECOVERY/.phase.new"
-	chmod 600 "$ADOPTION_RECOVERY/.phase.new"
-	mv -f "$ADOPTION_RECOVERY/.phase.new" "$ADOPTION_RECOVERY/phase"
+	phase_source="$(mktemp "$ADOPTION_RECOVERY/.phase.XXXXXX")" || return 1
+	printf '%s\n' "$phase" > "$phase_source" || { rm -f "$phase_source"; return 1; }
+	commit_file "$phase_source" "$ADOPTION_RECOVERY/phase" 600 || { rm -f "$phase_source"; return 1; }
+	rm -f "$phase_source" || return 1
 }
 
 read_adoption_phase() {
@@ -250,14 +445,14 @@ prepare_adoption_recovery() {
 	fi
 	bounded_regular_file "$NODE_REGISTRY" 4194304 || return 1
 	bounded_regular_file "$NODE_OUTBOUNDS" 8388608 || return 1
-	mkdir -p "$ADOPTION_RECOVERY"
-	chmod 700 "$ADOPTION_RECOVERY"
+	mkdir -p "$ADOPTION_RECOVERY" || return 1
+	chmod 700 "$ADOPTION_RECOVERY" || return 1
 	if ! cp "$NODE_REGISTRY" "$ADOPTION_RECOVERY/nodes.json" || \
 		! cp "$NODE_OUTBOUNDS" "$ADOPTION_RECOVERY/04_outbounds.json"; then
 		rm -rf "$ADOPTION_RECOVERY"
 		return 1
 	fi
-	chmod 600 "$ADOPTION_RECOVERY/nodes.json" "$ADOPTION_RECOVERY/04_outbounds.json"
+	chmod 600 "$ADOPTION_RECOVERY/nodes.json" "$ADOPTION_RECOVERY/04_outbounds.json" || return 1
 	if ! validate_node_pair "$CANDIDATE/$BINARY_ASSET" \
 		"$ADOPTION_RECOVERY/nodes.json" "$ADOPTION_RECOVERY/04_outbounds.json" \
 		"$ADOPTION_RECOVERY/.snapshot-rendered"; then
@@ -268,21 +463,8 @@ prepare_adoption_recovery() {
 }
 
 restore_node_file() {
-	source="$1"
-	destination="$2"
-	temporary="${destination}.adoption-recovery.new"
-	bounded_regular_file "$source" 8388608 || return 1
-	[ -d "$(dirname "$destination")" ] || return 1
-	if [ -e "$destination" ] || [ -L "$destination" ]; then
-		[ -f "$destination" ] && [ ! -L "$destination" ] || return 1
-	fi
-	if [ -e "$temporary" ] || [ -L "$temporary" ]; then
-		[ ! -L "$temporary" ] || return 1
-		rm -f "$temporary"
-	fi
-	cp "$source" "$temporary"
-	chmod 600 "$temporary"
-	mv -f "$temporary" "$destination"
+	bounded_regular_file "$1" 8388608 || return 1
+	commit_file "$1" "$2" 600
 }
 
 node_snapshot_matches_live() {
@@ -342,25 +524,44 @@ clear_adoption_recovery() {
 }
 
 copy_panel() {
+	commit_file "$1" "$2" 755
+}
+
+# Conditional callers disable errexit inside shell functions. Every operation
+# therefore has its own checked result. Never reuse a predictable stale .new.
+commit_file() (
 	source="$1"
 	destination="$2"
-	[ -f "$source" ] || fail
-	cp "$source" "$destination.new"
-	chmod 755 "$destination.new"
-	mv -f "$destination.new" "$destination"
-}
+	mode="$3"
+	[ -f "$source" ] && [ ! -L "$source" ] || return 1
+	directory="$(dirname "$destination")" || return 1
+	[ -d "$directory" ] && [ ! -L "$directory" ] || return 1
+	if [ -e "$destination" ] || [ -L "$destination" ]; then
+		[ -f "$destination" ] && [ ! -L "$destination" ] || return 1
+	fi
+	temporary="$(mktemp "$directory/.panel-commit.XXXXXX")" || return 1
+	trap 'rm -f "$temporary"' EXIT
+	cp "$source" "$temporary" || return 1
+	chmod "$mode" "$temporary" || return 1
+	cmp -s "$source" "$temporary" || return 1
+	[ "$(stat -c %a "$temporary")" = "$mode" ] || return 1
+	"${SYNC:-sync}" -f "$temporary" || return 1
+	mv -f "$temporary" "$destination" || return 1
+	"${SYNC:-sync}" -f "$directory" || return 1
+	cmp -s "$source" "$destination" || return 1
+	[ "$(stat -c %a "$destination")" = "$mode" ] || return 1
+)
 
 snapshot_helper_state() {
 	source="$1"
 	destination_dir="$2"
 	if [ -e "$source" ] || [ -L "$source" ]; then
 		[ -f "$source" ] && [ -x "$source" ] && [ ! -L "$source" ] || return 1
-		cp "$source" "$destination_dir/xkeen-control-updater"
-		chmod 755 "$destination_dir/xkeen-control-updater"
-		rm -f "$destination_dir/.helper-absent"
+		commit_file "$source" "$destination_dir/xkeen-control-updater" 755 || return 1
+		rm -f "$destination_dir/.helper-absent" || return 1
 	else
-		: > "$destination_dir/.helper-absent"
-		chmod 600 "$destination_dir/.helper-absent"
+		: > "$destination_dir/.helper-absent" || return 1
+		chmod 600 "$destination_dir/.helper-absent" || return 1
 	fi
 }
 
@@ -383,36 +584,34 @@ snapshot_generation() {
 	destination_dir="$1"
 	[ -f "$BIN" ] && [ ! -L "$BIN" ] || return 1
 	[ -f "$INIT" ] && [ ! -L "$INIT" ] || return 1
-	cp "$BIN" "$destination_dir/$BINARY_ASSET"
-	cp "$INIT" "$destination_dir/S99xkeen-control"
+	commit_file "$BIN" "$destination_dir/$BINARY_ASSET" 755 || return 1
+	commit_file "$INIT" "$destination_dir/S99xkeen-control" 755 || return 1
 	snapshot_helper_state "$HELPER" "$destination_dir" || return 1
 	if [ -e "$STATE/installed-release.json" ] || [ -L "$STATE/installed-release.json" ]; then
 		[ -f "$STATE/installed-release.json" ] && [ ! -L "$STATE/installed-release.json" ] || return 1
-		cp "$STATE/installed-release.json" "$destination_dir/installed-release.json"
-		chmod 600 "$destination_dir/installed-release.json"
+		commit_file "$STATE/installed-release.json" "$destination_dir/installed-release.json" 600 || return 1
 	fi
-	chmod 755 "$destination_dir/$BINARY_ASSET" "$destination_dir/S99xkeen-control"
+	return 0
 }
 
 write_marker_from() {
 	source="$1"
-	[ -f "$source" ] || return 1
-	mkdir -p "$STATE"
-	chmod 700 "$STATE"
-	cp "$source" "$STATE/.installed-release.json.new"
-	chmod 600 "$STATE/.installed-release.json.new"
-	mv -f "$STATE/.installed-release.json.new" "$STATE/installed-release.json"
+	[ -f "$source" ] && [ ! -L "$source" ] || return 1
+	mkdir -p "$STATE" || return 1
+	[ ! -L "$STATE" ] || return 1
+	chmod 700 "$STATE" || return 1
+	commit_file "$source" "$STATE/installed-release.json" 600
 }
 
 restore_previous() {
 	[ -f "$PREVIOUS/$BINARY_ASSET" ] || return 1
-	copy_panel "$PREVIOUS/$BINARY_ASSET" "$BIN"
-	copy_panel "$PREVIOUS/S99xkeen-control" "$INIT"
+	copy_panel "$PREVIOUS/$BINARY_ASSET" "$BIN" || return 1
+	copy_panel "$PREVIOUS/S99xkeen-control" "$INIT" || return 1
 	restore_helper_state "$PREVIOUS" "$HELPER" || return 1
 	if [ -f "$PREVIOUS/installed-release.json" ]; then
-		write_marker_from "$PREVIOUS/installed-release.json"
+		write_marker_from "$PREVIOUS/installed-release.json" || return 1
 	else
-		rm -f "$STATE/installed-release.json"
+		rm -f "$STATE/installed-release.json" || return 1
 	fi
 }
 
@@ -421,8 +620,15 @@ verify_build() {
 	commit="$2"
 	channel="$3"
 	[ -n "$version" ] && [ -n "$commit" ] && [ -n "$channel" ] || return 1
-	"$BIN" version --json 2>/dev/null | jq -e --arg version "$version" --arg commit "$commit" --arg channel "$channel" \
-		'.product == "xkeen-control" and .version == $version and .sourceCommit == $commit and .channel == $channel' >/dev/null 2>&1
+	probe_seconds=5
+	if [ -n "${readiness_deadline:-}" ]; then
+		remaining=$((readiness_deadline - $(date +%s) - 1))
+		[ "$remaining" -gt 0 ] || return 1
+		[ "$remaining" -ge "$probe_seconds" ] || probe_seconds="$remaining"
+	fi
+	build_output="$(timeout -k 1 "$probe_seconds" "$BIN" version --json 2>/dev/null)" || return 1
+	printf '%s\n' "$build_output" | jq -e -s --arg version "$version" --arg commit "$commit" --arg channel "$channel" \
+		'length == 1 and (.[0] | .product == "xkeen-control" and .version == $version and .sourceCommit == $commit and .channel == $channel)' >/dev/null 2>&1
 }
 
 verify_marker() {
@@ -443,15 +649,7 @@ restore_current_marker() {
 }
 
 install_listener_candidate() {
-	[ -d "$(dirname "$LISTEN_FILE")" ] || return 1
-	if [ -e "$LISTEN_FILE" ] || [ -L "$LISTEN_FILE" ]; then
-		[ -f "$LISTEN_FILE" ] && [ ! -L "$LISTEN_FILE" ] || return 1
-	fi
-	temporary="${LISTEN_FILE}.rebind.new"
-	[ ! -e "$temporary" ] && [ ! -L "$temporary" ] || return 1
-	cp "$1" "$temporary"
-	chmod 600 "$temporary"
-	mv -f "$temporary" "$LISTEN_FILE"
+	commit_file "$1" "$LISTEN_FILE" 600
 }
 
 restore_listener_snapshot() {
@@ -466,6 +664,7 @@ restore_listener_snapshot() {
 }
 
 if [ "$action" = "rebind" ]; then
+	legacy_ready || fail
 	# An inherited environment bind is explicitly read-only. The broker will
 	# reject a rebind before launch, and this helper keeps the same fail-closed
 	# boundary if invoked outside that path.
@@ -494,6 +693,7 @@ if [ "$action" = "rebind" ]; then
 fi
 
 if [ "$action" = "adopt" ]; then
+	legacy_ready || fail
 	# Adoption is a separate action so the normal managed self-update path keeps
 	# its existing coordinator-owned lifecycle. Only the signed installer can
 	# place this fixed sentinel in the candidate boundary.
@@ -568,35 +768,70 @@ if [ "$action" = "install" ]; then
 	expected_version="$(jq -r '.version' "$CANDIDATE/installed-release.json" 2>/dev/null || true)"
 	expected_commit="$(jq -r '.sourceCommit' "$CANDIDATE/installed-release.json" 2>/dev/null || true)"
 	expected_channel="$(jq -r '.channel' "$CANDIDATE/installed-release.json" 2>/dev/null || true)"
+	[ -f "$ACTIVE" ] && [ ! -L "$ACTIVE" ] || fail
+	[ "$(stat -c %a "$ACTIVE")" = 600 ] || fail
+	jq -e --arg version "$expected_version" --arg source "$expected_commit" --arg arch "$ARCHITECTURE" \
+		'.schemaVersion==1 and .phase=="prepared" and .candidate.version==$version and .candidate.sourceCommit==$source and .architecture==$arch' "$ACTIVE" >/dev/null || fail
+	verify_candidate_tuple || fail
+	if [ -e "$RESULT" ] || [ -L "$RESULT" ]; then
+		[ -f "$RESULT" ] && [ ! -L "$RESULT" ] || fail
+		[ "$(jq -r .operationId "$RESULT")" != "$(jq -r .operationId "$ACTIVE")" ] || fail
+	fi
+	# Copy the reservation before any service/file mutation. Do not reuse a result
+	# belonging to an older operation. EXIT/signal paths never perform rollback.
+	durability_preflight && capture_intent || fail
+commit_file "$ACTIVE" "$RESULT" 600 || fail
+	update_resolved=0; update_reason=file-commit-failed
+	trap update_exit EXIT
+	trap 'update_reason=signal; exit 1' HUP INT TERM
+	"${SYNC:-sync}" -f "$STATE" || fail
+	update_phase stopping || fail
+	rebind_response_grace || fail
+	"$INIT" stop >/dev/null 2>&1 || fail
+	update_lock && verify_previous || fail
 	if [ -e "$BIN" ] || [ -L "$BIN" ]; then
-		rm -rf "$PREVIOUS"
-		mkdir -p "$PREVIOUS"
-		chmod 700 "$PREVIOUS"
-		snapshot_generation "$PREVIOUS" || { rm -rf "$PREVIOUS"; fail; }
+		rm -rf "$PREVIOUS" || fail
+		mkdir -p "$PREVIOUS" || fail
+		chmod 700 "$PREVIOUS" || fail
+		snapshot_generation "$PREVIOUS" || fail
 	elif [ -e "$INIT" ] || [ -L "$INIT" ] || [ -e "$HELPER" ] || [ -L "$HELPER" ] || [ -e "$STATE/installed-release.json" ] || [ -L "$STATE/installed-release.json" ]; then
 		fail
 	fi
-	stop_panel
-	copy_panel "$CANDIDATE/$BINARY_ASSET" "$BIN"
-	copy_panel "$CANDIDATE/S99xkeen-control" "$INIT"
-	copy_panel "$CANDIDATE/xkeen-control-updater" "$HELPER"
-	if start_panel && health && verify_build "$expected_version" "$expected_commit" "$expected_channel" && write_marker_from "$CANDIDATE/installed-release.json"; then
-		rm -rf "$TEMP" "$CANDIDATE"
+	update_phase committing || fail
+	if verify_candidate_tuple && copy_panel "$CANDIDATE/$BINARY_ASSET" "$BIN" && \
+		copy_panel "$CANDIDATE/S99xkeen-control" "$INIT" && \
+		copy_panel "$CANDIDATE/xkeen-control-updater" "$HELPER" && \
+		update_phase starting && update_allow_daemon && begin_readiness && start_panel && await_ready "$CANDIDATE" && \
+		update_phase marker-commit && write_marker_from "$CANDIDATE/installed-release.json" && \
+		cmp -s "$CANDIDATE/installed-release.json" "$STATE/installed-release.json" && await_ready "$CANDIDATE"; then
+		update_terminal installed-verified || fail
+		update_resolved=1
+		rm -rf "$TEMP" "$CANDIDATE" || fail
 		exit 0
 	fi
-	stop_panel
+	update_phase rollback "$update_reason" || fail
+	"$INIT" stop >/dev/null 2>&1 || fail
+	update_lock || fail
 	if [ -f "$PREVIOUS/$BINARY_ASSET" ]; then
-		restore_previous || { rm -rf "$TEMP" "$CANDIDATE"; fail; }
+		restore_previous || fail
 	else
-		rm -f "$BIN" "$INIT" "$HELPER" "$STATE/installed-release.json"
-		rm -rf "$TEMP" "$CANDIDATE"
 		fail
 	fi
-	start_panel && health && verify_marker "$PREVIOUS/installed-release.json" || fail
-	rm -rf "$TEMP" "$CANDIDATE"
+	update_phase rollback-starting "$update_reason" || fail
+	readiness_deadline=""
+	update_allow_daemon && begin_readiness && start_panel && await_ready "$PREVIOUS" || fail
+	cmp -s "$PREVIOUS/installed-release.json" "$STATE/installed-release.json" || fail
+	update_terminal rolled-back-verified "$update_reason" || fail
+	update_resolved=1
+	rm -rf "$TEMP" "$CANDIDATE" || fail
 	fail
 fi
 
+# Historical explicitly recorded helper-absent generation only. Managed rollback
+# admission requires a full previous tuple and cannot enter this branch.
+if [ -f "$PREVIOUS/.helper-absent" ]; then
+ [ ! -e "$ACTIVE" ] && [ ! -L "$ACTIVE" ] || fail
+ [ ! -e "$RESULT" ] && [ ! -L "$RESULT" ] || fail
 [ -f "$PREVIOUS/$BINARY_ASSET" ] || fail
 rm -rf "$TEMP"
 mkdir -p "$TEMP"
@@ -627,5 +862,57 @@ else
 fi
 restore_current_marker
 start_panel && health && verify_marker "$TEMP/current-installed-release.json" || fail
+rm -rf "$TEMP"
+fail
+fi
+
+[ -f "$PREVIOUS/$BINARY_ASSET" ] || fail
+[ -f "$ACTIVE" ] && [ ! -L "$ACTIVE" ] || fail
+jq -e '.phase=="prepared" and .action=="rollback"' "$ACTIVE" >/dev/null || fail
+previous_digest="$( (cd "$PREVIOUS" && sha256sum "$BINARY_ASSET" S99xkeen-control xkeen-control-updater installed-release.json) | sha256sum | awk '{print $1}')" || fail
+[ "$previous_digest" = "$(jq -r .manifestDigest "$ACTIVE")" ] || fail
+if [ -f "$RESULT" ]; then [ "$(jq -r .operationId "$RESULT")" != "$(jq -r .operationId "$ACTIVE")" ] || fail; fi
+durability_preflight && capture_intent || fail
+commit_file "$ACTIVE" "$RESULT" 600 || fail
+update_resolved=0; update_reason=rollback-failed
+trap update_exit EXIT
+trap 'update_reason=signal; exit 1' HUP INT TERM
+update_phase stopping || fail
+rebind_response_grace || fail
+"$INIT" stop >/dev/null 2>&1 || fail
+update_lock && verify_previous || fail
+rm -rf "$TEMP"
+mkdir -p "$TEMP"
+chmod 700 "$TEMP"
+snapshot_generation "$TEMP" || fail
+update_phase committing || fail
+restore_previous || fail
+update_phase starting || fail
+if update_allow_daemon && begin_readiness && start_panel && await_ready "$PREVIOUS" && cmp -s "$PREVIOUS/installed-release.json" "$STATE/installed-release.json"; then
+	update_terminal rolled-back-verified explicit-rollback || fail
+	update_resolved=1
+	rm -rf "$PREVIOUS" "$TEMP"
+	exit 0
+fi
+update_phase rollback "$update_reason" || fail
+"$INIT" stop >/dev/null 2>&1 || fail
+update_lock || fail
+copy_panel "$TEMP/$BINARY_ASSET" "$BIN" || fail
+copy_panel "$TEMP/S99xkeen-control" "$INIT" || fail
+if [ -f "$TEMP/xkeen-control-updater" ]; then
+	copy_panel "$TEMP/xkeen-control-updater" "$HELPER" || fail
+else
+	[ -f "$TEMP/.helper-absent" ] || fail
+	if [ -e "$HELPER" ] || [ -L "$HELPER" ]; then
+		[ -f "$HELPER" ] && [ ! -L "$HELPER" ] || fail
+		rm -f "$HELPER"
+	fi
+fi
+write_marker_from "$TEMP/installed-release.json" || fail
+readiness_deadline=""
+update_phase rollback-starting || fail
+update_allow_daemon && begin_readiness && start_panel && await_ready "$TEMP" || fail
+update_terminal rolled-back-verified rollback-failed-restored-current || fail
+update_resolved=1
 rm -rf "$TEMP"
 fail

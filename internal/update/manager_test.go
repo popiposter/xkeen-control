@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -105,7 +106,7 @@ func TestManagerStagesMarkerAndHandsOffUnderLifecycle(t *testing.T) {
 	done := make(chan struct{})
 	var helperAction string
 	var markerContents []byte
-	manager := NewManager(Config{
+	manager := newFixtureManager(t, Config{
 		Current:   buildinfo.Info{Product: "xkeen-control", Version: "1.0.0", SourceCommit: strings.Repeat("b", 40), Channel: "stable"},
 		Client:    release.NewClientForTest(server.URL, privateKey.Public().(ed25519.PublicKey)),
 		Lifecycle: lifecycle,
@@ -168,7 +169,7 @@ func TestApplyCheckedConsumesCandidateBeforeHandoff(t *testing.T) {
 
 	dir := t.TempDir()
 	helperStarted := make(chan struct{}, 1)
-	manager := NewManager(Config{
+	manager := newFixtureManager(t, Config{
 		Current: buildinfo.Info{Product: "xkeen-control", Version: "1.0.0", SourceCommit: strings.Repeat("b", 40), Channel: "stable"},
 		Client:  release.NewClientForTest(server.URL, privateKey.Public().(ed25519.PublicKey)),
 		Paths:   Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: filepath.Join(dir, "previous"), MarkerPath: filepath.Join(dir, "state", "installed-release.json"), PolicyPath: filepath.Join(dir, "state", "update-policy.json")},
@@ -203,7 +204,7 @@ func TestApplyCheckedConsumesCandidateBeforeHandoff(t *testing.T) {
 func TestRollbackStartsHelperOnlyWhenPreviousGenerationExists(t *testing.T) {
 	dir := t.TempDir()
 	lifecycle := &fakeLifecycle{}
-	manager := NewManager(Config{
+	manager := newFixtureManager(t, Config{
 		Client:    release.NewClientForTest("http://fixture.invalid", nil),
 		Current:   buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
 		Lifecycle: lifecycle,
@@ -216,7 +217,11 @@ func TestRollbackStartsHelperOnlyWhenPreviousGenerationExists(t *testing.T) {
 
 func TestMIPSRollbackRequiresSamePlatformPreviousGeneration(t *testing.T) {
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	previous := filepath.Join(dir, "previous")
+	preparePreviousMetadata(t, previous)
 	if err := os.MkdirAll(previous, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +230,7 @@ func TestMIPSRollbackRequiresSamePlatformPreviousGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	called := make(chan struct{}, 1)
-	manager := NewManager(Config{
+	manager := newFixtureManager(t, Config{
 		Current: buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
 		Client:  release.NewClientForTestArchitecture("http://fixture.invalid", nil, "mipsle"),
 		Paths:   Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: previous, MarkerPath: filepath.Join(dir, "marker"), PolicyPath: filepath.Join(dir, "policy")},
@@ -267,6 +272,7 @@ func TestMIPSRollbackRequiresSamePlatformPreviousGeneration(t *testing.T) {
 func TestRollbackConsumesHandoffBeforeReturning(t *testing.T) {
 	dir := t.TempDir()
 	previous := filepath.Join(dir, "previous")
+	preparePreviousMetadata(t, previous)
 	if err := os.MkdirAll(previous, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +280,7 @@ func TestRollbackConsumesHandoffBeforeReturning(t *testing.T) {
 		t.Fatal(err)
 	}
 	helperStarted := make(chan struct{}, 1)
-	manager := NewManager(Config{
+	manager := newFixtureManager(t, Config{
 		Client:  release.NewClientForTest("http://fixture.invalid", nil),
 		Current: buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
 		Paths:   Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: previous, MarkerPath: filepath.Join(dir, "state", "installed-release.json"), PolicyPath: filepath.Join(dir, "state", "update-policy.json")},
@@ -306,6 +312,7 @@ func TestRollbackConsumesHandoffBeforeReturning(t *testing.T) {
 func TestRollbackReleasesAdmissionAfterLifecycleFailure(t *testing.T) {
 	dir := t.TempDir()
 	previous := filepath.Join(dir, "previous")
+	preparePreviousMetadata(t, previous)
 	if err := os.MkdirAll(previous, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +320,7 @@ func TestRollbackReleasesAdmissionAfterLifecycleFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	lifecycle := &rejectingLifecycle{err: errors.New("synthetic lifecycle busy")}
-	manager := NewManager(Config{
+	manager := newFixtureManager(t, Config{
 		Client:    release.NewClientForTest("http://fixture.invalid", nil),
 		Current:   buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
 		Lifecycle: lifecycle,
@@ -337,13 +344,14 @@ func TestRollbackReleasesAdmissionAfterLifecycleFailure(t *testing.T) {
 func TestRollbackReleasesAdmissionAfterHelperStartFailure(t *testing.T) {
 	dir := t.TempDir()
 	previous := filepath.Join(dir, "previous")
+	preparePreviousMetadata(t, previous)
 	if err := os.MkdirAll(previous, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(previous, "xkeen-control-linux-arm64"), []byte("previous"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	manager := NewManager(Config{
+	manager := newFixtureManager(t, Config{
 		Client:  release.NewClientForTest("http://fixture.invalid", nil),
 		Current: buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
 		Paths:   Paths{CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: previous, MarkerPath: filepath.Join(dir, "state", "installed-release.json"), PolicyPath: filepath.Join(dir, "state", "update-policy.json"), HelperPath: filepath.Join(dir, "missing-helper")},
@@ -352,8 +360,8 @@ func TestRollbackReleasesAdmissionAfterHelperStartFailure(t *testing.T) {
 		t.Fatal("missing rollback helper unexpectedly started")
 	}
 	status := manager.Status(context.Background())
-	if !status.RollbackAvailable || status.RollbackVerificationRequired {
-		t.Fatalf("helper-start failure retained rollback claim: %+v", status)
+	if status.RollbackAvailable || !status.InspectionRequired {
+		t.Fatalf("helper-start failure lost durable inspection fence: %+v", status)
 	}
 	if err := manager.Rollback(context.Background()); err == nil {
 		t.Fatal("rollback admission was not released after helper-start failure")
@@ -363,6 +371,7 @@ func TestRollbackReleasesAdmissionAfterHelperStartFailure(t *testing.T) {
 func TestRollbackExcludesConcurrentAdmissionAndPersistsAfterHelperStart(t *testing.T) {
 	dir := t.TempDir()
 	previous := filepath.Join(dir, "previous")
+	preparePreviousMetadata(t, previous)
 	if err := os.MkdirAll(previous, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -371,7 +380,7 @@ func TestRollbackExcludesConcurrentAdmissionAndPersistsAfterHelperStart(t *testi
 	}
 	lifecycle := &blockingLifecycle{entered: make(chan struct{}, 1), release: make(chan struct{})}
 	helperStarted := make(chan struct{}, 1)
-	manager := NewManager(Config{
+	manager := newFixtureManager(t, Config{
 		Client:    release.NewClientForTest("http://fixture.invalid", nil),
 		Current:   buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("c", 40), Channel: "stable"},
 		Lifecycle: lifecycle,
@@ -411,7 +420,7 @@ func TestRollbackExcludesConcurrentAdmissionAndPersistsAfterHelperStart(t *testi
 
 func TestPolicyRejectsBetaAutoAndBoundsCadence(t *testing.T) {
 	dir := t.TempDir()
-	manager := NewManager(Config{Current: buildinfo.Current(), Paths: Paths{PolicyPath: filepath.Join(dir, "state", "policy.json"), CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: filepath.Join(dir, "previous")}})
+	manager := newFixtureManager(t, Config{Current: buildinfo.Current(), Paths: Paths{PolicyPath: filepath.Join(dir, "state", "policy.json"), CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: filepath.Join(dir, "previous")}})
 	if _, err := manager.SetPolicy(Policy{Channel: "beta", Mode: "auto-stable", CheckCadenceMinutes: 360}); err == nil {
 		t.Fatal("beta auto policy accepted")
 	}
@@ -426,7 +435,7 @@ func TestPolicyRejectsBetaAutoAndBoundsCadence(t *testing.T) {
 
 func TestCheckedCandidateIsExactAndPolicyChangeClearsIt(t *testing.T) {
 	dir := t.TempDir()
-	manager := NewManager(Config{Current: buildinfo.Current(), Client: release.NewClientForTest("", nil), Paths: Paths{
+	manager := newFixtureManager(t, Config{Current: buildinfo.Current(), Client: release.NewClientForTest("", nil), Paths: Paths{
 		PolicyPath: filepath.Join(dir, "state", "policy.json"), CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: filepath.Join(dir, "previous"),
 	}})
 	if err := manager.ValidateChecked(context.Background(), "stable", "1.2.3"); err == nil {
@@ -461,7 +470,7 @@ func TestCheckedCandidateIsExactAndPolicyChangeClearsIt(t *testing.T) {
 
 func TestCheckBoundsVersionAndRequiresBetaPin(t *testing.T) {
 	dir := t.TempDir()
-	manager := NewManager(Config{Paths: Paths{
+	manager := newFixtureManager(t, Config{Paths: Paths{
 		PolicyPath: filepath.Join(dir, "state", "policy.json"), CandidateDir: filepath.Join(dir, "candidate"), PreviousDir: filepath.Join(dir, "previous"),
 	}})
 	if _, err := manager.Check(context.Background(), "beta", ""); err == nil {
@@ -491,4 +500,52 @@ func testCandidate(t *testing.T) (release.Manifest, map[string][]byte) {
 		t.Fatal(err)
 	}
 	return manifest, assets
+}
+
+func preparePreviousMetadata(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"S99xkeen-control", "xkeen-control-updater"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("fixture"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "installed-release.json"), []byte(`{"product":"xkeen-control","version":"1.0.0","sourceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","channel":"stable"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func newFixtureManager(t *testing.T, c Config) *Manager {
+	t.Helper()
+	d := t.TempDir()
+	c.Paths.BinaryPath = filepath.Join(d, "binary")
+	c.Paths.InitPath = filepath.Join(d, "init")
+	if c.Paths.HelperPath == "" {
+		c.Paths.HelperPath = filepath.Join(d, "helper")
+	}
+	if c.Paths.MarkerPath == "" {
+		c.Paths.MarkerPath = filepath.Join(d, "installed-release.json")
+	}
+	for _, p := range []string{c.Paths.BinaryPath, c.Paths.InitPath, c.Paths.HelperPath} {
+		if _, err := os.Lstat(p); os.IsNotExist(err) {
+			if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("fixture"), 0755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := os.Lstat(c.Paths.MarkerPath); os.IsNotExist(err) {
+		if err := os.MkdirAll(filepath.Dir(c.Paths.MarkerPath), 0700); err != nil {
+			t.Fatal(err)
+		}
+		b, _ := json.Marshal(c.Current)
+		if err := os.WriteFile(c.Paths.MarkerPath, b, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return NewManager(c)
 }

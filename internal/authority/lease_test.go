@@ -7,6 +7,31 @@ import (
 	"time"
 )
 
+func TestExternalAdmissionFenceAlsoBlocksRecovery(t *testing.T) {
+	l := NewLease()
+	blocked := true
+	l.Admission = func() error {
+		if blocked {
+			return ErrBlocked
+		}
+		return nil
+	}
+	l.Block()
+	l.Unblock()
+	if _, e := l.AcquireForRecovery(context.Background(), 0); !errors.Is(e, ErrBlocked) {
+		t.Fatal("recovery bypassed durable external fence", e)
+	}
+	if _, e := l.TryAcquire(); !errors.Is(e, ErrBlocked) {
+		t.Fatal(e)
+	}
+	blocked = false
+	release, e := l.TryAcquire()
+	if e != nil {
+		t.Fatal(e)
+	}
+	release()
+}
+
 func TestTryAcquireIsImmediateAndPreservesBlockingAcquire(t *testing.T) {
 	lease := NewLease()
 	release, err := lease.Acquire(context.Background(), 0)

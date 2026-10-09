@@ -18,6 +18,27 @@ trap cleanup EXIT
 fakebin="$tmp/fakebin"
 mkdir -p "$fakebin"
 
+# Exercise the real checked commit function under conditional invocation, where
+# POSIX shells disable errexit. A stale predictable marker must not mask failure.
+sed -n '/^commit_file() (/,/^)/p' "$ROOT/scripts/xkeen-control-updater" > "$tmp/commit-functions"
+sed -n '/^write_marker_from() {/,/^}/p' "$ROOT/scripts/xkeen-control-updater" >> "$tmp/commit-functions"
+for fault in cp chmod mv sync; do
+	case_root="$tmp/commit-$fault"
+	mkdir -p "$case_root/state" "$case_root/bin"
+	printf 'old\n' > "$case_root/state/installed-release.json"
+	printf 'stale\n' > "$case_root/state/.installed-release.json.new"
+	printf 'candidate\n' > "$case_root/source"
+	printf '#!/bin/sh\nexit 91\n' > "$case_root/bin/$fault"
+	chmod 755 "$case_root/bin/$fault"
+	if PATH="$case_root/bin:$PATH" STATE="$case_root/state" SOURCE="$case_root/source" \
+		sh -c '. "$1"; if write_marker_from "$SOURCE"; then exit 0; else exit 1; fi' sh "$tmp/commit-functions"; then
+		echo "unchecked $fault failure committed marker" >&2
+		exit 1
+	fi
+	[ "$(cat "$case_root/state/installed-release.json")" = old ]
+done
+echo 'Conditional marker cp/chmod/mv/sync failure fixtures passed'
+
 cat > "$fakebin/curl" <<'EOF_CURL'
 #!/bin/sh
 set -eu
@@ -27,6 +48,11 @@ for arg in "$@"; do
 done
 [ "$url" = "${EXPECTED_HEALTH_URL:?}" ] || { echo "unexpected health URL: $url" >&2; exit 1; }
 [ -z "${FAIL_HEALTH_URL:-}" ] || [ "$url" != "$FAIL_HEALTH_URL" ] || exit 1
+if [ -n "${FIXTURE_HEALTH_SEQUENCE:-}" ]; then
+	count=0; [ ! -f "$XKEEN_CONTROL_TEST_ROOT/health-count" ] || count="$(cat "$XKEEN_CONTROL_TEST_ROOT/health-count")"
+	count=$((count + 1)); printf '%s\n' "$count" > "$XKEEN_CONTROL_TEST_ROOT/health-count"
+	case "$FIXTURE_HEALTH_SEQUENCE:$count" in delayed:1|delayed:2|intermittent:2) exit 1 ;; esac
+fi
 exit 0
 EOF_CURL
 chmod 755 "$fakebin/curl"
@@ -175,6 +201,7 @@ setup_generation() {
 		"$root/opt/etc/xkeen-control/state" "$root/opt/etc/xkeen-control/previous" \
 		"$root/opt/etc/xkeen-control/secrets" "$root/opt/etc/xray/configs" \
 		"$root/tmp/xkeen-control/panel-update"
+	chmod 700 "$root/opt/etc/xkeen-control/state"
 	make_binary "$root/opt/sbin/xkeen-control" "1.0.0" "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" stable
 	make_init "$root/opt/etc/init.d/S99xkeen-control"
 	cp "$ROOT/scripts/xkeen-control-updater" "$root/opt/libexec/xkeen-control-updater"
@@ -186,6 +213,7 @@ setup_generation() {
 		chmod 644 "$root/opt/etc/xkeen-control/listen-address"
 	fi
 	printf '%s\n' '{"product":"xkeen-control","version":"1.0.0","sourceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","channel":"stable"}' > "$root/opt/etc/xkeen-control/state/installed-release.json"
+	chmod 600 "$root/opt/etc/xkeen-control/state/installed-release.json"
 	printf '%s\n' '{"schemaVersion":1,"generation":"legacy"}' > "$root/opt/etc/xkeen-control/secrets/nodes.json"
 	printf '%s\n' '{"schemaVersion":1,"generation":"legacy"}' > "$root/opt/etc/xray/configs/04_outbounds.json"
 
@@ -196,7 +224,43 @@ setup_generation() {
 	chmod 755 "$candidate/xkeen-control-updater"
 	printf '%s\n' '{"product":"xkeen-control","version":"1.2.3","sourceCommit":"cccccccccccccccccccccccccccccccccccccccc","channel":"stable"}' > "$candidate/installed-release.json"
 	printf '%s\n' '{"version":"1.2.3","sourceCommit":"cccccccccccccccccccccccccccccccccccccccc","channel":"stable"}' > "$candidate/release-manifest.json"
+	printf '#!/bin/sh\nexit 0\n' > "$candidate/install.sh"
+	prepare_update_intent "$root" arm64
 }
+
+prepare_update_intent() {
+	root="$1"; arch="$2"; candidate="$root/tmp/xkeen-control/panel-update"
+	previous_digest="$(installed_generation_digest "$root" "$arch")"
+	artifacts='[]'
+	for asset in "xkeen-control-linux-$arch" S99xkeen-control xkeen-control-updater install.sh; do
+		hash="$(sha256sum "$candidate/$asset" | awk '{print $1}')"
+		artifacts="$(printf '%s' "$artifacts" | jq --arg name "$asset" --arg hash "$hash" '.+[{name:$name,sha256:$hash}]')"
+	done
+	jq --argjson artifacts "$artifacts" '.artifacts=$artifacts' "$candidate/release-manifest.json" > "$candidate/manifest.tmp"
+	mv "$candidate/manifest.tmp" "$candidate/release-manifest.json"
+	digest="$(sha256sum "$candidate/release-manifest.json" | awk '{print $1}')"
+	jq -n --arg arch "$arch" --arg digest "$digest" --arg previousDigest "$previous_digest" --slurpfile previous "$root/opt/etc/xkeen-control/state/installed-release.json" --slurpfile candidate "$candidate/installed-release.json" \
+		'{schemaVersion:1,operationId:"11111111111111111111111111111111",action:"install",architecture:$arch,manifestDigest:$digest,previousDigest:$previousDigest,previous:$previous[0],candidate:$candidate[0],phase:"prepared",startedAt:"2026-01-01T00:00:00Z",updatedAt:"2026-01-01T00:00:00Z"}' > "$root/opt/etc/xkeen-control/state/panel-update-active.json"
+	chmod 600 "$root/opt/etc/xkeen-control/state/panel-update-active.json"
+}
+
+installed_generation_digest() (
+	root="$1"; arch="$2"
+	for entry in "opt/sbin/xkeen-control:xkeen-control-linux-$arch" 'opt/etc/init.d/S99xkeen-control:S99xkeen-control' 'opt/libexec/xkeen-control-updater:xkeen-control-updater' 'opt/etc/xkeen-control/state/installed-release.json:installed-release.json'; do
+		printf '%s  %s\n' "$(sha256sum "$root/${entry%%:*}" | awk '{print $1}')" "${entry#*:}"
+	done | sha256sum | awk '{print $1}'
+)
+
+prepare_rollback_intent() (
+	root="$1"; arch="$2"; previous="$root/opt/etc/xkeen-control/previous/panel"
+	previous_digest="$(installed_generation_digest "$root" "$arch")"
+	digest="$(for name in "xkeen-control-linux-$arch" S99xkeen-control xkeen-control-updater installed-release.json; do
+		printf '%s  %s\n' "$(sha256sum "$previous/$name" | awk '{print $1}')" "$name"
+	done | sha256sum | awk '{print $1}')"
+	jq -n --arg arch "$arch" --arg digest "$digest" --arg previousDigest "$previous_digest" --slurpfile previous "$root/opt/etc/xkeen-control/state/installed-release.json" --slurpfile candidate "$previous/installed-release.json" \
+		'{schemaVersion:1,operationId:"22222222222222222222222222222222",action:"rollback",architecture:$arch,manifestDigest:$digest,previousDigest:$previousDigest,previous:$previous[0],candidate:$candidate[0],phase:"prepared",startedAt:"2026-01-01T00:00:00Z",updatedAt:"2026-01-01T00:00:00Z"}' > "$root/opt/etc/xkeen-control/state/panel-update-active.json"
+	chmod 600 "$root/opt/etc/xkeen-control/state/panel-update-active.json"
+)
 
 setup_legacy_generation() {
 	root="$1"
@@ -230,15 +294,27 @@ XKEEN_CONTROL_TEST_MODE=1 \
 XKEEN_CONTROL_TEST_ROOT="$root" \
 sh "$ROOT/scripts/xkeen-control-updater" install
 
+jq -e '.phase=="installed-verified" and .verified.version=="1.2.3" and .operationId=="11111111111111111111111111111111"' "$root/opt/etc/xkeen-control/state/panel-update-result.json" >/dev/null
+[ ! -e "$root/opt/etc/xkeen-control/state/panel-update-active.json" ]
+# A completed handoff is not replayable after its candidate/intent are consumed.
+installed_before_replay="$(installed_generation_digest "$root" arm64)"
+if PATH="$fakebin:$PATH" EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' XKEEN_CONTROL_TEST_MODE=1 XKEEN_CONTROL_TEST_ROOT="$root" sh "$ROOT/scripts/xkeen-control-updater" install >/dev/null 2>&1; then
+	echo 'completed update replay admitted' >&2; exit 1
+fi
+[ "$installed_before_replay" = "$(installed_generation_digest "$root" arm64)" ]
+
 grep -Fq '"version":"1.2.3"' "$root/opt/etc/xkeen-control/state/installed-release.json"
 [ -f "$root/opt/etc/xkeen-control/previous/panel/xkeen-control-linux-arm64" ]
 "$root/opt/sbin/xkeen-control" version --json | jq -e '.version == "1.2.3"' >/dev/null
 
+prepare_rollback_intent "$root" arm64
 PATH="$fakebin:$PATH" \
 EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
 XKEEN_CONTROL_TEST_MODE=1 \
 XKEEN_CONTROL_TEST_ROOT="$root" \
 sh "$root/opt/libexec/xkeen-control-updater" rollback
+jq -e '.phase=="rolled-back-verified" and .verified.version=="1.0.0" and .operationId=="22222222222222222222222222222222"' "$root/opt/etc/xkeen-control/state/panel-update-result.json" >/dev/null
+[ ! -e "$root/opt/etc/xkeen-control/state/panel-update-active.json" ]
 
 grep -Fq '"version":"1.0.0"' "$root/opt/etc/xkeen-control/state/installed-release.json"
 [ ! -e "$root/opt/etc/xkeen-control/previous/panel" ]
@@ -424,6 +500,7 @@ sh "$ROOT/scripts/xkeen-control-updater" install >/dev/null
 
 rebind_root="$tmp/rebind-root"
 setup_generation "$rebind_root" "127.0.0.1:8787"
+rm "$rebind_root/opt/etc/xkeen-control/state/panel-update-active.json"
 make_listener_init "$rebind_root/opt/etc/init.d/S99xkeen-control"
 mkdir -p "$rebind_root/tmp/xkeen-control/panel-listener"
 printf '%s\n' '10.0.0.4:8787' > "$rebind_root/tmp/xkeen-control/panel-listener/candidate"
@@ -445,6 +522,7 @@ fi
 
 rebind_failure_root="$tmp/rebind-failure-root"
 setup_generation "$rebind_failure_root" "127.0.0.1:8787"
+rm "$rebind_failure_root/opt/etc/xkeen-control/state/panel-update-active.json"
 make_listener_init "$rebind_failure_root/opt/etc/init.d/S99xkeen-control"
 mkdir -p "$rebind_failure_root/tmp/xkeen-control/panel-listener"
 printf '%s\n' '10.0.0.4:8787' > "$rebind_failure_root/tmp/xkeen-control/panel-listener/candidate"
@@ -466,6 +544,7 @@ fi
 
 rebind_absence_root="$tmp/rebind-absence-root"
 setup_generation "$rebind_absence_root" ""
+rm "$rebind_absence_root/opt/etc/xkeen-control/state/panel-update-active.json"
 make_listener_init "$rebind_absence_root/opt/etc/init.d/S99xkeen-control"
 mkdir -p "$rebind_absence_root/tmp/xkeen-control/panel-listener"
 printf '%s\n' '10.0.0.4:8787' > "$rebind_absence_root/tmp/xkeen-control/panel-listener/candidate"
@@ -488,6 +567,7 @@ fi
 failure_root="$tmp/failure-root"
 setup_generation "$failure_root"
 make_binary "$failure_root/tmp/xkeen-control/panel-update/xkeen-control-linux-arm64" "9.9.9" "dddddddddddddddddddddddddddddddddddddddd" stable
+prepare_update_intent "$failure_root" arm64
 if PATH="$fakebin:$PATH" \
 	EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
 	XKEEN_CONTROL_TEST_MODE=1 \
@@ -501,6 +581,8 @@ grep -Fq '"version":"1.0.0"' "$failure_root/opt/etc/xkeen-control/state/installe
 
 # Reuse the actual lifecycle owner on the MIPS candidate/previous filenames.
 run_mips_updater() {
+    if [ "$2" = install ]; then prepare_update_intent "$1" mipsle; fi
+    if [ "$2" = rollback ] && [ -f "$1/opt/etc/xkeen-control/previous/panel/installed-release.json" ]; then prepare_rollback_intent "$1" mipsle; fi
     PATH="$fakebin:$PATH" EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
     XKEEN_CONTROL_TEST_MODE=1 XKEEN_CONTROL_TEST_ARCH=mipsle XKEEN_CONTROL_TEST_ROOT="$1" \
     sh "$ROOT/scripts/xkeen-control-updater" "$2"
@@ -509,6 +591,7 @@ for scenario in success failed-candidate; do
     mipsroot="$tmp/mips-$scenario"
     setup_generation "$mipsroot"
     mv "$mipsroot/tmp/xkeen-control/panel-update/xkeen-control-linux-arm64" "$mipsroot/tmp/xkeen-control/panel-update/xkeen-control-linux-mipsle"
+    prepare_update_intent "$mipsroot" mipsle
     native_before=$(sha256sum "$mipsroot/opt/etc/xkeen-control/secrets/nodes.json" "$mipsroot/opt/etc/xray/configs/04_outbounds.json")
     if [ "$scenario" = failed-candidate ]; then
         make_binary "$mipsroot/tmp/xkeen-control/panel-update/xkeen-control-linux-mipsle" 9.9.9 dddddddddddddddddddddddddddddddddddddddd stable
@@ -551,6 +634,7 @@ exit "${FIXTURE_ARCH_EXIT:-0}"
 EOF_MIPS_OPKG
     chmod 755 "$mipsroot/opt/bin/opkg"
     mv "$mipsroot/tmp/xkeen-control/panel-update/xkeen-control-linux-arm64" "$mipsroot/tmp/xkeen-control/panel-update/xkeen-control-linux-mipsle"
+    prepare_update_intent "$mipsroot" mipsle
     binary_before=$(sha256sum "$mipsroot/opt/sbin/xkeen-control")
     if PATH="$fakebin:$PATH" EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' \
         FIXTURE_ARCH_EXIT="$probe_exit" XKEEN_CONTROL_TEST_MODE=1 XKEEN_CONTROL_TEST_ARCH=probe \
@@ -565,3 +649,69 @@ EOF_MIPS_OPKG
     fi
 done
 echo 'MIPS updater production ABI probe success/nonzero-partial-output fixtures passed'
+
+# Receipt admission must fail before any service or installed artifact mutation.
+for refusal in interrupted malformed previous-drift manifest-drift helper-drift architecture; do
+	case_root="$tmp/intent-$refusal"
+	setup_generation "$case_root"
+	make_listener_init "$case_root/opt/etc/init.d/S99xkeen-control"
+	prepare_update_intent "$case_root" arm64
+	active="$case_root/opt/etc/xkeen-control/state/panel-update-active.json"
+	case "$refusal" in
+		interrupted) jq '.phase="starting"' "$active" > "$active.new"; mv "$active.new" "$active" ;;
+		malformed) printf '{invalid\n' > "$active" ;;
+		previous-drift) printf '\n# drift\n' >> "$case_root/opt/sbin/xkeen-control" ;;
+		manifest-drift) printf '\n' >> "$case_root/tmp/xkeen-control/panel-update/release-manifest.json" ;;
+		helper-drift) printf '\n# changed helper\n' >> "$case_root/tmp/xkeen-control/panel-update/xkeen-control-updater" ;;
+		architecture) jq '.architecture="mipsle"' "$active" > "$active.new"; mv "$active.new" "$active" ;;
+	esac
+	chmod 600 "$active"
+	before="$(installed_generation_digest "$case_root" arm64)"
+	if PATH="$fakebin:$PATH" EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' XKEEN_CONTROL_TEST_MODE=1 XKEEN_CONTROL_TEST_ROOT="$case_root" sh "$ROOT/scripts/xkeen-control-updater" install >/dev/null 2>&1; then
+		echo "unsafe $refusal intent admitted" >&2; exit 1
+	fi
+	[ "$before" = "$(installed_generation_digest "$case_root" arm64)" ]
+	[ -f "$active" ]
+	[ ! -e "$case_root/listener-start-count" ]
+	if [ "$refusal" != previous-drift ]; then [ ! -e "$case_root/listener-stop-count" ]; fi
+done
+echo 'Interrupted/malformed intent and previous-generation drift fixtures passed'
+
+for sequence in delayed intermittent; do
+	case_root="$tmp/readiness-$sequence"
+	setup_generation "$case_root"
+	make_listener_init "$case_root/opt/etc/init.d/S99xkeen-control"
+	make_listener_init "$case_root/tmp/xkeen-control/panel-update/S99xkeen-control"
+	prepare_update_intent "$case_root" arm64
+	PATH="$fakebin:$PATH" EXPECTED_HEALTH_URL='http://192.168.10.2:8787/healthz' FIXTURE_HEALTH_SEQUENCE="$sequence" XKEEN_CONTROL_TEST_MODE=1 XKEEN_CONTROL_TEST_ROOT="$case_root" sh "$ROOT/scripts/xkeen-control-updater" install
+	[ "$(cat "$case_root/listener-start-count")" -eq 1 ]
+	[ "$(cat "$case_root/listener-stop-count")" -eq 1 ]
+	[ "$(cat "$case_root/health-count")" -ge 4 ]
+	jq -e '.phase=="installed-verified" and .verified.version=="1.2.3"' "$case_root/opt/etc/xkeen-control/state/panel-update-result.json" >/dev/null
+done
+echo 'Delayed/intermittent health uses one start and verified terminal receipt fixtures passed'
+
+for capability in missing unsupported noop; do
+	case_root="$tmp/flock-$capability"
+	setup_generation "$case_root"
+	make_listener_init "$case_root/opt/etc/init.d/S99xkeen-control"
+	prepare_update_intent "$case_root" arm64
+	probe_bin="$case_root/tools"
+	mkdir "$probe_bin"
+	for tool in jq sha256sum awk stat timeout sh sync mktemp rm; do ln -s "$(command -v "$tool")" "$probe_bin/$tool"; done
+	ln -s /bin/true "$probe_bin/true"
+	if [ "$capability" != missing ]; then
+		code=1; [ "$capability" != noop ] || code=0
+		printf '#!/bin/sh\nexit %s\n' "$code" > "$probe_bin/flock"
+		chmod 755 "$probe_bin/flock"
+	fi
+	before="$(installed_generation_digest "$case_root" arm64)"
+	if PATH="$probe_bin" XKEEN_CONTROL_TEST_MODE=1 XKEEN_CONTROL_TEST_ROOT="$case_root" /bin/sh "$ROOT/scripts/xkeen-control-updater" install > "$case_root/refusal.log" 2>&1; then
+		echo "incompatible flock $capability admitted" >&2; exit 1
+	fi
+	grep -q 'flock' "$case_root/refusal.log"
+	[ "$before" = "$(installed_generation_digest "$case_root" arm64)" ]
+	[ ! -e "$case_root/listener-start-count" ] && [ ! -e "$case_root/listener-stop-count" ]
+	[ ! -e "$case_root/opt/etc/xkeen-control/state/panel-update-result.json" ]
+done
+echo 'Missing/unsupported/no-op flock refused before service actions'
