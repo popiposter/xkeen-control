@@ -10,7 +10,7 @@ Components and schedules use allowlisted native commands. Interactive prompts re
 
 ## Legacy independent LAN DNS
 
-[Issue #181](SIMPLE-DNS.md) removes this dependency from new setup. Existing installations must first detach their verified firmware/native consumers before stopping mosdns. The current source UI is read-only for legacy DNS; `POST /api/v1/dns/split/sync` returns 410 and cannot restart it. The finite deployed retirement operation and both-router acceptance are pending; do not manually remove its config or stop the service based on the fresh-setup changes.
+[Issue #181](SIMPLE-DNS.md) removes this dependency from new setup. Existing installations must first detach their verified firmware/native consumers before stopping mosdns. The current source UI is read-only for legacy DNS; `POST /api/v1/dns/split/sync` returns 410 and cannot restart it. Retirement on an existing router is a separate operator action with its own baseline and native/DNS readback; installing 0.4.9 alone does not perform it.
 
 An interrupted node/subscription transaction has a separate
 [offline typed recovery procedure](NODE-RECOVERY.md). Native-job inspection does
@@ -19,11 +19,11 @@ coherent current generation only when activation is admitted. A retained attempt
 activation instead needs explicit `verify-existing` in signed0.4.6 with fresh
 proof; never delete the marker or replay an unknown action.
 
-For existing installations, optional standard mosdns and a Keenetic DNS profile are installed/configured separately. The explicit [fresh `--setup` route](FRESH-KEENETIC.md) prepares them only within its restricted capability matrix. Keenetic retains LAN port53/local names; VPN DNS uses the existing loopback Xray SOCKS/native pool, DIRECT DoH is independent of Xray. VPN names have no DIRECT fallback. Do not replace all firmware DNS with an Xray-only listener.
+Older installations may have an optional mosdns service and Keenetic DNS profile. Published0.4.9 [fresh `--setup`](FRESH-KEENETIC.md) instead preserves ordinary Keenetic DNS and local names; it creates no separate resolver/profile or Xray DNS intercept. Existing custom DNS must be inspected on its own terms before retirement.
 
 The panel derives domain decisions from native configs and installed geosite files, preserving first-match order. IP/protocol/port/other conditional traffic rules do not become generic DNS rules. Pending sets postpone sync. Native success triggers reconciliation; a minute observer detects visible external source changes while panel runs. Last successful DNS generation continues if the panel stops; startup reconciles afterward.
 
-In published 0.4.8, Check and synchronize inspects exact current state. Unchanged effective policy avoids service restart; unsupported/drifting inputs keep an explicit failure. Interrupted activation is independently inspected without replay. Retain the bounded previous owned generation/config for recovery. Never use a successful later probe to relabel an earlier unknown operation.
+Historical signed0.4.8 offered Check and synchronize for the optional legacy resolver. Published0.4.9 makes that UI read-only and rejects new split-DNS synchronization. An interrupted older activation still needs independent inspection without replay; never use a successful later probe to relabel an earlier unknown operation.
 
 Historical [operator DNS qualification](qualification/independent-split-dns-2026-10-05.md) proved DIRECT/local availability with Xray stopped and protected-name failure without direct fallback. Its original static export procedure is superseded by [Issue125 integration](https://github.com/popiposter/xkeen-control/issues/125). Reboot, IPv6/all-provider outage and broader LAN failover remain separate [acceptance](ROADMAP.md).
 
@@ -35,7 +35,7 @@ For publication: exact reviewed remote main, available version/tag, protected Re
 
 ### Durable update outcomes (#162)
 
-Signed [0.4.8](RELEASES.md) retains the following commands and the #162 update
+Signed [0.4.9](RELEASES.md) retains the following commands and the #162 update
 contract introduced in 0.4.4. Published 0.4.3 does not provide them. Signed0.4.5
 capability checks and installation passed on KN1810. Signed0.4.6 installation
 also passed [independent readback](https://github.com/popiposter/xkeen-control/issues/168#issuecomment-6080313195).

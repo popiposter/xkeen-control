@@ -2,6 +2,21 @@
 
 ## Current release
 
+Signed stable [v0.4.9](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.9), published 2026-10-09T21:28:51Z, from independently reviewed source `771df6c35e303fa8842fb5c76503db62e1eec238`, tree `2190d50526fba595fc0f926d261fc407738fe778`, source epoch 1791580884.
+
+Protected [run37993030915](https://github.com/popiposter/xkeen-control/actions/runs/37993030915) passed hosted FULL and publication. Fresh unauthenticated downloads verified exactly ten assets, both pinned signatures/manifests, sizes/hashes, static ELF identity, MIPS soft-float and emulated version. Earlier run37991358440 failed before checkout because Docker Hub rate-limited the job image; it did not publish a tag or assets and was not replayed. [PR186](https://github.com/popiposter/xkeen-control/pull/186) pins the official Node image through the public ECR mirror; exact source review and local FULL bind `c3600cc8fdf8c8c2accb6df9bb2c9f60ea1cad82`, whose tree matches the released merge.
+
+| Binary | Bytes | SHA256 |
+| --- | ---: | --- |
+| linux/arm64 | 16,580,768 | `60f6b6b451e610009800ce1def4c94ea15de9c00e11025114a3419c02527b88d` |
+| linux/mipsle soft-float | 19,071,167 | `f30de1e938541927f31903355b78080f550b1de518745f2a969d2ce0840365ae` |
+
+[PR184](https://github.com/popiposter/xkeen-control/pull/184) fixes the MIPS manual speed test when the kernel omits `pswpout`, preserving fail-closed CPU/memory/swap pressure checks. Exact source review, local FULL and pre-release MIPS hardware telemetry admission passed. Signed0.4.9 installation on KN1810 is independently verified (`installed-verified`, matching binary/source and preserved Xray configuration). One bounded 4 MiB manual test completed all seven stages in 9.602 s without an error; Xray/API remained healthy and cron was restored. This establishes the tested node/path, not all-node throughput or fresh-install acceptance.
+
+The release also includes [PR182](https://github.com/popiposter/xkeen-control/pull/182): fresh setup now uses compact selective routing and ordinary Keenetic DNS without a mosdns install. Existing router DNS retirement is a separate operator action and is not performed by a panel update.
+
+## Previous stable 0.4.8
+
 Signed stable [v0.4.8](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.8), published 2026-10-09T14:40:11Z, from independently reviewed source `6796dbc3e4b914ba89a29ef9019cff9cb1a7f7c3`, tree `95870ad4fb5dadf07df7f3ac0a97708986002a40`, source epoch 1791556209.
 
 Protected [run37945046129](https://github.com/popiposter/xkeen-control/actions/runs/37945046129) passed exact-source hosted FULL and publication. Independent unauthenticated downloads verified all ten assets, both pinned signatures/manifests, hashes/sizes, static ABI and published MIPS soft-float startup under emulation.
@@ -65,16 +80,16 @@ Subsequent signed0.4.5 hardware capability checks and installation passed; node 
 Package targets:`linux/arm64` and `linux/mipsle` soft-float with confirmed Entware `mipsel-3.4`/`mipsel-3.4_kn`. For an existing stock XKeen/Xray with Entware, install only the panel. Existing KN1810 preparation and hardware limits are described in [MIPS Keenetic](MIPS-KEENETIC.md):
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.8/install.sh) && sh -c "$xkeen_installer"
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.9/install.sh) && sh -c "$xkeen_installer"
 ```
 
 For a genuinely new supported Ultra KN1811/5.01.C.6.0-1, one private IPv4 bridge/one WAN and no host/custom DNS exceptions, use the explicit guided mode:
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.8/install.sh) && sh -c "$xkeen_installer" -- --setup
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.9/install.sh) && sh -c "$xkeen_installer" -- --setup
 ```
 
-It privately imports the source, prepares stock2.1 native components, panel, mosdns and a validated reference generation, then assigns HOME last. [Fresh prerequisites, ordering and interrupted setup](FRESH-KEENETIC.md) govern this restricted route; it never patches native code or reinstalls existing components. Other firmware/model/topology support remains unavailable.
+It privately imports the source, prepares stock2.1 native components, the panel and compact selective routing with ordinary Keenetic DNS, then assigns HOME last. [Fresh prerequisites, ordering and interrupted setup](FRESH-KEENETIC.md) govern this restricted route; it never patches native code or reinstalls existing components. Other firmware/model/topology support remains unavailable.
 
 Initial panel password is printed once; existing authority is preserved by panel-only installation. Its default listener is loopback8787; guided setup chooses the exact discovered trusted HOME address. No WAN/wildcard listener. See [quick start](QUICKSTART-RU.md).
 

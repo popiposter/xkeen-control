@@ -5,12 +5,12 @@ KeeneticOS5.1.7, `uname -m: mips`, Entware `mipsel-3.4`/`mipsel-3.4_kn`,
 stock XKeen2.0.1 Beta/Xray26.7.28. Reported memory values indicate about249MiB
 RAM/105MiB available and1GiB swap; these are not panel hardware qualification.
 
-Signed stable [0.4.8](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.8)
+Signed stable [0.4.9](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.9)
 includes the MIPS soft-float panel. Source review, hosted FULL, exact ten-file
 public verification, both signatures and actual published MIPS emulated startup
 passed; see [release evidence](RELEASES.md). Signed0.4.5 installation and native
 preservation passed on KN1810; its node activation failed with retained intent.
-Signed0.4.6 and0.4.7 installation and their separately verified recovery settlements passed. A later automatic subscription transaction retained a new previous-branch readiness failure. Signed0.4.8 delivers the readiness repair, but its installation and new subscription transaction acceptance remain NOTRUN. Broader RSS/auth/PTY/LAN acceptance remains incomplete. Stable0.4.0
+Signed0.4.6 and0.4.7 installation and their separately verified recovery settlements passed. A later automatic subscription transaction retained a previous-branch readiness failure;0.4.8 delivered that repair. Signed0.4.9 installation and one bounded manual speed test passed on KN1810. A new subscription transaction under0.4.9 and broader RSS/auth/PTY/LAN acceptance remain incomplete. Stable0.4.0
 remains ARM64-only. No unsigned binary copy, architecture override, signature
 bypass or modification of0.4.0 assets. Fresh
 `--setup` remains unsupported for KN1810 and existing installations.
@@ -42,23 +42,23 @@ Only after the inventory and protected snapshot above, run the published
 panel-only installer:
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.8/install.sh) && sh -c "$xkeen_installer"
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.9/install.sh) && sh -c "$xkeen_installer"
 ```
 
 The initial installer trusts GitHub HTTPS and checks manifest/size/hash consistency;
 installed self-updates verify the pinned Ed25519 signature. Do not confuse these
 trust steps. After installation, `/opt/sbin/xkeen-control version --json` must
-report0.4.8/stable/source `6796dbc3e4b914ba89a29ef9019cff9cb1a7f7c3`.
+report0.4.9/stable/source `771df6c35e303fa8842fb5c76503db62e1eec238`.
 The MIPS binary SHA256 is
-`99679eaa7892131d42c57ba3f051a463f928212681c8a9f3238b8f3d2fb9ee26`.
+`f30de1e938541927f31903355b78080f550b1de518745f2a969d2ce0840365ae`.
 Keep private credentials and backup contents out of chat/public evidence.
 
-For an existing older panel helper, 0.4.8 provides the separate
+For an existing older panel helper, 0.4.9 provides the separate
 [verified maintenance delivery](OPERATIONS.md#durable-update-outcomes-162) path.
 The observed 0.4.3 attempt rolled back to 0.4.2; do not replay that old updater
-or treat a transient candidate version as successful installation. Actual 0.4.8
-installation and the next controlled subscription transaction remain NOTRUN;
-earlier signed installation/recovery evidence cannot settle the new marker.
+or treat a transient candidate version as successful installation. Actual 0.4.9
+installation and one bounded manual speed test passed; the next controlled
+subscription transaction under0.4.9 remains untested.
 
 ## Validation and prerequisite repair delivered in0.4.2 (#154)
 

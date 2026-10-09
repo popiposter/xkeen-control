@@ -1,6 +1,6 @@
 # Simple routing and ordinary Keenetic DNS
 
-[Issue #181](https://github.com/popiposter/xkeen-control/issues/181) is the reviewed transition contract. This is source work, not a claim that published 0.4.8 or either live router has already changed.
+[Issue #181](https://github.com/popiposter/xkeen-control/issues/181) is the reviewed transition contract. Published0.4.9 contains the fresh-setup changes. Existing routers were simplified by separate manual operator actions; a panel update alone does not retire their DNS service.
 
 Fresh setup keeps Keenetic DNS and local-name resolution. The native DNS reference is the empty official XKeen 2.1 template. It adds no mosdns process, DNS-over-VPN lists, custom DNS profile, or replacement resolver. Stock XKeen still owns interception and native configuration; its code is unmodified.
 
@@ -14,7 +14,7 @@ Retire one router at a time using its own baseline and supported typed operation
 
 Required order is dependency-driven: inspect pending operations; validate the complete native candidate; prove ordinary DNS availability; detach only the owned firmware/native DNS consumers with runtime and persisted readback; then stop the identified mosdns service and disable its autostart. Keep the bounded previous state until successful client verification. Unknown outcomes require inspection, never repeated Apply or service commands.
 
-The finite retirement CLI, durable retirement gate and both-router serving acceptance are the next slice. They are not delivered by the fresh-setup changes alone. Existing mosdns must stay available until its consumers are detached. No blanket package uninstall, firewall rewrite, reboot, or WAN exposure is part of this transition.
+Existing mosdns must stay available until its consumers are detached. Manual retirement follows the inspected dependency order above; no blanket package uninstall, firewall rewrite, reboot, or WAN exposure is part of it. Fresh-setup changes do not provide an automatic migration of existing installations.
 
 ## Hardware evidence
 
