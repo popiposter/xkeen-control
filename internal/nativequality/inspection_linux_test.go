@@ -18,6 +18,7 @@ type inspectionControl struct {
 	rules       []xrayapi.Rule
 	unavailable bool
 	removeFails bool
+	removeNoop  bool
 	removals    int
 }
 
@@ -31,6 +32,9 @@ func (c *inspectionControl) RemoveRule(_ context.Context, tag string) error {
 		return ErrUnavailable
 	}
 	c.removals++
+	if c.removeNoop {
+		return nil
+	}
 	for i, rule := range c.rules {
 		if rule.RuleTag == tag {
 			c.rules = append(c.rules[:i], c.rules[i+1:]...)
@@ -121,6 +125,22 @@ func TestExplicitQualityInspectionRequiresConcreteReadbacks(t *testing.T) {
 		t.Fatal("failed cleanup lost fence", err)
 	}
 	control.removeFails = false
+	control.removeNoop = true
+	if err := restarted.InspectAndResolve(context.Background()); err == nil {
+		t.Fatal("reported successful but ineffective probe removal cleared inspection")
+	}
+	if q, err := quotaState(s.QuotaPath, time.Now().UTC()); err != nil || !q.InspectionRequired {
+		t.Fatal("ineffective removal lost fence", err)
+	}
+	control.removeNoop = false
+	control.rules = append(control.rules, xrayapi.Rule{RuleTag: "xkeen-control-probe-unknown"})
+	if err := restarted.InspectAndResolve(context.Background()); err == nil {
+		t.Fatal("unknown panel probe rule cleared inspection")
+	}
+	if q, err := quotaState(s.QuotaPath, time.Now().UTC()); err != nil || !q.InspectionRequired {
+		t.Fatal("unknown panel probe rule lost fence", err)
+	}
+	control.rules = nil // Simulate separate inspected removal of the unknown rule.
 	if err := restarted.InspectAndResolve(context.Background()); err != nil {
 		t.Fatal("inspected native state did not settle", err)
 	}

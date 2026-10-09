@@ -2,6 +2,7 @@ package nativequality
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -10,7 +11,7 @@ import (
 // configuration, lifecycle and temporary probe state. It does not retry Apply,
 // assert that the previous recommendation won, or clear an unknown native job.
 func (s *Service) InspectAndResolve(parent context.Context) error {
-	if s.Editor == nil || s.Jobs == nil || s.Lease == nil || s.Reader == nil || s.Probe == nil || s.Nodes == nil || s.Resources == nil || !s.profile().Constrained || !s.profile().Automatic {
+	if s.Editor == nil || s.Jobs == nil || s.Lease == nil || s.Reader == nil || s.Probe == nil || s.Control == nil || s.Nodes == nil || s.Resources == nil || !s.profile().Constrained || !s.profile().Automatic {
 		return ErrUnavailable
 	}
 	path := s.QuotaPath
@@ -55,6 +56,15 @@ func (s *Service) InspectAndResolve(parent context.Context) error {
 	// Control.RemoveRule would leave its in-memory blocked gate set.
 	if err := s.Probe.Reconcile(ctx); err != nil || s.Probe.Blocked() {
 		return ErrUnavailable
+	}
+	rules, err := s.Control.ListRules(ctx)
+	if err != nil {
+		return ErrUnavailable
+	}
+	for _, rule := range rules {
+		if strings.HasPrefix(rule.RuleTag, "xkeen-control-probe-") {
+			return ErrUnavailable
+		}
 	}
 	pool, _, err := routingPool(before.Documents["05_routing.json"].Text, s.Nodes(ctx), before.Targets)
 	if err != nil || len(pool) < 2 {
