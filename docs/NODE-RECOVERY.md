@@ -1,6 +1,6 @@
 # Offline recovery of an interrupted node operation
 
-## Ordinary transaction proof (#171; source qualification pending)
+## Ordinary transaction proof (#171; signed 0.4.7, installation pending)
 
 Node changes and explicit runtime reconciliation now use the same protected
 receipt and completion fence as offline recovery. A receipt distinguishes the
