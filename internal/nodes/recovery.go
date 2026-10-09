@@ -126,7 +126,7 @@ func readRecoveryReceiptIdentity(dir string) (*recoveryReceipt, string, error) {
 	if (r.Phase == "verified" || r.Phase == "completed") && !recoveryHex(r.RuntimeAfter) && !(r.Branch == "metadata" && r.RuntimeAfter == "stopped") {
 		return nil, "", ErrNodeRecoveryRequired
 	}
-	if !validRecoveryStage(r.Stage) || (r.Reason != "" && r.Reason != "failed" && r.Reason != "unknown" && r.Reason != "deadline" && r.Reason != "canceled") {
+	if !validRecoveryStage(r.Stage) || !validRecoveryReason(r.Stage, r.Reason) {
 		return nil, "", ErrNodeRecoveryRequired
 	}
 	if r.Owner != "" && r.Owner != "transaction" && r.Owner != "recovery" {
@@ -176,7 +176,21 @@ func validRecoveryPhase(s string) bool {
 	}
 	return false
 }
+func validRecoveryReason(stage, reason string) bool {
+	switch reason {
+	case "", "failed", "unknown", "deadline", "canceled":
+		return true
+	case "unavailable", "unsupported", "permission", "protocol":
+		return stage == "readiness"
+	}
+	return false
+}
 func validFailureCode(s string) bool {
+	for _, reason := range []string{"unavailable", "unsupported", "permission", "protocol"} {
+		if s == "readiness:"+reason {
+			return true
+		}
+	}
 	for _, stage := range []string{"commit", "restart", "readiness", "inventory", "post-runtime", "generation-drift", "restore", "settlement"} {
 		for _, reason := range []string{"failed", "unknown", "deadline", "canceled"} {
 			if s == stage+":"+reason {
@@ -667,7 +681,11 @@ func (m *Manager) RecoverCurrent(ctx context.Context, digest string, runtime Rec
 	}
 	cancelActivation()
 	if err != nil {
-		return fail(receipt.Stage, "unknown")
+		reason := "unknown"
+		if receipt.Stage == "readiness" {
+			reason = failureReason(receipt.Stage, err)
+		}
+		return fail(receipt.Stage, reason)
 	}
 	after, err := m.recoverySnapshot(ctx, runtime)
 	if err != nil || after.runtime == s.runtime || after.runtime == "stopped" || after.runtime != receipt.RuntimeAfter {

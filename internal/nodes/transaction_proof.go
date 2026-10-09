@@ -211,14 +211,7 @@ func (j *transactionJournal) failure(stage string, cause error) error {
 	if j == nil {
 		return cause
 	}
-	j.r.Reason = "failed"
-	if errors.Is(cause, xkeen.ErrLifecycleUnknown) {
-		j.r.Reason = "unknown"
-	} else if errors.Is(cause, context.DeadlineExceeded) {
-		j.r.Reason = "deadline"
-	} else if errors.Is(cause, context.Canceled) {
-		j.r.Reason = "canceled"
-	}
+	j.r.Reason = failureReason(stage, cause)
 	if j.r.Branch == "previous" {
 		j.r.RollbackFailure = stage + ":" + j.r.Reason
 	} else if validFailureCode(stage + ":" + j.r.Reason) {
@@ -427,11 +420,8 @@ func (t Transaction) commitTracked(ctx context.Context, registry Registry, rende
 		return errors.Join(ErrNodeRecoveryRequired, err)
 	}
 	if j != nil {
-		j.r.ActivationFailure = stage + ":failed"
+		j.r.ActivationFailure = stage + ":" + failureReason(stage, err)
 		j.r.ActivationElapsedMS = time.Since(j.stageStarted).Milliseconds()
-		if errors.Is(err, context.DeadlineExceeded) {
-			j.r.ActivationFailure = stage + ":deadline"
-		}
 		j.r.GenerationProof = "" // previous files have not been proven yet
 		j.r.Branch = "previous"
 		if e := j.write("restoring", "restore"); e != nil {

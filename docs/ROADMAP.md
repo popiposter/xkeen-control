@@ -63,9 +63,14 @@ signature verification passed. Signed0.4.6 installation and the original
 settlement passed [hardware readback](https://github.com/popiposter/xkeen-control/issues/168#issuecomment-6080313195).
 A later automatic node transaction has a different unresolved marker.
 [#171 ordinary transaction proof](https://github.com/popiposter/xkeen-control/issues/171)
-is delivered in PR172 and signed0.4.7, with test-only qualification repairs in PR174/#173. Independent source review, local/hosted FULL and public signature verification passed. Signed0.4.7 installation and new legacy recovery remain pending.
-The resource experiment stopped before Save/Apply and has not demonstrated a
-controlled benefit yet.
+is delivered in PR172 and signed0.4.7, with test-only qualification repairs in PR174/#173. Independent source review, local/hosted FULL and public signature verification passed. Signed0.4.7 installation and the separately approved recovery settlement passed [hardware readback](https://github.com/popiposter/xkeen-control/issues/171#issuecomment-6082322961).
+A later automatic subscription transaction retained a new previous-branch
+readiness failure. [#176](https://github.com/popiposter/xkeen-control/issues/176)
+tracks bounded in-process readiness and truthful failure classification; live
+subscription acceptance remains pending. The Observatory experiment applied,
+but its first resource sample overlapped that automatic transaction. Later quiet
+measurements are observational, not controlled causal proof; see the
+[resource follow-up](https://github.com/popiposter/xkeen-control/issues/157#issuecomment-6082714508).
 
 [#157 router resources](https://github.com/popiposter/xkeen-control/issues/157)
 is delivered in [PR159](https://github.com/popiposter/xkeen-control/pull/159): constrained diagnostic budgets, pressure admission,
@@ -79,8 +84,10 @@ FULL and independent verification of all ten public assets and both signatures.
 
 Issues #157, #158, #162, #165 and #168 retain their separate hardware evidence. [Resource evidence and limits](ROUTER-RESOURCES.md)
 separate short observations from controlled hardware proof. The KN1810 configuration
-experiment still requires actual signed node recovery; publication does not settle
-its interrupted operation. The 0.4.3 update attempt failed and rolled back to 0.4.2; its terminal cause remains unknown. Signed0.4.5 installation passed, but its single node activation failed and retained activation-intent. Later working VPN/API/DNS observations do not settle it. Controlled load
+experiment has completed its prerequisite recovery and one typed config Apply;
+publication alone did not establish either result. Historical 0.4.3 and 0.4.5
+attempts retain their original failed outcomes. The newer automatic transaction
+remains unresolved despite working VPN/API observations. Controlled load
 comparison and independent client acceptance remain incomplete. Expanded diagnostics #138 remain
 deferred until the resource and hardware gates are satisfied.
 
