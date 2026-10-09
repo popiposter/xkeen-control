@@ -1,8 +1,8 @@
 # Установка на новый Keenetic
 
-> В стабильном 0.4.9 новая установка использует [обычный DNS Keenetic и компактный роутинг](SIMPLE-DNS.md). Обновление панели само по себе не удаляет прежний независимый DNS на существующих роутерах.
+> В стабильном 0.4.10 новая установка использует [обычный DNS Keenetic и компактный роутинг](SIMPLE-DNS.md). Обновление панели само по себе не удаляет прежний независимый DNS на существующих роутерах.
 
-Стабильный [0.4.9](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.9) содержит отдельный режим `--setup`: подписка/узел, штатный XKeen и Xray, панель, обычный DNS Keenetic и компактный selective routing. Он подключает всю HOME-сеть после проверок готовности. Для существующей установки используйте [установку только панели](QUICKSTART-RU.md), без `--setup`. MIPS-пакет панели не расширяет матрицу fresh setup.
+Стабильный [0.4.10](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.10) содержит отдельный режим `--setup`: подписка/узел, штатный XKeen и Xray, панель, обычный DNS Keenetic и компактный selective routing. Он подключает всю HOME-сеть после проверок готовности. Для существующей установки используйте [установку только панели](QUICKSTART-RU.md), без `--setup`. MIPS-пакет панели не расширяет матрицу fresh setup.
 
 ## Поддержанный начальный вариант
 
@@ -20,7 +20,7 @@
 Выполните из root SSH-сессии на поддержанном новом роутере:
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.9/install.sh) && sh -c "$xkeen_installer" -- --setup
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.10/install.sh) && sh -c "$xkeen_installer" -- --setup
 ```
 
 По запросу вставьте одну ссылку на подписку или поддержанный VLESS-узел. Ввод скрыт; ссылка не передаётся в argv/env и публичные логи. Не добавляйте её в команду. Пустой или ошибочный источник, недоступные зависимости и неизвестное состояние не разрешают подключение HOME.
@@ -54,4 +54,4 @@ xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/release
 
 ## Что уже проверено
 
-Source review и защищённый hosted FULL точного источника0.4.9, оба подписанных манифеста и десять публичных файлов проверены; локальный FULL предыдущих PR HEAD учтён отдельно в [релизном отчёте](RELEASES.md). Само выполнение fresh setup на аппаратном роутере, независимый LAN/IPv6 и отказ upstream остаются **NOTRUN**, [issue148](https://github.com/popiposter/xkeen-control/issues/148). Установка только панели 0.4.9 на действующем KN1810 не доказывает fresh setup; для его приёмки нужен отдельный новый роутер.
+Source review и защищённый hosted FULL точного источника0.4.10, оба подписанных манифеста и десять публичных файлов проверены; локальный FULL предыдущих PR HEAD учтён отдельно в [релизном отчёте](RELEASES.md). Само выполнение fresh setup на аппаратном роутере, независимый LAN/IPv6 и отказ upstream остаются **NOTRUN**, [issue148](https://github.com/popiposter/xkeen-control/issues/148). Установка только панели 0.4.10 на действующем KN1810 не доказывает fresh setup; для его приёмки нужен отдельный новый роутер.

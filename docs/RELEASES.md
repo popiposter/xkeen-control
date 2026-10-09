@@ -2,6 +2,19 @@
 
 ## Current release
 
+Signed stable [v0.4.10](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.10), published 2026-10-09T23:08:58Z, from independently reviewed source `2f91286af6738a101daa5b0de1b90deb378bc649`, tree `46d2537955d486ec076904c37bb519e09430bcb2`, source epoch 1791586859.
+
+Protected [run38002356078](https://github.com/popiposter/xkeen-control/actions/runs/38002356078) passed hosted FULL and publication. Fresh unauthenticated downloads verified exactly ten assets, both source-pinned signatures/manifests, hashes/sizes, static ELF/MIPS soft-float identity and the published MIPS version under emulation.
+
+| Binary | Bytes | SHA256 |
+| --- | ---: | --- |
+| linux/arm64 | 16,646,304 | `880ee2b15f90566c8e38e330e2d5f84c0d5589108be4ca8e6c58498ec8e92e00` |
+| linux/mipsle soft-float | 19,202,239 | `e7cc6820e856ed9035339c26844fd0b0633e47b90be4a3e5a8baefdbfdde4603` |
+
+[PR189](https://github.com/popiposter/xkeen-control/pull/189) delivers [#188](https://github.com/popiposter/xkeen-control/issues/188): bounded sequential MIPS speed comparisons of fresh eligible nodes and automatic application of a complete, sufficiently valid pool. Exact-HEAD local FULL and independent review passed. A separate disposable MIPS test binary ran the synthetic sweep fixtures on KN1810 before release; that proved algorithm execution, not a live sweep. The signed0.4.10 panel is installed on KN1810 with matching binary/source/receipt, healthy panel and preserved Xray/native configuration. Live automatic sweep and Apply acceptance are pending separate observation.
+
+## Previous stable 0.4.9
+
 Signed stable [v0.4.9](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.9), published 2026-10-09T21:28:51Z, from independently reviewed source `771df6c35e303fa8842fb5c76503db62e1eec238`, tree `2190d50526fba595fc0f926d261fc407738fe778`, source epoch 1791580884.
 
 Protected [run37993030915](https://github.com/popiposter/xkeen-control/actions/runs/37993030915) passed hosted FULL and publication. Fresh unauthenticated downloads verified exactly ten assets, both pinned signatures/manifests, sizes/hashes, static ELF identity, MIPS soft-float and emulated version. Earlier run37991358440 failed before checkout because Docker Hub rate-limited the job image; it did not publish a tag or assets and was not replayed. [PR186](https://github.com/popiposter/xkeen-control/pull/186) pins the official Node image through the public ECR mirror; exact source review and local FULL bind `c3600cc8fdf8c8c2accb6df9bb2c9f60ea1cad82`, whose tree matches the released merge.
@@ -80,13 +93,13 @@ Subsequent signed0.4.5 hardware capability checks and installation passed; node 
 Package targets:`linux/arm64` and `linux/mipsle` soft-float with confirmed Entware `mipsel-3.4`/`mipsel-3.4_kn`. For an existing stock XKeen/Xray with Entware, install only the panel. Existing KN1810 preparation and hardware limits are described in [MIPS Keenetic](MIPS-KEENETIC.md):
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.9/install.sh) && sh -c "$xkeen_installer"
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.10/install.sh) && sh -c "$xkeen_installer"
 ```
 
 For a genuinely new supported Ultra KN1811/5.01.C.6.0-1, one private IPv4 bridge/one WAN and no host/custom DNS exceptions, use the explicit guided mode:
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.9/install.sh) && sh -c "$xkeen_installer" -- --setup
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.10/install.sh) && sh -c "$xkeen_installer" -- --setup
 ```
 
 It privately imports the source, prepares stock2.1 native components, the panel and compact selective routing with ordinary Keenetic DNS, then assigns HOME last. [Fresh prerequisites, ordering and interrupted setup](FRESH-KEENETIC.md) govern this restricted route; it never patches native code or reinstalls existing components. Other firmware/model/topology support remains unavailable.

@@ -4,7 +4,7 @@ This is the current sequencing/status authority. Issues contain detailed task co
 
 ## Delivered
 
-**Stable0.4.9 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, guided fresh setup #145/PR147, MIPS panel delivery #150/PR151 and compact fresh routing #181/PR182 are delivered. #183/PR184 fixes MIPS speed telemetry, and #185/PR186 pins the protected release image after a failed Docker Hub pull. [Release evidence](RELEASES.md) binds the exact source and public bytes. Signed0.4.9 installation and a bounded manual speed test passed on KN1810; fresh setup remains untested.
+**Stable0.4.10 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, guided fresh setup #145/PR147, MIPS panel delivery #150/PR151 and compact fresh routing #181/PR182 are delivered. #183/PR184 fixes MIPS speed telemetry, #185/PR186 pins the protected release image, and #188/PR189 adds bounded MIPS automatic pool review. [Release evidence](RELEASES.md) binds the exact source and public bytes. Signed0.4.10 installation passed on KN1810; a bounded manual test passed under0.4.9. Live automatic sweep/Apply and fresh setup remain untested.
 
 - Stock XKeen owns installation, components/interception, service and cron; its code stays unmodified.
 - Native jobs/private console, Form/Text config editors and shared pending/Apply/Discard/previous restore.
@@ -31,25 +31,27 @@ The first adapter is restricted to the observed KN1811/5.01.C.6.0-1 CLI family;
 unsupported topology/schema stops before provisioning. Stock commands remain
 installation/update owners. [PR147](https://github.com/popiposter/xkeen-control/pull/147)
 records independent exact-source review and exact FULL evidence separately.
-Stable0.4.9 retains the installer/CLI; protected hosted FULL and independent
+Stable0.4.10 retains the installer/CLI; protected hosted FULL and independent
 ten-public-asset/both-signature verification passed. Fresh hardware acceptance remains
 [NOTRUN](https://github.com/popiposter/xkeen-control/issues/148). Source delivery
 does not certify fresh installation or client/outage behavior.
 
-## DNS simplification in development
+## DNS simplification delivered for fresh setup
 
 [#181](https://github.com/popiposter/xkeen-control/issues/181) replaces the heavy reference with compact selective routing and ordinary Keenetic DNS. Published0.4.9 changes fresh setup and removes split-DNS creation/synchronization from the UI. Existing installations require separate DNS retirement; manual operator changes on two routers do not establish automatic migration or fresh-install acceptance. [Transition boundaries](SIMPLE-DNS.md).
 
 PR180 remains held: the compact hardware constructor completed in 16.243 s, but that is not serving or retirement acceptance and does not justify releasing a timeout change first.
 
-## MIPS automatic pool review in development
+## MIPS automatic pool review delivered; live acceptance pending
 
-[#188](https://github.com/popiposter/xkeen-control/issues/188) addresses the
-gap between the three-node constrained manual sample and the operator's desired
-automatic pool update after subscription refresh. It specifies sequential
-bounded batches, complete fresh eligible-node coverage, a rolling traffic quota
-and one verified native Apply. Signed0.4.9 proves a manual MIPS speed test, not
-this automatic sweep or application; current live routing remains unchanged.
+[#188](https://github.com/popiposter/xkeen-control/issues/188) closes the source
+gap between the three-node constrained manual sample and automatic pool updates
+after subscription refresh. Signed0.4.10 contains sequential bounded batches,
+complete fresh eligible-node coverage, a rolling traffic quota and at most one
+verified native Apply per complete review. Independent review, exact-HEAD FULL,
+MIPS synthetic hardware execution, public signature verification and signed
+KN1810 installation passed. The synthetic test did not access live nodes; live
+automatic sweep/Apply and resource acceptance still require separate readback.
 
 ## Remaining acceptance
 
