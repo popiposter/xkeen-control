@@ -4,7 +4,7 @@ This is the current sequencing/status authority. Issues contain detailed task co
 
 ## Delivered
 
-**Stable0.4.8 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, DNS integration #125/PR126, guided fresh setup #145/PR147 and MIPS panel delivery #150/PR151 are delivered. PR128/130 corrected release dependency/fixture gates; [release evidence](RELEASES.md) binds the exact source and public bytes.
+**Stable0.4.9 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, guided fresh setup #145/PR147, MIPS panel delivery #150/PR151 and compact fresh routing #181/PR182 are delivered. #183/PR184 fixes MIPS speed telemetry, and #185/PR186 pins the protected release image after a failed Docker Hub pull. [Release evidence](RELEASES.md) binds the exact source and public bytes. Signed0.4.9 installation and a bounded manual speed test passed on KN1810; fresh setup remains untested.
 
 - Stock XKeen owns installation, components/interception, service and cron; its code stays unmodified.
 - Native jobs/private console, Form/Text config editors and shared pending/Apply/Discard/previous restore.
@@ -29,14 +29,14 @@ The first adapter is restricted to the observed KN1811/5.01.C.6.0-1 CLI family;
 unsupported topology/schema stops before provisioning. Stock commands remain
 installation/update owners. [PR147](https://github.com/popiposter/xkeen-control/pull/147)
 records independent exact-source review and exact FULL evidence separately.
-Stable0.4.8 retains the installer/CLI; protected hosted FULL and independent
+Stable0.4.9 retains the installer/CLI; protected hosted FULL and independent
 ten-public-asset/both-signature verification passed. Fresh hardware acceptance remains
 [NOTRUN](https://github.com/popiposter/xkeen-control/issues/148). Source delivery
 does not certify fresh installation or client/outage behavior.
 
 ## DNS simplification in development
 
-[#181](https://github.com/popiposter/xkeen-control/issues/181) replaces the heavy reference with compact selective routing and ordinary Keenetic DNS. Slice A changes fresh setup and removes split-DNS creation/synchronization from the UI; deployed retirement and both-router client acceptance remain pending. Published 0.4.8 still has the previous implementation. [Transition boundaries](SIMPLE-DNS.md).
+[#181](https://github.com/popiposter/xkeen-control/issues/181) replaces the heavy reference with compact selective routing and ordinary Keenetic DNS. Published0.4.9 changes fresh setup and removes split-DNS creation/synchronization from the UI. Existing installations require separate DNS retirement; manual operator changes on two routers do not establish automatic migration or fresh-install acceptance. [Transition boundaries](SIMPLE-DNS.md).
 
 PR180 remains held: the compact hardware constructor completed in 16.243 s, but that is not serving or retirement acceptance and does not justify releasing a timeout change first.
 
