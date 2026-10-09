@@ -4,7 +4,7 @@ This is the current sequencing/status authority. Issues contain detailed task co
 
 ## Delivered
 
-**Stable0.4.7 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, DNS integration #125/PR126, guided fresh setup #145/PR147 and MIPS panel delivery #150/PR151 are delivered. PR128/130 corrected release dependency/fixture gates; [release evidence](RELEASES.md) binds the exact source and public bytes.
+**Stable0.4.8 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, DNS integration #125/PR126, guided fresh setup #145/PR147 and MIPS panel delivery #150/PR151 are delivered. PR128/130 corrected release dependency/fixture gates; [release evidence](RELEASES.md) binds the exact source and public bytes.
 
 - Stock XKeen owns installation, components/interception, service and cron; its code stays unmodified.
 - Native jobs/private console, Form/Text config editors and shared pending/Apply/Discard/previous restore.
@@ -29,7 +29,7 @@ The first adapter is restricted to the observed KN1811/5.01.C.6.0-1 CLI family;
 unsupported topology/schema stops before provisioning. Stock commands remain
 installation/update owners. [PR147](https://github.com/popiposter/xkeen-control/pull/147)
 records independent exact-source review and exact FULL evidence separately.
-Stable0.4.7 retains the installer/CLI; protected hosted FULL and independent
+Stable0.4.8 retains the installer/CLI; protected hosted FULL and independent
 ten-public-asset/both-signature verification passed. Fresh hardware acceptance remains
 [NOTRUN](https://github.com/popiposter/xkeen-control/issues/148). Source delivery
 does not certify fresh installation or client/outage behavior.
@@ -66,8 +66,10 @@ A later automatic node transaction has a different unresolved marker.
 is delivered in PR172 and signed0.4.7, with test-only qualification repairs in PR174/#173. Independent source review, local/hosted FULL and public signature verification passed. Signed0.4.7 installation and the separately approved recovery settlement passed [hardware readback](https://github.com/popiposter/xkeen-control/issues/171#issuecomment-6082322961).
 A later automatic subscription transaction retained a new previous-branch
 readiness failure. [#176](https://github.com/popiposter/xkeen-control/issues/176)
-tracks bounded in-process readiness and truthful failure classification; live
-subscription acceptance remains pending. The Observatory experiment applied,
+is delivered in [PR177](https://github.com/popiposter/xkeen-control/pull/177)
+and signed0.4.8: bounded in-process readiness and truthful failure classification.
+Independent review, local/hosted FULL and public verification passed; signed0.4.8
+installation and a new subscription transaction remain pending. The Observatory experiment applied,
 but its first resource sample overlapped that automatic transaction. Later quiet
 measurements are observational, not controlled causal proof; see the
 [resource follow-up](https://github.com/popiposter/xkeen-control/issues/157#issuecomment-6082714508).

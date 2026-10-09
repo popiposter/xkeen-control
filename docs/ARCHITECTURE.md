@@ -1,7 +1,7 @@
 # Architecture
 
 The current product is a graphical shell alongside **unmodified stock XKeen**.
-Stable v0.4.7 is published; [release verification](RELEASES.md) and [remaining acceptance](ROADMAP.md) are separate.
+Stable v0.4.8 is published; [release verification](RELEASES.md) and [remaining acceptance](ROADMAP.md) are separate.
 
 ## Ownership
 

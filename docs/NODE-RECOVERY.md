@@ -1,6 +1,6 @@
 # Offline recovery of an interrupted node operation
 
-## Readiness follow-up (#176; source, not yet released)
+## Readiness follow-up (#176; signed 0.4.8)
 
 Node transactions and offline recovery use the same in-process, read-only
 `RoutingService.ListRule` readiness check. It retains the 30-second phase budget
@@ -12,7 +12,9 @@ validation, native lifecycle calls, inventory and generation proof stay separate
 Receipts retain safe readiness classes for deadline, cancellation, unavailable
 service, unsupported RPC, permission and protocol failures. Raw RPC details and
 rule contents are not recorded. Successful later verification preserves the
-original activation/rollback failure. These source changes do not establish the
+original activation/rollback failure. Signed [0.4.8](RELEASES.md) passed independent source review, hosted FULL and
+public verification; installation and a new subscription transaction remain
+pending. These changes do not establish the
 cause of earlier hardware failures or prove successful subscription activation.
 
 ## Ordinary transaction proof (#171; signed 0.4.7)
