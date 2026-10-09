@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -116,7 +118,15 @@ func main() {
 		return
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "nodes" {
-		close, err := initialsetup.Normal()
+		guard := initialsetup.Normal
+		if len(os.Args) > 2 && os.Args[2] == "recovery" {
+			if !validRecoveryArgs(os.Args[3:]) {
+				log.Print("usage: nodes recovery {inspect|activate-current --digest SHA256}")
+				os.Exit(2)
+			}
+			guard = initialsetup.Maintenance
+		}
+		close, err := guard()
 		if err != nil {
 			log.Print(err)
 			os.Exit(1)
@@ -200,6 +210,9 @@ func main() {
 	adaptiveRunner.Resources = resources
 	coordinator.SetAdaptiveRunner(adaptiveRunner)
 	authorityLease := authority.NewLease()
+	if nodes.RecoveryNeedsInspection(getenv("XKEEN_NODE_PREVIOUS_DIR", defaultNodePreviousDir)) {
+		authorityLease.Block()
+	}
 	panelLifecycle := panelLifecycle{coordinator: coordinator, lease: authorityLease}
 	listenerService := panellistener.NewService(panellistener.Config{
 		FilePath:   listenerFile,
@@ -440,6 +453,26 @@ func runNodesCommand(args []string) error {
 		return errors.New("usage: xkeen-control nodes {validate|render --output PATH|reconcile-runtime}")
 	}
 	switch args[0] {
+	case "recovery":
+		if !validRecoveryArgs(args[1:]) {
+			return errors.New("usage: nodes recovery {inspect|activate-current --digest SHA256}")
+		}
+		configDir := getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir)
+		manager = newNodeManager(nil, authority.NewLease(), &xkeen.ConfigEditor{PreviousDir: getenv("XKEEN_NATIVE_CONFIG_PREVIOUS_DIR", "/opt/etc/xkeen-control/previous/native-config")})
+		runtime := nodes.ProcessRecoveryRuntime{Binary: getenv("XKEEN_XRAY_BINARY", "/opt/sbin/xray"), ConfigDir: configDir, ReceiptPath: getenv("XKEEN_NATIVE_JOB_RECEIPT", "/opt/etc/xkeen-control/state/native-jobs/last-job.json")}
+		ctx, cancel := context.WithTimeout(context.Background(), nodes.DefaultTransactionTimeout)
+		defer cancel()
+		if args[1] == "inspect" {
+			value, err := manager.InspectRecovery(ctx, runtime)
+			if err != nil {
+				return errors.New("node recovery inspection unavailable; inspect pending state and quiesce competing processes")
+			}
+			return json.NewEncoder(os.Stdout).Encode(value)
+		}
+		if err := manager.RecoverCurrent(ctx, args[3], runtime); err != nil {
+			return errors.New("node recovery not completed; inspect durable state, do not retry activation")
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]string{"state": "completed", "action": "activate-current"})
 	case "validate":
 		if err := manager.ValidateStored(); err != nil {
 			return errors.New("node registry validation failed")
@@ -469,6 +502,17 @@ func runNodesCommand(args []string) error {
 	default:
 		return errors.New("usage: xkeen-control nodes {validate|render --output PATH|reconcile-runtime}")
 	}
+}
+
+func validRecoveryArgs(args []string) bool {
+	if len(args) == 1 && args[0] == "inspect" {
+		return true
+	}
+	if len(args) != 3 || args[0] != "activate-current" || args[1] != "--digest" || len(args[2]) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(args[2])
+	return err == nil && strings.ToLower(args[2]) == args[2]
 }
 
 func writeCLIOutput(path string, contents []byte) error {

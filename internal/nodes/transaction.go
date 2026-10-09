@@ -88,6 +88,9 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 		t.PreviousDir = filepath.Join(filepath.Dir(t.Store.Path), "previous")
 	}
 	pendingPath := filepath.Join(t.PreviousDir, ".pending")
+	if recoveryUnsettled(t.PreviousDir) {
+		return ErrNodeRecoveryRequired
+	}
 	if _, checkErr := os.Lstat(pendingPath); !errors.Is(checkErr, os.ErrNotExist) {
 		return ErrNodeRecoveryRequired
 	}

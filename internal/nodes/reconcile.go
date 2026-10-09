@@ -48,6 +48,9 @@ func (m *Manager) ReconcileRuntime(ctx context.Context) (resultErr error) {
 	if _, err := os.Lstat(filepath.Join(previousDir, ".pending")); !errors.Is(err, os.ErrNotExist) {
 		return ErrNodeRecoveryRequired
 	}
+	if recoveryUnsettled(previousDir) {
+		return ErrNodeRecoveryRequired
+	}
 	registry, err := m.store.Load()
 	if err != nil {
 		return errors.New("node registry unavailable")

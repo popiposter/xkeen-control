@@ -37,13 +37,19 @@ does not certify fresh installation or client/outage behavior.
 ## Remaining acceptance
 
 [#157 router resources](https://github.com/popiposter/xkeen-control/issues/157)
-is in source implementation: constrained diagnostic budgets, pressure admission,
+is merged in [PR159](https://github.com/popiposter/xkeen-control/pull/159): constrained diagnostic budgets, pressure admission,
 native schedule conflict reporting and preservation of routing criteria.
 [Resource evidence and limits](ROUTER-RESOURCES.md) separate short observations
 from hardware acceptance. The controlled KN1810 experiment is blocked by
 [#158 typed node recovery](https://github.com/popiposter/xkeen-control/issues/158);
 expanded diagnostics #138 remain deferred. No resource optimization release or
 hardware success is implied.
+
+[#158 typed node recovery](https://github.com/popiposter/xkeen-control/issues/158)
+is in source implementation. Its [offline maintenance path](NODE-RECOVERY.md)
+reuses the existing process lock and preserves unknown-operation fencing.
+PR159 source review and exact local FULL passed; recovery review, signed combined
+delivery and controlled router acceptance remain pending.
 
 [#150 MIPS panel delivery](https://github.com/popiposter/xkeen-control/issues/150)
 delivered panel-only source support for existing Ultra KN1810/KeeneticOS5.1.7/
