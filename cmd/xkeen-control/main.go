@@ -109,6 +109,15 @@ func main() {
 		return
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "self-update" {
+		if len(os.Args) == 3 && os.Args[2] == "inspect-capabilities" {
+			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			defer cancel()
+			if err := runCapabilityInspection(ctx, os.Stdout, initialsetup.InspectNormal, panelupdate.InspectCapabilities); err != nil {
+				log.Print(err)
+				os.Exit(1)
+			}
+			return
+		}
 		if len(os.Args) == 3 && os.Args[2] == "inspect-installed" {
 			value, err := panelupdate.InspectInstalled()
 			if err != nil {
@@ -422,10 +431,30 @@ func updateReadOnlyCommand(args []string) bool {
 	if len(args) == 0 {
 		return true
 	}
-	if len(args) == 2 && (args[0] == "version" && args[1] == "--json" || args[0] == "setup" && (args[1] == "guard" || args[1] == "inspect") || args[0] == "self-update" && (args[1] == "inspect" || args[1] == "inspect-installed")) {
+	if len(args) == 2 && (args[0] == "version" && args[1] == "--json" || args[0] == "setup" && (args[1] == "guard" || args[1] == "inspect") || args[0] == "self-update" && (args[1] == "inspect" || args[1] == "inspect-installed" || args[1] == "inspect-capabilities")) {
 		return true
 	}
 	return len(args) == 3 && args[0] == "nodes" && args[1] == "recovery" && args[2] == "inspect"
+}
+
+func runCapabilityInspection(ctx context.Context, out io.Writer, admit func() (func(), error), inspect func(context.Context) (panelupdate.CapabilityReport, error)) error {
+	close, err := admit()
+	if err != nil {
+		report := panelupdate.CapabilityReport{Sync: "not-run", Timeout: "not-run", Flock: "not-run", Reason: "setup-admission-unavailable"}
+		if errors.Is(err, initialsetup.ErrBusy) {
+			report.Reason = "setup-admission-busy"
+		}
+		if e := json.NewEncoder(out).Encode(report); e != nil {
+			return e
+		}
+		return err
+	}
+	defer close()
+	report, err := inspect(ctx)
+	if e := json.NewEncoder(out).Encode(report); e != nil {
+		return e
+	}
+	return err
 }
 
 func newNativeJobs(lease *authority.Lease) *xkeen.Jobs {

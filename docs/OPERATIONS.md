@@ -68,6 +68,22 @@ alone is insufficient. These capabilities are checked before reserving an update
 and again before service shutdown; the bootstrap installer checks its
 prerequisites before placing panel files.
 
+Issue [#165](https://github.com/popiposter/xkeen-control/issues/165) adds
+`xkeen-control self-update inspect-capabilities` to a later signed release;
+published 0.4.4 does not contain this diagnostic. It runs the same sync, timeout
+and descriptor-lock checks on disposable RAM files and reports structured
+`ready`/per-capability status. It takes shared admission on the existing setup
+lock, without creating missing state, reserving an update, downloading files or
+stopping services. Missing or incomplete setup state is a refusal. Run it with
+the verified signed RAM CLI before planning another maintenance operation.
+
+One 0.4.4 KN1810 maintenance attempt refused before reservation because the
+firmware `/bin/sh -c` dropped positional arguments used by the Go flock probe.
+Direct flock operations and script-file argument forwarding passed independent
+diagnostics. The #165 fix invokes flock directly and preserves the same lock
+semantics; it does not change firmware, XKeen or helper/init shebangs. That failed
+attempt remains failed and must not be replayed.
+
 For an affected older helper, use the explicitly approved maintenance delivery
 described in [#162](https://github.com/popiposter/xkeen-control/issues/162).
 Independently verify the signed release tuple before executing its candidate CLI

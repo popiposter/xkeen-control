@@ -1,7 +1,6 @@
 package update
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,7 +8,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"time"
@@ -272,60 +270,4 @@ func (m *Manager) reserveRecord(r Receipt) error {
 	}
 	defer dir.Close()
 	return dir.Sync()
-}
-
-func (m *Manager) durabilityReady() error {
-	syncPath, err := exec.LookPath("sync")
-	if err != nil {
-		return errors.New("panel update requires coreutils-sync with file/directory sync -f")
-	}
-	if info, e := os.Stat("/opt/bin/sync"); e == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
-		syncPath = "/opt/bin/sync"
-	}
-	for _, path := range []string{m.paths.MarkerPath, filepath.Dir(m.paths.MarkerPath)} {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		err = exec.CommandContext(ctx, syncPath, "-f", path).Run()
-		cancel()
-		if err != nil {
-			return errors.New("panel update requires working file/directory sync -f; install coreutils-sync")
-		}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	if exec.CommandContext(ctx, "timeout", "-k", "1", "1", "true").Run() != nil {
-		return errors.New("panel update requires timeout -k support; install coreutils-timeout")
-	}
-	return flockReady()
-}
-
-// This disposable RAM file probes the required descriptor operations; it is
-// never an update lock. The actual owner remains the existing setup inode.
-func flockReady() error {
-	flock, err := exec.LookPath("flock")
-	if err != nil {
-		return errors.New("panel update requires compatible flock descriptor locking")
-	}
-	f, err := os.CreateTemp("/tmp", "xkeen-flock-check-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	defer f.Close()
-	g, err := os.Open(f.Name())
-	if err != nil {
-		return err
-	}
-	defer g.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "timeout", "-k", "1", "3", "/bin/sh", "-c", `"$1" -n -x 3 || exit 1
-if "$1" -n -s 4; then exit 1; fi
-"$1" -n -s 3 || exit 1
-"$1" -n -s 4 || exit 1
-if "$1" -n -x 4; then exit 1; fi`, "flock-capability", flock)
-	cmd.ExtraFiles = []*os.File{f, g}
-	if cmd.Run() != nil {
-		return errors.New("panel update requires flock -n -x and shared descriptor semantics")
-	}
-	return nil
 }

@@ -94,6 +94,23 @@ func Normal() (func(), error) {
 	return processAdmission(false)
 }
 
+// InspectNormal holds the same shared admission without creating or repairing
+// persistent state. An absent inode is unavailable, never an unlocked success.
+func InspectNormal() (func(), error) { return inspectNormal(LockPath, ReceiptPath) }
+
+func inspectNormal(lockPath, receiptPath string) (func(), error) {
+	close, err := acquireExistingLock(lockPath, false)
+	if err != nil {
+		return nil, err
+	}
+	r, err := readReceipt(receiptPath)
+	if err != nil || r != nil && r.Phase != "completed" {
+		close()
+		return nil, ErrState
+	}
+	return close, nil
+}
+
 // Maintenance excludes every cooperating daemon/CLI for the complete offline
 // operation. It neither adopts setup state nor inherits an installation lock.
 func Maintenance() (func(), error) { return processAdmission(true) }
