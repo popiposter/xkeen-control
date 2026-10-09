@@ -5,7 +5,7 @@ KeeneticOS5.1.7, `uname -m: mips`, Entware `mipsel-3.4`/`mipsel-3.4_kn`,
 stock XKeen2.0.1 Beta/Xray26.7.28. Reported memory values indicate about249MiB
 RAM/105MiB available and1GiB swap; these are not panel hardware qualification.
 
-Signed stable [0.4.1](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.1)
+Signed stable [0.4.2](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.2)
 includes the MIPS soft-float panel. Source review, hosted FULL, exact ten-file
 public verification, both signatures and actual published MIPS emulated startup
 passed; see [release evidence](RELEASES.md). KN1810 hardware installation,
@@ -40,25 +40,25 @@ Only after the inventory and protected snapshot above, run the published
 panel-only installer:
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.1/install.sh) && sh -c "$xkeen_installer"
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.2/install.sh) && sh -c "$xkeen_installer"
 ```
 
 The initial installer trusts GitHub HTTPS and checks manifest/size/hash consistency;
 installed self-updates verify the pinned Ed25519 signature. Do not confuse these
 trust steps. After installation, `/opt/sbin/xkeen-control version --json` must
-report0.4.1/stable/source `68d7ed356980897fc921001375b24cf2af10b90c`.
+report0.4.2/stable/source `48c0f11e127edb6c7463c003f235467938ffa958`.
 The MIPS binary SHA256 is
-`3d16a7975ba0d52b9d6f7081189af8f3915282efb60ed0be247dddc5892bf9b5`.
+`4d21b277b681ad47c262f3c103ca44eb8d09b7d0a5d5924ac60d7a60d0e483fa`.
 Keep private credentials and backup contents out of chat/public evidence.
 
-## Validation and prerequisite repair in source (#154)
+## Validation and prerequisite repair delivered in0.4.2 (#154)
 
 The source repair under #154 gives linux/mipsle full Xray validation 120 seconds
 and configured Apply preparation 125 seconds; other targets retain 45/50 seconds.
 Node transactions allow 375 seconds on MIPS (300 elsewhere), with activation and
 rollback each retaining 120 seconds. Validation writes and configured start/restart
 wait up to 150 seconds in the UI; lost responses require inspection, never replay.
-These changes do not amend published0.4.1 bytes or establish hardware acceptance.
+Published0.4.1 bytes remain immutable;0.4.2 hardware acceptance is separate.
 
 Bootstrap checks selected stat -c metadata and jq buildinfo/regex functionality
 before downloads or placement. Missing stat maps to coreutils-stat; an existing
