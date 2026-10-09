@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
@@ -21,7 +22,10 @@ type inspectionControl struct {
 }
 
 func (*inspectionControl) OverrideBalancerTarget(context.Context, string, string) error { return nil }
-func (*inspectionControl) AddRule(context.Context, xrayapi.Rule, bool) error            { return nil }
+func (c *inspectionControl) AddRule(_ context.Context, rule xrayapi.Rule, _ bool) error {
+	c.rules = append(c.rules, rule)
+	return nil
+}
 func (c *inspectionControl) RemoveRule(_ context.Context, tag string) error {
 	if c.removeFails {
 		return ErrUnavailable
@@ -84,6 +88,8 @@ func TestExplicitQualityInspectionRequiresConcreteReadbacks(t *testing.T) {
 	s.Reader.(*sweepReader).failAfterFile = marker
 	control := &inspectionControl{}
 	s.Control = control
+	probe := c1.NewProbeRouter(control)
+	s.Probe = probe
 	if err := s.startSweep(context.Background(), "periodic"); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +102,7 @@ func TestExplicitQualityInspectionRequiresConcreteReadbacks(t *testing.T) {
 		t.Fatal("missing ambiguity intent")
 	}
 	configureSyntheticJobRecovery(t, s, dir)
-	restarted := &Service{Editor: s.Editor, Lease: s.Lease, Reader: s.Reader, Nodes: s.Nodes, Measurement: s.Measurement, Control: control, Resources: s.Resources, Jobs: s.Jobs, QuotaPath: s.QuotaPath}
+	restarted := &Service{Editor: s.Editor, Lease: s.Lease, Reader: s.Reader, Nodes: s.Nodes, Measurement: s.Measurement, Probe: probe, Control: control, Resources: s.Resources, Jobs: s.Jobs, QuotaPath: s.QuotaPath}
 	if err := restarted.InspectAndResolve(context.Background()); err == nil {
 		t.Fatal("unhealthy Xray cleared inspection")
 	}
@@ -104,8 +110,10 @@ func TestExplicitQualityInspectionRequiresConcreteReadbacks(t *testing.T) {
 		t.Fatal("failed inspection lost fence", err)
 	}
 	s.Reader.(*sweepReader).failAfterFile = ""
-	control.rules = []xrayapi.Rule{{RuleTag: "xkeen-control-probe-adaptive"}}
 	control.removeFails = true
+	if err := probe.WithTarget(context.Background(), "adaptive", "proxy-a", nil); err == nil || !probe.Blocked() {
+		t.Fatal("failed cleanup did not block shared probe router")
+	}
 	if err := restarted.InspectAndResolve(context.Background()); err == nil {
 		t.Fatal("failed probe cleanup cleared inspection")
 	}
@@ -116,8 +124,11 @@ func TestExplicitQualityInspectionRequiresConcreteReadbacks(t *testing.T) {
 	if err := restarted.InspectAndResolve(context.Background()); err != nil {
 		t.Fatal("inspected native state did not settle", err)
 	}
-	if control.removals != 1 || len(control.rules) != 0 {
-		t.Fatal("quality probe rule was not settled exactly once")
+	if control.removals == 0 || len(control.rules) != 0 || probe.Blocked() {
+		t.Fatal("shared probe router was not reconciled")
+	}
+	if err := probe.WithTarget(context.Background(), "adaptive", "proxy-a", nil); err != nil {
+		t.Fatal("next same-process measurement remained blocked", err)
 	}
 	q, err := quotaState(s.QuotaPath, time.Now().UTC())
 	if err != nil || q.InspectionRequired || q.ReviewsUsed != 1 || q.LastStartedAt.IsZero() {

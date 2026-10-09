@@ -26,8 +26,9 @@ separate per-run 24 MiB ceiling rather than drawing from the automatic quota;
 the panel shows both limits and the rolling automatic reservation usage.
 After an uncertain result, the panel's explicit inspection action checks the
 complete pending-free native workspace, lifecycle receipt/process, Xray runtime,
-active pool and probe rules. It can remove only its own temporary quality probe
-rule, then verifies its absence; it never reruns Apply or the speed test. If any
+active pool and probe rules. It reconciles only the panel's known temporary
+probe rules through their shared owner and verifies its in-memory gate cleared;
+it never reruns Apply or the speed test. If any
 readback remains uncertain, the fence persists for operator investigation.
 Only fresh, healthy, RTT-eligible nodes are candidates. An automatic pool change
 requires a complete review with every frozen eligible candidate attempted,

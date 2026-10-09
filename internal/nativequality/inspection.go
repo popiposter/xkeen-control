@@ -2,10 +2,7 @@ package nativequality
 
 import (
 	"context"
-	"strings"
 	"time"
-
-	"github.com/popiposter/xkeen-control/internal/c1"
 )
 
 // InspectAndResolve is an explicit operator action. It only settles the
@@ -13,7 +10,7 @@ import (
 // configuration, lifecycle and temporary probe state. It does not retry Apply,
 // assert that the previous recommendation won, or clear an unknown native job.
 func (s *Service) InspectAndResolve(parent context.Context) error {
-	if s.Editor == nil || s.Jobs == nil || s.Lease == nil || s.Reader == nil || s.Control == nil || s.Nodes == nil || s.Resources == nil || !s.profile().Constrained || !s.profile().Automatic {
+	if s.Editor == nil || s.Jobs == nil || s.Lease == nil || s.Reader == nil || s.Probe == nil || s.Nodes == nil || s.Resources == nil || !s.profile().Constrained || !s.profile().Automatic {
 		return ErrUnavailable
 	}
 	path := s.QuotaPath
@@ -54,31 +51,10 @@ func (s *Service) InspectAndResolve(parent context.Context) error {
 	if err := s.Editor.VerifySetupRuntime(ctx, before.Digest); err != nil {
 		return ErrUnavailable
 	}
-	rules, err := s.Control.ListRules(ctx)
-	if err != nil {
+	// Reconcile through the same ProbeRouter used by Coordinator. A direct
+	// Control.RemoveRule would leave its in-memory blocked gate set.
+	if err := s.Probe.Reconcile(ctx); err != nil || s.Probe.Blocked() {
 		return ErrUnavailable
-	}
-	for _, rule := range rules {
-		if rule.RuleTag == c1.AdaptiveRuleTag {
-			// This explicit inspected action may remove only the quality probe's
-			// temporary rule. It never changes native configuration or restarts Xray.
-			if err := s.Control.RemoveRule(ctx, c1.AdaptiveRuleTag); err != nil {
-				return ErrUnavailable
-			}
-			continue
-		}
-		if strings.HasPrefix(rule.RuleTag, "xkeen-control-probe-") {
-			return ErrUnavailable
-		}
-	}
-	rules, err = s.Control.ListRules(ctx)
-	if err != nil {
-		return ErrUnavailable
-	}
-	for _, rule := range rules {
-		if strings.HasPrefix(rule.RuleTag, "xkeen-control-probe-") {
-			return ErrUnavailable
-		}
 	}
 	pool, _, err := routingPool(before.Documents["05_routing.json"].Text, s.Nodes(ctx), before.Targets)
 	if err != nil || len(pool) < 2 {

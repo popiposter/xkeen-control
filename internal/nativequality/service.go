@@ -78,6 +78,7 @@ type Service struct {
 	Reader            xrayapi.Reader
 	Nodes             c1.NodeReader
 	Measurement       Measurement
+	Probe             *c1.ProbeRouter
 	Control           xrayapi.RoutingController
 	mu                sync.Mutex
 	status            Status
