@@ -605,13 +605,15 @@ func TestCoordinatorAdaptiveFinalDecisionStaysRunningAndFailsClosedOnApplyCancel
 }
 
 func TestCoordinatorStartsFreshAdaptiveCadenceAndDoesNotExposeLegacyNextRun(t *testing.T) {
-	start := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	// The scheduler uses real timers, so a historical frozen date would make
+	// the first cadence immediately overdue and race the startup snapshot.
+	start := time.Now().UTC()
 	coordinator := NewCoordinator(DefaultPolicy(), nil, nil, nil)
 	coordinator.SetClock(func() time.Time { return start })
 	coordinator.Start(context.Background())
+	defer coordinator.Stop()
 	status := coordinator.AdaptiveSnapshot()
 	if !status.NextRunAt.Equal(start.Add(AdaptiveCadence)) || !coordinator.Snapshot().Benchmark.NextRunAt.IsZero() || coordinator.Snapshot().Benchmark.Schedule != ExplicitBenchmarkSchedule {
 		t.Fatalf("scheduler projection = adaptive=%s legacy=%s", status.NextRunAt, coordinator.Snapshot().Benchmark.NextRunAt)
 	}
-	coordinator.Stop()
 }
