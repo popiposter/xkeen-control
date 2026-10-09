@@ -10,7 +10,7 @@ Stable v0.4.8 is published; [release verification](RELEASES.md) and [remaining a
 | XKeen | Official installation, Xray/geodata/component updates, interception, native service and cron |
 | Xray | Traffic routing, observation, native balancer selection and failover |
 | Panel | Authenticated UI, native command jobs/console, config editors, node/subscription registry, bounded quality recommendation, encrypted transfer, optional Telegram, its own signed updater |
-| Optional LAN DNS resolver | Last successful DIRECT/VPN domain decision generation, independently of panel lifetime |
+| Keenetic DNS | Ordinary router/client DNS and local names; fresh setup preserves it |
 
 The panel never patches native dispatcher/init/hooks/modules or installs a second component updater. Its lease serializes panel operations only; it does not lock external native CLI or cron.
 
@@ -32,7 +32,7 @@ Form/Text share drafts and undo/redo. Validated Save creates a pending set; expl
 
 Native Xray owns selection. Measurements recommend a pool; they do not automatically pin the top result or restart services. [Node lifecycle](NODE-LIFECYCLE.md) documents refresh, latency sampling, throughput and stale-result rejection.
 
-Optional LAN DNS derives ordered domain decisions from native configs and installed geosite files. Conditional IP/protocol/port rules are not generic DNS classifications. No second downloader and no VPN-to-DIRECT DNS fallback. See [DNS operations](OPERATIONS.md).
+Issue #181 replaces the fresh reference with compact Refilter domain/IP selection and DIRECT otherwise, including torrents. Native DNS uses the stock empty template and system resolution. Fresh setup no longer installs mosdns or assigns a custom firmware DNS profile. Existing deployments retain legacy DNS ownership until explicit retirement; an upgrade does not stop their resolver. The UI offers legacy inspection only and no split-DNS generator or synchronization action. See [simple DNS transition](SIMPLE-DNS.md).
 
 ## Trust and resources
 

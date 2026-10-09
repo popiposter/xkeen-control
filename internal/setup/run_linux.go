@@ -101,19 +101,10 @@ func Run(ctx context.Context, in *os.File, out io.Writer) error {
 		return e
 	}
 	b = nil
-	b, e = download(ctx, dnsURL, dnsSize, dnsHash)
-	if e != nil {
-		return e
-	}
-	dnsBinary, e := decodeDNS(b)
-	if e != nil {
-		return e
-	}
-	b = nil
 	if e = fresh(); e != nil {
 		return e
 	}
-	r := Receipt{Schema: 1, Release: info, Phase: "prepared", PolicyID: plan.PolicyID, ProfileID: strconv.Itoa(plan.ProfileID)}
+	r := Receipt{Schema: 2, Release: info, Phase: "prepared", PolicyID: plan.PolicyID}
 	if e = writeReceipt(ReceiptPath, r); e != nil {
 		return e
 	}
@@ -195,27 +186,16 @@ func Run(ctx context.Context, in *os.File, out io.Writer) error {
 	if e = exclusiveFile(panellistener.DefaultFilePath, []byte(plan.Address.String()+":8787\n"), 0600); e != nil {
 		return e
 	}
-	r.Phase = "dns"
-	if e = writeReceipt(ReceiptPath, r); e != nil {
-		return e
-	}
-	dnsConfig, e := splitdns.FreshConfig(plan.Address)
+	lease, editor, jobs, _, e := owners()
 	if e != nil {
 		return e
 	}
-	if e = provisionDNS(dnsBinary, dnsConfig); e != nil {
-		return e
-	}
-	dnsBinary = nil
-	lease, editor, jobs, dns, e := owners()
-	if e != nil {
-		return e
-	}
+	editor.ValidateDerived = nil // Fresh schema2 never provisions independent DNS.
 	r.Phase = "candidate"
 	if e = writeReceipt(ReceiptPath, r); e != nil {
 		return e
 	}
-	fmt.Fprintln(out, "Настраиваем эталон маршрутизации и независимый DNS.")
+	fmt.Fprintln(out, "Настраиваем типовую выборочную маршрутизацию.")
 	release, e := lease.TryAcquire()
 	if e != nil {
 		return e
@@ -298,21 +278,11 @@ func Run(ctx context.Context, in *os.File, out io.Writer) error {
 	if pending, e := editor.HasSavedChanges(); e != nil || pending {
 		return ErrState
 	}
-	if e = dns.Sync(ctx); e != nil {
-		return e
-	}
 	fmt.Fprintln(out, "Проверяем конфигурацию, VPN, DNS и область перехвата.")
-	if e = verifyReady(ctx, editor, dns, lease, r.Generation, registry, r.PolicyMark); e != nil {
+	if e = verifyReady(ctx, editor, nil, lease, r.Generation, registry, r.PolicyMark); e != nil {
 		return e
 	}
 	r.RuntimeVerified = true
-	base, e = firmware.PrepareDNS(ctx, base, plan, persistFirmware)
-	if e != nil {
-		return e
-	}
-	if firmware.VerifyDNS(ctx, plan, false) != nil {
-		return ErrState
-	}
 	r.PrerequisitesSaved = true
 	if e = writeReceipt(ReceiptPath, r); e != nil {
 		return e
@@ -327,7 +297,7 @@ func Run(ctx context.Context, in *os.File, out io.Writer) error {
 	if e = waitJob(ctx, jobs, job.ID, false); e != nil || nativeAutostart() != "on" {
 		return ErrState
 	}
-	if e = startupFiles(); e != nil {
+	if e = startupFilesFor(false); e != nil {
 		return e
 	}
 	r.StartupVerified = true
@@ -336,22 +306,19 @@ func Run(ctx context.Context, in *os.File, out io.Writer) error {
 		return e
 	}
 	fmt.Fprintln(out, "Подключаем всю обнаруженную домашнюю сеть.")
-	base, e = firmware.AssignHOME(ctx, base, plan, persistFirmware)
+	base, e = firmware.AssignHOMEPolicy(ctx, base, plan, persistFirmware)
 	if e != nil {
 		return e
 	}
 	r.FirmwareSaved = true
 	final, e := firmware.Discover(ctx)
-	if e != nil || final.Hash != base.Hash || final.HomePolicy != plan.PolicyID || final.HomeProfile != strconv.Itoa(plan.ProfileID) {
+	if e != nil || final.Hash != base.Hash || final.HomePolicy != plan.PolicyID || final.HomeProfile != base.HomeProfile {
 		return ErrState
 	}
 	if e = firmware.VerifyPolicy(ctx, plan, true); e != nil {
 		return e
 	}
-	if firmware.VerifyDNS(ctx, plan, true) != nil {
-		return ErrState
-	}
-	if e = verifyReady(ctx, editor, dns, lease, r.Generation, registry, r.PolicyMark); e != nil {
+	if e = verifyReady(ctx, editor, nil, lease, r.Generation, registry, r.PolicyMark); e != nil {
 		return e
 	}
 	if pending, e := editor.HasSavedChanges(); e != nil || pending {
@@ -373,7 +340,7 @@ func Run(ctx context.Context, in *os.File, out io.Writer) error {
 			enabled++
 		}
 	}
-	fmt.Fprintf(out, "Готово. Панель: http://%s:8787/; XKeen 2.1; Xray %s; mosdns 5.3.4; активных узлов: %d.\n", plan.Address, xrayVersion, enabled)
+	fmt.Fprintf(out, "Готово. Панель: http://%s:8787/; XKeen 2.1; Xray %s; активных узлов: %d.\n", plan.Address, xrayVersion, enabled)
 	fmt.Fprintln(out, "Настройки сохранены. Независимая проверка с LAN-клиента и IPv6 остаётся отдельной проверкой. Плановые native-обновления выключены.")
 	return nil
 }

@@ -144,3 +144,26 @@ func privateTemp(t *testing.T) string {
 	}
 	return d
 }
+
+func TestSchemaTwoAndLegacyPendingRemainFenced(t *testing.T) {
+	for _, schema := range []int{1, 2} {
+		root := privateTemp(t)
+		receipt := filepath.Join(root, "receipt.json")
+		lock := filepath.Join(root, "guard.lock")
+		close, e := acquireLock(lock, false)
+		if e != nil {
+			t.Fatal(e)
+		}
+		close()
+		r := initialReceipt()
+		r.Schema = schema
+		r.Phase = "activation"
+		if e := writeReceipt(receipt, r); e != nil {
+			t.Fatal(e)
+		}
+		if release, e := inspectNormal(lock, receipt); e == nil {
+			release()
+			t.Fatal("incomplete admitted", schema)
+		}
+	}
+}

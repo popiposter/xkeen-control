@@ -8,7 +8,6 @@ import { Field, FieldLabel } from '@/components/ui/field'
 import { NativeSelect } from '@/components/ui/native-select'
 import { documentField, editDocumentField, formatDocument, inspectDocument } from './native-config-document'
 import { NativeConfigForm } from './native-config-form'
-import { splitDNSDocuments } from './native-dns-policy'
 import { configRequestTimeout } from './native-request-budget'
 import { Disclosure } from './ui'
 
@@ -168,24 +167,6 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, on
     setWorkspace((previous) => ({ ...previous, digest: result.digest, pending: { ...previous.pending, files: [...new Set([...(previous.pending?.files || []), file])], drift: false }, documents: { ...previous.documents, [file]: { ...previous.documents[file], text } } }))
     setNotice('Saved and validated. Use the native Restart command to apply saved configurations together.')
   }
-  async function prepareSplitDNS() {
-    const ids = ['02_dns.json', '05_routing.json']
-    const loaded = {}
-    for (const id of ids) {
-      const result = await request('document', { file: id })
-      if (result.digest !== workspace.digest || typeof result.document?.text !== 'string') throw new Error('Configuration changed. Reload before preparing DNS.')
-      loaded[id] = result.document
-    }
-    const prepared = splitDNSDocuments(drafts['02_dns.json'] ?? loaded['02_dns.json'].text, drafts['05_routing.json'] ?? loaded['05_routing.json'].text, workspace.targets || [])
-    for (const id of ids) {
-      const old = drafts[id] ?? loaded[id].text
-      const item = history.current[id] ||= { undo: [], redo: [] }
-      item.undo.push(old); item.redo = []; while (item.undo.length > 40 || item.undo.reduce((sum,value) => sum+value.length,0) > (4 << 20)) item.undo.shift()
-    }
-    setWorkspace((previous) => ({ ...previous, documents: { ...previous.documents, ...loaded } }))
-    setDrafts((previous) => ({ ...previous, ...prepared.documents }))
-    setNotice(`DNS draft prepared: ${prepared.vpnMatches} VPN matches, ${prepared.directMatches} DIRECT matches. Save all configurations to validate both files together. LAN clients still use the router's own DNS; IP-only rules and ordered overlapping matches need separate inspection.`)
-  }
   async function saveAll() {
     const result = await request('save-set', { digest: workspace.digest, documents: changedDocuments })
     if (!/^[a-f0-9]{64}$/.test(result.digest)) throw new Error('Save was not confirmed. Reload before another save.')
@@ -261,7 +242,6 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, on
         {storedDraft !== undefined && <div className="flex flex-wrap items-center gap-2"><span>A saved draft is available.</span><Button className="self-start" variant="outline" disabled={locked} onClick={() => edit(storedDraft)}><IconRestore data-icon="inline-start" />Resume draft</Button><Button className="self-start" variant="outline" disabled={locked} onClick={() => void run(async () => { await request('draft', { file, discard: true }); setWorkspace((previous) => ({ ...previous, documents: { ...previous.documents, [file]: { text: previous.documents[file].text } } })) })}><IconTrash data-icon="inline-start" />Discard saved draft</Button></div>}
         {parsed.error && <p role="alert">{parsed.error}</p>}
         {mode === 'text' ? <Suspense fallback={<p>Loading text editor…</p>}><TextEditor text={text} disabled={locked} onChange={edit} onUndo={() => step('undo')} onRedo={() => step('redo')} /></Suspense> : !parsed.error && <div className="flex flex-col gap-3">
-          {file === '02_dns.json' && <div className="rounded-lg border bg-muted/30 p-4"><h3 className="font-semibold">DNS follows VPN domain categories</h3><p className="my-2 text-sm text-muted-foreground">Replace the resolver list in the draft with Cloudflare and Google DoH through the existing VPN pool for its domain categories. Other Xray lookups use system DNS. This does not change router DHCP or intercept LAN DNS, so the router resolver remains independent of XKeen. Review overlapping categories and IP-only rules separately.</p><Button className="self-start" variant="outline" disabled={locked || !workspace.targetsComplete} onClick={() => void run(prepareSplitDNS)}><IconBraces data-icon="inline-start" />Prepare DNS from routing</Button></div>}
           <Disclosure defaultOpen title="General settings">{fields.filter((item) => item.file === file).map((item) => <NativeField key={item.field} item={item} current={documentField(parsed.tree, item.area, item.field)} disabled={locked} onChange={(value) => { try { edit(editDocumentField(text, item.area, item.field, value)) } catch (error) { setNotice(error.message) } }} />)}</Disclosure>
           <NativeConfigForm key={file} file={file} text={text} tree={parsed.tree} disabled={locked} onChange={edit} onError={setNotice} request={request} targets={workspace.targets || []} />
           <p className="text-sm text-muted-foreground">Additional native properties are available in Text mode. Unknown fields and comments are preserved.</p>

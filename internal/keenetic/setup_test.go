@@ -2,6 +2,7 @@ package keenetic
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/netip"
 	"strings"
@@ -213,5 +214,107 @@ func TestInvalidPlanNeverDispatches(t *testing.T) {
 	p := Plan{Home: "Home;reboot", WAN: "ISP0", PolicyID: "Policy1", Address: netip.MustParseAddr("192.168.50.1"), ProfileID: 1}
 	if _, e := a.change(context.Background(), s, p, "home-policy", "ignored", func(Intent) error { return nil }, func(Snapshot) bool { return true }); e == nil || calls != 0 {
 		t.Fatal("caller command admitted")
+	}
+}
+
+func TestAssignHOMEPolicyDoesNotConfigureDNS(t *testing.T) {
+	a, initial := fixture(t)
+	p, err := a.Plan(initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := strings.Replace(freshConfig, "ip hotspot\n", "ip policy Policy1\n    description xkeen\n    permit global Internet\n!\nip hotspot\n", 1)
+	prior := a.run
+	commands := []string{}
+	a.run = func(ctx context.Context, c command, commandText string) ([]byte, error) {
+		switch c {
+		case running, startup:
+			return []byte(cfg), nil
+		case mutation:
+			commands = append(commands, commandText)
+			switch commandText {
+			case "ip hotspot policy Bridge0 Policy1":
+				cfg = strings.Replace(cfg, "    auto-register", "    auto-register\n    policy Bridge0 Policy1", 1)
+			case "system configuration save":
+			default:
+				t.Fatal("unexpected mutation", commandText)
+			}
+			return nil, nil
+		}
+		return prior(ctx, c, commandText)
+	}
+	before, err := a.Discover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := a.AssignHOMEPolicy(context.Background(), before, p, func(Intent) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 2 || after.HomePolicy != p.PolicyID || after.HomeProfile != before.HomeProfile || after.Engine != before.Engine {
+		t.Fatal("DNS-independent transition", commands, err)
+	}
+}
+
+func TestSchemaTwoPolicyInverseNeverRemovesDNS(t *testing.T) {
+	for _, drift := range []bool{false, true} {
+		a, original := fixture(t)
+		p, _ := a.Plan(original)
+		// Exercise the real private baseline persistence boundary: config is
+		// intentionally unexported and must not be needed by the inverse.
+		encoded, err := json.Marshal(original)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var persisted Snapshot
+		if json.Unmarshal(encoded, &persisted) != nil || persisted.config != nil || persisted.DNSHash == "" {
+			t.Fatal("baseline projection")
+		}
+		original = persisted
+
+		policyBlock := "ip policy Policy1\n    description xkeen\n    permit global Internet\n!\n"
+		cfg := strings.Replace(freshConfig, "ip hotspot\n", policyBlock+"ip hotspot\n", 1)
+		cfg = strings.Replace(cfg, "    auto-register", "    auto-register\n    policy Bridge0 Policy1", 1)
+		if drift {
+			cfg = strings.Replace(cfg, "    cache-size 100", "    cache-size 100\n    filter engine public", 1)
+		}
+		prior := a.run
+		commands := []string{}
+		a.run = func(ctx context.Context, c command, x string) ([]byte, error) {
+			switch c {
+			case running, startup:
+				return []byte(cfg), nil
+			case mutation:
+				commands = append(commands, x)
+				switch x {
+				case "no ip hotspot policy Bridge0":
+					cfg = strings.Replace(cfg, "    policy Bridge0 Policy1\n", "", 1)
+				case "no ip policy Policy1":
+					cfg = strings.Replace(cfg, policyBlock, "", 1)
+				case "system configuration save":
+				default:
+					t.Fatal("unexpected inverse", x)
+				}
+				return nil, nil
+			}
+			return prior(ctx, c, x)
+		}
+		actual, e := a.current(context.Background())
+		if e != nil {
+			t.Fatal(e)
+		}
+		missing := original
+		missing.DNSHash = ""
+		if _, err := a.RestorePolicyOwned(context.Background(), missing, p, actual.Hash, func(Intent) error { return nil }); err == nil || len(commands) != 0 {
+			t.Fatal("missing persisted DNS proof admitted inverse")
+		}
+		restored, e := a.RestorePolicyOwned(context.Background(), original, p, actual.Hash, func(Intent) error { return nil })
+		if drift {
+			if e == nil || len(commands) != 0 {
+				t.Fatal("DNS drift admitted inverse", e, commands)
+			}
+		} else if e != nil || restored.Hash != original.Hash || len(commands) != 3 {
+			t.Fatal("policy inverse", e, commands)
+		}
 	}
 }

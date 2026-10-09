@@ -8,7 +8,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/nodes"
 )
 
-func TestProductDefaultMatchesCheckedInPolicy(t *testing.T) {
+func TestLegacyProductDefaultMatchesCompatibilityPolicy(t *testing.T) {
 	if err := ValidateProductDefault(); err != nil {
 		t.Fatalf("embedded product default: %v", err)
 	}
@@ -17,7 +17,7 @@ func TestProductDefaultMatchesCheckedInPolicy(t *testing.T) {
 		t.Fatalf("render product default: %v", err)
 	}
 	for _, name := range []string{"02_dns.json", "05_routing.json", "07_observatory.json"} {
-		want, err := os.ReadFile(filepath.Join("..", "..", "config", "xray", name))
+		want, err := os.ReadFile(filepath.Join("templates", name))
 		if err != nil {
 			t.Fatalf("read checked-in %s: %v", name, err)
 		}

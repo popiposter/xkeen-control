@@ -6,3 +6,7 @@ import _ "embed"
 
 //go:embed ru-selective-v1.json
 var RUSelective []byte
+
+// CompactSelective is the source-owned typical selective policy.
+//go:embed compact-selective-v1.json
+var CompactSelective []byte
