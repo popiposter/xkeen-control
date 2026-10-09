@@ -15,9 +15,30 @@ import (
 	"github.com/popiposter/xkeen-control/internal/authority"
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/configjson"
+	"github.com/popiposter/xkeen-control/internal/resourcepolicy"
 	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
+
+type unusedMeasurement struct{}
+
+func (unusedMeasurement) MeasureNativeQuality(context.Context, c1.AdaptiveGeneration, func(c1.AdaptivePerformanceStatus)) (c1.AdaptiveResult, error) {
+	panic("measurement must not start")
+}
+func (unusedMeasurement) NativeQualityEvidence(xrayapi.Snapshot) map[string]c1.AdaptiveCandidateInput {
+	panic("measurement must not start")
+}
+
+func TestConstrainedNativeConflictIsVisibleWithoutActivation(t *testing.T) {
+	s := &Service{Editor: &xkeen.ConfigEditor{}, Lease: authority.NewLease(), Reader: &pinRuntime{}, Nodes: func(context.Context) []c1.NodeState { return nil }, Measurement: unusedMeasurement{}, Resources: &resourcepolicy.Guard{Profile: resourcepolicy.ForPlatform("mipsle", 254472), Conflict: func() (bool, error) { return true, nil }}}
+	if err := s.Start(context.Background()); err != resourcepolicy.ErrExternalBenchmark {
+		t.Fatal(err)
+	}
+	v := s.Read()
+	if v.StartReason != "native-speed-conflict" || v.AutomaticReason != "constrained-device" || v.State != "idle" {
+		t.Fatal(v)
+	}
+}
 
 func TestStageBroadSampleRestrictsOnlySelectorAndCostsAndKeepsFutureSampleBroad(t *testing.T) {
 	dir := t.TempDir()
@@ -25,7 +46,7 @@ func TestStageBroadSampleRestrictsOnlySelectorAndCostsAndKeepsFutureSampleBroad(
 	if err := os.WriteFile(validator, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	routing := `{/*keep*/"routing":{"rules":[{"domain":["example.invalid"],"outboundTag":"direct"}],"balancers":[{"tag":"bal-proxy","selector":["proxy-"],"fallbackTag":"blocked","strategy":{"type":"leastPing"}}]}}`
+	routing := `{/*keep*/"routing":{"rules":[{"domain":["example.invalid"],"outboundTag":"direct"}],"balancers":[{"tag":"bal-proxy","selector":["proxy-"],"fallbackTag":"blocked","strategy":{"type":"leastLoad","settings":{"maxRTT":"10s","expected":2}}}]}}`
 	var nodes []c1.NodeState
 	var pool []string
 	var outbounds []map[string]string
@@ -167,7 +188,7 @@ func TestStageUsesExistingPendingEditorPreservesOtherNativeBytes(t *testing.T) {
 	if err := os.WriteFile(validator, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	routing := `{/*retain*/"routing":{"future":9007199254740993,"rules":[],"balancers":[{"tag":"other","selector":["direct"]},{"tag":"bal-proxy","selector":["proxy-"],"fallbackTag":"blocked","strategy":{"type":"leastPing"}}]}}`
+	routing := `{/*retain*/"routing":{"future":9007199254740993,"rules":[],"balancers":[{"tag":"other","selector":["direct"]},{"tag":"bal-proxy","selector":["proxy-"],"fallbackTag":"blocked","strategy":{"type":"leastLoad","settings":{"maxRTT":"10s","expected":2}}}]}}`
 	for name, text := range map[string]string{"05_routing.json": routing, "04_outbounds.json": `{"outbounds":[{"tag":"proxy-a","protocol":"vless"},{"tag":"proxy-b","protocol":"vless"}]}`} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0600); err != nil {
 			t.Fatal(err)

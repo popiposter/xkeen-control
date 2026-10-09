@@ -139,6 +139,12 @@ func (c *Coordinator) SetManualRunner(runner *ManualNodeRunner) {
 	}
 	c.mu.Lock()
 	c.manualRunner = runner
+	if c.manual.State == "idle" {
+		limits := runner.Limits()
+		c.manual.BytesPlanned = limits.Bytes
+		c.manual.PlannedStages = ManualLatencySamples + len(limits.Download) + len(limits.Upload)
+		c.manual.MaxWallSeconds = limits.Seconds
+	}
 	c.mu.Unlock()
 }
 
@@ -318,8 +324,8 @@ func (c *Coordinator) TriggerManualNode(nodeID string) error {
 			Phase:         "latency",
 			TargetNodeID:  nodeID,
 			StartedAt:     started,
-			PlannedStages: ManualPlannedStages,
-			BytesPlanned:  ManualMaxDownloadBytes + ManualMaxUploadBytes,
+			PlannedStages: ManualLatencySamples + len(runner.Limits().Download) + len(runner.Limits().Upload),
+			BytesPlanned:  runner.Limits().Bytes,
 		}
 		c.mu.Unlock()
 
@@ -332,8 +338,8 @@ func (c *Coordinator) TriggerManualNode(nodeID string) error {
 				TargetNodeID:  nodeID,
 				StartedAt:     started,
 				ElapsedMS:     elapsedMilliseconds(started, time.Now().UTC()),
-				PlannedStages: ManualPlannedStages,
-				BytesPlanned:  ManualMaxDownloadBytes + ManualMaxUploadBytes,
+				PlannedStages: ManualLatencySamples + len(runner.Limits().Download) + len(runner.Limits().Upload),
+				BytesPlanned:  runner.Limits().Bytes,
 				ErrorCode:     "invalid-target",
 			})
 			return ErrManualInvalidTarget

@@ -7,9 +7,30 @@ import (
 	"time"
 
 	"github.com/popiposter/xkeen-control/internal/c1"
+	"github.com/popiposter/xkeen-control/internal/resourcepolicy"
 	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
+
+func TestStatusReportsActualGenerationBudget(t *testing.T) {
+	for _, tt := range []struct {
+		generation uint64
+		manual     bool
+		bytes      int64
+		seconds    int
+	}{{0, false, 288 * c1.MiB, 360}, {1, false, 144 * c1.MiB, 180}, {1, true, 288 * c1.MiB, 360}} {
+		s := &Service{status: Status{State: "running", Generation: tt.generation, ManualSample: tt.manual}}
+		v := s.Read()
+		if v.Limits.Bytes != tt.bytes || v.Limits.Seconds != tt.seconds {
+			t.Fatal(v)
+		}
+	}
+	s := &Service{Resources: &resourcepolicy.Guard{Profile: resourcepolicy.ForPlatform("mipsle", 254472)}, status: Status{StartReason: "native-speed-conflict"}}
+	v := s.Read()
+	if v.AutomaticReason != "constrained-device" || v.StartReason != "native-speed-conflict" {
+		t.Fatal(v)
+	}
+}
 
 func TestBroadSampleUsesThresholdAndMoreThanSixWithoutCurrentPoolPriority(t *testing.T) {
 	now := time.Now().UTC()

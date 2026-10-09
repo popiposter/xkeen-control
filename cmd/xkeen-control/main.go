@@ -27,6 +27,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/notifications"
 	"github.com/popiposter/xkeen-control/internal/panellistener"
 	"github.com/popiposter/xkeen-control/internal/performancepolicy"
+	"github.com/popiposter/xkeen-control/internal/resourcepolicy"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
 	initialsetup "github.com/popiposter/xkeen-control/internal/setup"
 	"github.com/popiposter/xkeen-control/internal/splitdns"
@@ -190,7 +191,14 @@ func main() {
 	})
 	runner := c1.NewBenchmarkRunner(policy, probeRouter, c1.BenchmarkStore{Path: getenv("XKEEN_CONTROL_BENCHMARK_PATH", c1.DefaultBenchmarkPath)})
 	coordinator := c1.NewCoordinator(policy, supervisor, runner, nodeReader)
-	coordinator.SetManualRunner(c1.NewManualNodeRunner(probeRouter))
+	resources := resourcepolicy.NewGuard()
+	resources.Conflict = xkeenReader.NativeSpeedConflict
+	manualRunner := c1.NewManualNodeRunner(probeRouter)
+	manualRunner.Resources = resources
+	coordinator.SetManualRunner(manualRunner)
+	adaptiveRunner := c1.NewAdaptiveRunner(probeRouter)
+	adaptiveRunner.Resources = resources
+	coordinator.SetAdaptiveRunner(adaptiveRunner)
 	authorityLease := authority.NewLease()
 	panelLifecycle := panelLifecycle{coordinator: coordinator, lease: authorityLease}
 	listenerService := panellistener.NewService(panellistener.Config{
@@ -254,7 +262,7 @@ func main() {
 			return state.Lifecycle.Maintenance, state.Lifecycle.Applying, true
 		},
 	})
-	qualityService := &nativequality.Service{Editor: nativeConfig, Lease: authorityLease, Reader: xrayReader, Nodes: nodeReader, Measurement: coordinator, Control: xrayReader}
+	qualityService := &nativequality.Service{Editor: nativeConfig, Lease: authorityLease, Reader: xrayReader, Nodes: nodeReader, Measurement: coordinator, Control: xrayReader, Resources: resources}
 	qualitySchedule := nativequality.NewSchedule(qualityService)
 	nodeManager.OnSubscriptionRefresh = qualitySchedule.NotifyRefresh
 	defer qualityService.Stop()

@@ -36,6 +36,9 @@ func comparisonDue(now, requested, lastStarted time.Time) time.Time {
 }
 
 func (s *Schedule) Run(ctx context.Context) {
+	if !s.service.profile().Automatic {
+		return
+	}
 	next := time.Now().Add(10 * time.Minute)
 	for {
 		s.service.mu.Lock()

@@ -8,7 +8,6 @@ import (
 	"math"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"github.com/popiposter/xkeen-control/internal/authority"
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/configjson"
+	"github.com/popiposter/xkeen-control/internal/resourcepolicy"
 	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
@@ -28,18 +28,23 @@ type Measurement interface {
 }
 
 type Status struct {
-	State          string                       `json:"state"`
-	Digest         string                       `json:"digest,omitempty"`
-	Generation     uint64                       `json:"generation"`
-	Progress       c1.AdaptivePerformanceStatus `json:"progress"`
-	CanStage       bool                         `json:"canStage"`
-	StageReason    string                       `json:"stageReason,omitempty"`
-	PoolCount      int                          `json:"poolCount"`
-	LatencyLimitMS int64                        `json:"latencyLimitMs"`
-	EligibleCount  int                          `json:"eligibleCount"`
-	ManualSample   bool                         `json:"manualSample"`
-	Ranking        []RankedNode                 `json:"ranking,omitempty"`
-	AppliedRanking []RankedNode                 `json:"appliedRanking,omitempty"`
+	StartReason     string                       `json:"startReason,omitempty"`
+	LatencySource   string                       `json:"latencySource,omitempty"`
+	ResourceProfile resourcepolicy.Profile       `json:"resourceProfile"`
+	Limits          resourcepolicy.Limits        `json:"limits"`
+	AutomaticReason string                       `json:"automaticReason,omitempty"`
+	State           string                       `json:"state"`
+	Digest          string                       `json:"digest,omitempty"`
+	Generation      uint64                       `json:"generation"`
+	Progress        c1.AdaptivePerformanceStatus `json:"progress"`
+	CanStage        bool                         `json:"canStage"`
+	StageReason     string                       `json:"stageReason,omitempty"`
+	PoolCount       int                          `json:"poolCount"`
+	LatencyLimitMS  int64                        `json:"latencyLimitMs"`
+	EligibleCount   int                          `json:"eligibleCount"`
+	ManualSample    bool                         `json:"manualSample"`
+	Ranking         []RankedNode                 `json:"ranking,omitempty"`
+	AppliedRanking  []RankedNode                 `json:"appliedRanking,omitempty"`
 }
 
 type RankedNode struct {
@@ -49,6 +54,7 @@ type RankedNode struct {
 }
 
 type Service struct {
+	Resources     *resourcepolicy.Guard
 	Editor        *xkeen.ConfigEditor
 	Lease         *authority.Lease
 	Reader        xrayapi.Reader
@@ -68,6 +74,13 @@ type Service struct {
 func (s *Service) Read() Status {
 	s.mu.Lock()
 	value := s.status
+	value.ResourceProfile = s.profile()
+	value.Limits = s.profile().Comparison(value.Generation == 0 || value.ManualSample)
+	if !value.ResourceProfile.Automatic {
+		value.AutomaticReason = "constrained-device"
+	} else if err := s.Resources.CheckConflict(); err != nil {
+		value.AutomaticReason = "native-speed-conflict-or-unavailable"
+	}
 	if value.State == "" {
 		value.State = "idle"
 	}
@@ -108,6 +121,13 @@ func (s *Service) Read() Status {
 	}
 	value.AppliedRanking = s.appliedRanking()
 	return value
+}
+
+func (s *Service) profile() resourcepolicy.Profile {
+	if s.Resources != nil {
+		return s.Resources.Profile
+	}
+	return resourcepolicy.Profile{Name: "standard", Automatic: true}
 }
 
 func (s *Service) appliedRanking() []RankedNode {
@@ -256,6 +276,14 @@ func (s *Service) start(ctx context.Context, broad bool) error {
 	if s.cancel != nil || s.closed {
 		return c1.ErrManualBusy
 	}
+	s.status.StartReason = ""
+	if err := s.Resources.CheckConflict(); err != nil {
+		s.status.StartReason = "resource-telemetry-unavailable"
+		if errors.Is(err, resourcepolicy.ErrExternalBenchmark) {
+			s.status.StartReason = "native-speed-conflict"
+		}
+		return err
+	}
 	release, err := s.Lease.TryAcquire()
 	if err != nil {
 		return c1.ErrManualBusy
@@ -265,7 +293,7 @@ func (s *Service) start(ctx context.Context, broad bool) error {
 		release()
 		return ErrUnavailable
 	}
-	pool, _, err := measurementPool(w.Documents["05_routing.json"].Text, s.Nodes(ctx), w.Targets)
+	pool, index, err := measurementPool(w.Documents["05_routing.json"].Text, s.Nodes(ctx), w.Targets)
 	if err != nil {
 		release()
 		return err
@@ -275,24 +303,33 @@ func (s *Service) start(ctx context.Context, broad bool) error {
 	if broad {
 		mode = 1
 	}
-	generation, err := prepare(snapshot, pool, s.status.Generation+1, mode, time.Now().UTC())
+	criteria, err := readCriteria(w.Documents["05_routing.json"].Text, w.Documents["07_observatory.json"].Text, index, w.Targets)
+	if err != nil {
+		release()
+		return err
+	}
+	generation, err := prepareWithCriteria(snapshot, pool, s.status.Generation+1, mode, time.Now().UTC(), criteria)
 	if err != nil {
 		release()
 		return err
 	}
 	retainHealthEvidence(&generation, s.Measurement.NativeQualityEvidence(snapshot))
+	limits := s.profile().Comparison(broad)
+	all := append(append([]c1.AdaptiveCandidateInput(nil), generation.Candidates...), generation.Fallbacks...)
+	initial, end := min(len(all), limits.Candidates), min(len(all), limits.Attempts)
+	generation.Candidates, generation.Fallbacks = all[:initial], all[initial:end]
 	s.lastStartedAt = time.Now().UTC()
-	wall := c1.AdaptiveMaxGenerationWallTime
-	if broad {
-		wall = c1.NativeQualityBroadWallTime
-	}
-	job, cancel := context.WithTimeout(context.Background(), wall+c1.AdaptiveCleanupReserve)
+	job, cancel := context.WithTimeout(context.Background(), limits.Wall())
 	s.cancel = cancel
 	done := make(chan struct{})
 	s.done = done
 	s.pool = append([]string(nil), pool...)
 	s.result = c1.AdaptiveResult{}
-	s.status = Status{State: "running", Digest: w.Digest, Generation: generation.Generation, PoolCount: len(pool), ManualSample: broad, LatencyLimitMS: latencyLimit(generation.Candidates[0].RTTMS, broad), EligibleCount: eligibleCount(snapshot, pool, broad, generation.StartedAt), Progress: c1.AdaptivePerformanceStatus{State: "running", ShortlistCount: len(generation.Candidates)}}
+	latencyCeiling := criteria.maxRTT
+	if broad {
+		latencyCeiling = min(latencyCeiling, max(int64(300), 2*generation.Candidates[0].RTTMS))
+	}
+	s.status = Status{State: "running", Digest: w.Digest, Generation: generation.Generation, PoolCount: len(pool), ManualSample: broad, LatencyLimitMS: latencyCeiling, LatencySource: criteria.latencySource, EligibleCount: len(all), Progress: c1.AdaptivePerformanceStatus{State: "running", ShortlistCount: len(generation.Candidates)}}
 	go func() {
 		defer close(done)
 		result, runErr := s.Measurement.MeasureNativeQuality(job, generation, func(progress c1.AdaptivePerformanceStatus) {
@@ -379,19 +416,7 @@ func (s *Service) Stage(ctx context.Context, digest string) (string, error) {
 			selectedCosts = append(selectedCosts, cost)
 		}
 	}
-	strategy := struct {
-		Type     string `json:"type"`
-		Settings any    `json:"settings"`
-	}{"leastLoad", struct {
-		Expected int                    `json:"expected"`
-		MaxRTT   string                 `json:"maxRTT"`
-		Costs    []c1.NativeQualityCost `json:"costs"`
-	}{1, "750ms", selectedCosts}}
-	text, err := configjson.ReplacePath([]byte(w.Documents["05_routing.json"].Text), []string{"routing", "balancers", strconv.Itoa(index), "strategy"}, strategy)
-	if err != nil {
-		return "", ErrUnavailable
-	}
-	text, err = configjson.ReplacePath(text, []string{"routing", "balancers", strconv.Itoa(index), "selector"}, selected)
+	text, err := replaceRecommendation(w.Documents["05_routing.json"].Text, index, selectedCosts, selected)
 	if err != nil {
 		return "", ErrUnavailable
 	}
@@ -474,6 +499,10 @@ func routingPool(text string, nodes []c1.NodeState, targets []xkeen.ConfigTarget
 }
 
 func prepare(snapshot xrayapi.Snapshot, pool []string, id uint64, mode int, now time.Time) (c1.AdaptiveGeneration, error) {
+	return prepareWithCriteria(snapshot, pool, id, mode, now, observationCriteria{maxRTT: c1.AdaptiveMaximumRTTMS, freshness: 2 * time.Minute})
+}
+
+func prepareWithCriteria(snapshot xrayapi.Snapshot, pool []string, id uint64, mode int, now time.Time, criteria observationCriteria) (c1.AdaptiveGeneration, error) {
 	if !snapshot.APIReachable || !snapshot.RoutingReachable || !snapshot.ObservatoryReachable || snapshot.Balancer.Override != "" {
 		return c1.AdaptiveGeneration{}, ErrUnavailable
 	}
@@ -487,11 +516,14 @@ func prepare(snapshot xrayapi.Snapshot, pool []string, id uint64, mode int, now 
 		if !known[h.Tag] {
 			continue
 		}
+		if criteria.observed != nil && !criteria.observed[h.Tag] {
+			continue
+		}
 		if seen[h.Tag] {
 			return c1.AdaptiveGeneration{}, ErrUnavailable
 		}
 		seen[h.Tag] = true
-		if !h.Alive || h.DelayMS <= 0 || h.DelayMS > c1.AdaptiveMaximumRTTMS || h.LastTry.IsZero() || h.LastTry.After(now) || now.Sub(h.LastTry) > 2*time.Minute {
+		if !h.Alive || h.DelayMS <= 0 || h.DelayMS > criteria.maxRTT || h.LastTry.IsZero() || h.LastTry.After(now) || now.Sub(h.LastTry) > criteria.freshness {
 			continue
 		}
 		// One observation is not a stability window. No invented loss/jitter evidence.
@@ -507,7 +539,10 @@ func prepare(snapshot xrayapi.Snapshot, pool []string, id uint64, mode int, now 
 		return c1.AdaptiveGeneration{}, ErrUnavailable
 	}
 	broad := mode == 1
-	limit := latencyLimit(eligible[0].RTTMS, broad)
+	limit := criteria.maxRTT
+	if broad {
+		limit = min(limit, max(int64(300), 2*eligible[0].RTTMS))
+	}
 	eligible = eligible[:sort.Search(len(eligible), func(i int) bool { return eligible[i].RTTMS > limit })]
 	if len(eligible) < 2 {
 		return c1.AdaptiveGeneration{}, ErrUnavailable
