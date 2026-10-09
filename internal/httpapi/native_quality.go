@@ -16,6 +16,8 @@ type NativeQualityService interface {
 	Stage(context.Context, string) (string, error)
 }
 
+type nativeQualityInspection interface{ InspectAndResolve(context.Context) error }
+
 func (s *Server) handleNativeQuality(w http.ResponseWriter, r *http.Request) {
 	session, ok := s.requireSession(w, r)
 	if !ok {
@@ -65,6 +67,17 @@ func (s *Server) handleNativeQuality(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
+	case "/api/v1/performance/quality/inspect":
+		inspector, ok := s.nativeQuality.(nativeQualityInspection)
+		if !ok {
+			writeError(w, http.StatusServiceUnavailable, "quality inspection unavailable")
+			return
+		}
+		if err := inspector.InspectAndResolve(r.Context()); err != nil {
+			writeError(w, http.StatusConflict, "quality inspection inconclusive; review native configuration, job and probe state")
+			return
+		}
+		writeJSON(w, http.StatusOK, s.nativeQuality.Read())
 	case "/api/v1/performance/quality/start":
 		if err := s.nativeQuality.Start(r.Context()); err != nil {
 			writeError(w, http.StatusConflict, "quality comparison busy or unavailable")

@@ -63,7 +63,42 @@ test('inspection-required automatic outcome fences browser testing and applying'
   await expect(page.getByText('Inspection required', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Run speed test', exact: true })).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Apply recommendation', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Verify and clear inspection block' })).toBeVisible()
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/inspect', 'POST')).toEqual([])
+})
+
+test('inspection action does not retry an uncertain application when verification refuses', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), inspectionRequired: true, reviewReason: 'inspection-required' }
+  let inspections = 0
+  await page.route('**/api/v1/performance/quality/inspect', async (route) => {
+    inspections++
+    await route.fulfill({ status: 409, json: { error: 'inspection incomplete' } })
+  })
+  await open(page)
+  await page.getByRole('button', { name: 'Verify and clear inspection block' }).click()
+  await expect(page.getByText(/Action was not confirmed/)).toBeVisible()
+  await expect(page.getByText('Inspection required', { exact: true })).toBeVisible()
+  expect(inspections).toBe(1)
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
+})
+
+test('verified inspection clears the browser block without repeating Apply', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), state: 'failed', canStage: false, inspectionRequired: true, reviewReason: 'inspection-required' }
+  let inspections = 0
+  await page.route('**/api/v1/performance/quality/inspect', async (route) => {
+    inspections++
+    model.quality = { ...model.quality, inspectionRequired: false, reviewReason: 'inspection-settled' }
+    await route.fulfill({ status: 200, json: model.quality })
+  })
+  await open(page)
+  await page.getByRole('button', { name: 'Verify and clear inspection block' }).click()
+  await expect(page.getByText('Inspection required', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Run speed test', exact: true })).toBeEnabled()
+  expect(inspections).toBe(1)
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
 })
 
