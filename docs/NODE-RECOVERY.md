@@ -1,6 +1,21 @@
 # Offline recovery of an interrupted node operation
 
-## Ordinary transaction proof (#171; signed 0.4.7, installation pending)
+## Readiness follow-up (#176; source, not yet released)
+
+Node transactions and offline recovery use the same in-process, read-only
+`RoutingService.ListRule` readiness check. It retains the 30-second phase budget
+and any shorter caller deadline, bounds each call to two seconds and waits
+500 milliseconds after a transient failure. One connection is closed when the
+check returns; readiness does not launch extra Xray processes. Full candidate
+validation, native lifecycle calls, inventory and generation proof stay separate.
+
+Receipts retain safe readiness classes for deadline, cancellation, unavailable
+service, unsupported RPC, permission and protocol failures. Raw RPC details and
+rule contents are not recorded. Successful later verification preserves the
+original activation/rollback failure. These source changes do not establish the
+cause of earlier hardware failures or prove successful subscription activation.
+
+## Ordinary transaction proof (#171; signed 0.4.7)
 
 Node changes and explicit runtime reconciliation now use the same protected
 receipt and completion fence as offline recovery. A receipt distinguishes the
@@ -28,8 +43,14 @@ Signed0.4.6 installation and the original explicit verification passed
 [hardware readback](https://github.com/popiposter/xkeen-control/issues/168#issuecomment-6080313195).
 A later automatic subscription operation created a different unresolved marker;
 the [resource experiment](https://github.com/popiposter/xkeen-control/issues/157#issuecomment-6080560450)
-stopped before Save/Apply. These are separate outcomes. #171 is not yet installed
-or hardware-qualified.
+stopped before Save/Apply. These are separate outcomes. Signed0.4.7 subsequently
+passed installation and [explicit recovery settlement](https://github.com/popiposter/xkeen-control/issues/171#issuecomment-6082322961).
+The later Observatory Apply completed, but a new automatic subscription attempt
+retained a transaction/previous receipt with candidate and rollback readiness
+failures. Healthy VPN afterward does not settle that newer attempt.
+[#176](https://github.com/popiposter/xkeen-control/issues/176) tracks readiness
+resource bounds and failure classification; subscription hardware acceptance
+remains pending.
 
 
 Signed 0.4.5 retains [#158](https://github.com/popiposter/xkeen-control/issues/158),

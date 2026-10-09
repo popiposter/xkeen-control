@@ -811,36 +811,6 @@ func xkeenForegroundEnvironmentFor(environment []string) []string {
 	return append(environment, foreground)
 }
 
-func (a CommandActivator) WaitReady(ctx context.Context) error {
-	if a.XrayBinary == "" {
-		a.XrayBinary = "xray"
-	}
-	if a.APIAddress == "" {
-		a.APIAddress = "127.0.0.1:10085"
-	}
-	timeout := a.ReadyTimeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	readyContext, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		command := exec.CommandContext(readyContext, a.XrayBinary, "api", "lsrules", "-s", a.APIAddress)
-		command.Stdout = io.Discard
-		command.Stderr = io.Discard
-		if command.Run() == nil {
-			return nil
-		}
-		select {
-		case <-readyContext.Done():
-			return errors.New("Xray API did not become ready")
-		case <-ticker.C:
-		}
-	}
-}
-
 func (a CommandActivator) VerifyOutboundTags(ctx context.Context, expected []string) error {
 	if len(expected) == 0 || a.ActiveOutboundsPath == "" {
 		return errors.New("active outbound artifact unavailable")
