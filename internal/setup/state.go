@@ -91,7 +91,15 @@ func Inspect() (*Receipt, error) { return readReceipt(ReceiptPath) }
 // Normal acquires the shared process lock before checking persisted setup state.
 // The returned close function must be held for the complete daemon/CLI lifetime.
 func Normal() (func(), error) {
-	l, err := acquireLock(LockPath, false)
+	return processAdmission(false)
+}
+
+// Maintenance excludes every cooperating daemon/CLI for the complete offline
+// operation. It neither adopts setup state nor inherits an installation lock.
+func Maintenance() (func(), error) { return processAdmission(true) }
+
+func processAdmission(exclusive bool) (func(), error) {
+	l, err := acquireLock(LockPath, exclusive)
 	if err != nil {
 		return nil, err
 	}

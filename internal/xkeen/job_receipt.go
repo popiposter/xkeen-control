@@ -19,6 +19,16 @@ type jobReceipt struct {
 	State  string `json:"state"`
 }
 
+// OfflineLifecycleSettled inspects the existing receipt without settling it.
+// Node recovery must not consume another owner's unresolved native action.
+func OfflineLifecycleSettled(path string) error {
+	m, err := NewPersistentJobs("", authority.NewLease(), path)
+	if err != nil || m.job != nil && m.job.state != "completed" && m.job.state != "inspected" {
+		return ErrJob
+	}
+	return nil
+}
+
 func NewPersistentJobs(binary string, lease *authority.Lease, path string) (*Jobs, error) {
 	m := NewJobs(binary, lease)
 	parent, err := os.Lstat(filepath.Dir(path))

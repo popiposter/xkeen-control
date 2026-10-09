@@ -47,11 +47,15 @@ func acquireNodeIntent(ctx context.Context, previousDir string) (*nodeIntent, er
 func (i *nodeIntent) Close() { _ = i.file.Close() }
 
 func (i *nodeIntent) Settle() error {
-	info, err := os.Lstat(i.file.Name())
-	if err != nil || !os.SameFile(info, i.info) || info.Mode() != i.info.Mode() {
+	return settleNodeIntent(i.file.Name(), i.info)
+}
+
+func settleNodeIntent(path string, original os.FileInfo) error {
+	info, err := os.Lstat(path)
+	if err != nil || !os.SameFile(info, original) || info.Mode() != original.Mode() {
 		return ErrNodeRecoveryRequired
 	}
-	if os.Remove(i.file.Name()) != nil || syncNodeDirectory(filepath.Dir(i.file.Name())) != nil {
+	if os.Remove(path) != nil || syncNodeDirectory(filepath.Dir(path)) != nil {
 		return ErrNodeRecoveryRequired
 	}
 	return nil

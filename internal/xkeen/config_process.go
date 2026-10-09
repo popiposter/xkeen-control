@@ -8,6 +8,12 @@ import (
 	"strings"
 )
 
+// ReadConfigProcess exposes the existing read-only identity proof to the offline
+// node recovery owner. It does not settle editor state or invoke native actions.
+func (e *ConfigEditor) ReadConfigProcess(ctx context.Context) (string, error) {
+	return e.configProcess(ctx)
+}
+
 // VerifySetupRuntime is readback for the explicit initial setup owner. It does
 // not clear pending state, replay a native action or replace InspectApplied.
 func (e *ConfigEditor) VerifySetupRuntime(ctx context.Context, expected string) error {
