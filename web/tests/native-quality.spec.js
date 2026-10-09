@@ -77,6 +77,16 @@ test('large eligible set shows bounded subset, deferred nodes and no-op without 
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
 })
 
+test('unavailable native readback does not present cached pool or selected node as current', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), activePoolCount: 6, activePool: [], activePoolState: 'unavailable',
+    nativeSelectedState: 'unavailable' }
+  await open(page)
+  await expect(page.getByText(/Active pool readback unavailable/)).toBeVisible()
+  await expect(page.getByText(/Current active pool: 6 nodes/)).toHaveCount(0)
+  await expect(page.getByText(/Last observed native selected node/)).toHaveCount(0)
+})
+
 test('inspection-required automatic outcome fences browser testing and applying', async ({ page }) => {
   const model = await mountFeatureCompleteDashboard(page)
   model.quality = { ...complete(), inspectionRequired: true, reviewReason: 'inspection-required' }

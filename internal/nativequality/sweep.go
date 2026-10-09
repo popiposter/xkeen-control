@@ -136,7 +136,8 @@ func (s *Service) startSweep(parent context.Context, trigger string) error {
 	s.pool = append([]string(nil), pool...)
 	s.sweepPlan = plan
 	s.result = c1.AdaptiveResult{}
-	s.status = Status{State: "running", Digest: w.Digest, Generation: generation.Generation, PoolCount: len(pool), ActivePoolCount: len(activePool), ActivePool: append([]string(nil), activePool...), EligibleCount: plan.TotalEligible, TotalEligible: plan.TotalEligible, SelectedForSpeed: len(plan.Candidates), DeferredForFutureReview: plan.Deferred, SubsetState: "all-eligible", FairCursor: plan.NextCursor, FairCursorState: plan.CursorState, LatencyLimitMS: criteria.maxRTT, LatencySource: criteria.latencySource, ReviewTrigger: trigger, Progress: c1.AdaptivePerformanceStatus{State: "running"}, AppliedState: "not-attempted", QuotaState: "available", QuotaUsedBytes: quota.UsedBytes, QuotaRemainingBytes: quota.RemainingBytes, QuotaReviewsUsed: quota.ReviewsUsed, QuotaNextResetAt: quota.NextResetAt}
+	s.status = Status{State: "running", Digest: w.Digest, Generation: generation.Generation, PoolCount: len(pool), ActivePoolCount: len(activePool), ActivePool: append([]string(nil), activePool...), ActivePoolState: "frozen-at-review", EligibleCount: plan.TotalEligible, TotalEligible: plan.TotalEligible, SelectedForSpeed: len(plan.Candidates), DeferredForFutureReview: plan.Deferred, SubsetState: "all-eligible", FairCursor: plan.NextCursor, FairCursorState: plan.CursorState, LatencyLimitMS: criteria.maxRTT, LatencySource: criteria.latencySource, ReviewTrigger: trigger, Progress: c1.AdaptivePerformanceStatus{State: "running"}, AppliedState: "not-attempted", QuotaState: "available", QuotaUsedBytes: quota.UsedBytes, QuotaRemainingBytes: quota.RemainingBytes, QuotaReviewsUsed: quota.ReviewsUsed, QuotaNextResetAt: quota.NextResetAt}
+	observeNativeSelection(&s.status, snapshot, now)
 	if plan.Deferred > 0 {
 		s.status.SubsetState = "subset-selected"
 	}
@@ -193,6 +194,9 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 			break
 		}
 		snapshot := s.Reader.Snapshot(wctx)
+		s.mu.Lock()
+		observeNativeSelection(&s.status, snapshot, time.Now().UTC())
+		s.mu.Unlock()
 		if !snapshot.APIReachable || !snapshot.RoutingReachable || !snapshot.ObservatoryReachable || snapshot.Balancer.Override != "" {
 			reason = "native-override-or-unavailable"
 			stop()

@@ -115,6 +115,9 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		return
 	}
 	snapshot := s.Reader.Snapshot(ctx)
+	s.mu.Lock()
+	observeNativeSelection(&s.status, snapshot, time.Now().UTC())
+	s.mu.Unlock()
 	if !snapshot.APIReachable || !snapshot.RoutingReachable || !snapshot.ObservatoryReachable || snapshot.Balancer.Override != "" || !s.Reader.ProbeReachable(ctx) {
 		s.applyOutcome("not-applied", "native-override-or-unavailable", false)
 		return
@@ -236,7 +239,9 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 	s.mu.Lock()
 	s.status.ActivePoolCount = len(selected)
 	s.status.ActivePool = append([]string(nil), selected...)
+	s.status.ActivePoolState = "verified-after-apply"
 	s.status.AppliedPool = append([]string(nil), selected...)
+	observeNativeSelection(&s.status, actual, time.Now().UTC())
 	s.mu.Unlock()
 	s.applyOutcome("applied", "", false)
 }

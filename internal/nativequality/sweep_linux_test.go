@@ -26,9 +26,11 @@ type sweepReader struct {
 	healthy       bool
 	failAfterFile string
 	count         int
+	snapshotCalls atomic.Int64
 }
 
 func (r *sweepReader) Snapshot(context.Context) xrayapi.Snapshot {
+	r.snapshotCalls.Add(1)
 	healthy := r.healthy
 	if r.failAfterFile != "" {
 		if _, err := os.Stat(r.failAfterFile); err == nil {
@@ -150,6 +152,45 @@ func TestSweepFortySixEligibleRunsBoundedSubsetWithoutApply(t *testing.T) {
 	w, err := s.Editor.Workspace(context.Background())
 	if err != nil || w.Pending != nil || w.Digest != v.Digest {
 		t.Fatal("no-op changed configuration", err)
+	}
+}
+
+func TestSweepOverlappingNativeSelectorRefusesBeforeQuotaOrTransfer(t *testing.T) {
+	s, _, _, dir := sweepFixtureCount(t, true, 46)
+	text := `{"routing":{"rules":[],"balancers":[{"tag":"bal-proxy","selector":["proxy-","proxy-0"],"strategy":{"type":"leastLoad","settings":{"maxRTT":"10s"}}}]}}`
+	if err := os.WriteFile(filepath.Join(dir, "05_routing.json"), []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.startSweep(context.Background(), "periodic"); err == nil {
+		t.Fatal("overlapping selector admitted")
+	}
+	if len(s.Measurement.(*sweepMeasurement).calls) != 0 {
+		t.Fatal("refused selector transferred data")
+	}
+	if _, err := os.Stat(s.QuotaPath); !os.IsNotExist(err) {
+		t.Fatal("refused selector reserved quota", err)
+	}
+}
+
+func TestQualityStatusPollingUsesCachedNativeSelection(t *testing.T) {
+	s, _, _, _ := sweepFixture(t, true)
+	reader := s.Reader.(*sweepReader)
+	s.status.NativeSelected = "proxy-00"
+	s.status.NativeSelectedState = "observed"
+	s.status.NativeSelectedAt = time.Now().UTC()
+	for i := 0; i < 3; i++ {
+		v := s.Read()
+		if v.NativeSelected != "proxy-00" || v.NativeSelectedState != "observed" {
+			t.Fatal("recent observed target lost", v.NativeSelectedState)
+		}
+	}
+	if got := reader.snapshotCalls.Load(); got != 0 {
+		t.Fatal("status poll opened full Xray snapshot", got)
+	}
+	s.status.NativeSelectedAt = time.Now().UTC().Add(-3 * time.Minute)
+	v := s.Read()
+	if v.NativeSelected != "" || v.NativeSelectedState != "unavailable" {
+		t.Fatal("stale native selection presented as current", v.NativeSelectedState)
 	}
 }
 
