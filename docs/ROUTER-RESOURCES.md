@@ -6,7 +6,7 @@ qualification, not measured router throughput capacity.
 
 | Profile | Single node | Comparison | Automatic comparisons |
 | --- | --- | --- | --- |
-| MIPS, RAM at most 256 MiB, or unknown total RAM | 4 MiB / 20 seconds | 3 successful nodes, 4 attempts, 24 MiB / 90 seconds per batch | Bounded sequential sweep under #188; hardware acceptance pending |
+| MIPS, RAM at most 256 MiB, or unknown total RAM | 4 MiB / 20 seconds | 3 successful nodes, 4 attempts, 24 MiB / 90 seconds per batch | Bounded sequential sweep in0.4.10; live sweep/Apply acceptance pending |
 | Other supported routers | 48 MiB / 45 seconds | Manual: 12 successful / 18 attempts, 288 MiB / 360 seconds; automatic: 6 / 12, 144 MiB / 180 seconds | At most every 6 hours |
 
 Wall ceilings include the existing three-second probe cleanup reserve. Failed
@@ -88,5 +88,6 @@ rejected it while an interrupted node transaction retained its pending marker.
 Cron was restored unchanged. Recovery is separately specified in
 [#158](https://github.com/popiposter/xkeen-control/issues/158). Do not delete the
 marker, restart to clear the lock, bypass the editor or replay native activation.
-The signed0.4.9 MIPS manual speed test completed; automatic sweep, controlled
-load comparison and client acceptance remain pending.
+The signed0.4.9 MIPS manual speed test completed. Signed0.4.10 installation and
+separate synthetic MIPS algorithm execution passed; live automatic sweep/Apply,
+controlled load comparison and client acceptance remain pending.
