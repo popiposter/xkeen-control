@@ -1,6 +1,7 @@
 # Offline recovery of an interrupted node operation
 
-Signed 0.4.3 delivers [#158](https://github.com/popiposter/xkeen-control/issues/158).
+Signed 0.4.4 retains [#158](https://github.com/popiposter/xkeen-control/issues/158),
+first delivered in 0.4.3, and adds [durable panel update outcomes](OPERATIONS.md#durable-update-outcomes-162).
 Source review, local/hosted FULL and signed publication passed; actual hardware recovery remains NOTRUN. It does not turn an
 unknown historical subscription operation into a successful one.
 

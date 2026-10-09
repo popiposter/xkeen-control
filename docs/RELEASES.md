@@ -2,33 +2,31 @@
 
 ## Current release
 
-Signed stable [v0.4.3](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.3), published 2026-10-09T08:14:04Z, from independently reviewed source `a98f090b2611f90a450458476383c62defafe966`, tree `1d4ec798795a2dea1db4e03fd0420cf20170da5f`, source epoch 1791533192.
+Signed stable [v0.4.4](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.4), published 2026-10-09T09:41:53Z, from independently reviewed source `27daa9abdfec946e150a2bb934f96ddd7aec3125`, tree `ee178ad47d3bb9da3ebf978971063c36c695ce98`, source epoch 1791538428.
 
-Protected [run37903102185](https://github.com/popiposter/xkeen-control/actions/runs/37903102185) completed exact-source hosted FULL and signing/publication. Fresh unauthenticated downloads verified exactly ten public assets using a verifier built from the released source: pinned Ed25519 key, both signatures/manifests, asset identity/compatibility/size/hash and all nine SHA256SUMS entries. Static ELF/soft-float and published MIPS version startup under qemu passed.
+Protected [run37912340620](https://github.com/popiposter/xkeen-control/actions/runs/37912340620) completed exact-source hosted FULL and signing/publication. Fresh unauthenticated downloads verified exactly ten public assets with the source-built verifier: pinned Ed25519 key, both signatures/manifests, sizes/hashes, nine SHA256SUMS entries, static ELF/soft-float and the published MIPS version under qemu.
 
 | Binary | Bytes | SHA256 |
 | --- | ---: | --- |
-| linux/arm64 | 16,515,232 | `341f77bed61ab75d9635d00bd0b5daa34cd0c5d61027a11c20eb6017b7f5c501` |
-| linux/mipsle soft-float | 19,005,631 | `b100eabd1c87c9e14a6ba9c57e2d8c8ec932b3572ed0bc7f155de49748a53e35` |
+| linux/arm64 | 16,515,232 | `051208a443148f32339feb230afa62ef20106636072112bd858549d571d17008` |
+| linux/mipsle soft-float | 19,071,167 | `1521f54d68fea16c8ffdb95c1f9d0f93a85b3e85ae3ad18075ff592afad09490` |
 
-[PR159](https://github.com/popiposter/xkeen-control/pull/159) delivers hardware-derived diagnostic budgets, resource pressure cancellation, native benchmark conflict reporting and preservation of native routing criteria. [PR160](https://github.com/popiposter/xkeen-control/pull/160) adds explicit offline recovery of coherent interrupted node transactions, with existing process-lock exclusion and durable no-replay fencing. Both received independent source review and local FULL. Final PR160 qualification binds `16900459f250339a352d9480370ada36e366a4f2`; the merged release tree is identical. Frozen-source review and protected hosted FULL separately bind the released merge SHA. Later documentation commits do not change the immutable release source.
+[PR163](https://github.com/popiposter/xkeen-control/pull/163) delivers [#162](https://github.com/popiposter/xkeen-control/issues/162): durable update receipts, bounded readiness, checked file commits/rollback and verified RAM maintenance delivery for older helpers. Independent source review and local FULL bind `93cd2b617a2b8886d5be015e25feb69d5fe5593a`; the released merge tree is identical. Frozen-source review and protected hosted FULL separately bind the released merge SHA. Later documentation commits do not change that source.
 
-One authorized KN1810 update attempt reached the signed 0.4.3 candidate and then the existing helper rolled back to signed 0.4.2. Installation acceptance **FAILED**; the terminal cause is unknown because the old helper did not retain a durable outcome. Fresh readback confirmed the restored binary and preserved native/configuration state. A transient candidate version is not installation proof. [#162](https://github.com/popiposter/xkeen-control/issues/162) addresses durable outcomes and bounded readiness; do not replay the old update command.
-
-Actual node recovery, controlled resource comparison and independent client/DNS/failure acceptance remain pending. Issues [#157](https://github.com/popiposter/xkeen-control/issues/157) and [#158](https://github.com/popiposter/xkeen-control/issues/158) remain open for hardware acceptance. Publication/emulation does not establish router success.
+Signed 0.4.4 hardware installation, node recovery, controlled resource comparison and independent client/DNS/failure acceptance remain **NOTRUN**. Issues [#157](https://github.com/popiposter/xkeen-control/issues/157), [#158](https://github.com/popiposter/xkeen-control/issues/158) and [#162](https://github.com/popiposter/xkeen-control/issues/162) remain open. The failed 0.4.3 update and observed rollback to 0.4.2 remain separate historical evidence below. Publication does not settle an interrupted operation or authorize replay; follow [maintenance delivery and inspection](OPERATIONS.md#durable-update-outcomes-162).
 
 ## Installation
 
 Package targets:`linux/arm64` and `linux/mipsle` soft-float with confirmed Entware `mipsel-3.4`/`mipsel-3.4_kn`. For an existing stock XKeen/Xray with Entware, install only the panel. Existing KN1810 preparation and hardware limits are described in [MIPS Keenetic](MIPS-KEENETIC.md):
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.3/install.sh) && sh -c "$xkeen_installer"
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.4/install.sh) && sh -c "$xkeen_installer"
 ```
 
 For a genuinely new supported Ultra KN1811/5.01.C.6.0-1, one private IPv4 bridge/one WAN and no host/custom DNS exceptions, use the explicit guided mode:
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.3/install.sh) && sh -c "$xkeen_installer" -- --setup
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.4/install.sh) && sh -c "$xkeen_installer" -- --setup
 ```
 
 It privately imports the source, prepares stock2.1 native components, panel, mosdns and a validated reference generation, then assigns HOME last. [Fresh prerequisites, ordering and interrupted setup](FRESH-KEENETIC.md) govern this restricted route; it never patches native code or reinstalls existing components. Other firmware/model/topology support remains unavailable.
@@ -68,6 +66,23 @@ Only protected manual Release publishes: explicit version/channel/current-review
 Independent host verification builds `cmd/xkeen-release` from exact released source, runs verify-pinned-key, then verify and verify-assets for each published architecture, and `sha256sum -c SHA256SUMS` on fresh downloads of the exact public set. For a dual-platform release this means ten downloads, both signatures/four-artifact manifests, equal source/version/channel/epoch/compatibility and linux/arm64 plus linux/mipsle identity. Bound retrieval to10minutes/128MiB. Historical ARM64 releases through0.4.0 require their seven files. Never bypass signature or manually repair failed publication.
 
 ## History
+
+### Stable 0.4.3 publication and failed installation
+
+Signed stable [v0.4.3](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.3), published 2026-10-09T08:14:04Z, from independently reviewed source `a98f090b2611f90a450458476383c62defafe966`, tree `1d4ec798795a2dea1db4e03fd0420cf20170da5f`, source epoch 1791533192.
+
+Protected [run37903102185](https://github.com/popiposter/xkeen-control/actions/runs/37903102185) completed exact-source hosted FULL and signing/publication. Fresh unauthenticated downloads verified exactly ten public assets using a verifier built from the released source: pinned Ed25519 key, both signatures/manifests, asset identity/compatibility/size/hash and all nine SHA256SUMS entries. Static ELF/soft-float and published MIPS version startup under qemu passed.
+
+| Binary | Bytes | SHA256 |
+| --- | ---: | --- |
+| linux/arm64 | 16,515,232 | `341f77bed61ab75d9635d00bd0b5daa34cd0c5d61027a11c20eb6017b7f5c501` |
+| linux/mipsle soft-float | 19,005,631 | `b100eabd1c87c9e14a6ba9c57e2d8c8ec932b3572ed0bc7f155de49748a53e35` |
+
+[PR159](https://github.com/popiposter/xkeen-control/pull/159) delivers hardware-derived diagnostic budgets, resource pressure cancellation, native benchmark conflict reporting and preservation of native routing criteria. [PR160](https://github.com/popiposter/xkeen-control/pull/160) adds explicit offline recovery of coherent interrupted node transactions, with existing process-lock exclusion and durable no-replay fencing. Both received independent source review and local FULL. Final PR160 qualification binds `16900459f250339a352d9480370ada36e366a4f2`; the merged release tree is identical. Frozen-source review and protected hosted FULL separately bind the released merge SHA. Later documentation commits do not change the immutable release source.
+
+One authorized KN1810 update attempt reached the signed 0.4.3 candidate and then the existing helper rolled back to signed 0.4.2. Installation acceptance **FAILED**; the terminal cause is unknown because the old helper did not retain a durable outcome. Fresh readback confirmed the restored binary and preserved native/configuration state. A transient candidate version is not installation proof. [#162](https://github.com/popiposter/xkeen-control/issues/162) addresses durable outcomes and bounded readiness; do not replay the old update command.
+
+Actual node recovery, controlled resource comparison and independent client/DNS/failure acceptance remain pending. Issues [#157](https://github.com/popiposter/xkeen-control/issues/157) and [#158](https://github.com/popiposter/xkeen-control/issues/158) remain open for hardware acceptance. Publication/emulation does not establish router success.
 
 ### Stable 0.4.2 publication record
 

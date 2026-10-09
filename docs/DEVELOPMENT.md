@@ -92,6 +92,7 @@ one frontend production build + Node unit tests + complete Playwright suite
 npm audit at repository threshold
 tracked embedded-asset consistency
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 build
+CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat build + emulated startup
 artifact SHA-256
 host git diff --check
 ```
@@ -116,13 +117,16 @@ Developer/local build helper:
 ./scripts/build-control-plane.sh
 ```
 
-Current qualified target:
+Current source/build targets (hardware acceptance is tracked separately):
 
 ```text
 CGO_ENABLED=0
 GOOS=linux
 GOARCH=arm64
 output: dist/xkeen-control-linux-arm64
+
+CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat
+output: dist/xkeen-control-linux-mipsle
 ```
 
 The binary is built off-router. Record exact source HEAD and artifact SHA-256 for production evidence.
@@ -161,8 +165,8 @@ The protected manual Release workflow:
 - assembles unsigned deterministic assets from those verified embedded bytes in the unprivileged build job; assembly does not repeat npm installation/build or rewrite tracked assets;
 - transfers only secretless release inputs to the protected `release` environment;
 - verifies the protected public key matches the compiled/source-pinned trust anchor;
-- signs the exact manifest with the protected private key;
-- creates a non-public draft, re-downloads and independently verifies the exact signed seven-asset set;
+- signs both exact platform manifests with the protected private key;
+- creates a non-public draft, re-downloads and independently verifies the exact signed ten-asset set for ARM64 and MIPS soft-float (both binaries, shared init/helper/installer, two manifests/signatures and SHA256SUMS); the seven-asset set applies only to historical ARM64 releases through 0.4.0;
 - re-checks current `main` before publishing the verified draft.
 
 Actions artifacts are build handoff only, not release authority.

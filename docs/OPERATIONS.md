@@ -31,8 +31,9 @@ For publication: exact reviewed remote main, available version/tag, protected Re
 
 ### Durable update outcomes (#162)
 
-The following commands require a signed release containing #162; published 0.4.3
-does not provide them. Source implementation is not installation authority.
+Signed [0.4.4](RELEASES.md) provides the following commands and the #162 update
+contract. Published 0.4.3 does not provide them. Hardware acceptance of 0.4.4 is
+still NOTRUN; publication alone does not establish an installed generation.
 
 ```sh
 xkeen-control self-update inspect
