@@ -35,7 +35,7 @@ func TestConstrainedNativeConflictIsVisibleWithoutActivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := s.Read()
-	if v.StartReason != "native-speed-conflict" || v.AutomaticReason != "constrained-device" || v.State != "idle" {
+	if v.StartReason != "native-speed-conflict" || v.AutomaticReason != "native-speed-conflict-or-unavailable" || v.State != "idle" {
 		t.Fatal(v)
 	}
 }

@@ -8,6 +8,35 @@ import (
 	"time"
 )
 
+func TestNativeSweepRequiresCompleteFreshEightyPercentCoverage(t *testing.T) {
+	now := time.Now().UTC()
+	r := AdaptiveResult{NativeQuality: true, Sweep: true, SweepEligibleCount: 14, Generation: 1, StartedAt: now.Add(-15 * time.Minute), CompletedAt: now, State: "completed", ShortlistCount: 14}
+	var pool []string
+	for i := 0; i < 14; i++ {
+		tag := fmt.Sprintf("proxy-%02d", i)
+		pool = append(pool, tag)
+		r.Candidates = append(r.Candidates, AdaptiveCandidateResult{Tag: tag, SampledAt: now.Add(-time.Duration(14-i) * time.Minute), RTTMS: int64(100 + i), Valid: i < 12, DownloadBPS: 1e6, UploadBPS: 1e6})
+	}
+	if costs, err := NativeQualityCosts(r, now, pool); err != nil || len(costs) != 14 || len(NativeQualityRanking(r, costs)) != 6 {
+		t.Fatalf("complete sweep rejected: %v %v", costs, err)
+	}
+	r.Candidates[11].Valid = false
+	if _, err := NativeQualityCosts(r, now, pool); err == nil {
+		t.Fatal("eleven of fourteen valid samples admitted")
+	}
+	r.Candidates[11].Valid = true
+	r.Candidates[0].SampledAt = now.Add(-31 * time.Minute)
+	if _, err := NativeQualityCosts(r, now, pool); err == nil {
+		t.Fatal("stale sample admitted")
+	}
+	r.Candidates[0].SampledAt = now.Add(-14 * time.Minute)
+	r.Candidates = r.Candidates[:13]
+	r.ShortlistCount = 13
+	if _, err := NativeQualityCosts(r, now, pool); err == nil {
+		t.Fatal("incomplete eligible coverage admitted")
+	}
+}
+
 func TestBalancedRankingSelectsSixFromBroadSampleInsteadOfWeakLowPing(t *testing.T) {
 	now := time.Now()
 	r := AdaptiveResult{NativeQuality: true, BroadSample: true, Generation: 1, State: "completed", StartedAt: now.Add(-4 * time.Minute), CompletedAt: now, ShortlistCount: 12}

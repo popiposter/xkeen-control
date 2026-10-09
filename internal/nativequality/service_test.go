@@ -27,7 +27,7 @@ func TestStatusReportsActualGenerationBudget(t *testing.T) {
 	}
 	s := &Service{Resources: &resourcepolicy.Guard{Profile: resourcepolicy.ForPlatform("mipsle", 254472)}, status: Status{StartReason: "native-speed-conflict"}}
 	v := s.Read()
-	if v.AutomaticReason != "constrained-device" || v.StartReason != "native-speed-conflict" {
+	if v.AutomaticReason != "" || v.StartReason != "native-speed-conflict" {
 		t.Fatal(v)
 	}
 }

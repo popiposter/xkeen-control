@@ -42,6 +42,15 @@ does not certify fresh installation or client/outage behavior.
 
 PR180 remains held: the compact hardware constructor completed in 16.243 s, but that is not serving or retirement acceptance and does not justify releasing a timeout change first.
 
+## MIPS automatic pool review in development
+
+[#188](https://github.com/popiposter/xkeen-control/issues/188) addresses the
+gap between the three-node constrained manual sample and the operator's desired
+automatic pool update after subscription refresh. It specifies sequential
+bounded batches, complete fresh eligible-node coverage, a rolling traffic quota
+and one verified native Apply. Signed0.4.9 proves a manual MIPS speed test, not
+this automatic sweep or application; current live routing remains unchanged.
+
 ## Remaining acceptance
 
 [#162 durable update outcomes](https://github.com/popiposter/xkeen-control/issues/162)
