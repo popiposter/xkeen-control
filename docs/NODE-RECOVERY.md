@@ -71,3 +71,44 @@ without another activation. The panel can be explicitly resumed with its retaine
 blocked state for read-only diagnosis; that does not settle recovery. A failed
 settlement or unknown activation needs a separate reviewed recovery decision.
 No reboot, WAN opening or native code patch is part of this procedure.
+
+## Verify an existing attempt (#168; not in signed 0.4.5)
+
+The proposed delivery adds a separate offline action for a retained attempt:
+
+```sh
+/opt/sbin/xkeen-control nodes recovery inspect
+/opt/sbin/xkeen-control nodes recovery verify-existing --digest DIGEST_FROM_INSPECT
+```
+
+Use only a subsequently verified signed release containing this command. The
+same maintenance exclusion and external-writer quiescence apply. `canVerify`
+is separate from `canActivate`; an unresolved activation never permits replay.
+Verification invokes no Restart, Start, Stop, Apply, rendering or restoration.
+
+For the initial legacy attempt, the original digest can be reconstructed from
+the exact protected marker, registry, sorted config files and previous artifacts
+(including inode/mode/mtime and absent files), followed by the stored old runtime
+identity. The new receipt is deliberately excluded from that reconstruction.
+Exact equality proves retention of the originally validated generation. If a
+prior receipt participated in the original digest and cannot be reconstructed,
+verification refuses; coherent JSON or a working tunnel alone is insufficient.
+
+The operation also requires a distinct stable runtime, bounded API readiness,
+the existing outbound/balancer verification, and unchanged protected input and
+receipt identities on re-read. This is not a claim to read endpoint credentials
+back from Xray memory. Native routing policy and restricted quality pools retain
+their existing verifier semantics.
+
+After proof, a durable `verified` receipt binds the generation without the pending
+marker and the new runtime. Identity-checked marker settlement precedes the final
+`completed` receipt. An explicitly requested verification can finish a crash
+between these steps without any lifecycle command, including after marker unlink
+when this durable generation proof exists. Older missing-marker receipts without
+the proof remain blocked. A completed receipt is returned without writes.
+
+New attempts retain sanitized stage/reason fields; failed pre-activation validation
+uses `validation-failed` and cannot authorize verification. Later failures retain
+their activation fence. Native error text is never persisted. This does not
+retroactively identify the unknown failure stage of the 0.4.5 hardware attempt.
+Existing lifecycle/readiness timeouts are unchanged.

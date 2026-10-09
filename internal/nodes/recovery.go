@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"os"
 	"path/filepath"
 	"sort"
@@ -27,16 +28,21 @@ type RecoveryInspection struct {
 	Digest         string `json:"digest,omitempty"`
 	Phase          string `json:"phase,omitempty"`
 	CanActivate    bool   `json:"canActivate"`
+	CanVerify      bool   `json:"canVerify"`
+	Reason         string `json:"reason,omitempty"`
 	Nodes          int    `json:"nodes"`
 }
 
 type recoveryReceipt struct {
-	Schema        int    `json:"schemaVersion"`
-	Phase         string `json:"phase"`
-	Digest        string `json:"digest"`
-	Marker        string `json:"marker"`
-	RuntimeBefore string `json:"runtimeBefore"`
-	RuntimeAfter  string `json:"runtimeAfter,omitempty"`
+	Schema          int    `json:"schemaVersion"`
+	Phase           string `json:"phase"`
+	Digest          string `json:"digest"`
+	Marker          string `json:"marker"`
+	RuntimeBefore   string `json:"runtimeBefore"`
+	RuntimeAfter    string `json:"runtimeAfter,omitempty"`
+	GenerationProof string `json:"generationProof,omitempty"`
+	Stage           string `json:"stage,omitempty"`
+	Reason          string `json:"reason,omitempty"`
 }
 
 type recoveryState struct {
@@ -48,6 +54,9 @@ type recoveryState struct {
 	configs          map[string][]byte
 	receipt          *recoveryReceipt
 	generationDigest string
+	generationProof  string
+	originalDigest   string
+	receiptIdentity  string
 }
 
 func (m *Manager) recoveryDir() string {
@@ -58,18 +67,52 @@ func (m *Manager) recoveryDir() string {
 }
 
 func readRecoveryReceipt(dir string) (*recoveryReceipt, error) {
-	data, _, err := recoveryRead(filepath.Join(dir, recoveryReceiptName), 8192, true)
+	r, _, err := readRecoveryReceiptIdentity(dir)
+	return r, err
+}
+
+func recoveryHex(v string) bool {
+	b, err := hex.DecodeString(v)
+	return err == nil && len(b) == 32 && hex.EncodeToString(b) == v
+}
+
+func readRecoveryReceiptIdentity(dir string) (*recoveryReceipt, string, error) {
+	data, info, err := recoveryRead(filepath.Join(dir, recoveryReceiptName), 8192, true)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, "", nil
 	}
 	if err != nil {
-		return nil, ErrNodeRecoveryRequired
+		return nil, "", ErrNodeRecoveryRequired
 	}
 	var r recoveryReceipt
-	if decodeStrictJSON(data, &r) != nil || r.Schema != 1 || (r.Phase != "activation-intent" && r.Phase != "verified" && r.Phase != "completed") || len(r.Digest) != 64 || len(r.Marker) != 64 {
-		return nil, ErrNodeRecoveryRequired
+	if decodeStrictJSON(data, &r) != nil || r.Schema != 1 || (r.Phase != "validation-failed" && r.Phase != "activation-intent" && r.Phase != "verified" && r.Phase != "completed") || !recoveryHex(r.Digest) || !recoveryHex(r.Marker) || (r.RuntimeBefore != "stopped" && !recoveryHex(r.RuntimeBefore)) || (r.RuntimeAfter != "" && !recoveryHex(r.RuntimeAfter)) || (r.GenerationProof != "" && !recoveryHex(r.GenerationProof)) {
+		return nil, "", ErrNodeRecoveryRequired
 	}
-	return &r, nil
+	if (r.Phase == "verified" || r.Phase == "completed") && !recoveryHex(r.RuntimeAfter) {
+		return nil, "", ErrNodeRecoveryRequired
+	}
+	if !validRecoveryStage(r.Stage) || (r.Reason != "" && r.Reason != "failed" && r.Reason != "unknown") {
+		return nil, "", ErrNodeRecoveryRequired
+	}
+	return &r, recoveryIdentity(info, data), nil
+}
+
+func validRecoveryStage(s string) bool {
+	switch s {
+	case "", "validation", "restart", "readiness", "inventory", "post-runtime", "generation-drift", "settlement":
+		return true
+	}
+	return false
+}
+
+// Keep the original schema-one framing exact; legacy pre-intent digests are
+// reconstructed from the same ordered bytes, never from a hash-of-a-hash.
+func bindRecovery(h hash.Hash, name string, b []byte, info os.FileInfo) {
+	fmt.Fprintf(h, "%s\x00%d\x00", name, len(b))
+	h.Write(b)
+	if info != nil {
+		fmt.Fprint(h, recoveryIdentity(info, b))
+	}
 }
 
 func recoveryUnsettled(dir string) bool {
@@ -101,11 +144,12 @@ func (m *Manager) recoverySnapshot(ctx context.Context, runtime RecoveryRuntime)
 		return s, ErrNodeRecoveryRequired
 	}
 	dir := m.recoveryDir()
-	receipt, err := readRecoveryReceipt(dir)
+	receipt, receiptIdentity, err := readRecoveryReceiptIdentity(dir)
 	if err != nil {
 		return s, err
 	}
 	s.receipt = receipt
+	s.receiptIdentity = receiptIdentity
 	if receipt != nil {
 		s.view.Phase = receipt.Phase
 	}
@@ -114,28 +158,38 @@ func (m *Manager) recoverySnapshot(ctx context.Context, runtime RecoveryRuntime)
 		s.view.Classification = "recovery-unsettled"
 		if receipt.Phase == "completed" {
 			s.view.Classification = "completed-receipt"
+			s.view.Digest = receiptIdentity
+			return s, nil
 		}
-		return s, nil
+		if receipt.Phase != "verified" || !recoveryHex(receipt.GenerationProof) {
+			s.view.Reason = "missing-generation-proof"
+			return s, nil
+		}
+		err = nil
 	}
-	if err != nil || string(marker) != "node-operation-pending\n" {
+	if err != nil || (info != nil && string(marker) != "node-operation-pending\n") {
 		return s, ErrNodeRecoveryRequired
 	}
 	s.marker = info
-	s.markerDigest = recoveryIdentity(info, marker)
+	if info != nil {
+		s.markerDigest = recoveryIdentity(info, marker)
+	}
 	runtimeID, err := runtime.Snapshot(ctx)
-	if err != nil || runtimeID == "" {
+	if err != nil || (runtimeID != "stopped" && !recoveryHex(runtimeID)) {
 		return s, ErrNodeRecoveryRequired
 	}
 	s.runtime = runtimeID
-	h := sha256.New()
+	h, original, generation := sha256.New(), sha256.New(), sha256.New()
 	bind := func(name string, b []byte, info os.FileInfo) {
-		fmt.Fprintf(h, "%s\x00%d\x00", name, len(b))
-		h.Write(b)
-		if info != nil {
-			fmt.Fprint(h, recoveryIdentity(info, b))
+		bindRecovery(h, name, b, info)
+		bindRecovery(original, name, b, info)
+		if name != "marker" {
+			bindRecovery(generation, name, b, info)
 		}
 	}
-	bind("marker", marker, info)
+	if info != nil {
+		bind("marker", marker, info)
+	}
 	raw, info, err := recoveryRead(m.store.Path, MaxRegistryDocument, true)
 	if err != nil {
 		return s, ErrNodeRecoveryRequired
@@ -181,14 +235,103 @@ func (m *Manager) recoverySnapshot(ctx context.Context, runtime RecoveryRuntime)
 		s.view.Previous = "coherent"
 	}
 	s.generationDigest = hex.EncodeToString(h.Sum(nil))
-	bind("runtime", []byte(runtimeID), nil)
+	s.generationProof = hex.EncodeToString(generation.Sum(nil))
+	bindRecovery(h, "runtime", []byte(runtimeID), nil)
 	if receipt != nil {
+		bindRecovery(original, "runtime", []byte(receipt.RuntimeBefore), nil)
+		s.originalDigest = hex.EncodeToString(original.Sum(nil))
 		b, _ := json.Marshal(receipt)
-		bind("receipt", b, nil)
+		bindRecovery(h, "receipt", b, nil)
+		bindRecovery(h, "receipt-identity", []byte(receiptIdentity), nil)
 	}
 	s.view.Digest = hex.EncodeToString(h.Sum(nil))
-	s.view.CanActivate = coherent && (receipt == nil || receipt.Phase == "completed" && receipt.Marker != s.markerDigest)
+	s.view.CanActivate = s.marker != nil && coherent && (receipt == nil || receipt.Phase == "completed" && receipt.Marker != s.markerDigest)
+	if receipt != nil && (receipt.Phase == "activation-intent" || receipt.Phase == "verified") {
+		proof := s.marker != nil && receipt.Marker == s.markerDigest && s.originalDigest == receipt.Digest
+		if receipt.Phase == "verified" && recoveryHex(receipt.GenerationProof) {
+			proof = receipt.GenerationProof == s.generationProof && (s.marker == nil || receipt.Marker == s.markerDigest) && runtimeID == receipt.RuntimeAfter
+		}
+		s.view.CanVerify = coherent && proof && runtimeID != "stopped" && runtimeID != receipt.RuntimeBefore
+		if !s.view.CanVerify {
+			s.view.Reason = "generation-or-runtime-unproven"
+		}
+	}
 	return s, nil
+}
+
+func saveRecoveryReceipt(dir string, receipt *recoveryReceipt) error {
+	b, err := json.Marshal(receipt)
+	if err != nil {
+		return err
+	}
+	if err = atomicWrite(filepath.Join(dir, recoveryReceiptName), b, 0600); err != nil {
+		return err
+	}
+	return syncNodeDirectory(dir)
+}
+
+// VerifyExistingRecovery validates and settles one retained attempt. It never
+// calls a lifecycle action, including when verification fails or is repeated.
+func (m *Manager) VerifyExistingRecovery(ctx context.Context, digest string, runtime RecoveryRuntime) error {
+	return m.verifyExistingRecovery(ctx, digest, runtime, saveRecoveryReceipt, settleNodeIntent)
+}
+
+// Dependency seams are private to deterministic crash fixtures; production
+// always uses the fixed durable writer and identity-checked settlement above.
+func (m *Manager) verifyExistingRecovery(ctx context.Context, digest string, runtime RecoveryRuntime, save func(string, *recoveryReceipt) error, settle func(string, os.FileInfo) error) error {
+	if !recoveryHex(digest) || m.tx.Activator == nil {
+		return ErrNodeRecoveryRequired
+	}
+	ctx, release, err := m.authority.AcquireForRecoveryContext(ctx, m.gateTimeout)
+	if err != nil {
+		return ErrNodeRecoveryRequired
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(ctx, m.tx.Budget.normalized().Total)
+	defer cancel()
+	s, err := m.recoverySnapshot(ctx, runtime)
+	if err != nil || s.view.Digest != digest {
+		return ErrPreviewStale
+	}
+	if s.view.Classification == "completed-receipt" {
+		return nil
+	}
+	if !s.view.CanVerify {
+		return ErrNodeRecoveryRequired
+	}
+	m.authority.Block()
+	// The matched original digest already binds the fully validated generation.
+	// Recheck readiness and inventory without rendering or invoking Restart.
+	if m.tx.Activator.WaitReady(ctx) != nil || m.tx.Activator.VerifyOutboundTags(ctx, enabledTags(s.registry)) != nil {
+		return ErrNodeRecoveryRequired
+	}
+	after, err := m.recoverySnapshot(ctx, runtime)
+	if err != nil || !after.view.CanVerify || after.view.Digest != digest || after.runtime != s.runtime || after.receiptIdentity != s.receiptIdentity {
+		return ErrPreviewStale
+	}
+	receipt := *after.receipt
+	receipt.Phase, receipt.Stage, receipt.Reason = "verified", "settlement", ""
+	receipt.RuntimeAfter, receipt.GenerationProof = after.runtime, after.generationProof
+	if save(m.recoveryDir(), &receipt) != nil {
+		return ErrNodeRecoveryRequired
+	}
+	// Re-read after the verified write as well. This captures concurrent native
+	// writers without treating the panel lock as exclusion of external CLI/cron.
+	final, err := m.recoverySnapshot(ctx, runtime)
+	if err != nil || !final.view.CanVerify || final.runtime != after.runtime || final.generationProof != after.generationProof || final.receipt == nil || *final.receipt != receipt {
+		return ErrNodeRecoveryRequired
+	}
+	if final.marker != nil {
+		if settle(filepath.Join(m.recoveryDir(), ".pending"), final.marker) != nil {
+			return ErrNodeRecoveryRequired
+		}
+	}
+	receipt.Phase = "completed"
+	if save(m.recoveryDir(), &receipt) != nil {
+		return ErrNodeRecoveryRequired
+	}
+	m.authority.Unblock()
+	return nil
 }
 
 func (m *Manager) InspectRecovery(ctx context.Context, runtime RecoveryRuntime) (RecoveryInspection, error) {
@@ -220,9 +363,15 @@ func (m *Manager) RecoverCurrent(ctx context.Context, digest string, runtime Rec
 	if err != nil || !s.view.CanActivate || s.view.Digest != digest {
 		return ErrPreviewStale
 	}
+	receipt := recoveryReceipt{Schema: 1, Phase: "validation-failed", Digest: digest, Marker: s.markerDigest, RuntimeBefore: s.runtime, Stage: "validation"}
+	fail := func(stage, reason string) error {
+		receipt.Stage, receipt.Reason = stage, reason
+		_ = saveRecoveryReceipt(m.recoveryDir(), &receipt)
+		return ErrNodeRecoveryRequired
+	}
 	candidate, err := os.MkdirTemp("", "xkeen-node-recovery-")
 	if err != nil {
-		return ErrNodeRecoveryRequired
+		return fail("validation", "failed")
 	}
 	defer os.RemoveAll(candidate)
 	names := make([]string, 0, len(s.configs))
@@ -239,41 +388,47 @@ func (m *Manager) RecoverCurrent(ctx context.Context, digest string, runtime Rec
 	err = m.tx.Activator.ValidateCandidate(validation, candidate)
 	cancelValidation()
 	if err != nil {
-		return ErrNodeRecoveryRequired
+		return fail("validation", "failed")
 	}
 	before, err := m.recoverySnapshot(ctx, runtime)
 	if err != nil || before.view.Digest != digest {
-		return ErrPreviewStale
+		return fail("generation-drift", "failed")
 	}
-	receipt := recoveryReceipt{Schema: 1, Phase: "activation-intent", Digest: digest, Marker: s.markerDigest, RuntimeBefore: s.runtime}
+	receipt.Phase, receipt.Stage = "activation-intent", "restart"
 	save := func() error {
-		b, e := json.Marshal(receipt)
-		if e != nil {
-			return e
-		}
-		if e = atomicWrite(filepath.Join(m.recoveryDir(), recoveryReceiptName), b, 0600); e != nil {
-			return e
-		}
-		return syncNodeDirectory(m.recoveryDir())
+		return saveRecoveryReceipt(m.recoveryDir(), &receipt)
 	}
 	if save() != nil {
 		return ErrNodeRecoveryRequired
 	}
 	activation, cancelActivation := context.WithTimeout(ctx, budget.Activation)
-	err = m.tx.activate(activation, s.registry)
+	err = m.tx.Activator.Restart(activation)
+	if err == nil {
+		receipt.Stage = "readiness"
+		if err = save(); err == nil {
+			err = m.tx.Activator.WaitReady(activation)
+		}
+	}
+	if err == nil {
+		receipt.Stage = "inventory"
+		if err = save(); err == nil {
+			err = m.tx.Activator.VerifyOutboundTags(activation, enabledTags(s.registry))
+		}
+	}
 	cancelActivation()
 	if err != nil {
-		return ErrNodeRecoveryRequired
+		return fail(receipt.Stage, "unknown")
 	}
 	after, err := m.recoverySnapshot(ctx, runtime)
 	if err != nil || after.runtime == s.runtime || after.runtime == "stopped" {
-		return ErrNodeRecoveryRequired
+		return fail("post-runtime", "failed")
 	}
 	if s.generationDigest != after.generationDigest {
-		return ErrNodeRecoveryRequired
+		return fail("generation-drift", "failed")
 	}
 	receipt.Phase = "verified"
 	receipt.RuntimeAfter = after.runtime
+	receipt.GenerationProof, receipt.Stage = after.generationProof, "settlement"
 	if save() != nil {
 		return ErrNodeRecoveryRequired
 	}
