@@ -13,7 +13,10 @@ type Profile struct {
 }
 
 func ForPlatform(arch string, memoryKiB uint64) Profile {
-	if arch == "mips" || arch == "mipsle" || memoryKiB == 0 || memoryKiB <= 256*1024 {
+	if arch == "mips" || arch == "mipsle" {
+		return Profile{Name: "constrained", Constrained: true, Automatic: true}
+	}
+	if memoryKiB == 0 || memoryKiB <= 256*1024 {
 		return Profile{Name: "constrained", Constrained: true}
 	}
 	return Profile{Name: "standard", Automatic: true}

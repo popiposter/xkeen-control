@@ -6,12 +6,25 @@ qualification, not measured router throughput capacity.
 
 | Profile | Single node | Comparison | Automatic comparisons |
 | --- | --- | --- | --- |
-| MIPS, RAM at most 256 MiB, or unknown total RAM | 4 MiB / 20 seconds | 3 successful nodes, 4 attempts, 24 MiB / 90 seconds | Disabled |
+| MIPS, RAM at most 256 MiB, or unknown total RAM | 4 MiB / 20 seconds | 3 successful nodes, 4 attempts, 24 MiB / 90 seconds per batch | Bounded sequential sweep under #188; hardware acceptance pending |
 | Other supported routers | 48 MiB / 45 seconds | Manual: 12 successful / 18 attempts, 288 MiB / 360 seconds; automatic: 6 / 12, 144 MiB / 180 seconds | At most every 6 hours |
 
 Wall ceilings include the existing three-second probe cleanup reserve. Failed
 and partial transfers count toward traffic limits; stages can stop early. These
 tests measure short transfers and should not be presented as line-rate capacity.
+
+Issue [#188](https://github.com/popiposter/xkeen-control/issues/188) replaces
+the MIPS automatic-disabled policy with a bounded sequential review. Each batch
+keeps the constrained limits above; an automatic review may use at most six
+batches, 24 attempts, 144 MiB and 30 minutes. The rolling 24-hour automatic
+ceiling is two reviews and 288 MiB, including failed transfers. Refreshes are
+coalesced and a review never starts within six hours of another comparison.
+Only fresh, healthy, RTT-eligible nodes are candidates. An automatic pool change
+requires a complete review with every frozen eligible candidate attempted,
+at least 80% valid fresh measurements, unchanged registry/configuration and one
+verified native Apply. A partial three-node manual sample does not meet this
+condition. The current native pool remains in effect on incomplete or uncertain
+outcomes. These source limits do not establish live hardware acceptance.
 
 The existing measurement owners share a read-only hardware profile and an
 on-demand `/proc` sampler. No new daemon, persistent settings authority or timer
@@ -63,4 +76,5 @@ rejected it while an interrupted node transaction retained its pending marker.
 Cron was restored unchanged. Recovery is separately specified in
 [#158](https://github.com/popiposter/xkeen-control/issues/158). Do not delete the
 marker, restart to clear the lock, bypass the editor or replay native activation.
-Signed deployment, controlled load comparison and client acceptance remain pending.
+The signed0.4.9 MIPS manual speed test completed; automatic sweep, controlled
+load comparison and client acceptance remain pending.

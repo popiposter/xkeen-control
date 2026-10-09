@@ -51,29 +51,32 @@ It is not an exact30s failover guarantee. The panel displays these native result
 
 ## Throughput comparison
 
-The Performance action can start a comparison manually. A RAM-only scheduler also
-runs after10min startup and every6h. Successful manual/automatic subscription refresh
-(including no-op) requests a comparison after2min; notifications coalesce and no
-automatic start happens within6h of any previous manual/automatic comparison start.
-Busy, pending or unavailable conditions defer10min; an admitted failed measurement
-still consumes the6h slot. Maximum automatic transfer budget576MiB/day in a continuous
-run; panel restarts reset the RAM schedule. No automatic Stage, Apply, native restart
-or override: results are a recommendation. Manual Apply recommendation uses the
-same editor and native restart job directly from the test screen.
-Eligible nodes need fresh native observations (<=2min), alive and RTT<=750ms.
-Manual tests additionally require RTT <= max(300ms, twice the lowest fresh RTT),
-capped at750ms. Sample all enabled managed outbounds, not only the current selected
-pool: up to12successful measurements /18attempts in fresh RTT/tag order. Failed
-measurements use the next eligible candidate. Automatic tests retain6successes /
-12attempts and the absolute750ms ceiling. This bounded sample is not proof of
-the global best among unmeasured nodes.
+The Performance action can start a comparison manually. Subscription refreshes
+(including successful no-op refreshes) notify the panel's RAM scheduler; a
+failed fetch does not. The standard-router schedule only measures and leaves
+Apply to the operator. Issue [#188](https://github.com/popiposter/xkeen-control/issues/188)
+adds a constrained-router review that tests fresh eligible nodes in sequential
+small batches, then applies one verified native pool only after complete coverage.
+The first review waits at least10min after startup, refresh notifications coalesce
+for2min, and starts are separated by at least6h. MIPS periodic cadence is12h.
+Each constrained batch allows3valid/4attempts,24MiB/90s; a review is limited
+to6batches/24attempts/144MiB/30min and two reviews/288MiB per rolling24h.
+If eligibility exceeds18 nodes, coverage or 80% validity fails, evidence expires,
+or resource/configuration state is uncertain, the running pool is preserved.
+Manual Apply still uses the same editor and native restart job from this screen.
+Eligible nodes need fresh, alive native observations within the configured finite
+RTT criterion. Manual tests additionally require RTT no more than twice the
+lowest fresh RTT, with a300ms floor. Comparison candidates come from all enabled
+managed outbounds, not only the current selected pool. A bounded sample does not
+prove the global best among nodes outside the RTT criterion.
 
 Existing bounded diagnostics temporarily target each candidate and clean their
 owned temporary diagnostic state; they do not replace the production selection.
 Download stages1/3/4/8MiB (max16), upload1/3/4MiB (max8),8s per stage,30s per node;
 each direction stops once a complete stage lasts>=1s. Aggregate complete byte/time
-rates require>=250ms; incomplete transfers fail. Manual tests have288MiB/360s,
-automatic tests144MiB/180s, plus existing3s cleanup. All failed bytes count. Replacements
+rates require>=250ms; incomplete transfers fail. On a standard router, manual
+comparisons have288MiB/360s and automatic comparisons144MiB/180s; MIPS keeps the
+smaller per-batch limits above. Cleanup is included in each wall ceiling. All failed bytes count. Replacements
 stop at that ceiling; at least two valid results may form an explicitly partial
 recommendation. The action is named Run speed test. Download then upload; do not infer packet loss from
 HTTP failures. Unique retained native observations contribute failure-frequency and
@@ -96,8 +99,9 @@ navigation. The Stage API alone remains save-only.
 
 ## Native selection and switching
 
-The recommendation uses leastLoad, expected1, maxRTT750ms, up to six exact tag
-costs and selectors, preserving the existing fallback; no automatic override.
+The recommendation preserves the configured native strategy, expected count and
+maxRTT while selecting up to six exact tags and costs; it keeps the existing
+fallback and creates no automatic override.
 Native Xray excludes dead/noncandidate/too-slow nodes
 and orders eligible nodes by its RTT-deviation metric multiplied by sqrt(cost),
 with average RTT and health tie-breaks. Ordinary Observatory supplies delay as that

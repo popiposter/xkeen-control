@@ -16,6 +16,21 @@ type NativeQualityCost struct {
 	Value  float64 `json:"value"`
 }
 
+// NativeSweepStatus projects the complete frozen review, rather than just the
+// final three-node batch, into the authenticated bounded quality status.
+func NativeSweepStatus(result AdaptiveResult) AdaptivePerformanceStatus {
+	return AdaptivePerformanceStatus{
+		State:          result.State,
+		StartedAt:      result.StartedAt,
+		CompletedAt:    result.CompletedAt,
+		Generation:     result.Generation,
+		ShortlistCount: result.ShortlistCount,
+		ValidCount:     result.ValidCount,
+		ReasonCode:     safeAdaptiveReason(result.ReasonCode),
+		Candidates:     adaptiveResultStatuses(result.Candidates, NativeQualityBroadAttempts),
+	}
+}
+
 // NativeQualityCosts proposes bounded throughput/health weights for an existing
 // native balancer. This builder never writes configuration or
 // applies an override. Native health filtering remains the selection owner,
@@ -31,9 +46,35 @@ func NativeQualityCosts(result AdaptiveResult, now time.Time, pool []string) ([]
 			maxWall = NativeQualityBroadWallTime
 		}
 	}
+	if result.Sweep {
+		// A sweep aggregates several independently bounded generations. It is
+		// never a single enlarged transfer job.
+		maxAttempts = NativeQualityBroadAttempts
+		maxWall = 30 * time.Minute
+	}
 	invalid := errors.New("fresh complete quality measurements required")
-	if result.BroadSample && !result.NativeQuality || result.Generation == 0 || result.State != "completed" || result.StartedAt.IsZero() || result.CompletedAt.Before(result.StartedAt) || result.CompletedAt.Sub(result.StartedAt) > maxWall+AdaptiveCleanupReserve || result.CompletedAt.IsZero() || result.CompletedAt.After(now) || now.Sub(result.CompletedAt) > 30*time.Minute || len(result.Candidates) > maxAttempts || result.ShortlistCount != len(result.Candidates) || len(pool) > MaxRegistryNodes {
+	if result.BroadSample && !result.NativeQuality || result.Sweep && (!result.NativeQuality || result.BroadSample) || result.Generation == 0 || result.State != "completed" || result.StartedAt.IsZero() || result.CompletedAt.Before(result.StartedAt) || result.CompletedAt.Sub(result.StartedAt) > maxWall+AdaptiveCleanupReserve || result.CompletedAt.IsZero() || result.CompletedAt.After(now) || now.Sub(result.CompletedAt) > 30*time.Minute || len(result.Candidates) > maxAttempts || result.ShortlistCount != len(result.Candidates) || len(pool) > MaxRegistryNodes {
 		return nil, invalid
+	}
+	if result.Sweep {
+		if result.CompletedAt.Sub(result.StartedAt) > 30*time.Minute {
+			return nil, invalid
+		}
+		if result.SweepEligibleCount < 2 || result.SweepEligibleCount > 18 || len(result.Candidates) != result.SweepEligibleCount {
+			return nil, invalid
+		}
+		validCount := 0
+		for _, candidate := range result.Candidates {
+			if candidate.SampledAt.IsZero() || candidate.SampledAt.Before(result.StartedAt) || candidate.SampledAt.After(result.CompletedAt) || now.Sub(candidate.SampledAt) > 30*time.Minute {
+				return nil, invalid
+			}
+			if candidate.Valid && candidate.RTTMS > 0 && finitePositive(candidate.DownloadBPS) && finitePositive(candidate.UploadBPS) && finitePositive(adaptiveHealthPenalty(candidate.HealthPenalty)) {
+				validCount++
+			}
+		}
+		if validCount < 2 || validCount*5 < result.SweepEligibleCount*4 {
+			return nil, invalid
+		}
 	}
 	known := make(map[string]bool, len(pool))
 	for _, tag := range pool {

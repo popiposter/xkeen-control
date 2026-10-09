@@ -36,6 +36,33 @@ test('constrained automatic-disabled status does not hide manual native cron ref
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
 })
 
+test('bounded automatic review separates full pool, coverage and applied state without starting traffic from the browser', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), resourceProfile: { name: 'constrained', constrained: true, automatic: true },
+    limits: { candidates: 3, attempts: 4, bytes: 24 * 1048576, seconds: 90 },
+    poolCount: 52, activePoolCount: 6, eligibleCount: 14, attemptedCount: 14, validCount: 12,
+    batchCount: 5, aggregateBytes: 44 * 1048576, reviewTrigger: 'subscription-refresh',
+    appliedState: 'applied', nextDueAt: '2026-10-10T12:00:00Z' }
+  await open(page)
+  await expect(page.getByText(/Current active pool: 6 nodes. Enabled nodes available for comparison: 52/)).toBeVisible()
+  await expect(page.getByText(/14 of 14 eligible nodes attempted, 12 valid; 5 batches and 44.0 MiB transferred/)).toBeVisible()
+  await expect(page.getByText(/Automatic pool application: applied/)).toBeVisible()
+  await expect(page.getByText(/Automatic reviews test eligible nodes in small sequential batches/)).toBeVisible()
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
+})
+
+test('inspection-required automatic outcome fences browser testing and applying', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), inspectionRequired: true, reviewReason: 'inspection-required' }
+  await open(page)
+  await expect(page.getByText('Inspection required', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Run speed test', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Apply recommendation', exact: true })).toBeDisabled()
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
+})
+
 test('changed subscription generation explains stale recommendation without applying or retesting', async ({ page }) => {
   const model = await mountFeatureCompleteDashboard(page)
   model.quality = { ...complete(), canStage: false, stageReason: 'configuration-changed' }

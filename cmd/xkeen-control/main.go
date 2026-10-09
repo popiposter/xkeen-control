@@ -318,7 +318,7 @@ func main() {
 			return state.Lifecycle.Maintenance, state.Lifecycle.Applying, true
 		},
 	})
-	qualityService := &nativequality.Service{Editor: nativeConfig, Lease: authorityLease, Reader: xrayReader, Nodes: nodeReader, Measurement: coordinator, Control: xrayReader, Resources: resources}
+	qualityService := &nativequality.Service{Editor: nativeConfig, Lease: authorityLease, Reader: xrayReader, Nodes: nodeReader, Measurement: coordinator, Control: xrayReader, Resources: resources, Jobs: nativeJobs, AutomaticDisabled: getenv("XKEEN_QUALITY_AUTO", "") == "off"}
 	qualitySchedule := nativequality.NewSchedule(qualityService)
 	nodeManager.OnSubscriptionRefresh = qualitySchedule.NotifyRefresh
 	defer qualityService.Stop()

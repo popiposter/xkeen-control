@@ -28,23 +28,36 @@ type Measurement interface {
 }
 
 type Status struct {
-	StartReason     string                       `json:"startReason,omitempty"`
-	LatencySource   string                       `json:"latencySource,omitempty"`
-	ResourceProfile resourcepolicy.Profile       `json:"resourceProfile"`
-	Limits          resourcepolicy.Limits        `json:"limits"`
-	AutomaticReason string                       `json:"automaticReason,omitempty"`
-	State           string                       `json:"state"`
-	Digest          string                       `json:"digest,omitempty"`
-	Generation      uint64                       `json:"generation"`
-	Progress        c1.AdaptivePerformanceStatus `json:"progress"`
-	CanStage        bool                         `json:"canStage"`
-	StageReason     string                       `json:"stageReason,omitempty"`
-	PoolCount       int                          `json:"poolCount"`
-	LatencyLimitMS  int64                        `json:"latencyLimitMs"`
-	EligibleCount   int                          `json:"eligibleCount"`
-	ManualSample    bool                         `json:"manualSample"`
-	Ranking         []RankedNode                 `json:"ranking,omitempty"`
-	AppliedRanking  []RankedNode                 `json:"appliedRanking,omitempty"`
+	StartReason          string                       `json:"startReason,omitempty"`
+	LatencySource        string                       `json:"latencySource,omitempty"`
+	ResourceProfile      resourcepolicy.Profile       `json:"resourceProfile"`
+	Limits               resourcepolicy.Limits        `json:"limits"`
+	AutomaticReason      string                       `json:"automaticReason,omitempty"`
+	State                string                       `json:"state"`
+	Digest               string                       `json:"digest,omitempty"`
+	Generation           uint64                       `json:"generation"`
+	Progress             c1.AdaptivePerformanceStatus `json:"progress"`
+	CanStage             bool                         `json:"canStage"`
+	StageReason          string                       `json:"stageReason,omitempty"`
+	PoolCount            int                          `json:"poolCount"`
+	ActivePoolCount      int                          `json:"activePoolCount"`
+	LatencyLimitMS       int64                        `json:"latencyLimitMs"`
+	EligibleCount        int                          `json:"eligibleCount"`
+	ManualSample         bool                         `json:"manualSample"`
+	Ranking              []RankedNode                 `json:"ranking,omitempty"`
+	AppliedRanking       []RankedNode                 `json:"appliedRanking,omitempty"`
+	ReviewTrigger        string                       `json:"reviewTrigger,omitempty"`
+	AttemptedCount       int                          `json:"attemptedCount"`
+	ValidCount           int                          `json:"validCount"`
+	BatchCount           int                          `json:"batchCount"`
+	AggregateBytes       int64                        `json:"aggregateBytes"`
+	NextDueAt            time.Time                    `json:"nextDueAt,omitempty"`
+	ReviewReason         string                       `json:"reviewReason,omitempty"`
+	InspectionRequired   bool                         `json:"inspectionRequired"`
+	AppliedState         string                       `json:"appliedState,omitempty"`
+	AppliedJobState      string                       `json:"appliedJobState,omitempty"`
+	AppliedConfigState   string                       `json:"appliedConfigState,omitempty"`
+	ManualAllowanceBytes int64                        `json:"manualAllowanceBytes"`
 }
 
 type RankedNode struct {
@@ -54,21 +67,27 @@ type RankedNode struct {
 }
 
 type Service struct {
-	Resources     *resourcepolicy.Guard
-	Editor        *xkeen.ConfigEditor
-	Lease         *authority.Lease
-	Reader        xrayapi.Reader
-	Nodes         c1.NodeReader
-	Measurement   Measurement
-	Control       xrayapi.RoutingController
-	mu            sync.Mutex
-	status        Status
-	result        c1.AdaptiveResult
-	pool          []string
-	cancel        context.CancelFunc
-	done          chan struct{}
-	closed        bool
-	lastStartedAt time.Time
+	Resources         *resourcepolicy.Guard
+	Editor            *xkeen.ConfigEditor
+	Lease             *authority.Lease
+	Reader            xrayapi.Reader
+	Nodes             c1.NodeReader
+	Measurement       Measurement
+	Control           xrayapi.RoutingController
+	mu                sync.Mutex
+	status            Status
+	result            c1.AdaptiveResult
+	pool              []string
+	cancel            context.CancelFunc
+	done              chan struct{}
+	closed            bool
+	lastStartedAt     time.Time
+	QuotaPath         string
+	batchPause        time.Duration // tests shorten this; zero keeps the production floor.
+	Jobs              *xkeen.Jobs
+	AutomaticDisabled bool
+	autoApplying      bool
+	cursor            int
 }
 
 func (s *Service) Read() Status {
@@ -76,7 +95,10 @@ func (s *Service) Read() Status {
 	value := s.status
 	value.ResourceProfile = s.profile()
 	value.Limits = s.profile().Comparison(value.Generation == 0 || value.ManualSample)
-	if !value.ResourceProfile.Automatic {
+	value.ManualAllowanceBytes = s.profile().Comparison(true).Bytes
+	if s.AutomaticDisabled {
+		value.AutomaticReason = "operator-disabled"
+	} else if !value.ResourceProfile.Automatic {
 		value.AutomaticReason = "constrained-device"
 	} else if err := s.Resources.CheckConflict(); err != nil {
 		value.AutomaticReason = "native-speed-conflict-or-unavailable"
@@ -86,7 +108,7 @@ func (s *Service) Read() Status {
 	}
 	value.Progress.Candidates = append([]c1.AdaptiveCandidateStatus(nil), value.Progress.Candidates...)
 	_, err := c1.NativeQualityCosts(s.result, time.Now().UTC(), s.pool)
-	value.CanStage = value.State == "completed" && err == nil
+	value.CanStage = value.State == "completed" && value.AppliedState != "applied" && value.AppliedState != "no-op" && err == nil
 	if value.State == "completed" && err != nil {
 		value.StageReason = "measurement-expired-or-incomplete"
 	}
@@ -210,6 +232,12 @@ func (s *Service) SetManualOverride(ctx context.Context, target string) error {
 	if s.Editor == nil || s.Lease == nil || s.Reader == nil || s.Control == nil || s.Nodes == nil {
 		return ErrUnavailable
 	}
+	s.mu.Lock()
+	inspectionRequired := s.status.InspectionRequired
+	s.mu.Unlock()
+	if inspectionRequired {
+		return ErrUnavailable
+	}
 	release, err := s.Lease.TryAcquire()
 	if err != nil {
 		return c1.ErrManualBusy
@@ -273,7 +301,7 @@ func (s *Service) start(ctx context.Context, broad bool) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.cancel != nil || s.closed {
+	if s.cancel != nil || s.autoApplying || s.closed || s.status.InspectionRequired {
 		return c1.ErrManualBusy
 	}
 	s.status.StartReason = ""
@@ -297,6 +325,11 @@ func (s *Service) start(ctx context.Context, broad bool) error {
 	if err != nil {
 		release()
 		return err
+	}
+	activePool, _, activeErr := routingPool(w.Documents["05_routing.json"].Text, s.Nodes(ctx), w.Targets)
+	if activeErr != nil {
+		release()
+		return activeErr
 	}
 	snapshot := s.Reader.Snapshot(ctx)
 	mode := 0
@@ -329,7 +362,7 @@ func (s *Service) start(ctx context.Context, broad bool) error {
 	if broad {
 		latencyCeiling = min(latencyCeiling, max(int64(300), 2*generation.Candidates[0].RTTMS))
 	}
-	s.status = Status{State: "running", Digest: w.Digest, Generation: generation.Generation, PoolCount: len(pool), ManualSample: broad, LatencyLimitMS: latencyCeiling, LatencySource: criteria.latencySource, EligibleCount: len(all), Progress: c1.AdaptivePerformanceStatus{State: "running", ShortlistCount: len(generation.Candidates)}}
+	s.status = Status{State: "running", Digest: w.Digest, Generation: generation.Generation, PoolCount: len(pool), ActivePoolCount: len(activePool), ManualSample: broad, LatencyLimitMS: latencyCeiling, LatencySource: criteria.latencySource, EligibleCount: len(all), Progress: c1.AdaptivePerformanceStatus{State: "running", ShortlistCount: len(generation.Candidates)}}
 	go func() {
 		defer close(done)
 		result, runErr := s.Measurement.MeasureNativeQuality(job, generation, func(progress c1.AdaptivePerformanceStatus) {
@@ -387,7 +420,7 @@ func (s *Service) Stop() {
 func (s *Service) Stage(ctx context.Context, digest string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.cancel != nil || s.status.State != "completed" || digest == "" || digest != s.status.Digest {
+	if s.closed || s.cancel != nil || s.status.State != "completed" || s.status.AppliedState == "applied" || s.status.AppliedState == "no-op" || digest == "" || digest != s.status.Digest {
 		return "", ErrUnavailable
 	}
 	costs, err := c1.NativeQualityCosts(s.result, time.Now().UTC(), s.pool)
@@ -550,6 +583,12 @@ func prepareWithCriteria(snapshot xrayapi.Snapshot, pool []string, id uint64, mo
 	maxCandidates, maxAttempts := c1.AdaptiveMaxCandidates, c1.NativeQualityMaxAttempts
 	if broad {
 		maxCandidates, maxAttempts = c1.NativeQualityBroadCandidates, c1.NativeQualityBroadAttempts
+	}
+	if mode == 2 {
+		if len(eligible) > 18 {
+			return c1.AdaptiveGeneration{}, ErrUnavailable
+		}
+		maxCandidates, maxAttempts = 18, 18
 	}
 	initial := min(len(eligible), maxCandidates)
 	end := min(len(eligible), maxAttempts)

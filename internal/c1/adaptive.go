@@ -88,6 +88,7 @@ type AdaptiveGeneration struct {
 
 type AdaptiveCandidateResult struct {
 	Tag           string
+	SampledAt     time.Time
 	RTTMS         int64
 	DownloadBPS   float64
 	UploadBPS     float64
@@ -98,24 +99,26 @@ type AdaptiveCandidateResult struct {
 }
 
 type AdaptiveResult struct {
-	NativeQuality  bool
-	BroadSample    bool
-	Generation     uint64
-	StartedAt      time.Time
-	CompletedAt    time.Time
-	CurrentTarget  string
-	ShortlistCount int
-	ValidCount     int
-	CurrentValid   bool
-	SelectedTarget string
-	SelectedScore  float64
-	CurrentScore   float64
-	SwitchApplied  bool
-	State          string
-	ReasonCode     string
-	AggregateBytes int64
-	Duration       time.Duration
-	Candidates     []AdaptiveCandidateResult
+	NativeQuality      bool
+	BroadSample        bool
+	Sweep              bool
+	SweepEligibleCount int
+	Generation         uint64
+	StartedAt          time.Time
+	CompletedAt        time.Time
+	CurrentTarget      string
+	ShortlistCount     int
+	ValidCount         int
+	CurrentValid       bool
+	SelectedTarget     string
+	SelectedScore      float64
+	CurrentScore       float64
+	SwitchApplied      bool
+	State              string
+	ReasonCode         string
+	AggregateBytes     int64
+	Duration           time.Duration
+	Candidates         []AdaptiveCandidateResult
 }
 
 // AdaptiveCandidateStatus is the only per-candidate material exposed by the
@@ -327,6 +330,7 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 
 		candidate := AdaptiveCandidateResult{
 			Tag:           input.Tag,
+			SampledAt:     adaptiveNow(r),
 			RTTMS:         input.RTTMS,
 			HealthPenalty: input.HealthPenalty,
 			DownloadBPS:   execution.downloadBPS,

@@ -152,14 +152,15 @@ func TestProfilesDoNotScaleTrafficWithNodeInventory(t *testing.T) {
 		arch        string
 		ram         uint64
 		constrained bool
-	}{{"mipsle", 500000, true}, {"arm64", 254472, true}, {"arm64", 500924, false}, {"arm64", 0, true}} {
+		automatic   bool
+	}{{"mipsle", 500000, true, true}, {"arm64", 254472, true, false}, {"arm64", 500924, false, true}, {"arm64", 0, true, false}} {
 		p := ForPlatform(tt.arch, tt.ram)
-		if p.Constrained != tt.constrained {
+		if p.Constrained != tt.constrained || p.Automatic != tt.automatic {
 			t.Fatal(p)
 		}
 		if p.Constrained {
 			m, c := p.Manual(), p.Comparison(true)
-			if p.Automatic || m.Bytes != 4*MiB || m.Seconds != 20 || c.Bytes != 24*MiB || c.Seconds != 90 || c.Candidates != 3 || c.Attempts != 4 {
+			if m.Bytes != 4*MiB || m.Seconds != 20 || c.Bytes != 24*MiB || c.Seconds != 90 || c.Candidates != 3 || c.Attempts != 4 {
 				t.Fatal(p, m, c)
 			}
 		}
