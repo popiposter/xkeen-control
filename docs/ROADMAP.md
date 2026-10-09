@@ -4,7 +4,7 @@ This is the current sequencing/status authority. Issues contain detailed task co
 
 ## Delivered
 
-**Stable0.4.2 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, DNS integration #125/PR126, guided fresh setup #145/PR147 and MIPS panel delivery #150/PR151 are delivered. PR128/130 corrected release dependency/fixture gates; [release evidence](RELEASES.md) binds the exact source and public bytes.
+**Stable0.4.3 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, DNS integration #125/PR126, guided fresh setup #145/PR147 and MIPS panel delivery #150/PR151 are delivered. PR128/130 corrected release dependency/fixture gates; [release evidence](RELEASES.md) binds the exact source and public bytes.
 
 - Stock XKeen owns installation, components/interception, service and cron; its code stays unmodified.
 - Native jobs/private console, Form/Text config editors and shared pending/Apply/Discard/previous restore.
@@ -29,7 +29,7 @@ The first adapter is restricted to the observed KN1811/5.01.C.6.0-1 CLI family;
 unsupported topology/schema stops before provisioning. Stock commands remain
 installation/update owners. [PR147](https://github.com/popiposter/xkeen-control/pull/147)
 records independent exact-source review and exact FULL evidence separately.
-Stable0.4.2 retains the installer/CLI; protected hosted FULL and independent
+Stable0.4.3 retains the installer/CLI; protected hosted FULL and independent
 ten-public-asset/both-signature verification passed. Fresh hardware acceptance remains
 [NOTRUN](https://github.com/popiposter/xkeen-control/issues/148). Source delivery
 does not certify fresh installation or client/outage behavior.
@@ -37,19 +37,21 @@ does not certify fresh installation or client/outage behavior.
 ## Remaining acceptance
 
 [#157 router resources](https://github.com/popiposter/xkeen-control/issues/157)
-is merged in [PR159](https://github.com/popiposter/xkeen-control/pull/159): constrained diagnostic budgets, pressure admission,
+is delivered in [PR159](https://github.com/popiposter/xkeen-control/pull/159): constrained diagnostic budgets, pressure admission,
 native schedule conflict reporting and preservation of routing criteria.
-[Resource evidence and limits](ROUTER-RESOURCES.md) separate short observations
-from hardware acceptance. The controlled KN1810 experiment is blocked by
-[#158 typed node recovery](https://github.com/popiposter/xkeen-control/issues/158);
-expanded diagnostics #138 remain deferred. No resource optimization release or
-hardware success is implied.
-
 [#158 typed node recovery](https://github.com/popiposter/xkeen-control/issues/158)
-is in source implementation. Its [offline maintenance path](NODE-RECOVERY.md)
-reuses the existing process lock and preserves unknown-operation fencing.
-PR159 source review and exact local FULL passed; recovery review, signed combined
-delivery and controlled router acceptance remain pending.
+is delivered in [PR160](https://github.com/popiposter/xkeen-control/pull/160).
+Its [offline maintenance path](NODE-RECOVERY.md) reuses the existing process lock
+and preserves unknown-operation fencing. Both passed independent source review
+and exact local FULL; signed 0.4.3 passed frozen-source review, protected hosted
+FULL and independent verification of all ten public assets and both signatures.
+
+Both issues remain open for hardware acceptance. [Resource evidence and limits](ROUTER-RESOURCES.md)
+separate short observations from controlled hardware proof. The KN1810 configuration
+experiment still requires actual signed node recovery; publication does not settle
+its interrupted operation. Signed 0.4.3 installation/recovery, controlled load
+comparison and client acceptance remain NOTRUN. Expanded diagnostics #138 remain
+deferred until the resource and hardware gates are satisfied.
 
 [#150 MIPS panel delivery](https://github.com/popiposter/xkeen-control/issues/150)
 delivered panel-only source support for existing Ultra KN1810/KeeneticOS5.1.7/

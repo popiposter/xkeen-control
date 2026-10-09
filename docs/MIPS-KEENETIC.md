@@ -5,7 +5,7 @@ KeeneticOS5.1.7, `uname -m: mips`, Entware `mipsel-3.4`/`mipsel-3.4_kn`,
 stock XKeen2.0.1 Beta/Xray26.7.28. Reported memory values indicate about249MiB
 RAM/105MiB available and1GiB swap; these are not panel hardware qualification.
 
-Signed stable [0.4.2](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.2)
+Signed stable [0.4.3](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.3)
 includes the MIPS soft-float panel. Source review, hosted FULL, exact ten-file
 public verification, both signatures and actual published MIPS emulated startup
 passed; see [release evidence](RELEASES.md). KN1810 hardware installation,
@@ -40,15 +40,15 @@ Only after the inventory and protected snapshot above, run the published
 panel-only installer:
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.2/install.sh) && sh -c "$xkeen_installer"
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.3/install.sh) && sh -c "$xkeen_installer"
 ```
 
 The initial installer trusts GitHub HTTPS and checks manifest/size/hash consistency;
 installed self-updates verify the pinned Ed25519 signature. Do not confuse these
 trust steps. After installation, `/opt/sbin/xkeen-control version --json` must
-report0.4.2/stable/source `48c0f11e127edb6c7463c003f235467938ffa958`.
+report0.4.3/stable/source `a98f090b2611f90a450458476383c62defafe966`.
 The MIPS binary SHA256 is
-`4d21b277b681ad47c262f3c103ca44eb8d09b7d0a5d5924ac60d7a60d0e483fa`.
+`b100eabd1c87c9e14a6ba9c57e2d8c8ec932b3572ed0bc7f155de49748a53e35`.
 Keep private credentials and backup contents out of chat/public evidence.
 
 ## Validation and prerequisite repair delivered in0.4.2 (#154)
@@ -68,6 +68,14 @@ allowed. A functional existing jq is accepted regardless of package name. Guided
 setup still requires preinstalled tools and remains ARM64-only.
 
 ## Before configuring nodes or routing
+
+Stable 0.4.3 adds [constrained resource limits](ROUTER-RESOURCES.md): automatic
+speed comparisons are disabled on MIPS; explicit single-node tests are bounded
+to 4 MiB / 20 seconds, comparisons to 24 MiB / 90 seconds. Pressure admission
+and cancellation preserve the existing cleanup owner. These conservative limits
+are not a measured line-rate guarantee; controlled hardware acceptance is pending.
+Interrupted node transactions use the separate [offline recovery](NODE-RECOVERY.md)
+procedure, never marker deletion or automatic replay.
 
 Panel-managed profiles use the private node registry; unmanaged native outbounds
 remain preserved. Do not restore only generated outbounds over a different

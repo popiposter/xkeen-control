@@ -1,7 +1,7 @@
 # Offline recovery of an interrupted node operation
 
-This source path implements [#158](https://github.com/popiposter/xkeen-control/issues/158).
-Signed release and hardware acceptance are separate gates. It does not turn an
+Signed 0.4.3 delivers [#158](https://github.com/popiposter/xkeen-control/issues/158).
+Source review, local/hosted FULL and signed publication passed; actual hardware recovery remains NOTRUN. It does not turn an
 unknown historical subscription operation into a successful one.
 
 Only an explicitly approved **activate-current** operation is supported. The

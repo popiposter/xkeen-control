@@ -1,7 +1,7 @@
 # Router resource limits
 
-Issue [#157](https://github.com/popiposter/xkeen-control/issues/157) introduces
-conservative diagnostic limits. These are source limits awaiting signed hardware
+Issue [#157](https://github.com/popiposter/xkeen-control/issues/157) delivers
+conservative diagnostic limits in signed 0.4.3. These limits await hardware
 qualification, not measured router throughput capacity.
 
 | Profile | Single node | Comparison | Automatic comparisons |
