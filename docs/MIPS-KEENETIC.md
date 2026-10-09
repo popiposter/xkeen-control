@@ -5,7 +5,7 @@ KeeneticOS5.1.7, `uname -m: mips`, Entware `mipsel-3.4`/`mipsel-3.4_kn`,
 stock XKeen2.0.1 Beta/Xray26.7.28. Reported memory values indicate about249MiB
 RAM/105MiB available and1GiB swap; these are not panel hardware qualification.
 
-Signed stable [0.4.4](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.4)
+Signed stable [0.4.5](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.5)
 includes the MIPS soft-float panel. Source review, hosted FULL, exact ten-file
 public verification, both signatures and actual published MIPS emulated startup
 passed; see [release evidence](RELEASES.md). KN1810 hardware installation,
@@ -41,21 +41,21 @@ Only after the inventory and protected snapshot above, run the published
 panel-only installer:
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.4/install.sh) && sh -c "$xkeen_installer"
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.5/install.sh) && sh -c "$xkeen_installer"
 ```
 
 The initial installer trusts GitHub HTTPS and checks manifest/size/hash consistency;
 installed self-updates verify the pinned Ed25519 signature. Do not confuse these
 trust steps. After installation, `/opt/sbin/xkeen-control version --json` must
-report0.4.4/stable/source `27daa9abdfec946e150a2bb934f96ddd7aec3125`.
+report0.4.5/stable/source `5cc498f79d337fb723f5ac90fd21f6dcce3f0eeb`.
 The MIPS binary SHA256 is
-`1521f54d68fea16c8ffdb95c1f9d0f93a85b3e85ae3ad18075ff592afad09490`.
+`fffe6620d38fced79081657feca6d99e8f728ddf5560488d6ef49d25c9161f53`.
 Keep private credentials and backup contents out of chat/public evidence.
 
-For an existing older panel helper, 0.4.4 provides the separate
+For an existing older panel helper, 0.4.5 provides the separate
 [verified maintenance delivery](OPERATIONS.md#durable-update-outcomes-162) path.
 The observed 0.4.3 attempt rolled back to 0.4.2; do not replay that old updater
-or treat a transient candidate version as successful installation. Actual 0.4.4
+or treat a transient candidate version as successful installation. Actual 0.4.5
 installation and node recovery remain NOTRUN.
 
 ## Validation and prerequisite repair delivered in0.4.2 (#154)

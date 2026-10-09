@@ -31,8 +31,8 @@ For publication: exact reviewed remote main, available version/tag, protected Re
 
 ### Durable update outcomes (#162)
 
-Signed [0.4.4](RELEASES.md) provides the following commands and the #162 update
-contract. Published 0.4.3 does not provide them. Hardware acceptance of 0.4.4 is
+Signed [0.4.5](RELEASES.md) retains the following commands and the #162 update
+contract introduced in 0.4.4. Published 0.4.3 does not provide them. Hardware acceptance of 0.4.5 is
 still NOTRUN; publication alone does not establish an installed generation.
 
 ```sh
@@ -69,7 +69,7 @@ and again before service shutdown; the bootstrap installer checks its
 prerequisites before placing panel files.
 
 Issue [#165](https://github.com/popiposter/xkeen-control/issues/165) adds
-`xkeen-control self-update inspect-capabilities` to a later signed release;
+`xkeen-control self-update inspect-capabilities` in signed 0.4.5;
 published 0.4.4 does not contain this diagnostic. It runs the same sync, timeout
 and descriptor-lock checks on disposable RAM files and reports structured
 `ready`/per-capability status. It takes shared admission on the existing setup

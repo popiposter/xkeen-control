@@ -2,31 +2,31 @@
 
 ## Current release
 
-Signed stable [v0.4.4](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.4), published 2026-10-09T09:41:53Z, from independently reviewed source `27daa9abdfec946e150a2bb934f96ddd7aec3125`, tree `ee178ad47d3bb9da3ebf978971063c36c695ce98`, source epoch 1791538428.
+Signed stable [v0.4.5](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.5), published 2026-10-09T10:33:06Z, from independently reviewed source `5cc498f79d337fb723f5ac90fd21f6dcce3f0eeb`, tree `8dd2b8365aec76d3d32a0808a5468bf505cf20d0`, source epoch 1791541537.
 
-Protected [run37912340620](https://github.com/popiposter/xkeen-control/actions/runs/37912340620) completed exact-source hosted FULL and signing/publication. Fresh unauthenticated downloads verified exactly ten public assets with the source-built verifier: pinned Ed25519 key, both signatures/manifests, sizes/hashes, nine SHA256SUMS entries, static ELF/soft-float and the published MIPS version under qemu.
+Protected [run37917684760](https://github.com/popiposter/xkeen-control/actions/runs/37917684760) completed exact-source hosted FULL and signing/publication. Fresh unauthenticated downloads verified exactly ten public assets with the source-built verifier: pinned Ed25519 key, both signatures/manifests, sizes/hashes, nine SHA256SUMS entries, static ELF/soft-float and the published MIPS version under qemu.
 
 | Binary | Bytes | SHA256 |
 | --- | ---: | --- |
-| linux/arm64 | 16,515,232 | `051208a443148f32339feb230afa62ef20106636072112bd858549d571d17008` |
-| linux/mipsle soft-float | 19,071,167 | `1521f54d68fea16c8ffdb95c1f9d0f93a85b3e85ae3ad18075ff592afad09490` |
+| linux/arm64 | 16,515,232 | `900dd6f02d3af440f784078b0ed8dde4911675fffa73239b688ca8effff4f69f` |
+| linux/mipsle soft-float | 19,136,703 | `fffe6620d38fced79081657feca6d99e8f728ddf5560488d6ef49d25c9161f53` |
 
-[PR163](https://github.com/popiposter/xkeen-control/pull/163) delivers [#162](https://github.com/popiposter/xkeen-control/issues/162): durable update receipts, bounded readiness, checked file commits/rollback and verified RAM maintenance delivery for older helpers. Independent source review and local FULL bind `93cd2b617a2b8886d5be015e25feb69d5fe5593a`; the released merge tree is identical. Frozen-source review and protected hosted FULL separately bind the released merge SHA. Later documentation commits do not change that source.
+[PR166](https://github.com/popiposter/xkeen-control/pull/166) delivers [#165](https://github.com/popiposter/xkeen-control/issues/165): direct flock descriptor checks and the fixed read-only `self-update inspect-capabilities` command. Independent source review and local FULL bind `6c406f1aef8d9c931f24261d1f178feaf35da243`; the released merge tree is identical. Frozen-source review and protected hosted FULL separately bind the released merge SHA. Later documentation commits do not change that source.
 
-Signed 0.4.4 hardware installation, node recovery, controlled resource comparison and independent client/DNS/failure acceptance remain **NOTRUN**. Issues [#157](https://github.com/popiposter/xkeen-control/issues/157), [#158](https://github.com/popiposter/xkeen-control/issues/158) and [#162](https://github.com/popiposter/xkeen-control/issues/162) remain open. The failed 0.4.3 update and observed rollback to 0.4.2 remain separate historical evidence below. Publication does not settle an interrupted operation or authorize replay; follow [maintenance delivery and inspection](OPERATIONS.md#durable-update-outcomes-162).
+Signed 0.4.5 hardware capability inspection, installation, node recovery, controlled resource comparison and independent client/DNS/failure acceptance remain **NOTRUN**. Issues #157, #158, #162 and #165 remain open. The failed 0.4.3 update and 0.4.4 preflight refusal remain separate historical evidence below. Publication does not settle an interrupted operation or authorize replay; follow [maintenance delivery and inspection](OPERATIONS.md#durable-update-outcomes-162).
 
 ## Installation
 
 Package targets:`linux/arm64` and `linux/mipsle` soft-float with confirmed Entware `mipsel-3.4`/`mipsel-3.4_kn`. For an existing stock XKeen/Xray with Entware, install only the panel. Existing KN1810 preparation and hardware limits are described in [MIPS Keenetic](MIPS-KEENETIC.md):
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.4/install.sh) && sh -c "$xkeen_installer"
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.5/install.sh) && sh -c "$xkeen_installer"
 ```
 
 For a genuinely new supported Ultra KN1811/5.01.C.6.0-1, one private IPv4 bridge/one WAN and no host/custom DNS exceptions, use the explicit guided mode:
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.4/install.sh) && sh -c "$xkeen_installer" -- --setup
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.5/install.sh) && sh -c "$xkeen_installer" -- --setup
 ```
 
 It privately imports the source, prepares stock2.1 native components, panel, mosdns and a validated reference generation, then assigns HOME last. [Fresh prerequisites, ordering and interrupted setup](FRESH-KEENETIC.md) govern this restricted route; it never patches native code or reinstalls existing components. Other firmware/model/topology support remains unavailable.
@@ -66,6 +66,22 @@ Only protected manual Release publishes: explicit version/channel/current-review
 Independent host verification builds `cmd/xkeen-release` from exact released source, runs verify-pinned-key, then verify and verify-assets for each published architecture, and `sha256sum -c SHA256SUMS` on fresh downloads of the exact public set. For a dual-platform release this means ten downloads, both signatures/four-artifact manifests, equal source/version/channel/epoch/compatibility and linux/arm64 plus linux/mipsle identity. Bound retrieval to10minutes/128MiB. Historical ARM64 releases through0.4.0 require their seven files. Never bypass signature or manually repair failed publication.
 
 ## History
+
+### Stable 0.4.4 publication and preflight refusal
+
+Signed stable [v0.4.4](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.4), published 2026-10-09T09:41:53Z, from independently reviewed source `27daa9abdfec946e150a2bb934f96ddd7aec3125`, tree `ee178ad47d3bb9da3ebf978971063c36c695ce98`, source epoch 1791538428.
+
+Protected [run37912340620](https://github.com/popiposter/xkeen-control/actions/runs/37912340620) completed exact-source hosted FULL and signing/publication. Fresh unauthenticated downloads verified exactly ten public assets with the source-built verifier: pinned Ed25519 key, both signatures/manifests, sizes/hashes, nine SHA256SUMS entries, static ELF/soft-float and the published MIPS version under qemu.
+
+| Binary | Bytes | SHA256 |
+| --- | ---: | --- |
+| linux/arm64 | 16,515,232 | `051208a443148f32339feb230afa62ef20106636072112bd858549d571d17008` |
+| linux/mipsle soft-float | 19,071,167 | `1521f54d68fea16c8ffdb95c1f9d0f93a85b3e85ae3ad18075ff592afad09490` |
+
+[PR163](https://github.com/popiposter/xkeen-control/pull/163) delivers [#162](https://github.com/popiposter/xkeen-control/issues/162): durable update receipts, bounded readiness, checked file commits/rollback and verified RAM maintenance delivery for older helpers. Independent source review and local FULL bind `93cd2b617a2b8886d5be015e25feb69d5fe5593a`; the released merge tree is identical. Frozen-source review and protected hosted FULL separately bind the released merge SHA. Later documentation commits do not change that source.
+
+One 0.4.4 KN1810 maintenance attempt refused before reservation, helper launch or payload placement: firmware `/bin/sh -c` dropped the positional arguments used by the Go flock probe. Direct flock and script-file forwarding passed independent diagnosis. Installed signed 0.4.2 and native configuration/runtime remained unchanged; prior panel/cron services were restored. This is a failed preflight, not successful installation, and must not be replayed. #165 addresses the narrow Go probe dependency; no native code or helper/init patches.
+
 
 ### Stable 0.4.3 publication and failed installation
 
