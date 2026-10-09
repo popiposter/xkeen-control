@@ -81,8 +81,8 @@ func recoveryFixture(t *testing.T) (*Manager, *fakeActivator, *recoveryRuntimeSt
 		t.Fatal(err)
 	}
 	intent.Close()
-	runtime := &recoveryRuntimeStub{identity: "old-process"}
-	a := &fakeActivator{onRestart: func(int) { runtime.identity = "new-process" }}
+	runtime := &recoveryRuntimeStub{identity: strings.Repeat("a", 64)}
+	a := &fakeActivator{onRestart: func(int) { runtime.identity = strings.Repeat("b", 64) }}
 	m.tx.Activator = a
 	m.authority.Block()
 	return m, a, runtime
@@ -146,7 +146,7 @@ func TestRecoveryRefusesDriftUnsafeStateAndReplay(t *testing.T) {
 				}
 			case "post-activation-drift":
 				a.onRestart = func(int) {
-					r.identity = "new-process"
+					r.identity = strings.Repeat("b", 64)
 					os.WriteFile(filepath.Join(m.recoveryDir(), ".registry-absent"), []byte("drift"), 0600)
 				}
 			case "unchanged-process":

@@ -39,4 +39,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go test -count=1 -exec q
 CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go test -count=1 -exec qemu-mipsel \
     -run 'Test(DirectFlockSequenceAndCleanup|FlockRejectsNonConflictFailures|FlockUsesOneDeadlineAndCleansOnTimeout|DroppedShellTailDefectDoesNotAffectDirectProbe|DiagnosticSharedChecksOnlyTouchRAM|InspectNormalNeverCreatesAndReusesSharedAdmission|CapabilityInspectionReleasesAdmissionAndReportsFailures|UpdateInspectionAllowlistIsExact)$' \
     ./internal/update ./internal/setup ./cmd/xkeen-control
+CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go test -count=1 -exec qemu-mipsel \
+    -run 'Test(VerifyExisting|RecoveryPersistsSanitizedFailureStage|RecoveryCLIHasOnlyExactActions)' \
+    ./internal/nodes ./cmd/xkeen-control
 echo 'MIPS static soft-float ELF/startup and emulated platform fixtures passed (hardware NOTRUN)'

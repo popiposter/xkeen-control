@@ -163,7 +163,7 @@ func main() {
 		guard := initialsetup.Normal
 		if len(os.Args) > 2 && os.Args[2] == "recovery" {
 			if !validRecoveryArgs(os.Args[3:]) {
-				log.Print("usage: nodes recovery {inspect|activate-current --digest SHA256}")
+				log.Print("usage: nodes recovery {inspect|activate-current --digest SHA256|verify-existing --digest SHA256}")
 				os.Exit(2)
 			}
 			guard = initialsetup.Maintenance
@@ -547,7 +547,7 @@ func runNodesCommand(args []string) error {
 	switch args[0] {
 	case "recovery":
 		if !validRecoveryArgs(args[1:]) {
-			return errors.New("usage: nodes recovery {inspect|activate-current --digest SHA256}")
+			return errors.New("usage: nodes recovery {inspect|activate-current --digest SHA256|verify-existing --digest SHA256}")
 		}
 		configDir := getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir)
 		manager = newNodeManager(nil, authority.NewLease(), &xkeen.ConfigEditor{PreviousDir: getenv("XKEEN_NATIVE_CONFIG_PREVIOUS_DIR", "/opt/etc/xkeen-control/previous/native-config")})
@@ -560,6 +560,12 @@ func runNodesCommand(args []string) error {
 				return errors.New("node recovery inspection unavailable; inspect pending state and quiesce competing processes")
 			}
 			return json.NewEncoder(os.Stdout).Encode(value)
+		}
+		if args[1] == "verify-existing" {
+			if err := manager.VerifyExistingRecovery(ctx, args[3], runtime); err != nil {
+				return errors.New("existing node recovery not verified; inspect durable state, no activation was invoked")
+			}
+			return json.NewEncoder(os.Stdout).Encode(map[string]string{"state": "completed", "action": "verify-existing"})
 		}
 		if err := manager.RecoverCurrent(ctx, args[3], runtime); err != nil {
 			return errors.New("node recovery not completed; inspect durable state, do not retry activation")
@@ -600,7 +606,7 @@ func validRecoveryArgs(args []string) bool {
 	if len(args) == 1 && args[0] == "inspect" {
 		return true
 	}
-	if len(args) != 3 || args[0] != "activate-current" || args[1] != "--digest" || len(args[2]) != 64 {
+	if len(args) != 3 || (args[0] != "activate-current" && args[0] != "verify-existing") || args[1] != "--digest" || len(args[2]) != 64 {
 		return false
 	}
 	_, err := hex.DecodeString(args[2])
