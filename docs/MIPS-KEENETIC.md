@@ -15,6 +15,8 @@ remains ARM64-only. No unsigned binary copy, architecture override, signature
 bypass or modification of0.4.0 assets. Fresh
 `--setup` remains unsupported for KN1810 and existing installations.
 
+For pre-release hardware qualification of [Issue188](https://github.com/popiposter/xkeen-control/issues/188), an exact-HEAD MIPS **test binary** may be copied to a private disposable path under `/opt` and run against synthetic data. Record its hash, bound execution and remove only its owned files after checking that no child remains. This does not install or replace the panel, invoke live XKeen/Xray, read production credentials or configuration, or authorize native Apply. The prohibition on unsigned **panel installation** above still applies; a successful synthetic run proves MIPS algorithm execution, not live automatic selection or application. Live acceptance follows a verified signed installation with a fresh state snapshot.
+
 ## Before installing a signed MIPS release
 
 1. Connect locally to Entware root shell. Confirm model/firmware, little-endian
