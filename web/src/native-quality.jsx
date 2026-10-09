@@ -12,10 +12,13 @@ const stageReasons = {
   'configuration-pending': 'Saved configuration changes are pending. Apply or discard them in the configuration editor before running a fresh speed test.',
   'configuration-unavailable': 'The current configuration could not be verified. Inspect it in the configuration editor and refresh the status.',
   'measurement-expired-or-incomplete': 'Measurements have expired or do not include enough successful nodes. Run a fresh speed test.',
+  'inspection-required': 'An earlier operation needs inspection before another recommendation can be applied.',
+  'quota-unavailable': 'The private comparison receipt is unavailable. Inspect it before another action.',
 }
 const reviewReasons = {
   'eligible-unavailable-or-over-limit': 'The eligible node set is unavailable or exceeds the bounded review limit; the running pool was kept.',
   'quota-unavailable-or-exhausted': 'The automatic traffic quota is unavailable or exhausted; the running pool was kept.',
+  'quota-busy-or-unavailable': 'Another automatic review owns the traffic quota, or its receipt is unavailable; the running pool was kept.',
   'review-budget-exceeded': 'The review reached its traffic limit; the running pool was kept.',
   'review-cancelled': 'The review was cancelled; the running pool was kept.',
   'review-timeout-or-cancelled': 'The review timed out or was cancelled; the running pool was kept.',
@@ -41,6 +44,7 @@ const reviewReasons = {
   'apply-not-verified': 'The native job or configuration did not verify as applied.',
   'applied-config-readback-mismatch': 'The applied routing does not match the proposed pool. Inspect configuration.',
   'inspection-required': 'Automatic application needs inspection. Do not repeat the operation.',
+  'inspection-receipt-unavailable': 'The private inspection receipt could not be settled. Inspect it before another comparison.',
 }
 
 export function NativeQualitySection({ csrfToken, onUnauthorized, busy, workingEdits, onReadback, onNativeJob, onOpenConsole, onInspectConfigs, nodesByTag, onStatusChange }) {
@@ -148,6 +152,7 @@ export function NativeQualitySection({ csrfToken, onUnauthorized, busy, workingE
       <p>{status?.automaticReason === 'constrained-device' ? 'Automatic speed comparisons are disabled on this constrained router.' : status?.automaticReason === 'operator-disabled' ? 'Automatic node reviews are temporarily disabled by the operator for this panel process.' : status?.automaticReason ? 'Automatic comparisons are deferred: a native periodic speed test is configured or its state is unavailable.' : status?.resourceProfile?.constrained && status.resourceProfile?.automatic ? 'Automatic reviews test eligible nodes in small sequential batches after subscription refresh and on a bounded schedule. A complete fresh review may apply one pool and restart XKeen once.' : 'Automatic comparisons run at most every six hours and coalesce subscription refreshes.'} Tests stop if sustained CPU, memory or swap pressure is detected. External native jobs are outside panel exclusion.</p>
       {status?.activePoolCount > 0 && <p className="text-sm text-muted-foreground">Current active pool: {status.activePoolCount} nodes. Enabled nodes available for comparison: {status.poolCount || 0}. The table below shows measured candidates from the latest test, not the entire active pool.</p>}
       {status?.batchCount > 0 && <p className="text-sm text-muted-foreground">Automatic review: {status.attemptedCount || 0} of {status.eligibleCount || 0} eligible nodes attempted, {status.validCount || 0} valid; {status.batchCount} batches and {((status.aggregateBytes || 0) / 1048576).toFixed(1)} MiB transferred.{status.reviewTrigger ? ` Trigger: ${status.reviewTrigger}.` : ''}</p>}
+      {status?.resourceProfile?.constrained && status?.resourceProfile?.automatic && <p className="text-sm text-muted-foreground">Automatic traffic quota: {status.quotaState === 'available' ? `${((status.quotaUsedBytes || 0) / 1048576).toFixed(0)} of 288 MiB reserved in the rolling 24 hours (${status.quotaReviewsUsed || 0} of 2 reviews); ${((status.quotaRemainingBytes || 0) / 1048576).toFixed(0)} MiB remaining${status.quotaNextResetAt ? `, next reservation expires ${new Date(status.quotaNextResetAt).toLocaleString()}` : ''}.` : 'unavailable; inspect the private receipt before another comparison.'} Manual speed tests have a separate limit of {((status.manualAllowanceBytes || 0) / 1048576).toFixed(0)} MiB per run.</p>}
       {status?.nextDueAt && new Date(status.nextDueAt).getFullYear() >= 2020 && <p className="text-sm text-muted-foreground">Next automatic review: <time dateTime={status.nextDueAt}>{new Date(status.nextDueAt).toLocaleString()}</time>.</p>}
       {status?.reviewReason && <p role="status">{reviewReasons[status.reviewReason] || `Automatic review: ${status.reviewReason}.`}</p>}
       {status?.appliedState && <p role="status">Automatic pool application: {status.appliedState}.</p>}
@@ -160,6 +165,6 @@ export function NativeQualitySection({ csrfToken, onUnauthorized, busy, workingE
       <p>Apply recommendation saves the selected pool and restarts XKeen once. Xray chooses within that pool using its existing native strategy and live health; speed weights apply only to leastLoad. Rank one is not pinned. Existing connections may need to reconnect. Previous configuration remains available in the editor.</p>
       {workingEdits && <p role="alert">Save or discard unfinished configuration edits before applying the recommendation.</p>}
     </CardContent>
-    <CardFooter className="flex flex-wrap gap-2"><Button disabled={!status || busy || working || applying || status.state === 'running' || status.state === 'applying' || status.inspectionRequired} onClick={() => act('start')}><IconGauge data-icon="inline-start" />Run speed test</Button><Button variant="outline" disabled={!status?.canStage || working || busy || applying || applyAttempted || workingEdits || status.state === 'applying' || status.inspectionRequired} onClick={() => act('apply')}><IconPlayerPlay data-icon="inline-start" />Apply recommendation</Button><Button variant="ghost" disabled={working} onClick={refresh}><IconRefresh data-icon="inline-start" />Refresh</Button>{applyAttempted && <><Button variant="ghost" onClick={onInspectConfigs}>Inspect configuration</Button><Button variant="ghost" onClick={onOpenConsole}><IconTerminal2 data-icon="inline-start" />XKeen console</Button></>}</CardFooter>
+    <CardFooter className="flex flex-wrap gap-2"><Button disabled={!status || busy || working || applying || status.state === 'running' || status.state === 'applying' || status.inspectionRequired || (status.resourceProfile?.constrained && status.resourceProfile?.automatic && status.quotaState !== 'available')} onClick={() => act('start')}><IconGauge data-icon="inline-start" />Run speed test</Button><Button variant="outline" disabled={!status?.canStage || working || busy || applying || applyAttempted || workingEdits || status.state === 'applying' || status.inspectionRequired} onClick={() => act('apply')}><IconPlayerPlay data-icon="inline-start" />Apply recommendation</Button><Button variant="ghost" disabled={working} onClick={refresh}><IconRefresh data-icon="inline-start" />Refresh</Button>{applyAttempted && <><Button variant="ghost" onClick={onInspectConfigs}>Inspect configuration</Button><Button variant="ghost" onClick={onOpenConsole}><IconTerminal2 data-icon="inline-start" />XKeen console</Button></>}</CardFooter>
   </Card>
 }

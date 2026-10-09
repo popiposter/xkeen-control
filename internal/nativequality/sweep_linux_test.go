@@ -5,6 +5,7 @@ package nativequality
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,23 +22,40 @@ import (
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
 
-type sweepReader struct{ healthy bool }
+type sweepReader struct {
+	healthy       bool
+	failAfterFile string
+}
 
 func (r *sweepReader) Snapshot(context.Context) xrayapi.Snapshot {
-	snapshot := xrayapi.Snapshot{APIReachable: r.healthy, RoutingReachable: r.healthy, ObservatoryReachable: r.healthy, Balancer: xrayapi.BalancerState{NativeSelected: "proxy-00"}}
+	healthy := r.healthy
+	if r.failAfterFile != "" {
+		if _, err := os.Stat(r.failAfterFile); err == nil {
+			healthy = false
+		}
+	}
+	snapshot := xrayapi.Snapshot{APIReachable: healthy, RoutingReachable: healthy, ObservatoryReachable: healthy, Balancer: xrayapi.BalancerState{NativeSelected: "proxy-00"}}
 	for i := 0; i < 14; i++ {
 		snapshot.OutboundHealth = append(snapshot.OutboundHealth, xrayapi.OutboundHealth{Tag: fmt.Sprintf("proxy-%02d", i), Alive: true, DelayMS: int64(100 + i), LastTry: time.Now().UTC().Add(-time.Second)})
 	}
 	return snapshot
 }
-func (r *sweepReader) ProbeReachable(context.Context) bool { return r.healthy }
+func (r *sweepReader) ProbeReachable(context.Context) bool {
+	if r.failAfterFile != "" {
+		if _, err := os.Stat(r.failAfterFile); err == nil {
+			return false
+		}
+	}
+	return r.healthy
+}
 
 type sweepMeasurement struct {
-	calls      [][]string
-	validLimit int
-	failBatch  int
-	onBatch    func(int)
-	hold       <-chan struct{}
+	calls        [][]string
+	validLimit   int
+	failBatch    int
+	cleanupBatch int
+	onBatch      func(int)
+	hold         <-chan struct{}
 }
 
 func (*sweepMeasurement) NativeQualityEvidence(xrayapi.Snapshot) map[string]c1.AdaptiveCandidateInput {
@@ -63,6 +81,10 @@ func (m *sweepMeasurement) MeasureNativeQuality(_ context.Context, g c1.Adaptive
 		r.State = "failed"
 		r.Candidates = r.Candidates[:1]
 		r.ValidCount = 1
+	}
+	if m.cleanupBatch == index {
+		r.State = "cleanup-pending"
+		return r, errors.New("probe cleanup unknown")
 	}
 	r.CompletedAt = time.Now().UTC()
 	if publish != nil {
@@ -269,6 +291,18 @@ func writeSweepProcess(t *testing.T, proc, pid, start, xray, dir string) {
 
 func TestSweepFourteenNodesOneVerifiedNativeApply(t *testing.T) {
 	s, g, digest, dir := sweepFixture(t, false)
+	callMarker := setupNativeApply(t, s, dir)
+	runSweepFixture(t, s, g, digest)
+	v := s.Read()
+	calls, err := os.ReadFile(callMarker)
+	w, readErr := s.Editor.Workspace(context.Background())
+	if err != nil || string(calls) != "x" || readErr != nil || w.Pending != nil || v.State != "completed" || v.AppliedState != "applied" || v.ActivePoolCount != 6 || v.AppliedJobState != "completed" || v.AppliedConfigState != "applied" || v.InspectionRequired || v.CanStage {
+		t.Fatalf("one verified Apply missing: calls=%q err=%v workspace=%v status=%+v", calls, err, readErr, v)
+	}
+}
+
+func setupNativeApply(t *testing.T, s *Service, dir string) string {
+	t.Helper()
 	proc := t.TempDir()
 	s.Editor.ProcRoot = proc
 	xray := s.Editor.XrayBinary
@@ -294,11 +328,94 @@ func TestSweepFourteenNodesOneVerifiedNativeApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Jobs = xkeen.NewJobs(script, s.Lease)
-	runSweepFixture(t, s, g, digest)
-	v := s.Read()
-	calls, err := os.ReadFile(callMarker)
-	w, readErr := s.Editor.Workspace(context.Background())
-	if err != nil || string(calls) != "x" || readErr != nil || w.Pending != nil || v.State != "completed" || v.AppliedState != "applied" || v.ActivePoolCount != 6 || v.AppliedJobState != "completed" || v.AppliedConfigState != "applied" || v.InspectionRequired || v.CanStage {
-		t.Fatalf("one verified Apply missing: calls=%q err=%v workspace=%v status=%+v", calls, err, readErr, v)
+	return callMarker
+}
+
+func TestSweepPostApplyReadbackAmbiguitySurvivesPanelRestart(t *testing.T) {
+	s, _, _, dir := sweepFixture(t, false)
+	marker := setupNativeApply(t, s, dir)
+	s.Reader.(*sweepReader).failAfterFile = marker
+	if err := s.startSweep(context.Background(), "subscription-refresh"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-s.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sweep did not settle")
+	}
+	if !s.Read().InspectionRequired {
+		t.Fatal("post-Apply readback ambiguity not fenced")
+	}
+	q, err := quotaState(s.QuotaPath, time.Now().UTC())
+	if err != nil || !q.InspectionRequired {
+		t.Fatal("durable post-Apply fence missing", q, err)
+	}
+	restarted, _, _, _ := sweepFixture(t, false)
+	restarted.QuotaPath = s.QuotaPath
+	if err := restarted.startSweep(context.Background(), "periodic"); err == nil || !restarted.Read().InspectionRequired {
+		t.Fatal("restart bypassed inspection", err)
+	}
+}
+
+func TestSweepCleanupAmbiguitySurvivesPanelRestart(t *testing.T) {
+	s, _, _, _ := sweepFixture(t, true)
+	s.Measurement.(*sweepMeasurement).cleanupBatch = 1
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-s.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sweep did not settle")
+	}
+	q, err := quotaState(s.QuotaPath, time.Now().UTC())
+	if err != nil || !q.InspectionRequired {
+		t.Fatal("cleanup ambiguity not durable", q, err)
+	}
+	restarted, _, _, _ := sweepFixture(t, true)
+	restarted.QuotaPath = s.QuotaPath
+	if err := restarted.Start(context.Background()); err == nil {
+		t.Fatal("manual start bypassed durable cleanup fence")
+	}
+	if err := restarted.startSweep(context.Background(), "periodic"); err == nil {
+		t.Fatal("automatic start bypassed durable cleanup fence")
+	}
+}
+
+func TestManualAndAutomaticStartsPersistSixHourFloor(t *testing.T) {
+	manual, _, _, _ := sweepFixture(t, true)
+	if err := manual.Start(context.Background()); err != nil {
+		t.Fatal("manual start", err)
+	}
+	select {
+	case <-manual.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("manual did not settle")
+	}
+	q, err := quotaState(manual.QuotaPath, time.Now().UTC())
+	if err != nil || q.LastStartedAt.IsZero() {
+		t.Fatal("manual start not durable", q, err)
+	}
+	restarted, _, _, _ := sweepFixture(t, true)
+	restarted.QuotaPath = manual.QuotaPath
+	if err := restarted.startSweep(context.Background(), "subscription-refresh"); err == nil {
+		t.Fatal("restart bypassed manual six-hour floor")
+	}
+	auto, _, _, _ := sweepFixture(t, true)
+	if err := auto.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-auto.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("automatic did not settle")
+	}
+	q, err = quotaState(auto.QuotaPath, time.Now().UTC())
+	if err != nil || q.LastStartedAt.IsZero() || q.InspectionRequired {
+		t.Fatal("automatic start not settled durably", q, err)
+	}
+	restarted.QuotaPath = auto.QuotaPath
+	if err := restarted.startSweep(context.Background(), "periodic"); err == nil {
+		t.Fatal("restart bypassed automatic six-hour floor")
 	}
 }

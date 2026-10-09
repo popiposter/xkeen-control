@@ -19,6 +19,11 @@ keeps the constrained limits above; an automatic review may use at most six
 batches, 24 attempts, 144 MiB and 30 minutes. The rolling 24-hour automatic
 ceiling is two reviews and 288 MiB, including failed transfers. Refreshes are
 coalesced and a review never starts within six hours of another comparison.
+The private quota receipt also preserves the last comparison start and an
+inspection-required fence across panel restarts. An uncertain native outcome
+cannot be retried simply by restarting the panel. Manual comparisons have a
+separate per-run 24 MiB ceiling rather than drawing from the automatic quota;
+the panel shows both limits and the rolling automatic reservation usage.
 Only fresh, healthy, RTT-eligible nodes are candidates. An automatic pool change
 requires a complete review with every frozen eligible candidate attempted,
 at least 80% valid fresh measurements, unchanged registry/configuration and one

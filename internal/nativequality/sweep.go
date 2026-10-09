@@ -106,6 +106,13 @@ func (s *Service) startSweep(parent context.Context, trigger string) error {
 		s.status.ReviewReason = "quota-unavailable-or-exhausted"
 		return err
 	}
+	quotaReceipt, err := readQuotaLocked(quotaPath, now)
+	if err != nil {
+		quotaUnlock()
+		s.status.InspectionRequired = true
+		return errQuota
+	}
+	quota := viewQuota(quotaReceipt, now)
 	// The review decision is capped at 30 minutes; the separate native Apply
 	// may need a bounded validation/restart/readback margin afterwards.
 	job, cancelJob := context.WithTimeout(parent, sweepWall+6*time.Minute)
@@ -114,7 +121,7 @@ func (s *Service) startSweep(parent context.Context, trigger string) error {
 	s.lastStartedAt = now
 	s.pool = append([]string(nil), pool...)
 	s.result = c1.AdaptiveResult{}
-	s.status = Status{State: "running", Digest: w.Digest, Generation: generation.Generation, PoolCount: len(pool), ActivePoolCount: len(activePool), EligibleCount: len(generation.Candidates), LatencyLimitMS: criteria.maxRTT, LatencySource: criteria.latencySource, ReviewTrigger: trigger, Progress: c1.AdaptivePerformanceStatus{State: "running"}, AppliedState: "not-attempted"}
+	s.status = Status{State: "running", Digest: w.Digest, Generation: generation.Generation, PoolCount: len(pool), ActivePoolCount: len(activePool), EligibleCount: len(generation.Candidates), LatencyLimitMS: criteria.maxRTT, LatencySource: criteria.latencySource, ReviewTrigger: trigger, Progress: c1.AdaptivePerformanceStatus{State: "running"}, AppliedState: "not-attempted", QuotaState: "available", QuotaUsedBytes: quota.UsedBytes, QuotaRemainingBytes: quota.RemainingBytes, QuotaReviewsUsed: quota.ReviewsUsed, QuotaNextResetAt: quota.NextResetAt}
 	ordered := rotateCandidates(generation.Candidates, s.cursor)
 	s.cursor = (s.cursor + 1) % len(ordered)
 	go s.runSweep(job, cancelJob, done, generation, ordered, w.Digest, quotaUnlock)
@@ -254,5 +261,18 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 			s.status.State = "failed"
 		}
 	}
+	inspection := s.status.InspectionRequired
 	s.mu.Unlock()
+	if quotaUnlock != nil {
+		path := s.QuotaPath
+		if path == "" {
+			path = defaultQuotaPath
+		}
+		if err := settleSweepLocked(path, time.Now().UTC(), !inspection); err != nil {
+			s.mu.Lock()
+			s.status.InspectionRequired = true
+			s.status.ReviewReason = "inspection-receipt-unavailable"
+			s.mu.Unlock()
+		}
+	}
 }

@@ -42,12 +42,16 @@ test('bounded automatic review separates full pool, coverage and applied state w
     limits: { candidates: 3, attempts: 4, bytes: 24 * 1048576, seconds: 90 },
     poolCount: 52, activePoolCount: 6, eligibleCount: 14, attemptedCount: 14, validCount: 12,
     batchCount: 5, aggregateBytes: 44 * 1048576, reviewTrigger: 'subscription-refresh',
-    appliedState: 'applied', nextDueAt: '2026-10-10T12:00:00Z' }
+    appliedState: 'applied', nextDueAt: '2026-10-10T12:00:00Z',
+    quotaState: 'available', quotaUsedBytes: 144 * 1048576, quotaRemainingBytes: 144 * 1048576,
+    quotaReviewsUsed: 1, quotaNextResetAt: '2026-10-11T01:00:00Z', manualAllowanceBytes: 24 * 1048576 }
   await open(page)
   await expect(page.getByText(/Current active pool: 6 nodes. Enabled nodes available for comparison: 52/)).toBeVisible()
   await expect(page.getByText(/14 of 14 eligible nodes attempted, 12 valid; 5 batches and 44.0 MiB transferred/)).toBeVisible()
   await expect(page.getByText(/Automatic pool application: applied/)).toBeVisible()
   await expect(page.getByText(/Automatic reviews test eligible nodes in small sequential batches/)).toBeVisible()
+  await expect(page.getByText(/144 of 288 MiB reserved in the rolling 24 hours \(1 of 2 reviews\); 144 MiB remaining/)).toBeVisible()
+  await expect(page.getByText(/Manual speed tests have a separate limit of 24 MiB per run/)).toBeVisible()
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
 })
@@ -61,6 +65,16 @@ test('inspection-required automatic outcome fences browser testing and applying'
   await expect(page.getByRole('button', { name: 'Apply recommendation', exact: true })).toBeDisabled()
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
+})
+
+test('unavailable quota is shown as unknown rather than unused', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), resourceProfile: { name: 'constrained', constrained: true, automatic: true },
+    quotaState: 'unavailable', manualAllowanceBytes: 24 * 1048576 }
+  await open(page)
+  await expect(page.getByText(/Automatic traffic quota: unavailable; inspect the private receipt before another comparison/)).toBeVisible()
+  await expect(page.getByText(/0 of 288 MiB reserved/)).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Run speed test', exact: true })).toBeDisabled()
 })
 
 test('changed subscription generation explains stale recommendation without applying or retesting', async ({ page }) => {

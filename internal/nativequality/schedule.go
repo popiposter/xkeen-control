@@ -61,6 +61,14 @@ func (s *Schedule) Run(ctx context.Context) {
 		s.service.mu.Lock()
 		last := s.service.lastStartedAt
 		s.service.mu.Unlock()
+		if s.service.profile().Constrained {
+			if q, err := quotaState(s.service.QuotaPath, time.Now().UTC()); err == nil && q.LastStartedAt.After(last) {
+				last = q.LastStartedAt
+				s.service.mu.Lock()
+				s.service.lastStartedAt = last
+				s.service.mu.Unlock()
+			}
+		}
 		next = comparisonDue(time.Now(), next, last)
 		if next.Before(startupFloor) {
 			next = startupFloor
@@ -85,6 +93,14 @@ func (s *Schedule) Run(ctx context.Context) {
 			s.service.mu.Lock()
 			last = s.service.lastStartedAt
 			s.service.mu.Unlock()
+			if s.service.profile().Constrained {
+				if q, err := quotaState(s.service.QuotaPath, time.Now().UTC()); err == nil && q.LastStartedAt.After(last) {
+					last = q.LastStartedAt
+				} else if err != nil {
+					next = time.Now().Add(10 * time.Minute)
+					continue
+				}
+			}
 			now := time.Now()
 			if due := comparisonDue(now, next, last); due.After(now) {
 				next = due

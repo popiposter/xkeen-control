@@ -58,6 +58,11 @@ type Status struct {
 	AppliedJobState      string                       `json:"appliedJobState,omitempty"`
 	AppliedConfigState   string                       `json:"appliedConfigState,omitempty"`
 	ManualAllowanceBytes int64                        `json:"manualAllowanceBytes"`
+	QuotaState           string                       `json:"quotaState"`
+	QuotaUsedBytes       int64                        `json:"quotaUsedBytes"`
+	QuotaRemainingBytes  int64                        `json:"quotaRemainingBytes"`
+	QuotaReviewsUsed     int                          `json:"quotaReviewsUsed"`
+	QuotaNextResetAt     time.Time                    `json:"quotaNextResetAt,omitempty"`
 }
 
 type RankedNode struct {
@@ -93,6 +98,7 @@ type Service struct {
 func (s *Service) Read() Status {
 	s.mu.Lock()
 	value := s.status
+	activeReview := s.cancel != nil || s.autoApplying
 	value.ResourceProfile = s.profile()
 	value.Limits = s.profile().Comparison(value.Generation == 0 || value.ManualSample)
 	value.ManualAllowanceBytes = s.profile().Comparison(true).Bytes
@@ -142,6 +148,22 @@ func (s *Service) Read() Status {
 		}
 	}
 	value.AppliedRanking = s.appliedRanking()
+	if value.ResourceProfile.Constrained && value.ResourceProfile.Automatic {
+		if q, err := quotaState(s.QuotaPath, time.Now().UTC()); err == nil {
+			value.QuotaState = "available"
+			value.QuotaUsedBytes, value.QuotaRemainingBytes = q.UsedBytes, q.RemainingBytes
+			value.QuotaReviewsUsed, value.QuotaNextResetAt = q.ReviewsUsed, q.NextResetAt
+			if q.InspectionRequired && !activeReview {
+				value.InspectionRequired = true
+				value.CanStage = false
+				value.StageReason = "inspection-required"
+			}
+		} else if !activeReview {
+			value.QuotaState = "unavailable"
+			value.CanStage = false
+			value.StageReason = "quota-unavailable"
+		}
+	}
 	return value
 }
 
@@ -238,6 +260,11 @@ func (s *Service) SetManualOverride(ctx context.Context, target string) error {
 	if inspectionRequired {
 		return ErrUnavailable
 	}
+	if s.profile().Constrained && s.profile().Automatic {
+		if q, err := quotaState(s.QuotaPath, time.Now().UTC()); err != nil || q.InspectionRequired {
+			return ErrUnavailable
+		}
+	}
 	release, err := s.Lease.TryAcquire()
 	if err != nil {
 		return c1.ErrManualBusy
@@ -304,6 +331,11 @@ func (s *Service) start(ctx context.Context, broad bool) error {
 	if s.cancel != nil || s.autoApplying || s.closed || s.status.InspectionRequired {
 		return c1.ErrManualBusy
 	}
+	if s.profile().Constrained && s.profile().Automatic {
+		if q, err := quotaState(s.QuotaPath, time.Now().UTC()); err != nil || q.InspectionRequired {
+			return c1.ErrManualBusy
+		}
+	}
 	s.status.StartReason = ""
 	if err := s.Resources.CheckConflict(); err != nil {
 		s.status.StartReason = "resource-telemetry-unavailable"
@@ -351,7 +383,14 @@ func (s *Service) start(ctx context.Context, broad bool) error {
 	all := append(append([]c1.AdaptiveCandidateInput(nil), generation.Candidates...), generation.Fallbacks...)
 	initial, end := min(len(all), limits.Candidates), min(len(all), limits.Attempts)
 	generation.Candidates, generation.Fallbacks = all[:initial], all[initial:end]
-	s.lastStartedAt = time.Now().UTC()
+	startedAt := time.Now().UTC()
+	if s.profile().Constrained && s.profile().Automatic {
+		if err := recordComparisonStart(s.QuotaPath, startedAt); err != nil {
+			release()
+			return ErrUnavailable
+		}
+	}
+	s.lastStartedAt = startedAt
 	job, cancel := context.WithTimeout(context.Background(), limits.Wall())
 	s.cancel = cancel
 	done := make(chan struct{})
