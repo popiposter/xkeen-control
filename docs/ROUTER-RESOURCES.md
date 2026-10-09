@@ -38,6 +38,17 @@ verified native Apply. A partial three-node manual sample does not meet this
 condition. The current native pool remains in effect on incomplete or uncertain
 outcomes. These source limits do not establish live hardware acceptance.
 
+The first signed0.4.10 scheduled KN1810 attempt at 02:24 MSK on
+2026-10-10 found 46 fresh eligible nodes and refused the old 18-node
+admission limit before any transfer or Apply (0 MiB, unchanged configuration).
+Issue [#191](https://github.com/popiposter/xkeen-control/issues/191) changes
+the source planner to review at most 18 each time: current pool members, up to
+six low-RTT challengers, then a durable rotating share. The status distinguishes
+the selected subset from nodes deferred to later reviews. All selected nodes
+must be attempted, with at least 80% valid; an unchanged pool avoids restart,
+and replacing a healthy member needs at least 15% measured score improvement.
+The 0.4.10 refusal remains the live outcome until new signed hardware proof.
+
 The existing measurement owners share a read-only hardware profile and an
 on-demand `/proc` sampler. No new daemon, persistent settings authority or timer
 is installed. Admission uses two CPU deltas: both at least 85% busy refuses work.

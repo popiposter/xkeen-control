@@ -25,6 +25,7 @@ import (
 type sweepReader struct {
 	healthy       bool
 	failAfterFile string
+	count         int
 }
 
 func (r *sweepReader) Snapshot(context.Context) xrayapi.Snapshot {
@@ -35,7 +36,11 @@ func (r *sweepReader) Snapshot(context.Context) xrayapi.Snapshot {
 		}
 	}
 	snapshot := xrayapi.Snapshot{APIReachable: healthy, RoutingReachable: healthy, ObservatoryReachable: healthy, Balancer: xrayapi.BalancerState{NativeSelected: "proxy-00"}}
-	for i := 0; i < 14; i++ {
+	count := r.count
+	if count == 0 {
+		count = 14
+	}
+	for i := 0; i < count; i++ {
 		snapshot.OutboundHealth = append(snapshot.OutboundHealth, xrayapi.OutboundHealth{Tag: fmt.Sprintf("proxy-%02d", i), Alive: true, DelayMS: int64(100 + i), LastTry: time.Now().UTC().Add(-time.Second)})
 	}
 	return snapshot
@@ -125,7 +130,34 @@ func TestSweepAdmissionFreezesFourteenAndCrossProcessOwner(t *testing.T) {
 	}
 }
 
+func TestSweepFortySixEligibleRunsBoundedSubsetWithoutApply(t *testing.T) {
+	s, _, _, _ := sweepFixtureCount(t, true, 46)
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal("bounded admission", err, s.Read().ReviewReason)
+	}
+	select {
+	case <-s.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("bounded review did not settle")
+	}
+	v := s.Read()
+	if v.State != "completed" || v.AppliedState != "no-op" || v.TotalEligible != 46 || v.SelectedForSpeed != 18 || v.DeferredForFutureReview != 28 || v.AttemptedCount != 18 || v.ValidCount != 18 || v.BatchCount != 6 || len(v.Progress.Candidates) != 18 || v.SubsetState != "subset-complete" || v.PoolDecision != "pool-unchanged" {
+		t.Fatal("bounded review/status mismatch", v)
+	}
+	if len(s.Measurement.(*sweepMeasurement).calls) != 6 {
+		t.Fatal("wrong batch count")
+	}
+	w, err := s.Editor.Workspace(context.Background())
+	if err != nil || w.Pending != nil || w.Digest != v.Digest {
+		t.Fatal("no-op changed configuration", err)
+	}
+}
+
 func sweepFixture(t *testing.T, noop bool) (*Service, c1.AdaptiveGeneration, string, string) {
+	return sweepFixtureCount(t, noop, 14)
+}
+
+func sweepFixtureCount(t *testing.T, noop bool, count int) (*Service, c1.AdaptiveGeneration, string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	validator := filepath.Join(dir, "xray")
@@ -137,7 +169,7 @@ func sweepFixture(t *testing.T, noop bool) (*Service, c1.AdaptiveGeneration, str
 	var costs []c1.NativeQualityCost
 	var candidates []c1.AdaptiveCandidateInput
 	var pool []string
-	for i := 0; i < 14; i++ {
+	for i := 0; i < count; i++ {
 		tag := fmt.Sprintf("proxy-%02d", i)
 		outbounds = append(outbounds, map[string]string{"tag": tag, "protocol": "vless"})
 		pool = append(pool, tag)
@@ -171,13 +203,13 @@ func sweepFixture(t *testing.T, noop bool) (*Service, c1.AdaptiveGeneration, str
 		return resourcepolicy.Sample{At: time.Now().Add(time.Duration(n) * time.Second), Total: n * 100, Idle: n * 50, TotalKiB: 254472, AvailableKiB: 150000, SwapSource: "vmstat", SwapUnitBytes: 4096}, nil
 	}}
 	m := &sweepMeasurement{}
-	s := &Service{Editor: e, Lease: lease, Reader: &sweepReader{healthy: true}, Nodes: func(context.Context) []c1.NodeState {
+	s := &Service{Editor: e, Lease: lease, Reader: &sweepReader{healthy: true, count: count}, Nodes: func(context.Context) []c1.NodeState {
 		result := make([]c1.NodeState, 0, len(pool))
 		for _, tag := range pool {
 			result = append(result, c1.NodeState{Tag: tag, Enabled: true})
 		}
 		return result
-	}, Measurement: m, Resources: guard, Jobs: xkeen.NewJobs(filepath.Join(dir, "missing-xkeen"), lease), QuotaPath: filepath.Join(t.TempDir(), "quota", "receipt.json"), pool: pool, batchPause: time.Millisecond, status: Status{State: "running", Digest: w.Digest, EligibleCount: 14, ActivePoolCount: len(selector), AppliedState: "not-attempted"}}
+	}, Measurement: m, Resources: guard, Jobs: xkeen.NewJobs(filepath.Join(dir, "missing-xkeen"), lease), QuotaPath: filepath.Join(t.TempDir(), "quota", "receipt.json"), pool: pool, batchPause: time.Millisecond, status: Status{State: "running", Digest: w.Digest, EligibleCount: count, ActivePoolCount: len(selector), AppliedState: "not-attempted"}}
 	return s, c1.AdaptiveGeneration{Generation: 1, NativeQuality: true, Candidates: candidates}, w.Digest, dir
 }
 

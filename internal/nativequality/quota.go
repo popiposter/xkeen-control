@@ -1,6 +1,8 @@
 package nativequality
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -8,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/resourcepolicy"
 )
 
@@ -29,6 +32,8 @@ type quotaReceipt struct {
 	Reservations            []quotaReservation `json:"reservations"`
 	LastComparisonStartedAt time.Time          `json:"lastComparisonStartedAt,omitempty"`
 	InspectionRequired      bool               `json:"inspectionRequired,omitempty"`
+	FairCursor              int                `json:"fairCursor,omitempty"`
+	EligibleSetHash         string             `json:"eligibleSetHash,omitempty"`
 }
 
 type quotaView struct {
@@ -38,6 +43,7 @@ type quotaView struct {
 	NextResetAt        time.Time
 	LastStartedAt      time.Time
 	InspectionRequired bool
+	FairCursor         int
 }
 
 func quotaState(path string, now time.Time) (quotaView, error) {
@@ -57,7 +63,7 @@ func quotaState(path string, now time.Time) (quotaView, error) {
 }
 
 func viewQuota(q quotaReceipt, now time.Time) quotaView {
-	v := quotaView{RemainingBytes: maxDailySweepBytes, LastStartedAt: q.LastComparisonStartedAt, InspectionRequired: q.InspectionRequired}
+	v := quotaView{RemainingBytes: maxDailySweepBytes, LastStartedAt: q.LastComparisonStartedAt, InspectionRequired: q.InspectionRequired, FairCursor: q.FairCursor}
 	for _, r := range q.Reservations {
 		if now.Sub(r.At) < 24*time.Hour {
 			v.UsedBytes += r.Bytes
@@ -120,6 +126,12 @@ func reserveSweep(path string, now time.Time) (int64, error) {
 // Caller holds the separate fixed-inode quota lock. The sweep retains that
 // lock until all measurement and native application readback has settled.
 func reserveSweepLocked(path string, now time.Time) (int64, error) {
+	return reserveSweepPlannedLocked(path, now, nil)
+}
+
+// A planned reservation charges traffic, records the recovery intent and
+// advances fairness in one private durable write before any transfer starts.
+func reserveSweepPlannedLocked(path string, now time.Time, plan *sweepPlan) (int64, error) {
 	q, err := readQuotaLocked(path, now)
 	if err != nil {
 		return 0, errQuota
@@ -140,6 +152,10 @@ func reserveSweepLocked(path string, now time.Time) (int64, error) {
 	q.Reservations = append(kept, quotaReservation{At: now, Bytes: maxSweepBytes})
 	q.LastComparisonStartedAt = now
 	q.InspectionRequired = true
+	if plan != nil {
+		q.FairCursor = plan.NextCursor
+		q.EligibleSetHash = plan.EligibleSetHash
+	}
 	if err := writeQuotaLocked(path, q); err != nil {
 		return v.UsedBytes, errQuota
 	}
@@ -178,6 +194,15 @@ func readQuotaLocked(path string, now time.Time) (quotaReceipt, error) {
 	}
 	if q.Version != 1 || len(q.Reservations) > 2 {
 		return quotaReceipt{}, errQuota
+	}
+	if q.FairCursor < 0 || q.FairCursor > c1.MaxRegistryNodes || q.EligibleSetHash == "" && q.FairCursor != 0 {
+		return quotaReceipt{}, errQuota
+	}
+	if q.EligibleSetHash != "" {
+		decoded, decodeErr := hex.DecodeString(q.EligibleSetHash)
+		if decodeErr != nil || len(decoded) != sha256.Size || hex.EncodeToString(decoded) != q.EligibleSetHash {
+			return quotaReceipt{}, errQuota
+		}
 	}
 	if !q.LastComparisonStartedAt.IsZero() && q.LastComparisonStartedAt.After(now) {
 		return quotaReceipt{}, errQuota
