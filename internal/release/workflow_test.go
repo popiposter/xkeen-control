@@ -6,6 +6,10 @@ import (
 	"testing"
 )
 
+const releaseBuildImage = "public.ecr.aws/docker/library/node@sha256:3d27e5c11e5786e309ec3e03f93ae536eb36e6e5eb3714d5eb3300a36157add0"
+
+const releaseBuildContainer = "    container:\n      image: " + releaseBuildImage + "\n      options: --user 0\n"
+
 // Deliberately narrow contract for the existing workflow, not a YAML interpreter.
 func releaseQualificationBoundary(workflow, devCheck string) bool {
 	workflow = strings.ReplaceAll(workflow, "\r\n", "\n")
@@ -28,7 +32,7 @@ func releaseQualificationBoundary(workflow, devCheck string) bool {
 	install := strings.Index(devCheck, "\t\tbash scripts/web-dependencies.sh --clean\n")
 	browser := strings.Index(devCheck, "\t\tnpm --prefix web run test:ui\n")
 	return checkout >= 0 && root > checkout && trust > root && identity > trust && tools > identity && full > tools && handoff > full && install >= 0 && browser > install &&
-		strings.Contains(build, "\n    container:\n      image: node:24-bookworm\n      options: --user 0\n") &&
+		strings.Contains(build, "\n"+releaseBuildContainer) &&
 		strings.Contains(build, "\n    defaults:\n      run:\n        shell: bash\n") &&
 		strings.Contains(build, "XKEEN_PLAYWRIGHT_INSTALL: \"1\"") &&
 		!strings.Contains(build, "continue-on-error:") && !strings.Contains(build, "environment:") &&
@@ -82,7 +86,7 @@ func TestReleaseQualificationBoundary(t *testing.T) {
 	lateTrust := strings.ReplaceAll(workflow, trustLine, "")
 	lateTrust = strings.Replace(lateTrust, "      - name: Prepare root-owned qualification fixtures\n", trustLine+"      - name: Prepare root-owned qualification fixtures\n", 1)
 	for name, pair := range map[string][2]string{
-		"removed container":           {strings.ReplaceAll(workflow, "    container:\n      image: node:24-bookworm\n      options: --user 0\n", ""), devCheck},
+		"removed container":           {strings.ReplaceAll(workflow, releaseBuildContainer, ""), devCheck},
 		"nonroot container":           {strings.ReplaceAll(workflow, "options: --user 0", "options: --user 1001"), devCheck},
 		"removed Bash default":        {strings.ReplaceAll(workflow, "shell: bash", "shell: sh"), devCheck},
 		"removed UID admission":       {strings.ReplaceAll(workflow, "test \"$(id -u)\" -eq 0", "true"), devCheck},

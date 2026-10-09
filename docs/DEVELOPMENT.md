@@ -160,7 +160,7 @@ The protected manual Release workflow:
 - takes explicit `version`, `channel` and full `source_ref` inputs;
 - checks that `source_ref` equals the exact checkout and current remote `main`;
 - admits UID 0 immediately after checkout and adds only `$GITHUB_WORKSPACE` to the build job's global Git `safe.directory` before reading Git identity; checkout's own trust configuration is temporary and does not cover subsequent steps;
-- runs the read-only-permission build job in a `node:24-bookworm` container with explicit UID 0 and Bash, admits UID 0 and installs `build-essential`, Git and jq before qualification; Linux auth/notification fixtures require root-owned synthetic authorities and ownership-negative cases;
+- runs the read-only-permission build job in a digest-pinned Docker Official Images Node 24 Bookworm container from the public ECR mirror, with explicit UID 0 and Bash, admits UID 0 and installs `build-essential`, Git and jq before qualification; Linux auth/notification fixtures require root-owned synthetic authorities and ownership-negative cases;
 - runs `scripts/dev-check.sh --full`, including the lockfile-pinned, two-worker Chromium `test:ui` suite, before unsigned assembly; a failure blocks `publish` through `needs: build`;
 - assembles unsigned deterministic assets from those verified embedded bytes in the unprivileged build job; assembly does not repeat npm installation/build or rewrite tracked assets;
 - transfers only secretless release inputs to the protected `release` environment;
