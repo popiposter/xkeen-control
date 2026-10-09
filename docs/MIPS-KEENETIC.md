@@ -8,8 +8,10 @@ RAM/105MiB available and1GiB swap; these are not panel hardware qualification.
 Signed stable [0.4.6](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.6)
 includes the MIPS soft-float panel. Source review, hosted FULL, exact ten-file
 public verification, both signatures and actual published MIPS emulated startup
-passed; see [release evidence](RELEASES.md). KN1810 hardware installation,
-RSS/auth/PTY/native preservation and LAN behavior remain NOTRUN. Stable0.4.0
+passed; see [release evidence](RELEASES.md). Signed0.4.5 installation and native
+preservation passed on KN1810; its node activation failed with retained intent.
+Signed0.4.6 installation/settlement and broader RSS/auth/PTY/LAN acceptance remain
+incomplete. Stable0.4.0
 remains ARM64-only. No unsigned binary copy, architecture override, signature
 bypass or modification of0.4.0 assets. Fresh
 `--setup` remains unsupported for KN1810 and existing installations.
@@ -47,9 +49,9 @@ xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/release
 The initial installer trusts GitHub HTTPS and checks manifest/size/hash consistency;
 installed self-updates verify the pinned Ed25519 signature. Do not confuse these
 trust steps. After installation, `/opt/sbin/xkeen-control version --json` must
-report0.4.6/stable/source `5cc498f79d337fb723f5ac90fd21f6dcce3f0eeb`.
+report0.4.6/stable/source `9d1c516cb3744ba7cb4fa4e4585f6e795e51d72e`.
 The MIPS binary SHA256 is
-`fffe6620d38fced79081657feca6d99e8f728ddf5560488d6ef49d25c9161f53`.
+`a18701d11107e71d63a31d11e89f56d5a99af5dbe8f3c1693efab5c83780320c`.
 Keep private credentials and backup contents out of chat/public evidence.
 
 For an existing older panel helper, 0.4.6 provides the separate
