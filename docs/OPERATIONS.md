@@ -47,9 +47,9 @@ command resumes an operation or proves a transient candidate is installed.
 The updater reserves an active intent before staging. It records phases before
 mutations and permits only one transaction. `installed-verified` proves the
 candidate tuple and readiness; `rolled-back-verified` proves restoration but
-means the requested update failed. `inspection-required`, a retained active
-intent, or an interrupted phase blocks further mutations. Do not remove these
-files or retry Apply to clear the block.
+means the requested update failed. In generations containing #162,
+`inspection-required`, a retained active intent, or an interrupted phase blocks
+further mutations. Do not remove these files or retry Apply to clear the block.
 
 Candidate startup has a total readiness budget of 30 seconds on ARM64 and
 60 seconds on MIPS, with a separate bounded rollback startup phase. Polling does
@@ -76,9 +76,14 @@ This entrypoint verifies itself and the helper against the same signed release,
 rechecks the old installed tuple and hands ownership to the existing updater.
 It does not install a helper in advance. Existing setup-lock exclusion and an
 active intent protect cooperating panel processes; external native CLI/cron still
-require operator quiescence. After any outcome, inspect the receipt and actual
-state before restoring prior services. Node recovery is a separate operation
-and remains blocked until the installed generation is established.
+require operator quiescence. A rollback to an older generation also restores a
+daemon, API and startup background workers that do not understand this intent.
+Account for those writers explicitly during migration qualification; restored
+health is not proof that their mutations are fenced. Inspect an older generation's
+update receipt with the retained verified RAM CLI, not its unsupported old CLI.
+After any outcome, inspect the receipt and actual state before restoring prior
+services. Node recovery is a separate operation and remains blocked until the
+installed generation is established.
 
 ## Operational evidence
 
