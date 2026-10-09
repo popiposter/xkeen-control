@@ -19,5 +19,5 @@ grep -Fq 'CGO_ENABLED=0' <<< "$metadata"
 qemu-mipsel "$binary" version --json | jq -e '.product == "xkeen-control" and (.version | type == "string") and (.sourceCommit | type == "string")' >/dev/null
 # These fixtures exercise actual 32-bit crypto/JSON/platform clients under
 # emulation; they contain no native/router processes or private credentials.
-CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go test -count=1 -exec qemu-mipsel ./internal/release ./internal/buildinfo
+CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go test -count=1 -exec qemu-mipsel ./internal/release ./internal/buildinfo ./internal/validationbudget
 echo 'MIPS static soft-float ELF/startup and emulated platform fixtures passed (hardware NOTRUN)'

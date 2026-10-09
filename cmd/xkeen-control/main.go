@@ -31,6 +31,7 @@ import (
 	initialsetup "github.com/popiposter/xkeen-control/internal/setup"
 	"github.com/popiposter/xkeen-control/internal/splitdns"
 	panelupdate "github.com/popiposter/xkeen-control/internal/update"
+	"github.com/popiposter/xkeen-control/internal/validationbudget"
 	"github.com/popiposter/xkeen-control/internal/webassets"
 	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
@@ -286,7 +287,7 @@ func main() {
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      nodes.DefaultTransactionTimeout + 30*time.Second,
+		WriteTimeout:      nodes.DefaultTransactionTimeout + validationbudget.HTTPMargin,
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    16 << 10,
 	}

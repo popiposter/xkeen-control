@@ -89,27 +89,7 @@ if [ "$ARCHITECTURE" = mipsle ]; then
 	SIGNATURE_ASSET=release-manifest-mipsle.sig
 fi
 
-if [ "$INSTALL_MODE" = setup ]; then
-	command -v flock >/dev/null 2>&1 && command -v stat >/dev/null 2>&1 || fail "setup requires flock and stat before bootstrap"
-	# Root-only fixed parents prevent an untrusted rename between checks/open.
-	# The Go owner repeats descriptor/inode validation and adopts FD3. Never
-	# unlink this inode or close it across the launcher -> setup handoff.
-	for dir in "$OPT_ROOT" "$OPT_ROOT/var" "$OPT_ROOT/var/lock" "$OPT_ROOT/var/lock/xkeen-control"; do
-		if [ ! -e "$dir" ] && [ ! -L "$dir" ]; then (umask 077; mkdir "$dir") || fail "setup lock directory unavailable"; fi
-		[ -d "$dir" ] && [ ! -L "$dir" ] && [ "$(stat -c %u "$dir")" = 0 ] || fail "unsafe setup lock directory"
-		mode=$(stat -c %a "$dir")
-		case "$mode" in ''|*[!0-7]*) fail "unsafe setup directory mode";; esac
-		[ "$((0$mode & 0022))" -eq 0 ] || fail "writable setup lock directory"
-	done
-	LOCK_PATH="$OPT_ROOT/var/lock/xkeen-control/initial-setup.lock"
-	[ "$(stat -c %a "$OPT_ROOT/var/lock/xkeen-control")" = 700 ] || fail "setup lock directory must be private"
-	if [ -e "$LOCK_PATH" ] || [ -L "$LOCK_PATH" ]; then
-		[ -f "$LOCK_PATH" ] && [ ! -L "$LOCK_PATH" ] && [ "$(stat -c '%u:%a:%h' "$LOCK_PATH")" = 0:600:1 ] || fail "unsafe setup lock file"
-	fi
-	umask 077
-	exec 3>>"$LOCK_PATH"
-	flock -n -x 3 || fail "setup or panel is already running"
-elif [ "$INSTALL_MODE" = panel ] && { [ -e "$STATE_DIR/initial-setup.json" ] || [ -L "$STATE_DIR/initial-setup.json" ]; }; then
+if [ "$INSTALL_MODE" = panel ] && { [ -e "$STATE_DIR/initial-setup.json" ] || [ -L "$STATE_DIR/initial-setup.json" ]; }; then
 	[ -x "$BIN" ] || fail "incomplete initial setup; use setup inspect"
 	"$BIN" setup guard || fail "initial setup blocks ordinary installation"
 fi
@@ -137,6 +117,7 @@ need_tool() {
 need_tool curl curl
 need_tool jq jq
 need_tool sha256sum coreutils-sha256sum
+need_tool stat coreutils-stat
 
 validate_buildinfo_json() {
 	jq -e -s '
@@ -195,6 +176,41 @@ validate_buildinfo_json() {
 		(length == 1) and (.[0] | info_valid)
 	' >/dev/null 2>&1
 }
+
+# Exercise selected tools before creating setup/destination paths or downloading
+# assets. Existing incompatible packages are never removed or overwritten.
+stat_owner=$(stat -c %u "$OPT_ROOT" 2>/dev/null) || fail "stat -c ownership support required; install coreutils-stat and select /opt/bin/stat"
+stat_mode=$(stat -c %a "$OPT_ROOT" 2>/dev/null) || fail "stat -c mode support required; install coreutils-stat and select /opt/bin/stat"
+case "$stat_owner" in ''|*[!0-9]*) fail "stat -c ownership support required; install coreutils-stat and select /opt/bin/stat";; esac
+case "$stat_mode" in ''|*[!0-7]*) fail "stat -c mode support required; install coreutils-stat and select /opt/bin/stat";; esac
+stat_links=$(stat -c %h "$OPT_ROOT" 2>/dev/null) || fail "stat -c metadata support required; install coreutils-stat and select /opt/bin/stat"
+case "$stat_links" in ''|*[!0-9]*) fail "stat -c metadata support required; install coreutils-stat and select /opt/bin/stat";; esac
+[ "$(stat -c '%u:%a:%h' "$OPT_ROOT" 2>/dev/null)" = "$stat_owner:$stat_mode:$stat_links" ] || fail "stat -c metadata support required; install coreutils-stat and select /opt/bin/stat"
+printf '%s\n' '{"product":"xkeen-control","version":"1.2.3","sourceCommit":"cccccccccccccccccccccccccccccccccccccccc","channel":"stable"}' | validate_buildinfo_json || fail "selected jq lacks required buildinfo/regex support; install compatible jq-full explicitly, then rerun (no automatic jq replacement)"
+
+if [ "$INSTALL_MODE" = setup ]; then
+	command -v flock >/dev/null 2>&1 && command -v stat >/dev/null 2>&1 || fail "setup requires flock and stat before bootstrap"
+	# Root-only fixed parents prevent an untrusted rename between checks/open.
+	# The Go owner repeats descriptor/inode validation and adopts FD3. Never
+	# unlink this inode or close it across the launcher -> setup handoff.
+	for dir in "$OPT_ROOT" "$OPT_ROOT/var" "$OPT_ROOT/var/lock" "$OPT_ROOT/var/lock/xkeen-control"; do
+		if [ ! -e "$dir" ] && [ ! -L "$dir" ]; then (umask 077; mkdir "$dir") || fail "setup lock directory unavailable"; fi
+		[ -d "$dir" ] && [ ! -L "$dir" ] && [ "$(stat -c %u "$dir")" = 0 ] || fail "unsafe setup lock directory"
+		mode=$(stat -c %a "$dir")
+		case "$mode" in ''|*[!0-7]*) fail "unsafe setup directory mode";; esac
+		[ "$((0$mode & 0022))" -eq 0 ] || fail "writable setup lock directory"
+	done
+	LOCK_PATH="$OPT_ROOT/var/lock/xkeen-control/initial-setup.lock"
+	[ "$(stat -c %a "$OPT_ROOT/var/lock/xkeen-control")" = 700 ] || fail "setup lock directory must be private"
+	if [ -e "$LOCK_PATH" ] || [ -L "$LOCK_PATH" ]; then
+		[ -f "$LOCK_PATH" ] && [ ! -L "$LOCK_PATH" ] && [ "$(stat -c '%u:%a:%h' "$LOCK_PATH")" = 0:600:1 ] || fail "unsafe setup lock file"
+	fi
+	umask 077
+	exec 3>>"$LOCK_PATH"
+	flock -n -x 3 || fail "setup or panel is already running"
+
+fi
+
 
 legacy_layout() {
 	[ "$ARCHITECTURE" = arm64 ] || return 1

@@ -17,6 +17,7 @@ import (
 
 	"github.com/popiposter/xkeen-control/internal/configjson"
 	"github.com/popiposter/xkeen-control/internal/redact"
+	"github.com/popiposter/xkeen-control/internal/validationbudget"
 	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
@@ -29,12 +30,12 @@ type Activator interface {
 }
 
 const (
-	DefaultCandidateValidationTimeout = 45 * time.Second
+	DefaultCandidateValidationTimeout = validationbudget.Candidate
 	DefaultActivationTimeout          = 2 * time.Minute
 	DefaultRollbackTimeout            = 2 * time.Minute
 	// DefaultTransactionTimeout includes all three phase ceilings plus a small
 	// allowance for bounded local rendering, snapshots, and atomic writes.
-	DefaultTransactionTimeout = 5 * time.Minute
+	DefaultTransactionTimeout = validationbudget.Transaction
 )
 
 var ErrRollbackFailed = errors.New("node activation failed; rollback failed")
