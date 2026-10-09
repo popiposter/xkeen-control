@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"hash"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 )
 
 const recoveryReceiptName = "node-recovery.json"
+const recoveryCompletionFenceName = "node-recovery-completing"
 
 // RecoveryRuntime supplies independent process identity and refuses live native
 // writers. Offline callers must hold setup.Maintenance for the entire operation.
@@ -116,6 +118,9 @@ func bindRecovery(h hash.Hash, name string, b []byte, info os.FileInfo) {
 }
 
 func recoveryUnsettled(dir string) bool {
+	if _, err := os.Lstat(filepath.Join(dir, recoveryCompletionFenceName)); !errors.Is(err, os.ErrNotExist) {
+		return true
+	}
 	r, err := readRecoveryReceipt(dir)
 	return err != nil || r != nil && r.Phase != "completed"
 }
@@ -150,18 +155,23 @@ func (m *Manager) recoverySnapshot(ctx context.Context, runtime RecoveryRuntime)
 	}
 	s.receipt = receipt
 	s.receiptIdentity = receiptIdentity
+	fence, fenceInfo, fenceErr := recoveryRead(filepath.Join(dir, recoveryCompletionFenceName), 65, true)
+	fenced := fenceErr == nil
+	if fenced && (receipt == nil || string(fence) != receipt.Digest+"\n") || (fenceErr != nil && !errors.Is(fenceErr, os.ErrNotExist)) {
+		return s, ErrNodeRecoveryRequired
+	}
 	if receipt != nil {
 		s.view.Phase = receipt.Phase
 	}
 	marker, info, err := recoveryRead(filepath.Join(dir, ".pending"), 128, true)
 	if errors.Is(err, os.ErrNotExist) && receipt != nil {
 		s.view.Classification = "recovery-unsettled"
-		if receipt.Phase == "completed" {
+		if receipt.Phase == "completed" && !fenced {
 			s.view.Classification = "completed-receipt"
 			s.view.Digest = receiptIdentity
 			return s, nil
 		}
-		if receipt.Phase != "verified" || !recoveryHex(receipt.GenerationProof) {
+		if (receipt.Phase != "verified" && !(receipt.Phase == "completed" && fenced)) || !recoveryHex(receipt.GenerationProof) {
 			s.view.Reason = "missing-generation-proof"
 			return s, nil
 		}
@@ -244,11 +254,14 @@ func (m *Manager) recoverySnapshot(ctx context.Context, runtime RecoveryRuntime)
 		bindRecovery(h, "receipt", b, nil)
 		bindRecovery(h, "receipt-identity", []byte(receiptIdentity), nil)
 	}
+	if fenced {
+		bindRecovery(h, "completion-fence", fence, fenceInfo)
+	}
 	s.view.Digest = hex.EncodeToString(h.Sum(nil))
-	s.view.CanActivate = s.marker != nil && coherent && (receipt == nil || receipt.Phase == "completed" && receipt.Marker != s.markerDigest)
-	if receipt != nil && (receipt.Phase == "activation-intent" || receipt.Phase == "verified") {
+	s.view.CanActivate = !fenced && s.marker != nil && coherent && (receipt == nil || receipt.Phase == "completed" && receipt.Marker != s.markerDigest)
+	if receipt != nil && (receipt.Phase == "activation-intent" || receipt.Phase == "verified" || receipt.Phase == "completed" && fenced) {
 		proof := s.marker != nil && receipt.Marker == s.markerDigest && s.originalDigest == receipt.Digest
-		if receipt.Phase == "verified" && recoveryHex(receipt.GenerationProof) {
+		if (receipt.Phase == "verified" || receipt.Phase == "completed") && recoveryHex(receipt.GenerationProof) {
 			proof = receipt.GenerationProof == s.generationProof && (s.marker == nil || receipt.Marker == s.markerDigest) && runtimeID == receipt.RuntimeAfter
 		}
 		s.view.CanVerify = coherent && proof && runtimeID != "stopped" && runtimeID != receipt.RuntimeBefore
@@ -260,25 +273,63 @@ func (m *Manager) recoverySnapshot(ctx context.Context, runtime RecoveryRuntime)
 }
 
 func saveRecoveryReceipt(dir string, receipt *recoveryReceipt) error {
+	_, err := writeRecoveryReceipt(dir, receipt)
+	return err
+}
+
+func writeRecoveryReceipt(dir string, receipt *recoveryReceipt) (string, error) {
+	return writeRecoveryReceiptWithSync(dir, receipt, (*os.File).Sync, syncNodeDirectory)
+}
+
+func writeRecoveryReceiptWithSync(dir string, receipt *recoveryReceipt, syncFile func(*os.File) error, syncDir func(string) error) (string, error) {
 	b, err := json.Marshal(receipt)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if err = atomicWrite(filepath.Join(dir, recoveryReceiptName), b, 0600); err != nil {
-		return err
+	// Capture the inode we created, not whichever inode occupies the final path
+	// after rename. Equal-byte replacement is still external receipt drift.
+	f, err := os.CreateTemp(dir, ".xkeen-node-recovery-*")
+	if err != nil {
+		return "", err
 	}
-	return syncNodeDirectory(dir)
+	defer os.Remove(f.Name())
+	defer f.Close()
+	if _, err = f.Write(b); err != nil {
+		return "", err
+	}
+	if err = syncFile(f); err != nil {
+		return "", err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	ownedIdentity := recoveryIdentity(info, b)
+	if err = f.Close(); err != nil {
+		return "", err
+	}
+	if err = os.Rename(f.Name(), filepath.Join(dir, recoveryReceiptName)); err != nil {
+		return "", err
+	}
+	if err = syncDir(dir); err != nil {
+		return "", err
+	}
+	r, identity, err := readRecoveryReceiptIdentity(dir)
+	if err != nil || r == nil || *r != *receipt || identity != ownedIdentity {
+		return "", ErrNodeRecoveryRequired
+	}
+	return identity, nil
 }
 
 // VerifyExistingRecovery validates and settles one retained attempt. It never
 // calls a lifecycle action, including when verification fails or is repeated.
 func (m *Manager) VerifyExistingRecovery(ctx context.Context, digest string, runtime RecoveryRuntime) error {
-	return m.verifyExistingRecovery(ctx, digest, runtime, saveRecoveryReceipt, settleNodeIntent)
+	return m.verifyExistingRecovery(ctx, digest, runtime, writeRecoveryReceipt, settleNodeIntent)
 }
 
 // Dependency seams are private to deterministic crash fixtures; production
 // always uses the fixed durable writer and identity-checked settlement above.
-func (m *Manager) verifyExistingRecovery(ctx context.Context, digest string, runtime RecoveryRuntime, save func(string, *recoveryReceipt) error, settle func(string, os.FileInfo) error) error {
+func (m *Manager) verifyExistingRecovery(ctx context.Context, digest string, runtime RecoveryRuntime, save func(string, *recoveryReceipt) (string, error), settle func(string, os.FileInfo) error) error {
 	if !recoveryHex(digest) || m.tx.Activator == nil {
 		return ErrNodeRecoveryRequired
 	}
@@ -312,25 +363,120 @@ func (m *Manager) verifyExistingRecovery(ctx context.Context, digest string, run
 	receipt := *after.receipt
 	receipt.Phase, receipt.Stage, receipt.Reason = "verified", "settlement", ""
 	receipt.RuntimeAfter, receipt.GenerationProof = after.runtime, after.generationProof
-	if save(m.recoveryDir(), &receipt) != nil {
+	ownedIdentity, err := save(m.recoveryDir(), &receipt)
+	if err != nil {
 		return ErrNodeRecoveryRequired
 	}
 	// Re-read after the verified write as well. This captures concurrent native
 	// writers without treating the panel lock as exclusion of external CLI/cron.
 	final, err := m.recoverySnapshot(ctx, runtime)
-	if err != nil || !final.view.CanVerify || final.runtime != after.runtime || final.generationProof != after.generationProof || final.receipt == nil || *final.receipt != receipt {
+	if err != nil || !final.view.CanVerify || final.runtime != after.runtime || final.generationProof != after.generationProof || final.receipt == nil || *final.receipt != receipt || final.receiptIdentity != ownedIdentity {
 		return ErrNodeRecoveryRequired
 	}
 	if final.marker != nil {
+		if _, err := beginRecoveryCompletion(m.recoveryDir(), receipt.Digest); err != nil {
+			return ErrNodeRecoveryRequired
+		}
 		if settle(filepath.Join(m.recoveryDir(), ".pending"), final.marker) != nil {
 			return ErrNodeRecoveryRequired
 		}
 	}
-	receipt.Phase = "completed"
-	if save(m.recoveryDir(), &receipt) != nil {
+	settled, err := m.recoverySnapshot(ctx, runtime)
+	if err != nil || settled.marker != nil || !settled.view.CanVerify || settled.runtime != after.runtime || settled.generationProof != after.generationProof || settled.receiptIdentity != ownedIdentity || settled.receipt == nil || *settled.receipt != receipt {
+		return ErrNodeRecoveryRequired
+	}
+	if m.completeRecovery(ctx, runtime, &receipt, save) != nil {
 		return ErrNodeRecoveryRequired
 	}
 	m.authority.Unblock()
+	return nil
+}
+
+// A durable fence keeps a completed rename with a failed fsync from admitting
+// a fresh daemon. Its identity-checked unlink is the final commit, only after
+// the completed receipt and generation/runtime proof have been re-read.
+func beginRecoveryCompletion(dir, digest string) (os.FileInfo, error) {
+	return beginRecoveryCompletionWithSync(dir, digest, (*os.File).Sync, syncNodeDirectory)
+}
+
+func beginRecoveryCompletionWithSync(dir, digest string, syncFile func(*os.File) error, syncDir func(string) error) (os.FileInfo, error) {
+	path := filepath.Join(dir, recoveryCompletionFenceName)
+	want := digest + "\n"
+	b, info, err := recoveryRead(path, 65, true)
+	if errors.Is(err, os.ErrNotExist) {
+		f, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if e != nil {
+			return nil, e
+		}
+		_, e = f.WriteString(want)
+		if e == nil {
+			e = syncFile(f)
+		}
+		info, err = f.Stat()
+		closeErr := f.Close()
+		if e != nil || err != nil || closeErr != nil {
+			return nil, ErrNodeRecoveryRequired
+		}
+	} else {
+		if err != nil || string(b) != want {
+			return nil, ErrNodeRecoveryRequired
+		}
+		f, e := os.Open(path)
+		if e != nil {
+			return nil, e
+		}
+		actual, e := f.Stat()
+		if e == nil && os.SameFile(info, actual) {
+			e = syncFile(f)
+		} else {
+			e = ErrNodeRecoveryRequired
+		}
+		closeErr := f.Close()
+		if e != nil || closeErr != nil {
+			return nil, ErrNodeRecoveryRequired
+		}
+	}
+	if syncDir(dir) != nil {
+		return nil, ErrNodeRecoveryRequired
+	}
+	b, actual, err := recoveryRead(path, 65, true)
+	if err != nil || string(b) != want || !os.SameFile(info, actual) {
+		return nil, ErrNodeRecoveryRequired
+	}
+	return actual, nil
+}
+
+func (m *Manager) completeRecovery(ctx context.Context, runtime RecoveryRuntime, receipt *recoveryReceipt, save func(string, *recoveryReceipt) (string, error)) error {
+	fence, err := beginRecoveryCompletion(m.recoveryDir(), receipt.Digest)
+	if err != nil {
+		return ErrNodeRecoveryRequired
+	}
+	receipt.Phase = "completed"
+	identity, err := save(m.recoveryDir(), receipt)
+	if err != nil {
+		return ErrNodeRecoveryRequired
+	}
+	s, err := m.recoverySnapshot(ctx, runtime)
+	if err != nil || !s.view.CanVerify || s.marker != nil || s.generationProof != receipt.GenerationProof || s.runtime != receipt.RuntimeAfter || s.receiptIdentity != identity || s.receipt == nil || *s.receipt != *receipt {
+		return ErrNodeRecoveryRequired
+	}
+	return finishRecoveryCompletion(m.recoveryDir(), receipt.Digest, fence, os.Remove, syncNodeDirectory)
+}
+
+func finishRecoveryCompletion(dir, digest string, fence os.FileInfo, remove func(string) error, syncDir func(string) error) error {
+	path := filepath.Join(dir, recoveryCompletionFenceName)
+	b, current, err := recoveryRead(path, 65, true)
+	if err != nil || string(b) != digest+"\n" || !os.SameFile(fence, current) {
+		return ErrNodeRecoveryRequired
+	}
+	if err = remove(path); err != nil {
+		return ErrNodeRecoveryRequired
+	}
+	// The completed receipt is already durable. A failed cleanup sync can only
+	// resurrect the conservative fence on crash; it cannot revoke this commit.
+	if syncDir(dir) != nil {
+		log.Print("node recovery completion fence cleanup sync deferred")
+	}
 	return nil
 }
 
@@ -432,11 +578,13 @@ func (m *Manager) RecoverCurrent(ctx context.Context, digest string, runtime Rec
 	if save() != nil {
 		return ErrNodeRecoveryRequired
 	}
+	if _, err := beginRecoveryCompletion(m.recoveryDir(), receipt.Digest); err != nil {
+		return ErrNodeRecoveryRequired
+	}
 	if settleNodeIntent(filepath.Join(m.recoveryDir(), ".pending"), s.marker) != nil {
 		return ErrNodeRecoveryRequired
 	}
-	receipt.Phase = "completed"
-	if save() != nil {
+	if m.completeRecovery(ctx, runtime, &receipt, writeRecoveryReceipt) != nil {
 		return ErrNodeRecoveryRequired
 	}
 	m.authority.Unblock()

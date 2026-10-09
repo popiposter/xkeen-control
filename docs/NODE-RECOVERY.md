@@ -2,7 +2,10 @@
 
 Signed 0.4.5 retains [#158](https://github.com/popiposter/xkeen-control/issues/158),
 first delivered in 0.4.3, and adds [durable panel update outcomes](OPERATIONS.md#durable-update-outcomes-162).
-Source review, local/hosted FULL and signed publication passed; actual hardware recovery remains NOTRUN. It does not turn an
+Source review, local/hosted FULL and signed publication passed. One hardware
+activation attempt retained `activation-intent` after a failed result; its exact
+failure stage is unknown. Working VPN traffic afterward does not settle it.
+It does not turn an
 unknown historical subscription operation into a successful one.
 
 Only an explicitly approved **activate-current** operation is supported. The
@@ -101,11 +104,20 @@ back from Xray memory. Native routing policy and restricted quality pools retain
 their existing verifier semantics.
 
 After proof, a durable `verified` receipt binds the generation without the pending
-marker and the new runtime. Identity-checked marker settlement precedes the final
-`completed` receipt. An explicitly requested verification can finish a crash
+marker and the new runtime. A protected completion fence is synced before
+identity-checked marker settlement. A fresh read after marker removal must still
+match the generation, runtime and the identity of the receipt just written.
+The `completed` receipt and its parent directory are synced while the fence
+remains. A write or sync failure leaves fresh processes blocked even if the
+receipt rename already happened. Only the identity-checked fence unlink commits
+completion; failure of its subsequent cleanup sync is a durability warning, since
+a crash can only restore the conservative fence over an already durable receipt.
+An explicitly requested verification can finish a crash
 between these steps without any lifecycle command, including after marker unlink
 when this durable generation proof exists. Older missing-marker receipts without
-the proof remain blocked. A completed receipt is returned without writes.
+the proof remain blocked. A completed receipt with a retained fence needs the
+same verification; malformed or mismatched fences refuse settlement. A completed
+receipt without a fence is returned without writes.
 
 New attempts retain sanitized stage/reason fields; failed pre-activation validation
 uses `validation-failed` and cannot authorize verification. Later failures retain

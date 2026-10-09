@@ -177,19 +177,19 @@ func TestVerifyExistingRechecksRuntimeGenerationAndReceipt(t *testing.T) {
 }
 
 func TestVerifyExistingCrashSettlementAndExplicitContinuation(t *testing.T) {
-	for _, point := range []string{"verified-before-write", "verified-after-write", "before-unlink", "after-unlink", "completed-before-write"} {
+	for _, point := range []string{"verified-before-write", "verified-after-write", "before-unlink", "after-unlink", "completed-before-write", "completed-after-write"} {
 		t.Run(point, func(t *testing.T) {
 			m, a, r := legacyRecoveryAttempt(t)
 			v, _ := m.InspectRecovery(context.Background(), r)
-			save := func(dir string, rc *recoveryReceipt) error {
+			save := func(dir string, rc *recoveryReceipt) (string, error) {
 				if (point == "verified-before-write" && rc.Phase == "verified") || (point == "completed-before-write" && rc.Phase == "completed") {
-					return errors.New("fsync fixture")
+					return "", errors.New("fsync fixture")
 				}
-				err := saveRecoveryReceipt(dir, rc)
-				if point == "verified-after-write" && rc.Phase == "verified" {
-					return errors.New("lost write response")
+				identity, err := writeRecoveryReceipt(dir, rc)
+				if (point == "verified-after-write" && rc.Phase == "verified") || (point == "completed-after-write" && rc.Phase == "completed") {
+					return "", errors.New("lost write response")
 				}
-				return err
+				return identity, err
 			}
 			settle := func(path string, info os.FileInfo) error {
 				if point == "before-unlink" {
@@ -236,6 +236,222 @@ func TestVerifyExistingMissingMarkerRequiresDurableGenerationProof(t *testing.T)
 	}
 	if m.VerifyExistingRecovery(context.Background(), strings.Repeat("a", 64), r) == nil || a.restarts != 0 {
 		t.Fatal("guessed missing proof")
+	}
+}
+
+func TestVerifyExistingRejectsSettlementDrift(t *testing.T) {
+	for _, point := range []string{"verified-write", "marker-unlink", "completed-write"} {
+		for _, kind := range []string{"runtime", "config", "receipt", "fence"} {
+			t.Run(point+"/"+kind, func(t *testing.T) {
+				m, a, r := legacyRecoveryAttempt(t)
+				v, _ := m.InspectRecovery(context.Background(), r)
+				mutate := func() {
+					switch kind {
+					case "runtime":
+						r.identity = strings.Repeat("c", 64)
+					case "config":
+						if err := os.WriteFile(filepath.Join(m.tx.ConfigDir, "05_routing.json"), []byte(`{}`), 0600); err != nil {
+							t.Fatal(err)
+						}
+					case "receipt":
+						p := filepath.Join(m.recoveryDir(), recoveryReceiptName)
+						b, err := os.ReadFile(p)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if err = atomicWrite(p, b, 0600); err != nil {
+							t.Fatal(err)
+						}
+					case "fence":
+						if err := os.WriteFile(filepath.Join(m.recoveryDir(), recoveryCompletionFenceName), []byte("mismatched\n"), 0600); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				save := func(dir string, rc *recoveryReceipt) (string, error) {
+					identity, err := writeRecoveryReceipt(dir, rc)
+					if point == rc.Phase+"-write" {
+						mutate()
+					}
+					return identity, err
+				}
+				settle := func(path string, info os.FileInfo) error {
+					err := settleNodeIntent(path, info)
+					if point == "marker-unlink" {
+						mutate()
+					}
+					return err
+				}
+				if m.verifyExistingRecovery(context.Background(), v.Digest, r, save, settle) == nil {
+					t.Fatal("settlement drift accepted")
+				}
+				if !RecoveryNeedsInspection(m.recoveryDir()) || a.restarts != 0 || a.validatedPath != "" {
+					t.Fatal("drift lost fence or invoked lifecycle")
+				}
+			})
+		}
+	}
+}
+
+func TestVerifyExistingRejectsUnsafeCompletionFence(t *testing.T) {
+	for _, kind := range []string{"malformed", "mismatch", "directory", "symlink", "public"} {
+		t.Run(kind, func(t *testing.T) {
+			m, a, r := legacyRecoveryAttempt(t)
+			v, _ := m.InspectRecovery(context.Background(), r)
+			p := filepath.Join(m.recoveryDir(), recoveryCompletionFenceName)
+			switch kind {
+			case "directory":
+				if err := os.Mkdir(p, 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				if err := os.Symlink(filepath.Join(m.recoveryDir(), recoveryReceiptName), p); err != nil {
+					t.Fatal(err)
+				}
+			default:
+				b := []byte("bad\n")
+				mode := os.FileMode(0600)
+				if kind == "mismatch" {
+					b = []byte(strings.Repeat("f", 64) + "\n")
+				}
+				if kind == "public" {
+					mode = 0644
+				}
+				if err := os.WriteFile(p, b, mode); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !RecoveryNeedsInspection(m.recoveryDir()) {
+				t.Fatal("fresh process ignores fence")
+			}
+			if m.VerifyExistingRecovery(context.Background(), v.Digest, r) == nil || a.restarts != 0 {
+				t.Fatal("unsafe fence accepted")
+			}
+		})
+	}
+}
+
+func TestVerifyExistingReceiptDurabilityFailures(t *testing.T) {
+	for _, phase := range []string{"verified", "completed"} {
+		for _, failure := range []string{"file-sync", "directory-sync", "replace-after-rename"} {
+			t.Run(phase+"/"+failure, func(t *testing.T) {
+				m, a, r := legacyRecoveryAttempt(t)
+				v, _ := m.InspectRecovery(context.Background(), r)
+				save := func(dir string, rc *recoveryReceipt) (string, error) {
+					if rc.Phase != phase {
+						return writeRecoveryReceipt(dir, rc)
+					}
+					return writeRecoveryReceiptWithSync(dir, rc, func(f *os.File) error {
+						if failure == "file-sync" {
+							return errors.New("fsync fixture")
+						}
+						return f.Sync()
+					}, func(dir string) error {
+						if failure == "directory-sync" {
+							return errors.New("directory fsync fixture")
+						}
+						p := filepath.Join(dir, recoveryReceiptName)
+						b, err := os.ReadFile(p)
+						if err != nil {
+							return err
+						}
+						if err = atomicWrite(p, b, 0600); err != nil {
+							return err
+						}
+						return syncNodeDirectory(dir)
+					})
+				}
+				if m.verifyExistingRecovery(context.Background(), v.Digest, r, save, settleNodeIntent) == nil {
+					t.Fatal("failed durability or replaced receipt accepted")
+				}
+				// Uses only files, as a fresh process would: no in-memory authority.
+				if !RecoveryNeedsInspection(m.recoveryDir()) || a.restarts != 0 {
+					t.Fatal("fresh process admitted failed completion")
+				}
+			})
+		}
+	}
+}
+
+func TestVerifyExistingCompletionFenceFailuresAndReappearance(t *testing.T) {
+	for _, failure := range []string{"create", "file-sync", "directory-sync", "replaced", "unlink", "cleanup-sync", "reappearance"} {
+		t.Run(failure, func(t *testing.T) {
+			m, a, r := legacyRecoveryAttempt(t)
+			v, _ := m.InspectRecovery(context.Background(), r)
+			if err := m.VerifyExistingRecovery(context.Background(), v.Digest, r); err != nil {
+				t.Fatal(err)
+			}
+			rc, _ := readRecoveryReceipt(m.recoveryDir())
+			p := filepath.Join(m.recoveryDir(), recoveryCompletionFenceName)
+			if failure == "create" {
+				if err := os.Mkdir(p, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			info, err := beginRecoveryCompletionWithSync(m.recoveryDir(), rc.Digest, func(f *os.File) error {
+				if failure == "file-sync" {
+					return errors.New("file sync fixture")
+				}
+				return f.Sync()
+			}, func(dir string) error {
+				if failure == "directory-sync" {
+					return errors.New("directory sync fixture")
+				}
+				return syncNodeDirectory(dir)
+			})
+			if failure == "create" || failure == "file-sync" || failure == "directory-sync" {
+				if err == nil || !RecoveryNeedsInspection(m.recoveryDir()) {
+					t.Fatal("fence preparation failure did not block fresh process")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if failure == "replaced" {
+				if err = atomicWrite(p, []byte(rc.Digest+"\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err = finishRecoveryCompletion(m.recoveryDir(), rc.Digest, info, func(path string) error {
+				if failure == "unlink" {
+					return errors.New("unlink fixture")
+				}
+				return os.Remove(path)
+			}, func(dir string) error {
+				if failure == "cleanup-sync" {
+					return errors.New("cleanup sync fixture")
+				}
+				return syncNodeDirectory(dir)
+			})
+			if failure == "replaced" || failure == "unlink" {
+				if err == nil || !RecoveryNeedsInspection(m.recoveryDir()) {
+					t.Fatal("precommit failure admitted fresh process")
+				}
+				return
+			}
+			if err != nil || RecoveryNeedsInspection(m.recoveryDir()) {
+				t.Fatal("logical commit reported failure", err)
+			}
+			if failure == "reappearance" {
+				if _, err = beginRecoveryCompletion(m.recoveryDir(), rc.Digest); err != nil {
+					t.Fatal(err)
+				}
+				if !RecoveryNeedsInspection(m.recoveryDir()) {
+					t.Fatal("resurrected fence ignored")
+				}
+				v, err = m.InspectRecovery(context.Background(), r)
+				if err != nil || !v.CanVerify || v.CanActivate {
+					t.Fatal(v, err)
+				}
+				if err = m.VerifyExistingRecovery(context.Background(), v.Digest, r); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if a.restarts != 0 {
+				t.Fatal("lifecycle invoked")
+			}
+		})
 	}
 }
 
