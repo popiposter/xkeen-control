@@ -90,3 +90,21 @@ func TestManualAdmissionCancellationIsNotPressure(t *testing.T) {
 		t.Fatal(result, api.adds)
 	}
 }
+
+func TestPressureAtCandidateBoundaryDoesNotBecomeCompletedBudgetResult(t *testing.T) {
+	for _, cause := range []error{resourcepolicy.ErrPressure, resourcepolicy.ErrTelemetry} {
+		api := &benchmarkProbeAPI{}
+		runner := NewAdaptiveRunner(NewProbeRouter(api))
+		runner.Transport = &adaptiveTransportStub{duration: 300 * time.Millisecond, failedDownload: -1, failedUpload: -1}
+		ctx, cancel := context.WithCancelCause(context.Background())
+		result := runner.Run(ctx, AdaptiveGeneration{Generation: 1, NativeQuality: true, Candidates: []AdaptiveCandidateInput{{Tag: "proxy-a", RTTMS: 20}, {Tag: "proxy-b", RTTMS: 20}, {Tag: "proxy-c", RTTMS: 20}}}, func(s AdaptivePerformanceStatus) {
+			if s.ValidCount == 2 {
+				cancel(cause)
+			}
+		})
+		cancel(context.Canceled)
+		if result.State != "failed" || result.ReasonCode != resourceReason(cause) || result.ValidCount != 2 || len(api.adds) != 2 || len(api.removes) != 2 {
+			t.Fatal(result, api.adds, api.removes)
+		}
+	}
+}

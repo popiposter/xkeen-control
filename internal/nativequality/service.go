@@ -28,6 +28,7 @@ type Measurement interface {
 }
 
 type Status struct {
+	StartReason     string                       `json:"startReason,omitempty"`
 	LatencySource   string                       `json:"latencySource,omitempty"`
 	ResourceProfile resourcepolicy.Profile       `json:"resourceProfile"`
 	Limits          resourcepolicy.Limits        `json:"limits"`
@@ -74,7 +75,7 @@ func (s *Service) Read() Status {
 	s.mu.Lock()
 	value := s.status
 	value.ResourceProfile = s.profile()
-	value.Limits = s.profile().Comparison(true)
+	value.Limits = s.profile().Comparison(value.Generation == 0 || value.ManualSample)
 	if !value.ResourceProfile.Automatic {
 		value.AutomaticReason = "constrained-device"
 	} else if err := s.Resources.CheckConflict(); err != nil {
@@ -267,9 +268,6 @@ func (s *Service) Start(ctx context.Context) error {
 }
 
 func (s *Service) start(ctx context.Context, broad bool) error {
-	if err := s.Resources.CheckConflict(); err != nil {
-		return err
-	}
 	if s.Editor == nil || s.Lease == nil || s.Reader == nil || s.Nodes == nil || s.Measurement == nil {
 		return ErrUnavailable
 	}
@@ -277,6 +275,14 @@ func (s *Service) start(ctx context.Context, broad bool) error {
 	defer s.mu.Unlock()
 	if s.cancel != nil || s.closed {
 		return c1.ErrManualBusy
+	}
+	s.status.StartReason = ""
+	if err := s.Resources.CheckConflict(); err != nil {
+		s.status.StartReason = "resource-telemetry-unavailable"
+		if errors.Is(err, resourcepolicy.ErrExternalBenchmark) {
+			s.status.StartReason = "native-speed-conflict"
+		}
+		return err
 	}
 	release, err := s.Lease.TryAcquire()
 	if err != nil {

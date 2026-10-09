@@ -262,6 +262,10 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 		if generation.NativeQuality && countAdaptiveValid(result.Candidates) >= len(generation.Candidates) {
 			break
 		}
+		if cause := context.Cause(generationContext); errors.Is(cause, resourcepolicy.ErrPressure) || errors.Is(cause, resourcepolicy.ErrTelemetry) {
+			result.State, result.ReasonCode = "failed", resourceReason(cause)
+			break
+		}
 		if err := parent.Err(); err != nil {
 			result.State = "cancelled"
 			result.ReasonCode = AdaptiveReasonCancelled

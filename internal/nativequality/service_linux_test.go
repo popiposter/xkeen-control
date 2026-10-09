@@ -15,9 +15,30 @@ import (
 	"github.com/popiposter/xkeen-control/internal/authority"
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/configjson"
+	"github.com/popiposter/xkeen-control/internal/resourcepolicy"
 	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
+
+type unusedMeasurement struct{}
+
+func (unusedMeasurement) MeasureNativeQuality(context.Context, c1.AdaptiveGeneration, func(c1.AdaptivePerformanceStatus)) (c1.AdaptiveResult, error) {
+	panic("measurement must not start")
+}
+func (unusedMeasurement) NativeQualityEvidence(xrayapi.Snapshot) map[string]c1.AdaptiveCandidateInput {
+	panic("measurement must not start")
+}
+
+func TestConstrainedNativeConflictIsVisibleWithoutActivation(t *testing.T) {
+	s := &Service{Editor: &xkeen.ConfigEditor{}, Lease: authority.NewLease(), Reader: &pinRuntime{}, Nodes: func(context.Context) []c1.NodeState { return nil }, Measurement: unusedMeasurement{}, Resources: &resourcepolicy.Guard{Profile: resourcepolicy.ForPlatform("mipsle", 254472), Conflict: func() (bool, error) { return true, nil }}}
+	if err := s.Start(context.Background()); err != resourcepolicy.ErrExternalBenchmark {
+		t.Fatal(err)
+	}
+	v := s.Read()
+	if v.StartReason != "native-speed-conflict" || v.AutomaticReason != "constrained-device" || v.State != "idle" {
+		t.Fatal(v)
+	}
+}
 
 func TestStageBroadSampleRestrictsOnlySelectorAndCostsAndKeepsFutureSampleBroad(t *testing.T) {
 	dir := t.TempDir()

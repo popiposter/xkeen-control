@@ -27,6 +27,15 @@ test('constrained router shows actual ceilings and pressure without launching tr
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
 })
 
+test('constrained automatic-disabled status does not hide manual native cron refusal', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { state: 'idle', canStage: false, automaticReason: 'constrained-device', startReason: 'native-speed-conflict' }
+  await open(page)
+  await expect(page.getByText(/Automatic speed comparisons are disabled/)).toBeVisible()
+  await expect(page.getByRole('alert').filter({ hasText: 'Inspect and quiesce' })).toBeVisible()
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
+})
+
 test('changed subscription generation explains stale recommendation without applying or retesting', async ({ page }) => {
   const model = await mountFeatureCompleteDashboard(page)
   model.quality = { ...complete(), canStage: false, stageReason: 'configuration-changed' }
