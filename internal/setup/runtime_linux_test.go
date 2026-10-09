@@ -79,3 +79,30 @@ func TestInterceptionRequiresPolicyMarkAndPriorDNSReturn(t *testing.T) {
 		}
 	}
 }
+
+func TestSchemaTwoStartupNeedsPanelButRefusesDNSArtifacts(t *testing.T) {
+	root := t.TempDir()
+	initDir := filepath.Join(root, "etc/init.d")
+	if err := os.MkdirAll(initDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	panel := []byte("#!/bin/sh\n\"$BIN\" setup guard\n")
+	if err := os.WriteFile(filepath.Join(initDir, "S99xkeen-control"), panel, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := startupFilesAt(root, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := startupFilesAt(root, true); err == nil {
+		t.Fatal("legacy DNS requirement skipped")
+	}
+	if err := os.WriteFile(filepath.Join(initDir, "S06mosdns"), []byte(dnsInit), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := startupFilesAt(root, false); err == nil {
+		t.Fatal("foreign DNS autostart admitted")
+	}
+	if err := startupFilesAt(root, true); err != nil {
+		t.Fatal("legacy startup changed", err)
+	}
+}

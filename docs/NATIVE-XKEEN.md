@@ -182,15 +182,17 @@ script patches. See the v2 plan for exact recorded development/live boundaries.
 
 The cleanup source also removes repository template deployment and legacy secret migration scripts. Native XKeen installation/update commands and the current encrypted transfer UI replace those obsolete entrypoints. This cleanup is not installed until its own exact-source delivery gate passes.
 
-## Optional independent LAN DNS integration (Issue #125)
+## Legacy independent LAN DNS integration (Issue #125)
 
-The panel can synchronize an already-installed mosdns resolver at fixed `/opt/etc/mosdns` and `/opt/etc/init.d/S06mosdns` paths. It does not install it, change Keenetic DNS profiles, alter native XKeen code, or download geodata. Internal Xray `02_dns.json` and the independent LAN resolver remain distinct. The DNS page shows LAN synchronization/service status above the internal Xray editor.
+Issue #181 supersedes this installation direction: [fresh setup uses normal Keenetic DNS](SIMPLE-DNS.md). The following describes compatibility for already deployed instances, not a new installation target. The ordinary UI no longer creates or synchronizes split DNS; the legacy owner remains until explicit deployed retirement.
+
+The panel can synchronize an already-installed mosdns resolver at fixed `/opt/etc/mosdns` and `/opt/etc/init.d/S06mosdns` paths. It does not install it, change Keenetic DNS profiles, alter native XKeen code, or download geodata. Internal Xray `02_dns.json` and the independent LAN resolver remain distinct. The current DNS page shows read-only legacy service status above the internal Xray editor.
 
 Unconditional domain rules project in native first-match order, including BLOCK, DIRECT, the configured SOCKS VPN target and the unconditional catch-all/default outbound. Geosite exports preserve full/domain/keyword/regexp and category attributes. Conditional IP/protocol/port and other inbound-scope rules remain traffic rules and are counted without pretending they classify DNS questions. Domain node endpoints resolve directly to avoid tunnel bootstrap recursion. DIRECT DoH stays independent; VPN DoH follows `panel-dns-vpn` server addresses through the existing loopback SOCKS/native pool, without direct fallback. Unsupported targets/layouts are explicit.
 
 Save/Apply validates derivation without changing running DNS. Pending or unreadable pending history prevents synchronization. Successful native Start/Restart/update jobs and independently confirmed config Apply trigger synchronization under the ordinary panel lease; Telegram uses the same jobs. A bounded minute observer detects external CLI/cron source changes while the panel is running. It does not lock external writers or invoke native commands. Direct external edits have no panel pending marker: observing their disk bytes does not prove Xray has reloaded them; the external operator remains responsible for native activation. DNS continues with its last generation if the panel stops and resynchronizes on startup.
 
-Owned generation lists and atomic DNS config replacement retain one previous generation. Unchanged effective rules/resolvers do not restart the service. A fixed DNS restart has bounded process/readiness/file verification; interrupted operations leave one own receipt. Explicit synchronization can independently confirm that receipt without replaying the restart. Unconfirmed DNS activation is reported separately from the native command exit result.
+Owned generation lists and atomic DNS config replacement retain one previous generation. Unchanged effective rules/resolvers do not restart the service. A fixed DNS restart has bounded process/readiness/file verification; interrupted operations leave one own receipt. In published 0.4.8, explicit synchronization can independently confirm that receipt without replaying the restart; the current UI/API no longer offers that mutation. Unconfirmed DNS activation is reported separately from the native command exit result.
 
 ### Stock transparent LAN scope clarification
 

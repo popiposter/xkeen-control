@@ -8,7 +8,9 @@ Inspect the current native status and pending config set before mutations. Save 
 
 Components and schedules use allowlisted native commands. Interactive prompts remain visible in the command-bound console. External CLI/cron do not share the panel lease: quiesce competing operations and check drift instead of assuming a global lock. Private console output must not be uploaded to public evidence.
 
-## Independent LAN DNS
+## Legacy independent LAN DNS
+
+[Issue #181](SIMPLE-DNS.md) removes this dependency from new setup. Existing installations must first detach their verified firmware/native consumers before stopping mosdns. The current source UI is read-only for legacy DNS; `POST /api/v1/dns/split/sync` returns 410 and cannot restart it. The finite deployed retirement operation and both-router acceptance are pending; do not manually remove its config or stop the service based on the fresh-setup changes.
 
 An interrupted node/subscription transaction has a separate
 [offline typed recovery procedure](NODE-RECOVERY.md). Native-job inspection does
@@ -21,7 +23,7 @@ For existing installations, optional standard mosdns and a Keenetic DNS profile 
 
 The panel derives domain decisions from native configs and installed geosite files, preserving first-match order. IP/protocol/port/other conditional traffic rules do not become generic DNS rules. Pending sets postpone sync. Native success triggers reconciliation; a minute observer detects visible external source changes while panel runs. Last successful DNS generation continues if the panel stops; startup reconciles afterward.
 
-Check and synchronize inspects exact current state. Unchanged effective policy avoids service restart; unsupported/drifting inputs keep an explicit failure. Interrupted activation is independently inspected without replay. Retain the bounded previous owned generation/config for recovery. Never use a successful later probe to relabel an earlier unknown operation.
+In published 0.4.8, Check and synchronize inspects exact current state. Unchanged effective policy avoids service restart; unsupported/drifting inputs keep an explicit failure. Interrupted activation is independently inspected without replay. Retain the bounded previous owned generation/config for recovery. Never use a successful later probe to relabel an earlier unknown operation.
 
 Historical [operator DNS qualification](qualification/independent-split-dns-2026-10-05.md) proved DIRECT/local availability with Xray stopped and protected-name failure without direct fallback. Its original static export procedure is superseded by [Issue125 integration](https://github.com/popiposter/xkeen-control/issues/125). Reboot, IPv6/all-provider outage and broader LAN failover remain separate [acceptance](ROADMAP.md).
 

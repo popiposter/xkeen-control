@@ -34,6 +34,12 @@ ten-public-asset/both-signature verification passed. Fresh hardware acceptance r
 [NOTRUN](https://github.com/popiposter/xkeen-control/issues/148). Source delivery
 does not certify fresh installation or client/outage behavior.
 
+## DNS simplification in development
+
+[#181](https://github.com/popiposter/xkeen-control/issues/181) replaces the heavy reference with compact selective routing and ordinary Keenetic DNS. Slice A changes fresh setup and removes split-DNS creation/synchronization from the UI; deployed retirement and both-router client acceptance remain pending. Published 0.4.8 still has the previous implementation. [Transition boundaries](SIMPLE-DNS.md).
+
+PR180 remains held: the compact hardware constructor completed in 16.243 s, but that is not serving or retirement acceptance and does not justify releasing a timeout change first.
+
 ## Remaining acceptance
 
 [#162 durable update outcomes](https://github.com/popiposter/xkeen-control/issues/162)

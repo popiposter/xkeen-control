@@ -38,7 +38,13 @@ func TestAdoptionRejectsProofDriftDuringValidation(t *testing.T) {
 
 	result := make(chan error, 1)
 	go func() { result <- fixture.service.Adopt(context.Background()) }()
-	<-validator.started
+	select {
+	case <-validator.started:
+	case err := <-result:
+		t.Fatalf("adoption returned before validation: %v", err)
+	case <-time.After(6 * time.Second):
+		t.Fatal("validation did not start within its bounded deadline")
+	}
 
 	routingPath := filepath.Join(fixture.configDir, "05_routing.json")
 	contents, err := os.ReadFile(routingPath)
@@ -70,7 +76,13 @@ func TestAdoptionDoesNotReplaceAuthorityCreatedDuringValidation(t *testing.T) {
 
 	result := make(chan error, 1)
 	go func() { result <- fixture.service.Adopt(context.Background()) }()
-	<-validator.started
+	select {
+	case <-validator.started:
+	case err := <-result:
+		t.Fatalf("adoption returned before validation: %v", err)
+	case <-time.After(6 * time.Second):
+		t.Fatal("validation did not start within its bounded deadline")
+	}
 
 	if err := os.MkdirAll(filepath.Dir(fixture.appliancePath), 0o700); err != nil {
 		t.Fatal(err)

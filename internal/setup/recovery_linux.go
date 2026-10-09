@@ -44,7 +44,10 @@ func recoveryScope(r *Receipt) (firmwareBaseline, keenetic.Intent, error) {
 	if privateJSON("/opt/etc/xkeen-control/state/initial-firmware-baseline.json", &b) != nil || privateJSON("/opt/etc/xkeen-control/state/initial-firmware.json", &intent) != nil {
 		return b, intent, ErrState
 	}
-	if !digestPattern.MatchString(b.Before.Hash) || !digestPattern.MatchString(intent.AfterHash) || b.Plan.PolicyID != r.PolicyID || fmt.Sprint(b.Plan.ProfileID) != r.ProfileID || intent.PolicyID != r.PolicyID || intent.Home != b.Plan.Home || intent.ProfileID != b.Plan.ProfileID {
+	if !digestPattern.MatchString(b.Before.Hash) || !digestPattern.MatchString(intent.AfterHash) || b.Plan.PolicyID != r.PolicyID || (r.Schema == 1 && fmt.Sprint(b.Plan.ProfileID) != r.ProfileID) || intent.PolicyID != r.PolicyID || intent.Home != b.Plan.Home || intent.ProfileID != b.Plan.ProfileID {
+		return b, intent, ErrState
+	}
+	if r.Schema == 2 && !digestPattern.MatchString(b.Before.DNSHash) {
 		return b, intent, ErrState
 	}
 	return b, intent, nil
@@ -93,17 +96,22 @@ func Recover(ctx context.Context, out io.Writer) error {
 			return ErrState
 		}
 	}
-	// A DNS operation receipt is inspected by the existing owner; absent receipt
-	// uses a read-only observer rather than Sync/Reconcile (which could restart).
-	if _, e = os.Lstat("/opt/etc/mosdns/panel-operation.json"); e == nil {
-		if dns.Sync(ctx) != nil {
+	if r.Schema == 1 {
+		// A DNS operation receipt is inspected by the existing owner; absent receipt
+		// uses a read-only observer rather than Sync/Reconcile (which could restart).
+		if _, e = os.Lstat("/opt/etc/mosdns/panel-operation.json"); e == nil {
+			if dns.Sync(ctx) != nil {
+				return ErrState
+			}
+		} else if !os.IsNotExist(e) {
 			return ErrState
 		}
-	} else if !os.IsNotExist(e) {
-		return ErrState
-	}
-	if dns.InspectOwned(ctx) != nil {
-		return ErrState
+		if dns.InspectOwned(ctx) != nil {
+			return ErrState
+		}
+	} else {
+		dns = nil
+		editor.ValidateDerived = nil
 	}
 	if r.Phase != "home" || !r.PrerequisitesSaved || !r.RuntimeVerified || !r.StartupVerified {
 		return ErrState
@@ -114,10 +122,10 @@ func Recover(ctx context.Context, out io.Writer) error {
 		return ErrState
 	}
 	mark, e := firmware.Mark(ctx, base.Plan, true)
-	if e != nil || mark != r.PolicyMark || nativeAutostart() != "on" || startupFiles() != nil {
+	if e != nil || mark != r.PolicyMark || nativeAutostart() != "on" || startupFilesFor(r.Schema == 1) != nil {
 		return ErrState
 	}
-	if firmware.VerifyDNS(ctx, base.Plan, true) != nil {
+	if r.Schema == 1 && firmware.VerifyDNS(ctx, base.Plan, true) != nil {
 		return ErrState
 	}
 	registry, e := (nodes.Store{Path: registryPath}).Load()
@@ -202,7 +210,12 @@ func Abort(ctx context.Context, out io.Writer) error {
 		return ErrState
 	}
 	if e = restoreAfterStop(ctx, stoppedEditor, r.Generation, func() error {
-		_, err := firmware.RestoreOwned(ctx, base.Before, base.Plan, intent.AfterHash, persistFirmware)
+		var err error
+		if r.Schema == 2 {
+			_, err = firmware.RestorePolicyOwned(ctx, base.Before, base.Plan, intent.AfterHash, persistFirmware)
+		} else {
+			_, err = firmware.RestoreOwned(ctx, base.Before, base.Plan, intent.AfterHash, persistFirmware)
+		}
 		return err
 	}); e != nil {
 		return e

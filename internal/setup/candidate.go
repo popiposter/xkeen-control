@@ -49,7 +49,7 @@ func Candidate(native map[string][]byte, registry nodes.Registry) (map[string][]
 	var ref struct {
 		Routing map[string]json.RawMessage `json:"routing"`
 	}
-	if json.Unmarshal(presets.RUSelective, &ref) != nil {
+	if json.Unmarshal(presets.CompactSelective, &ref) != nil {
 		return nil, nil, ErrState
 	}
 	var rules []json.RawMessage
@@ -58,7 +58,6 @@ func Candidate(native map[string][]byte, registry nodes.Registry) (map[string][]
 	}
 	rules = append([]json.RawMessage{
 		json.RawMessage(`{"type":"field","inboundTag":["api"],"outboundTag":"api"}`),
-		json.RawMessage(`{"type":"field","inboundTag":["panel-dns-socks"],"balancerTag":"bal-proxy"}`),
 	}, rules...)
 	for key, value := range ref.Routing {
 		if key != "rules" {
@@ -72,39 +71,8 @@ func Candidate(native map[string][]byte, registry nodes.Registry) (map[string][]
 	if err != nil {
 		return nil, nil, ErrState
 	}
-	inbounds, err := configjson.DecodeObject(files["03_inbounds.json"])
-	if err != nil {
-		return nil, nil, ErrState
-	}
-	var ins []map[string]json.RawMessage
-	if json.Unmarshal(inbounds["inbounds"], &ins) != nil {
-		return nil, nil, ErrState
-	}
-	for _, in := range ins {
-		var tag string
-		var port int
-		_ = json.Unmarshal(in["tag"], &tag)
-		_ = json.Unmarshal(in["port"], &port)
-		if tag == "panel-dns-socks" || port == 5310 {
-			return nil, nil, ErrState
-		}
-	}
-	var socks map[string]json.RawMessage
-	_ = json.Unmarshal([]byte(`{"tag":"panel-dns-socks","listen":"127.0.0.1","port":5310,"protocol":"socks","settings":{"auth":"noauth","udp":true}}`), &socks)
-	ins = append(ins, socks)
-	inbounds["inbounds"], _ = json.Marshal(ins)
-	files["03_inbounds.json"], _ = json.Marshal(inbounds)
-	dns, err := configjson.DecodeObject(files["02_dns.json"])
-	if err != nil {
-		return nil, nil, ErrState
-	}
-	dnsSettings := map[string]json.RawMessage{}
-	if raw, ok := dns["dns"]; ok && (json.Unmarshal(raw, &dnsSettings) != nil || dnsSettings == nil) {
-		return nil, nil, ErrState
-	}
-	dnsSettings["servers"] = json.RawMessage(`[{"address":"https://1.1.1.1/dns-query","tag":"panel-dns-vpn"},"localhost"]`)
-	dns["dns"], _ = json.Marshal(dnsSettings)
-	files["02_dns.json"], _ = json.Marshal(dns)
+	// Official typical DNS basis: system resolver, no custom interception.
+	files["02_dns.json"] = []byte("{}\n")
 	data, err := nodes.MarshalCanonical(registry)
 	if err != nil {
 		return nil, nil, ErrState

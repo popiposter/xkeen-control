@@ -1,36 +1,21 @@
 import { expect, test } from '@playwright/test'
 import { mountFeatureCompleteDashboard } from './fixtures/feature-complete-model.js'
 
-test('LAN DNS separates active service from pending internal config and inspects sync result', async ({ page }) => {
+test('legacy DNS is read-only and cannot regenerate split configuration', async ({ page }) => {
  await mountFeatureCompleteDashboard(page)
- let state = { state: 'pending', running: true, entries: 85000, conditionalRules: 2 }
- let syncs = 0
- let syncedReads = 0
- await page.route('**/api/v1/dns/split', route => {
-  if (state.state === 'synced') syncedReads++
-  return route.fulfill({json: state})
- })
- await page.route('**/api/v1/dns/split/sync', route => {
-  expect(route.request().headers()['x-csrf-token']).toBeTruthy()
-  expect(route.request().postDataJSON()).toEqual({})
-  syncs++
-  state = {state:'synced',running:true,entries:85000,conditionalRules:2,lastSync:'2026-10-06T00:00:00Z'}
-  return route.fulfill({json: state})
- })
+ let state = { state: 'pending', running: true, entries: 85000 }
+ let writes = 0
+ await page.route('**/api/v1/dns/split', route => route.fulfill({json: state}))
+ await page.route('**/api/v1/dns/split/sync', route => { writes++; return route.fulfill({status:410,json:{error:'retired'}}) })
  await page.goto('/')
  await page.getByRole('button',{name:'DNS',exact:true}).click()
  await expect(page.getByText('Waiting for Apply',{exact:true})).toBeVisible()
- await expect(page.getByRole('button',{name:'Check and synchronize'})).toBeDisabled()
- state={...state,state:'failed',message:'Inspect interrupted DNS activation.'}
- await page.getByRole('button',{name:'Overview',exact:true}).click()
- await page.getByRole('button',{name:'DNS',exact:true}).click()
- await expect(page.getByText('Needs attention',{exact:true})).toBeVisible()
- await page.getByRole('button',{name:'Check and synchronize'}).click()
- await expect.poll(() => syncedReads).toBeGreaterThan(0)
- await expect(page.getByText('Synchronized',{exact:true})).toBeVisible()
- await page.getByRole('button',{name:'Overview',exact:true}).click()
- await page.getByRole('button',{name:'DNS',exact:true}).click()
- await expect.poll(() => syncedReads).toBeGreaterThan(1)
- await expect(page.getByText('Synchronized',{exact:true})).toBeVisible()
- expect(syncs).toBe(1)
+ await expect(page.getByText(/legacy LAN resolver is still configured/)).toBeVisible()
+ await expect(page.getByRole('button',{name:'Check and synchronize'})).toHaveCount(0)
+ await expect(page.getByRole('button',{name:'Prepare DNS from routing'})).toHaveCount(0)
+ state={state:'unconfigured'}
+ await page.getByRole('button',{name:'Refresh DNS status'}).click()
+ await expect(page.getByText('No separate resolver',{exact:true})).toBeVisible()
+ await expect(page.getByText(/legacy LAN resolver is still configured/)).toHaveCount(0)
+ expect(writes).toBe(0)
 })

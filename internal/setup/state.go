@@ -43,7 +43,7 @@ type Receipt struct {
 }
 
 func (r Receipt) valid() bool {
-	if r.Schema != 1 || r.Release.Validate() != nil || r.Release.Channel == "development" {
+	if (r.Schema != 1 && r.Schema != 2) || r.Release.Validate() != nil || r.Release.Channel == "development" {
 		return false
 	}
 	switch r.Phase {
@@ -59,8 +59,11 @@ func (r Receipt) valid() bool {
 	if r.Generation != "" && !digestPattern.MatchString(r.Generation) {
 		return false
 	}
+	if r.Schema == 2 && (r.ProfileID != "" || r.Phase == "dns") {
+		return false
+	}
 	if r.Phase == "completed" {
-		return r.PolicyID != "" && r.PolicyMark != 0 && r.ProfileID != "" && r.Generation != "" &&
+		return r.PolicyID != "" && r.PolicyMark != 0 && (r.Schema == 2 || r.ProfileID != "") && r.Generation != "" &&
 			r.PrerequisitesSaved && r.FirmwareSaved && r.RuntimeVerified && r.StartupVerified
 	}
 	return true

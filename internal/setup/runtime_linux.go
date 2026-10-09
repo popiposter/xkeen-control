@@ -96,8 +96,24 @@ func saveFirmwareBaseline(s keenetic.Snapshot, p keenetic.Plan) error {
 	return exclusiveFile("/opt/etc/xkeen-control/state/initial-firmware-baseline.json", b, 0600)
 }
 
-func startupFiles() error {
-	for _, p := range []string{"/opt/etc/init.d/S06mosdns", "/opt/etc/init.d/S99xkeen-control"} {
+func startupFiles() error { return startupFilesFor(true) }
+
+func startupFilesFor(legacyDNS bool) error { return startupFilesAt("/opt", legacyDNS) }
+
+func startupFilesAt(root string, legacyDNS bool) error {
+	if !legacyDNS {
+		for _, path := range []string{"/opt/sbin/mosdns", "/opt/etc/mosdns", "/opt/etc/init.d/S06mosdns"} {
+			if _, err := os.Lstat(filepath.Join(root, strings.TrimPrefix(path, "/opt/"))); !os.IsNotExist(err) {
+				return ErrState
+			}
+		}
+	}
+	paths := []string{"/opt/etc/init.d/S99xkeen-control"}
+	if legacyDNS {
+		paths = append(paths, "/opt/etc/init.d/S06mosdns")
+	}
+	for _, p := range paths {
+		p = filepath.Join(root, strings.TrimPrefix(p, "/opt/"))
 		b, e := readOwned(p, 64<<10, false)
 		if e != nil || !strings.HasPrefix(string(b), "#!/bin/sh\n") {
 			return ErrState
@@ -295,9 +311,11 @@ func verifyReady(ctx context.Context, e *xkeen.ConfigEditor, dns *splitdns.Servi
 	if e.VerifySetupRuntime(ctx, digest) != nil || verifyScope(ctx, mark) != nil {
 		return ErrState
 	}
-	state := dns.Status(ctx)
-	if !state.Running || state.State != "synced" {
-		return ErrState
+	if dns != nil {
+		state := dns.Status(ctx)
+		if !state.Running || state.State != "synced" {
+			return ErrState
+		}
 	}
 	api := xrayapi.NewClient("", "", 3*time.Second)
 	snapshot := api.Snapshot(ctx)
@@ -324,7 +342,11 @@ func verifyReady(ctx context.Context, e *xkeen.ConfigEditor, dns *splitdns.Servi
 	if !found {
 		return ErrState
 	}
-	for _, address := range []string{"127.0.0.1:15355", "127.0.0.1:15356", "127.0.0.1:15354"} {
+	addresses := []string{"127.0.0.1:53"}
+	if dns != nil {
+		addresses = []string{"127.0.0.1:15355", "127.0.0.1:15356", "127.0.0.1:15354"}
+	}
+	for _, address := range addresses {
 		if dnsAnswer(ctx, address) != nil {
 			return ErrState
 		}

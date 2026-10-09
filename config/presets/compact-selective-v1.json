@@ -5,13 +5,6 @@
       {
         "type": "field",
         "inboundTag": [
-          "api"
-        ],
-        "outboundTag": "api"
-      },
-      {
-        "type": "field",
-        "inboundTag": [
           "force-proxy-redirect",
           "force-proxy-tproxy"
         ],
@@ -95,18 +88,6 @@
           "tproxy",
           "socks"
         ]
-      }
-    ],
-    "balancers": [
-      {
-        "tag": "bal-proxy",
-        "selector": [
-          "proxy-"
-        ],
-        "fallbackTag": "block",
-        "strategy": {
-          "type": "leastPing"
-        }
       }
     ]
   }

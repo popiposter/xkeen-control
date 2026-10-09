@@ -13,9 +13,9 @@ import (
 	"github.com/popiposter/xkeen-control/internal/nodes"
 )
 
-func TestCurrentRepositoryPolicyRoundTripsThroughTypedAppliance(t *testing.T) {
+func TestLegacyCompatibilityPolicyRoundTripsThroughTypedAppliance(t *testing.T) {
 	repoRoot := repositoryRoot(t)
-	value, err := parseActivePolicy(filepath.Join(repoRoot, "config", "xray"))
+	value, err := parseActivePolicy(filepath.Join(repoRoot, "internal", "appliance", "templates"))
 	if err != nil {
 		t.Fatalf("parse repository policy: %v", err)
 	}
@@ -212,7 +212,7 @@ func newApplianceFixture(t *testing.T) *applianceFixture {
 	outboundsPath := filepath.Join(configDir, "04_outbounds.json")
 	appliancePath := filepath.Join(root, "control", "config", "appliance.json")
 	for _, name := range []string{"02_dns.json", "05_routing.json", "07_observatory.json"} {
-		copyFixtureFile(t, filepath.Join(repoRoot, "config", "xray", name), filepath.Join(configDir, name))
+		copyFixtureFile(t, filepath.Join(repoRoot, "internal", "appliance", "templates", name), filepath.Join(configDir, name))
 	}
 	for _, name := range []string{"01_log.json", "03_inbounds.json", "06_policy.json", "08_api.json"} {
 		copyFixtureFile(t, filepath.Join(repoRoot, "config", "xray", name), filepath.Join(configDir, name))

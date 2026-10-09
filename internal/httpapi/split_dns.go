@@ -1,11 +1,9 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/popiposter/xkeen-control/internal/auth"
 	"github.com/popiposter/xkeen-control/internal/splitdns"
@@ -51,15 +49,5 @@ func (s *Server) handleSplitDNS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "expected empty synchronization request")
 		return
 	}
-	if s.splitDNS == nil {
-		writeError(w, http.StatusConflict, "independent DNS is not installed")
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
-	defer cancel()
-	if s.splitDNS.Sync(ctx) != nil {
-		writeJSON(w, http.StatusConflict, s.splitDNS.Status(r.Context()))
-		return
-	}
-	writeJSON(w, http.StatusOK, s.splitDNS.Status(r.Context()))
+	writeError(w, http.StatusGone, "LAN DNS synchronization is retired; existing resolver status remains available")
 }

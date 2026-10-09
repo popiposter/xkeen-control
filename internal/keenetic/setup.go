@@ -60,6 +60,8 @@ type Snapshot struct {
 	// Private complete firmware data never enters a public status/log/export.
 	config []configLine
 	Hash   string
+	// DNSHash persists only a bounded one-way projection for schema2 recovery.
+	DNSHash string `json:"dnsHash,omitempty"`
 }
 type Plan struct {
 	Home, WAN, PolicyID string
@@ -333,7 +335,26 @@ func project(lines []configLine) (Snapshot, error) {
 	}
 	s.config = lines
 	s.Hash = projectionHash(lines, s.Home, s.WAN)
+	s.DNSHash = dnsProjectionHash(lines)
 	return s, nil
+}
+
+func dnsProjectionHash(lines []configLine) string {
+	h := sha256.New()
+	for _, line := range lines {
+		dns := len(line.words) > 0 && line.words[0] == "dns-proxy"
+		for _, word := range line.words {
+			dns = dns || word == "name-server"
+		}
+		if dns {
+			for _, word := range line.words {
+				h.Write([]byte(word))
+				h.Write([]byte{0})
+			}
+			h.Write([]byte{10})
+		}
+	}
+	return fmt.Sprintf("%x", h.Sum(nil))
 }
 
 func projectionHash(lines []configLine, home, wan string) string {
@@ -610,6 +631,27 @@ func contains(s Snapshot, line string) bool {
 	}
 	return false
 }
+
+// AssignHOMEPolicy attaches only XKeen interception. It does not change DNS.
+func (a *Adapter) AssignHOMEPolicy(ctx context.Context, s Snapshot, p Plan, persist Persist) (Snapshot, error) {
+	if e := a.VerifyPolicy(ctx, p, false); e != nil {
+		return s, e
+	}
+	if s.HomePolicy != "" {
+		return s, ErrCapability
+	}
+	before := s
+	var e error
+	s, e = a.change(ctx, s, p, "home-policy", "ip hotspot policy "+p.Home+" "+p.PolicyID, persist, func(v Snapshot) bool { return v.HomePolicy == p.PolicyID })
+	if e != nil {
+		return s, e
+	}
+	if s.HomeProfile != before.HomeProfile || s.Engine != before.Engine {
+		return s, ErrUnknown
+	}
+	return a.SaveAndInspect(ctx, s, p, persist)
+}
+
 func (a *Adapter) AssignHOME(ctx context.Context, s Snapshot, p Plan, persist Persist) (Snapshot, error) {
 	if e := a.VerifyPolicy(ctx, p, false); e != nil {
 		return s, e
@@ -625,6 +667,39 @@ func (a *Adapter) AssignHOME(ctx context.Context, s Snapshot, p Plan, persist Pe
 	s, e = a.change(ctx, s, p, "home-dns", fmt.Sprintf("dns-proxy filter assign interface profile %s %d", p.Home, p.ProfileID), persist, func(v Snapshot) bool { return v.HomeProfile == strconv.Itoa(p.ProfileID) })
 	if e != nil {
 		return s, e
+	}
+	return a.SaveAndInspect(ctx, s, p, persist)
+}
+
+// RestorePolicyOwned is the schema2 inverse: DNS must match the original
+// projection and no DNS command is ever dispatched.
+func (a *Adapter) RestorePolicyOwned(ctx context.Context, original Snapshot, p Plan, expected string, persist Persist) (Snapshot, error) {
+	s, e := a.current(ctx)
+	if e != nil || s.Hash != expected || original.Home != p.Home || original.WAN != p.WAN || original.Address != p.Address || original.HomePolicy != "" || s.HomeProfile != original.HomeProfile || s.Engine != original.Engine || len(s.Profiles) != len(original.Profiles) {
+		return s, ErrUnknown
+	}
+	// Original.config is deliberately not serialized. Bind the bounded DNS
+	// projection captured before setup, rather than reconstructing absent data.
+	if len(original.DNSHash) != 64 || s.DNSHash != original.DNSHash {
+		return s, ErrUnknown
+	}
+	if s.HomePolicy != "" && s.HomePolicy != p.PolicyID {
+		return s, ErrUnknown
+	}
+	if s.HomePolicy != "" {
+		s, e = a.change(ctx, s, p, "home-policy-remove", "no ip hotspot policy "+p.Home, persist, func(v Snapshot) bool { return v.HomePolicy == "" })
+		if e != nil {
+			return s, e
+		}
+	}
+	if _, ok := s.Policies[p.PolicyID]; ok {
+		s, e = a.change(ctx, s, p, "policy-remove", "no ip policy "+p.PolicyID, persist, func(v Snapshot) bool { _, ok := v.Policies[p.PolicyID]; return !ok })
+		if e != nil {
+			return s, e
+		}
+	}
+	if s.Hash != original.Hash {
+		return s, ErrUnknown
 	}
 	return a.SaveAndInspect(ctx, s, p, persist)
 }
