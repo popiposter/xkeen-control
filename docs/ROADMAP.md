@@ -4,7 +4,7 @@ This is the current sequencing/status authority. Issues contain detailed task co
 
 ## Delivered
 
-**Stable0.4.3 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, DNS integration #125/PR126, guided fresh setup #145/PR147 and MIPS panel delivery #150/PR151 are delivered. PR128/130 corrected release dependency/fixture gates; [release evidence](RELEASES.md) binds the exact source and public bytes.
+**Stable0.4.4 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, DNS integration #125/PR126, guided fresh setup #145/PR147 and MIPS panel delivery #150/PR151 are delivered. PR128/130 corrected release dependency/fixture gates; [release evidence](RELEASES.md) binds the exact source and public bytes.
 
 - Stock XKeen owns installation, components/interception, service and cron; its code stays unmodified.
 - Native jobs/private console, Form/Text config editors and shared pending/Apply/Discard/previous restore.
@@ -29,12 +29,20 @@ The first adapter is restricted to the observed KN1811/5.01.C.6.0-1 CLI family;
 unsupported topology/schema stops before provisioning. Stock commands remain
 installation/update owners. [PR147](https://github.com/popiposter/xkeen-control/pull/147)
 records independent exact-source review and exact FULL evidence separately.
-Stable0.4.3 retains the installer/CLI; protected hosted FULL and independent
+Stable0.4.4 retains the installer/CLI; protected hosted FULL and independent
 ten-public-asset/both-signature verification passed. Fresh hardware acceptance remains
 [NOTRUN](https://github.com/popiposter/xkeen-control/issues/148). Source delivery
 does not certify fresh installation or client/outage behavior.
 
 ## Remaining acceptance
+
+[#162 durable update outcomes](https://github.com/popiposter/xkeen-control/issues/162)
+is delivered in [PR163](https://github.com/popiposter/xkeen-control/pull/163) and
+signed 0.4.4: bounded readiness, verified rollback receipts, mutation fencing and
+verified RAM delivery for older helpers. Independent source/local FULL,
+frozen-source review, protected hosted FULL and exact ten-asset public verification
+passed. [Release evidence](RELEASES.md) binds source and both binary hashes;
+0.4.4 router installation remains NOTRUN.
 
 [#157 router resources](https://github.com/popiposter/xkeen-control/issues/157)
 is delivered in [PR159](https://github.com/popiposter/xkeen-control/pull/159): constrained diagnostic budgets, pressure admission,
@@ -46,10 +54,10 @@ and preserves unknown-operation fencing. Both passed independent source review
 and exact local FULL; signed 0.4.3 passed frozen-source review, protected hosted
 FULL and independent verification of all ten public assets and both signatures.
 
-Both issues remain open for hardware acceptance. [Resource evidence and limits](ROUTER-RESOURCES.md)
+Issues #157, #158 and #162 remain open for hardware acceptance. [Resource evidence and limits](ROUTER-RESOURCES.md)
 separate short observations from controlled hardware proof. The KN1810 configuration
 experiment still requires actual signed node recovery; publication does not settle
-its interrupted operation. Signed 0.4.3 installation/recovery, controlled load
+its interrupted operation. The 0.4.3 update attempt failed and rolled back to 0.4.2; its terminal cause remains unknown. Signed 0.4.4 installation/recovery, controlled load
 comparison and client acceptance remain NOTRUN. Expanded diagnostics #138 remain
 deferred until the resource and hardware gates are satisfied.
 
