@@ -56,6 +56,7 @@ func TestSnapshotWaitsForApplyAndReturnsFinallyCommittedGeneration(t *testing.T)
 			oldNode := testNode(t, syntheticProfile, "node-11111111", true)
 			oldRegistry.Nodes = []Node{oldNode}
 			manager, store, _ := testManager(t, &oldRegistry, nil)
+			seedNativeFixture(t, manager)
 			manager.gateTimeout = time.Second
 			activator := &snapshotLifecycleActivator{started: make(chan struct{}), release: make(chan struct{}), fail: test.fail}
 			manager.tx.Activator = activator

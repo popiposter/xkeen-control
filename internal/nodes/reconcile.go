@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/popiposter/xkeen-control/internal/configjson"
-	"github.com/popiposter/xkeen-control/internal/xkeen"
 )
 
 // ReconcileRuntime proves that the authoritative registry and generated active
@@ -86,6 +85,10 @@ func (t Transaction) reconcileRuntime(ctx context.Context, registry Registry, re
 	reconcileContext, cancelReconcile := context.WithDeadline(ctx, deadline)
 	defer cancelReconcile()
 
+	validatedBase, err := validationIdentity(t)
+	if err != nil {
+		return err
+	}
 	candidateDir, err := os.MkdirTemp("", "xkeen-node-reconcile-")
 	if err != nil {
 		return errors.New("unable to prepare node runtime reconciliation")
@@ -108,41 +111,49 @@ func (t Transaction) reconcileRuntime(ctx context.Context, registry Registry, re
 	if t.PreviousDir == "" {
 		t.PreviousDir = filepath.Join(filepath.Dir(t.Store.Path), "previous")
 	}
+	currentIdentity, e := validationIdentity(t)
+	if e != nil || currentIdentity != validatedBase {
+		return ErrPreviewStale
+	}
 	intent, intentErr := acquireNodeIntent(ctx, t.PreviousDir)
 	if intentErr != nil {
 		return intentErr
 	}
 	defer intent.Close()
-	settled := true
-	defer func() {
-		if settled {
-			if releaseErr := intent.Settle(); releaseErr != nil {
-				err = releaseErr
-			}
-		}
-	}()
+
 	current, loadErr := t.Store.Load()
 	active, readErr := ReadBoundedFile(t.ActiveOutboundsPath, MaxLegacyDocument)
 	if loadErr != nil || readErr != nil || !reflect.DeepEqual(current, registry) || !bytes.Equal(active, rendered) {
+		if intent.Settle() != nil {
+			return ErrNodeRecoveryRequired
+		}
 		return errors.New("node configuration changed during reconciliation")
 	}
 	if err := t.savePrevious(registry, true, rendered, true); err != nil {
-		return err
+		return errors.Join(ErrNodeRecoveryRequired, err)
 	}
 	if syncNodeDirectory(t.PreviousDir) != nil {
 		return ErrNodeRecoveryRequired
 	}
-	settled = false
-
-	activationContext, cancelActivation := context.WithTimeout(reconcileContext, budget.Activation)
-	activationErr := t.activate(activationContext, registry)
-	cancelActivation()
-	if activationErr != nil {
-		if errors.Is(activationErr, xkeen.ErrLifecycleUnknown) {
-			return errors.Join(ErrNodeRecoveryRequired, activationErr)
-		}
+	if current, e := validationIdentity(t); e != nil || current != validatedBase {
 		return ErrNodeRecoveryRequired
 	}
-	settled = true
-	return nil
+	j, err := t.newJournal(reconcileContext, registry, rendered, true, intent)
+	if err != nil {
+		return errors.Join(ErrNodeRecoveryRequired, err)
+	}
+	g, err := captureNodeGeneration(t, nil)
+	if err != nil || g.proof != j.r.BeforeProof {
+		return j.failure("generation-drift", ErrNodeRecoveryRequired)
+	}
+	if err = j.bindBranch(reconcileContext, "current", g.content); err != nil {
+		return err
+	}
+	activation, cancel := context.WithTimeout(reconcileContext, budget.Activation)
+	stage, err := t.activateTracked(activation, registry, j)
+	cancel()
+	if err != nil {
+		return j.failure(stage, err)
+	}
+	return j.finish(reconcileContext)
 }

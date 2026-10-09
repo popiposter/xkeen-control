@@ -17,6 +17,11 @@ Current entry points: `cmd/xkeen-control/main.go`, `internal/httpapi`, embedded 
 
 One panel lease serializes native jobs, configuration changes and related panel operations. External CLI/cron are not participants; source drift is checked and must not be called cross-process exclusion. HTTP202 means accepted handoff, not successful Apply/update. Existing job terminal state and independent configuration/process/health readback determine success. Unknown outcomes are inspected without replay.
 
+Ordinary node transactions retain branch-specific generation/process proof and
+sanitized failure stages in the same bounded receipt used by
+[offline recovery](NODE-RECOVERY.md). Live process reads do not apply offline
+cron/daemon exclusion; offline settlement still requires quiescence.
+
 Native config text, secrets, PTY output and encrypted backups are private surfaces distinct from sanitized status. Session-bound previews, bounded input/output and origin/CSRF checks remain mandatory. Frontend owner/AbortController handling prevents stale session results from reappearing.
 
 DNS validation happens before native config commit; synchronization follows verified native commands/Apply. Pending sets defer DNS changes. Same effective rules do not restart DNS; ambiguous activation has an inspect-only receipt. Native commands are never replayed by synchronization.

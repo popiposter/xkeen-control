@@ -12,10 +12,21 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 )
 
 const recoveryReceiptName = "node-recovery.json"
 const recoveryCompletionFenceName = "node-recovery-completing"
+
+func predecessorName(slot string) string {
+	if slot == "a" {
+		return "node-recovery-predecessor-a.json"
+	}
+	if slot == "b" {
+		return "node-recovery-predecessor-b.json"
+	}
+	return "invalid-predecessor-slot"
+}
 
 // RecoveryRuntime supplies independent process identity and refuses live native
 // writers. Offline callers must hold setup.Maintenance for the entire operation.
@@ -25,26 +36,48 @@ type RecoveryRuntime interface {
 }
 
 type RecoveryInspection struct {
-	Classification string `json:"classification"`
-	Previous       string `json:"previous"`
-	Digest         string `json:"digest,omitempty"`
-	Phase          string `json:"phase,omitempty"`
-	CanActivate    bool   `json:"canActivate"`
-	CanVerify      bool   `json:"canVerify"`
-	Reason         string `json:"reason,omitempty"`
-	Nodes          int    `json:"nodes"`
+	Classification      string `json:"classification"`
+	Previous            string `json:"previous"`
+	Digest              string `json:"digest,omitempty"`
+	Phase               string `json:"phase,omitempty"`
+	CanActivate         bool   `json:"canActivate"`
+	CanVerify           bool   `json:"canVerify"`
+	Reason              string `json:"reason,omitempty"`
+	Nodes               int    `json:"nodes"`
+	Branch              string `json:"branch,omitempty"`
+	Stage               string `json:"stage,omitempty"`
+	Failure             string `json:"failure,omitempty"`
+	ElapsedMS           int64  `json:"elapsedMs,omitempty"`
+	StageElapsedMS      int64  `json:"stageElapsedMs,omitempty"`
+	RollbackFailure     string `json:"rollbackFailure,omitempty"`
+	ActivationFailure   string `json:"activationFailure,omitempty"`
+	ActivationElapsedMS int64  `json:"activationElapsedMs,omitempty"`
 }
 
 type recoveryReceipt struct {
-	Schema          int    `json:"schemaVersion"`
-	Phase           string `json:"phase"`
-	Digest          string `json:"digest"`
-	Marker          string `json:"marker"`
-	RuntimeBefore   string `json:"runtimeBefore"`
-	RuntimeAfter    string `json:"runtimeAfter,omitempty"`
-	GenerationProof string `json:"generationProof,omitempty"`
-	Stage           string `json:"stage,omitempty"`
-	Reason          string `json:"reason,omitempty"`
+	Schema              int    `json:"schemaVersion"`
+	Phase               string `json:"phase"`
+	Digest              string `json:"digest"`
+	Marker              string `json:"marker"`
+	RuntimeBefore       string `json:"runtimeBefore"`
+	RuntimeAfter        string `json:"runtimeAfter,omitempty"`
+	GenerationProof     string `json:"generationProof,omitempty"`
+	Stage               string `json:"stage,omitempty"`
+	Reason              string `json:"reason,omitempty"`
+	Owner               string `json:"owner,omitempty"`
+	Branch              string `json:"branch,omitempty"`
+	BeforeProof         string `json:"beforeProof,omitempty"`
+	StableProof         string `json:"stableProof,omitempty"`
+	CandidateContent    string `json:"candidateContent,omitempty"`
+	PreviousContent     string `json:"previousContent,omitempty"`
+	RollbackFailure     string `json:"rollbackFailure,omitempty"`
+	ActivationFailure   string `json:"activationFailure,omitempty"`
+	Predecessor         string `json:"predecessor,omitempty"`
+	PredecessorOriginal string `json:"predecessorOriginal,omitempty"`
+	PredecessorSlot     string `json:"predecessorSlot,omitempty"`
+	ElapsedMS           int64  `json:"elapsedMs,omitempty"`
+	StageElapsedMS      int64  `json:"stageElapsedMs,omitempty"`
+	ActivationElapsedMS int64  `json:"activationElapsedMs,omitempty"`
 }
 
 type recoveryState struct {
@@ -87,21 +120,75 @@ func readRecoveryReceiptIdentity(dir string) (*recoveryReceipt, string, error) {
 		return nil, "", ErrNodeRecoveryRequired
 	}
 	var r recoveryReceipt
-	if decodeStrictJSON(data, &r) != nil || r.Schema != 1 || (r.Phase != "validation-failed" && r.Phase != "activation-intent" && r.Phase != "verified" && r.Phase != "completed") || !recoveryHex(r.Digest) || !recoveryHex(r.Marker) || (r.RuntimeBefore != "stopped" && !recoveryHex(r.RuntimeBefore)) || (r.RuntimeAfter != "" && !recoveryHex(r.RuntimeAfter)) || (r.GenerationProof != "" && !recoveryHex(r.GenerationProof)) {
+	if decodeStrictJSON(data, &r) != nil || r.Schema != 1 || !validRecoveryPhase(r.Phase) || !recoveryHex(r.Digest) || !recoveryHex(r.Marker) || (r.RuntimeBefore != "stopped" && !recoveryHex(r.RuntimeBefore)) || (r.RuntimeAfter != "" && !recoveryHex(r.RuntimeAfter) && !(r.Branch == "metadata" && r.RuntimeAfter == "stopped")) || (r.GenerationProof != "" && !recoveryHex(r.GenerationProof)) {
 		return nil, "", ErrNodeRecoveryRequired
 	}
-	if (r.Phase == "verified" || r.Phase == "completed") && !recoveryHex(r.RuntimeAfter) {
+	if (r.Phase == "verified" || r.Phase == "completed") && !recoveryHex(r.RuntimeAfter) && !(r.Branch == "metadata" && r.RuntimeAfter == "stopped") {
 		return nil, "", ErrNodeRecoveryRequired
 	}
-	if !validRecoveryStage(r.Stage) || (r.Reason != "" && r.Reason != "failed" && r.Reason != "unknown") {
+	if !validRecoveryStage(r.Stage) || (r.Reason != "" && r.Reason != "failed" && r.Reason != "unknown" && r.Reason != "deadline" && r.Reason != "canceled") {
 		return nil, "", ErrNodeRecoveryRequired
+	}
+	if r.Owner != "" && r.Owner != "transaction" && r.Owner != "recovery" {
+		return nil, "", ErrNodeRecoveryRequired
+	}
+	if r.Branch != "" && r.Branch != "candidate" && r.Branch != "previous" && r.Branch != "metadata" && r.Branch != "current" {
+		return nil, "", ErrNodeRecoveryRequired
+	}
+	for _, v := range []string{r.BeforeProof, r.StableProof, r.CandidateContent, r.PreviousContent, r.Predecessor, r.PredecessorOriginal} {
+		if v != "" && !recoveryHex(v) {
+			return nil, "", ErrNodeRecoveryRequired
+		}
+	}
+	if r.ElapsedMS < 0 || r.ElapsedMS > int64((24*time.Hour)/time.Millisecond) || r.StageElapsedMS < 0 || r.StageElapsedMS > r.ElapsedMS || r.ActivationElapsedMS < 0 || r.ActivationElapsedMS > r.ElapsedMS {
+		return nil, "", ErrNodeRecoveryRequired
+	}
+	if (r.ActivationFailure != "" && !validFailureCode(r.ActivationFailure)) || (r.RollbackFailure != "" && !validFailureCode(r.RollbackFailure)) {
+		return nil, "", ErrNodeRecoveryRequired
+	}
+	if (r.Predecessor == "") != (r.PredecessorOriginal == "") {
+		return nil, "", ErrNodeRecoveryRequired
+	}
+	if r.Owner == "transaction" && (r.Branch == "" || !recoveryHex(r.BeforeProof) || !recoveryHex(r.StableProof) || !recoveryHex(r.CandidateContent) || !recoveryHex(r.PreviousContent)) {
+		return nil, "", ErrNodeRecoveryRequired
+	}
+	if r.Owner == "recovery" && (r.Branch != "current" || !recoveryHex(r.GenerationProof)) {
+		return nil, "", ErrNodeRecoveryRequired
+	}
+	if r.Owner == "" && (r.Branch != "" || r.Predecessor != "" || r.BeforeProof != "" || r.StableProof != "" || r.CandidateContent != "" || r.PreviousContent != "" || r.Phase == "prepared" || r.Phase == "committing" || r.Phase == "restoring" || r.Phase == "inspection-required") {
+		return nil, "", ErrNodeRecoveryRequired
+	}
+	if (r.Predecessor == "" && r.PredecessorSlot != "") || (r.Predecessor != "" && r.PredecessorSlot != "a" && r.PredecessorSlot != "b") {
+		return nil, "", ErrNodeRecoveryRequired
+	}
+	if r.Owner != "" && (r.Phase == "verified" || r.Phase == "completed") {
+		if !recoveryHex(r.GenerationProof) || (r.Branch == "metadata" && r.RuntimeAfter != r.RuntimeBefore) || (r.Branch != "metadata" && (r.RuntimeAfter == r.RuntimeBefore || !recoveryHex(r.RuntimeAfter))) {
+			return nil, "", ErrNodeRecoveryRequired
+		}
 	}
 	return &r, recoveryIdentity(info, data), nil
 }
 
+func validRecoveryPhase(s string) bool {
+	switch s {
+	case "validation-failed", "activation-intent", "verified", "completed", "prepared", "committing", "restoring", "inspection-required":
+		return true
+	}
+	return false
+}
+func validFailureCode(s string) bool {
+	for _, stage := range []string{"commit", "restart", "readiness", "inventory", "post-runtime", "generation-drift", "restore", "settlement"} {
+		for _, reason := range []string{"failed", "unknown", "deadline", "canceled"} {
+			if s == stage+":"+reason {
+				return true
+			}
+		}
+	}
+	return false
+}
 func validRecoveryStage(s string) bool {
 	switch s {
-	case "", "validation", "restart", "readiness", "inventory", "post-runtime", "generation-drift", "settlement":
+	case "", "prepared", "commit", "restore", "validation", "restart", "readiness", "inventory", "post-runtime", "generation-drift", "settlement":
 		return true
 	}
 	return false
@@ -162,6 +249,9 @@ func (m *Manager) recoverySnapshot(ctx context.Context, runtime RecoveryRuntime)
 	}
 	if receipt != nil {
 		s.view.Phase = receipt.Phase
+		s.view.Branch, s.view.Stage, s.view.Failure, s.view.ElapsedMS = receipt.Branch, receipt.Stage, receipt.Reason, receipt.ElapsedMS
+		s.view.StageElapsedMS, s.view.ActivationFailure, s.view.ActivationElapsedMS = receipt.StageElapsedMS, receipt.ActivationFailure, receipt.ActivationElapsedMS
+		s.view.RollbackFailure = receipt.RollbackFailure
 	}
 	marker, info, err := recoveryRead(filepath.Join(dir, ".pending"), 128, true)
 	if errors.Is(err, os.ErrNotExist) && receipt != nil {
@@ -200,48 +290,18 @@ func (m *Manager) recoverySnapshot(ctx context.Context, runtime RecoveryRuntime)
 	if info != nil {
 		bind("marker", marker, info)
 	}
-	raw, info, err := recoveryRead(m.store.Path, MaxRegistryDocument, true)
+	g, err := captureNodeGeneration(m.tx, bind)
 	if err != nil {
-		return s, ErrNodeRecoveryRequired
+		return s, err
 	}
-	bind("registry", raw, info)
-	entries, err := recoveryConfigNames(m.tx.ConfigDir)
-	if err != nil {
-		return s, ErrNodeRecoveryRequired
-	}
-	total := 0
-	for _, name := range entries {
-		b, i, e := recoveryRead(filepath.Join(m.tx.ConfigDir, name), MaxLegacyDocument, false)
-		if e != nil {
-			return s, ErrNodeRecoveryRequired
-		}
-		total += len(b)
-		if total > 8<<20 {
-			return s, ErrNodeRecoveryRequired
-		}
-		bind(name, b, i)
-		s.configs[name] = b
-	}
-	registry, coherent := coherentRecoveryPair(raw, s.configs["04_outbounds.json"])
+	s.configs = g.configs
+	registry, coherent := coherentRecoveryPair(g.registry, s.configs["04_outbounds.json"])
 	s.registry = registry
 	s.view.Nodes = len(registry.Nodes)
 	if coherent {
 		s.view.Classification = "current-coherent"
 	}
-	previous := map[string][]byte{}
-	for _, name := range []string{"nodes.json", "04_outbounds.json", ".registry-absent", ".outbounds-absent"} {
-		b, i, e := recoveryRead(filepath.Join(dir, name), MaxRegistryDocument, true)
-		if errors.Is(e, os.ErrNotExist) {
-			bind("previous-absent:"+name, nil, nil)
-			continue
-		}
-		if e != nil {
-			return s, ErrNodeRecoveryRequired
-		}
-		previous[name] = b
-		bind("previous:"+name, b, i)
-	}
-	if _, ok := coherentRecoveryPair(previous["nodes.json"], previous["04_outbounds.json"]); ok && previous[".registry-absent"] == nil && previous[".outbounds-absent"] == nil {
+	if _, ok := coherentRecoveryPair(g.previous["nodes.json"], g.previous["04_outbounds.json"]); ok && g.previous[".registry-absent"] == nil && g.previous[".outbounds-absent"] == nil {
 		s.view.Previous = "coherent"
 	}
 	s.generationDigest = hex.EncodeToString(h.Sum(nil))
@@ -259,14 +319,27 @@ func (m *Manager) recoverySnapshot(ctx context.Context, runtime RecoveryRuntime)
 	}
 	s.view.Digest = hex.EncodeToString(h.Sum(nil))
 	s.view.CanActivate = !fenced && s.marker != nil && coherent && (receipt == nil || receipt.Phase == "completed" && receipt.Marker != s.markerDigest)
-	if receipt != nil && (receipt.Phase == "activation-intent" || receipt.Phase == "verified" || receipt.Phase == "completed" && fenced) {
+	if receipt != nil && (receipt.Phase == "activation-intent" || receipt.Phase == "inspection-required" || receipt.Phase == "verified" || receipt.Phase == "completed" && fenced) {
 		proof := s.marker != nil && receipt.Marker == s.markerDigest && s.originalDigest == receipt.Digest
+		if receipt.Owner != "" {
+			proof = s.marker != nil && receipt.Marker == s.markerDigest && recoveryHex(receipt.GenerationProof) && receipt.GenerationProof == s.generationProof && (receipt.Stage == "restart" || receipt.Stage == "readiness" || receipt.Stage == "inventory" || receipt.Stage == "post-runtime" || receipt.Stage == "settlement")
+		}
 		if (receipt.Phase == "verified" || receipt.Phase == "completed") && recoveryHex(receipt.GenerationProof) {
 			proof = receipt.GenerationProof == s.generationProof && (s.marker == nil || receipt.Marker == s.markerDigest) && runtimeID == receipt.RuntimeAfter
 		}
-		s.view.CanVerify = coherent && proof && runtimeID != "stopped" && runtimeID != receipt.RuntimeBefore
+		runtimeProven := runtimeID != "stopped" && runtimeID != receipt.RuntimeBefore
+		if receipt.Branch == "metadata" {
+			runtimeProven = runtimeID == receipt.RuntimeBefore && (receipt.Phase == "verified" || receipt.Phase == "completed")
+		}
+		s.view.CanVerify = coherent && proof && runtimeProven && (receipt.RuntimeAfter == "" || runtimeID == receipt.RuntimeAfter)
 		if !s.view.CanVerify {
 			s.view.Reason = "generation-or-runtime-unproven"
+		}
+	}
+	if receipt != nil && receipt.Predecessor != "" {
+		b, i, e := recoveryRead(filepath.Join(dir, predecessorName(receipt.PredecessorSlot)), 8192, true)
+		if e != nil || recoveryIdentity(i, b) != receipt.Predecessor {
+			return s, ErrNodeRecoveryRequired
 		}
 	}
 	return s, nil
@@ -353,7 +426,7 @@ func (m *Manager) verifyExistingRecovery(ctx context.Context, digest string, run
 	m.authority.Block()
 	// The matched original digest already binds the fully validated generation.
 	// Recheck readiness and inventory without rendering or invoking Restart.
-	if m.tx.Activator.WaitReady(ctx) != nil || m.tx.Activator.VerifyOutboundTags(ctx, enabledTags(s.registry)) != nil {
+	if s.receipt.Branch != "metadata" && (m.tx.Activator.WaitReady(ctx) != nil || m.tx.Activator.VerifyOutboundTags(ctx, enabledTags(s.registry)) != nil) {
 		return ErrNodeRecoveryRequired
 	}
 	after, err := m.recoverySnapshot(ctx, runtime)
@@ -509,10 +582,35 @@ func (m *Manager) RecoverCurrent(ctx context.Context, digest string, runtime Rec
 	if err != nil || !s.view.CanActivate || s.view.Digest != digest {
 		return ErrPreviewStale
 	}
-	receipt := recoveryReceipt{Schema: 1, Phase: "validation-failed", Digest: digest, Marker: s.markerDigest, RuntimeBefore: s.runtime, Stage: "validation"}
+	receipt := recoveryReceipt{Schema: 1, Phase: "validation-failed", Digest: digest, Marker: s.markerDigest, RuntimeBefore: s.runtime, Stage: "validation", Owner: "recovery", Branch: "current", GenerationProof: s.generationProof}
+
+	expectedIdentity := s.receiptIdentity
+	owned := false
+	save := func() error {
+		_, current, e := readRecoveryReceiptIdentity(m.recoveryDir())
+		if e != nil || current != expectedIdentity {
+			return ErrNodeRecoveryRequired
+		}
+		if !owned {
+			receipt.Predecessor, receipt.PredecessorOriginal, receipt.PredecessorSlot, e = preserveCompletedPredecessor(m.recoveryDir())
+			if e != nil || receipt.PredecessorOriginal != expectedIdentity {
+				return ErrNodeRecoveryRequired
+			}
+		}
+		identity, e := writeRecoveryReceipt(m.recoveryDir(), &receipt)
+		if e != nil {
+			return ErrNodeRecoveryRequired
+		}
+		expectedIdentity = identity
+		owned = true
+		return nil
+	}
 	fail := func(stage, reason string) error {
 		receipt.Stage, receipt.Reason = stage, reason
-		_ = saveRecoveryReceipt(m.recoveryDir(), &receipt)
+		if stage != "validation" {
+			receipt.ActivationFailure = stage + ":" + reason
+		}
+		_ = save()
 		return ErrNodeRecoveryRequired
 	}
 	candidate, err := os.MkdirTemp("", "xkeen-node-recovery-")
@@ -541,14 +639,20 @@ func (m *Manager) RecoverCurrent(ctx context.Context, digest string, runtime Rec
 		return fail("generation-drift", "failed")
 	}
 	receipt.Phase, receipt.Stage = "activation-intent", "restart"
-	save := func() error {
-		return saveRecoveryReceipt(m.recoveryDir(), &receipt)
-	}
 	if save() != nil {
 		return ErrNodeRecoveryRequired
 	}
 	activation, cancelActivation := context.WithTimeout(ctx, budget.Activation)
 	err = m.tx.Activator.Restart(activation)
+	if err == nil {
+		receipt.Stage = "post-runtime"
+		id, e := runtime.Snapshot(activation)
+		if e != nil || id == "stopped" || id == receipt.RuntimeBefore {
+			err = ErrNodeRecoveryRequired
+		} else {
+			receipt.RuntimeAfter = id
+		}
+	}
 	if err == nil {
 		receipt.Stage = "readiness"
 		if err = save(); err == nil {
@@ -566,7 +670,7 @@ func (m *Manager) RecoverCurrent(ctx context.Context, digest string, runtime Rec
 		return fail(receipt.Stage, "unknown")
 	}
 	after, err := m.recoverySnapshot(ctx, runtime)
-	if err != nil || after.runtime == s.runtime || after.runtime == "stopped" {
+	if err != nil || after.runtime == s.runtime || after.runtime == "stopped" || after.runtime != receipt.RuntimeAfter {
 		return fail("post-runtime", "failed")
 	}
 	if s.generationDigest != after.generationDigest {

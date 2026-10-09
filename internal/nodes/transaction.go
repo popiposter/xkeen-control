@@ -23,6 +23,7 @@ import (
 )
 
 type Activator interface {
+	RuntimeIdentity(context.Context) (string, error)
 	ValidateCandidate(context.Context, string) error
 	Restart(context.Context) error
 	WaitReady(context.Context) error
@@ -113,6 +114,16 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 	if err != nil {
 		return err
 	}
+	var validatedBase string
+	if t.Activator != nil {
+		if t.ConfigDir == "" {
+			t.ConfigDir = filepath.Dir(t.ActiveOutboundsPath)
+		}
+		validatedBase, err = validationIdentity(t)
+		if err != nil {
+			return err
+		}
+	}
 	var rendered []byte
 	if previousOutboundsExists {
 		baseline := previousRegistry
@@ -127,6 +138,9 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 		return err
 	}
 	runtimeChanged := !previousOutboundsExists || !nativeDocumentsEqual(previousOutbounds, rendered)
+	if previousRegistryExists && reflect.DeepEqual(previousRegistry, registry) && !runtimeChanged {
+		return nil
+	}
 	candidateDir, err := os.MkdirTemp("", "xkeen-node-candidate-")
 	if err != nil {
 		return errors.New("unable to create candidate directory")
@@ -149,145 +163,54 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 		}
 	}
 
+	if t.ConfigDir == "" {
+		t.ConfigDir = filepath.Dir(t.ActiveOutboundsPath)
+	}
+	if t.Activator != nil {
+		current, e := validationIdentity(t)
+		if e != nil || current != validatedBase {
+			return errors.New("native configuration changed during validation")
+		}
+	}
 	intent, intentErr := acquireNodeIntent(ctx, t.PreviousDir)
 	if intentErr != nil {
 		return intentErr
 	}
 	defer intent.Close()
-	settled := true
-	defer func() {
-		if settled {
-			if releaseErr := intent.Settle(); releaseErr != nil {
-				err = releaseErr
-			}
-		}
-	}()
 	currentRegistry, currentRegistryExists, err := loadOptionalRegistry(t.Store)
 	if err != nil {
+		if intent.Settle() != nil {
+			return errors.Join(ErrNodeRecoveryRequired, err)
+		}
 		return err
 	}
 	currentOutbounds, currentOutboundsExists, err := readOptional(t.ActiveOutboundsPath, MaxLegacyDocument)
 	if err != nil {
+		if intent.Settle() != nil {
+			return errors.Join(ErrNodeRecoveryRequired, err)
+		}
 		return err
 	}
-	if currentRegistryExists != previousRegistryExists || !reflect.DeepEqual(currentRegistry, previousRegistry) ||
-		currentOutboundsExists != previousOutboundsExists || !bytes.Equal(currentOutbounds, previousOutbounds) {
+	if currentRegistryExists != previousRegistryExists || !reflect.DeepEqual(currentRegistry, previousRegistry) || currentOutboundsExists != previousOutboundsExists || !bytes.Equal(currentOutbounds, previousOutbounds) {
+		if intent.Settle() != nil {
+			return errors.Join(ErrNodeRecoveryRequired, err)
+		}
 		return errors.New("native node configuration changed during validation")
 	}
-	if err := t.savePrevious(previousRegistry, previousRegistryExists, previousOutbounds, previousOutboundsExists); err != nil {
-		settled = true
-		return err
+	if err = t.savePrevious(previousRegistry, previousRegistryExists, previousOutbounds, previousOutboundsExists); err != nil {
+		return errors.Join(ErrNodeRecoveryRequired, err)
+	}
+	if t.Activator != nil {
+		current, e := validationIdentity(t)
+		if e != nil || current != validatedBase {
+			return ErrNodeRecoveryRequired
+		}
 	}
 	if syncNodeDirectory(t.PreviousDir) != nil {
 		return ErrNodeRecoveryRequired
 	}
-	mutated := false
-	defer func() {
-		if err == nil || !mutated {
-			settled = true
-			return
-		}
-		if !runtimeChanged {
-			var restoreErr error
-			if previousRegistryExists {
-				restoreErr = t.Store.Save(previousRegistry)
-			} else {
-				restoreErr = os.Remove(t.Store.Path)
-				if errors.Is(restoreErr, os.ErrNotExist) {
-					restoreErr = nil
-				}
-			}
-			if restoreErr != nil {
-				err = &RollbackError{Cause: err, Recovery: restoreErr}
-				return
-			}
-			settled = true
-			return
-		}
-		if errors.Is(err, xkeen.ErrLifecycleUnknown) {
-			// Keep both the current candidate and previous snapshot untouched.
-			// Native hooks may not have settled after
-			// committing the candidate. Neither permits unowned rollback writes
-			// or a second lifecycle mutation in place of independent readback.
-			err = errors.Join(ErrNodeRecoveryRequired, err)
-			return
-		}
-		rollbackDeadline := time.Now().Add(budget.Rollback)
-		if transactionDeadline.Before(rollbackDeadline) {
-			rollbackDeadline = transactionDeadline
-		}
-		rollbackContext, cancelRollback := context.WithDeadline(context.WithoutCancel(ctx), rollbackDeadline)
-		rollbackErr := t.rollback(rollbackContext, previousRegistry, previousRegistryExists, previousOutbounds, previousOutboundsExists)
-		cancelRollback()
-		if rollbackErr != nil {
-			err = &RollbackError{Cause: err, Recovery: rollbackErr}
-			return
-		}
-		settled = true
-		err = errors.New(err.Error() + "; previous generation restored")
-	}()
+	return t.commitTracked(transactionContext, registry, rendered, runtimeChanged, previousRegistry, previousRegistryExists, previousOutbounds, previousOutboundsExists, intent)
 
-	settled = false
-	mutated = true
-	if err := t.Store.Save(registry); err != nil {
-		return err
-	}
-	if !runtimeChanged {
-		return nil
-	}
-	if err := atomicWrite(t.ActiveOutboundsPath, rendered, 0o600); err != nil {
-		return err
-	}
-	if t.Activator != nil {
-		activationContext, cancelActivation := context.WithTimeout(transactionContext, budget.Activation)
-		activationErr := t.activate(activationContext, registry)
-		cancelActivation()
-		if activationErr != nil {
-			return activationErr
-		}
-	}
-	return nil
-}
-
-func (t Transaction) activate(ctx context.Context, registry Registry) error {
-	if err := t.Activator.Restart(ctx); err != nil {
-		if errors.Is(err, xkeen.ErrLifecycleUnknown) {
-			return err
-		}
-		return errors.New("Xray restart failed")
-	}
-	if err := t.Activator.WaitReady(ctx); err != nil {
-		return errors.New("Xray readiness failed")
-	}
-	if err := t.Activator.VerifyOutboundTags(ctx, enabledTags(registry)); err != nil {
-		return errors.New("Xray outbound inventory failed")
-	}
-	return nil
-}
-
-func (t Transaction) rollback(ctx context.Context, registry Registry, registryExists bool, outbounds []byte, outboundsExists bool) error {
-	var failures []error
-	if err := t.restore(registry, registryExists, outbounds, outboundsExists); err != nil {
-		failures = append(failures, errors.New("restore failed"))
-	}
-	if err := t.verifyRestored(registry, registryExists, outbounds, outboundsExists); err != nil {
-		failures = append(failures, errors.New("restore verification failed"))
-	}
-	if t.Activator != nil {
-		if err := t.Activator.Restart(ctx); err != nil {
-			failures = append(failures, errors.New("rollback restart failed"))
-		}
-		if err := t.Activator.WaitReady(ctx); err != nil {
-			failures = append(failures, errors.New("rollback readiness failed"))
-		}
-		expected := enabledTags(registry)
-		if registryExists && len(expected) > 0 {
-			if err := t.Activator.VerifyOutboundTags(ctx, expected); err != nil {
-				failures = append(failures, errors.New("rollback inventory verification failed"))
-			}
-		}
-	}
-	return errors.Join(failures...)
 }
 
 func (t Transaction) savePrevious(registry Registry, registryExists bool, outbounds []byte, outboundsExists bool) error {

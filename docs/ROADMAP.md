@@ -59,7 +59,13 @@ is delivered in [PR169](https://github.com/popiposter/xkeen-control/pull/169) an
 signed0.4.6. It proves retention of the validated generation and a distinct stable
 runtime before settling an existing attempt, with zero lifecycle calls and a
 durable completion fence. Independent review, local/hosted FULL and public
-signature verification passed. Signed0.4.6 installation/settlement remain NOTRUN.
+signature verification passed. Signed0.4.6 installation and the original
+settlement passed [hardware readback](https://github.com/popiposter/xkeen-control/issues/168#issuecomment-6080313195).
+A later automatic node transaction has a different unresolved marker.
+[#171 ordinary transaction proof](https://github.com/popiposter/xkeen-control/issues/171)
+is in development; source review/qualification and signed deployment are pending.
+The resource experiment stopped before Save/Apply and has not demonstrated a
+controlled benefit yet.
 
 [#157 router resources](https://github.com/popiposter/xkeen-control/issues/157)
 is delivered in [PR159](https://github.com/popiposter/xkeen-control/pull/159): constrained diagnostic budgets, pressure admission,
