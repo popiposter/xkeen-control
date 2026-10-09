@@ -61,9 +61,11 @@ Durability requires a verified `sync -f` implementation supporting both files
 and directories. The helper checks this capability before stopping the panel;
 BusyBox `sync` alone may be insufficient. A missing prerequisite is a refusal,
 not permission to skip synchronization or install packages automatically. Bounded
-process checks also require `timeout -k` support. Both capabilities are checked
-before reserving an update and again before service shutdown; the bootstrap
-installer checks its prerequisites before placing panel files.
+process checks also require `timeout -k` support. `flock` must support descriptor
+locking, exclusive exclusion and downgrade to a shared lock; command presence
+alone is insufficient. These capabilities are checked before reserving an update
+and again before service shutdown; the bootstrap installer checks its
+prerequisites before placing panel files.
 
 For an affected older helper, use the explicitly approved maintenance delivery
 described in [#162](https://github.com/popiposter/xkeen-control/issues/162).
