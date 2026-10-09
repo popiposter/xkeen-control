@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"time"
 )
@@ -36,48 +37,52 @@ type RecoveryRuntime interface {
 }
 
 type RecoveryInspection struct {
-	Classification      string `json:"classification"`
-	Previous            string `json:"previous"`
-	Digest              string `json:"digest,omitempty"`
-	Phase               string `json:"phase,omitempty"`
-	CanActivate         bool   `json:"canActivate"`
-	CanVerify           bool   `json:"canVerify"`
-	Reason              string `json:"reason,omitempty"`
-	Nodes               int    `json:"nodes"`
-	Branch              string `json:"branch,omitempty"`
-	Stage               string `json:"stage,omitempty"`
-	Failure             string `json:"failure,omitempty"`
-	ElapsedMS           int64  `json:"elapsedMs,omitempty"`
-	StageElapsedMS      int64  `json:"stageElapsedMs,omitempty"`
-	RollbackFailure     string `json:"rollbackFailure,omitempty"`
-	ActivationFailure   string `json:"activationFailure,omitempty"`
-	ActivationElapsedMS int64  `json:"activationElapsedMs,omitempty"`
+	Classification      string        `json:"classification"`
+	Previous            string        `json:"previous"`
+	Digest              string        `json:"digest,omitempty"`
+	Phase               string        `json:"phase,omitempty"`
+	CanActivate         bool          `json:"canActivate"`
+	CanVerify           bool          `json:"canVerify"`
+	Reason              string        `json:"reason,omitempty"`
+	Nodes               int           `json:"nodes"`
+	Branch              string        `json:"branch,omitempty"`
+	Stage               string        `json:"stage,omitempty"`
+	Failure             string        `json:"failure,omitempty"`
+	ElapsedMS           int64         `json:"elapsedMs,omitempty"`
+	StageElapsedMS      int64         `json:"stageElapsedMs,omitempty"`
+	RollbackFailure     string        `json:"rollbackFailure,omitempty"`
+	ActivationFailure   string        `json:"activationFailure,omitempty"`
+	ActivationElapsedMS int64         `json:"activationElapsedMs,omitempty"`
+	ActivationTiming    *StageTimings `json:"activationTiming,omitempty"`
+	RollbackTiming      *StageTimings `json:"rollbackTiming,omitempty"`
 }
 
 type recoveryReceipt struct {
-	Schema              int    `json:"schemaVersion"`
-	Phase               string `json:"phase"`
-	Digest              string `json:"digest"`
-	Marker              string `json:"marker"`
-	RuntimeBefore       string `json:"runtimeBefore"`
-	RuntimeAfter        string `json:"runtimeAfter,omitempty"`
-	GenerationProof     string `json:"generationProof,omitempty"`
-	Stage               string `json:"stage,omitempty"`
-	Reason              string `json:"reason,omitempty"`
-	Owner               string `json:"owner,omitempty"`
-	Branch              string `json:"branch,omitempty"`
-	BeforeProof         string `json:"beforeProof,omitempty"`
-	StableProof         string `json:"stableProof,omitempty"`
-	CandidateContent    string `json:"candidateContent,omitempty"`
-	PreviousContent     string `json:"previousContent,omitempty"`
-	RollbackFailure     string `json:"rollbackFailure,omitempty"`
-	ActivationFailure   string `json:"activationFailure,omitempty"`
-	Predecessor         string `json:"predecessor,omitempty"`
-	PredecessorOriginal string `json:"predecessorOriginal,omitempty"`
-	PredecessorSlot     string `json:"predecessorSlot,omitempty"`
-	ElapsedMS           int64  `json:"elapsedMs,omitempty"`
-	StageElapsedMS      int64  `json:"stageElapsedMs,omitempty"`
-	ActivationElapsedMS int64  `json:"activationElapsedMs,omitempty"`
+	Schema              int           `json:"schemaVersion"`
+	Phase               string        `json:"phase"`
+	Digest              string        `json:"digest"`
+	Marker              string        `json:"marker"`
+	RuntimeBefore       string        `json:"runtimeBefore"`
+	RuntimeAfter        string        `json:"runtimeAfter,omitempty"`
+	GenerationProof     string        `json:"generationProof,omitempty"`
+	Stage               string        `json:"stage,omitempty"`
+	Reason              string        `json:"reason,omitempty"`
+	Owner               string        `json:"owner,omitempty"`
+	Branch              string        `json:"branch,omitempty"`
+	BeforeProof         string        `json:"beforeProof,omitempty"`
+	StableProof         string        `json:"stableProof,omitempty"`
+	CandidateContent    string        `json:"candidateContent,omitempty"`
+	PreviousContent     string        `json:"previousContent,omitempty"`
+	RollbackFailure     string        `json:"rollbackFailure,omitempty"`
+	ActivationFailure   string        `json:"activationFailure,omitempty"`
+	Predecessor         string        `json:"predecessor,omitempty"`
+	PredecessorOriginal string        `json:"predecessorOriginal,omitempty"`
+	PredecessorSlot     string        `json:"predecessorSlot,omitempty"`
+	ElapsedMS           int64         `json:"elapsedMs,omitempty"`
+	StageElapsedMS      int64         `json:"stageElapsedMs,omitempty"`
+	ActivationElapsedMS int64         `json:"activationElapsedMs,omitempty"`
+	ActivationTiming    *StageTimings `json:"activationTiming,omitempty"`
+	RollbackTiming      *StageTimings `json:"rollbackTiming,omitempty"`
 }
 
 type recoveryState struct {
@@ -139,6 +144,9 @@ func readRecoveryReceiptIdentity(dir string) (*recoveryReceipt, string, error) {
 		if v != "" && !recoveryHex(v) {
 			return nil, "", ErrNodeRecoveryRequired
 		}
+	}
+	if ((r.ActivationTiming != nil || r.RollbackTiming != nil) && r.Owner == "") || !validStageTimings(r.ActivationTiming) || !validStageTimings(r.RollbackTiming) || (r.Branch == "metadata" && (r.ActivationTiming != nil || r.RollbackTiming != nil)) || (r.RollbackTiming != nil && (r.Owner != "transaction" || r.Branch != "previous")) {
+		return nil, "", ErrNodeRecoveryRequired
 	}
 	if r.ElapsedMS < 0 || r.ElapsedMS > int64((24*time.Hour)/time.Millisecond) || r.StageElapsedMS < 0 || r.StageElapsedMS > r.ElapsedMS || r.ActivationElapsedMS < 0 || r.ActivationElapsedMS > r.ElapsedMS {
 		return nil, "", ErrNodeRecoveryRequired
@@ -263,6 +271,7 @@ func (m *Manager) recoverySnapshot(ctx context.Context, runtime RecoveryRuntime)
 	}
 	if receipt != nil {
 		s.view.Phase = receipt.Phase
+		s.view.ActivationTiming, s.view.RollbackTiming = receipt.ActivationTiming, receipt.RollbackTiming
 		s.view.Branch, s.view.Stage, s.view.Failure, s.view.ElapsedMS = receipt.Branch, receipt.Stage, receipt.Reason, receipt.ElapsedMS
 		s.view.StageElapsedMS, s.view.ActivationFailure, s.view.ActivationElapsedMS = receipt.StageElapsedMS, receipt.ActivationFailure, receipt.ActivationElapsedMS
 		s.view.RollbackFailure = receipt.RollbackFailure
@@ -402,7 +411,7 @@ func writeRecoveryReceiptWithSync(dir string, receipt *recoveryReceipt, syncFile
 		return "", err
 	}
 	r, identity, err := readRecoveryReceiptIdentity(dir)
-	if err != nil || r == nil || *r != *receipt || identity != ownedIdentity {
+	if err != nil || r == nil || !reflect.DeepEqual(r, receipt) || identity != ownedIdentity {
 		return "", ErrNodeRecoveryRequired
 	}
 	return identity, nil
@@ -457,7 +466,7 @@ func (m *Manager) verifyExistingRecovery(ctx context.Context, digest string, run
 	// Re-read after the verified write as well. This captures concurrent native
 	// writers without treating the panel lock as exclusion of external CLI/cron.
 	final, err := m.recoverySnapshot(ctx, runtime)
-	if err != nil || !final.view.CanVerify || final.runtime != after.runtime || final.generationProof != after.generationProof || final.receipt == nil || *final.receipt != receipt || final.receiptIdentity != ownedIdentity {
+	if err != nil || !final.view.CanVerify || final.runtime != after.runtime || final.generationProof != after.generationProof || final.receipt == nil || !reflect.DeepEqual(*final.receipt, receipt) || final.receiptIdentity != ownedIdentity {
 		return ErrNodeRecoveryRequired
 	}
 	if final.marker != nil {
@@ -469,7 +478,7 @@ func (m *Manager) verifyExistingRecovery(ctx context.Context, digest string, run
 		}
 	}
 	settled, err := m.recoverySnapshot(ctx, runtime)
-	if err != nil || settled.marker != nil || !settled.view.CanVerify || settled.runtime != after.runtime || settled.generationProof != after.generationProof || settled.receiptIdentity != ownedIdentity || settled.receipt == nil || *settled.receipt != receipt {
+	if err != nil || settled.marker != nil || !settled.view.CanVerify || settled.runtime != after.runtime || settled.generationProof != after.generationProof || settled.receiptIdentity != ownedIdentity || settled.receipt == nil || !reflect.DeepEqual(*settled.receipt, receipt) {
 		return ErrNodeRecoveryRequired
 	}
 	if m.completeRecovery(ctx, runtime, &receipt, save) != nil {
@@ -544,7 +553,7 @@ func (m *Manager) completeRecovery(ctx context.Context, runtime RecoveryRuntime,
 		return ErrNodeRecoveryRequired
 	}
 	s, err := m.recoverySnapshot(ctx, runtime)
-	if err != nil || !s.view.CanVerify || s.marker != nil || s.generationProof != receipt.GenerationProof || s.runtime != receipt.RuntimeAfter || s.receiptIdentity != identity || s.receipt == nil || *s.receipt != *receipt {
+	if err != nil || !s.view.CanVerify || s.marker != nil || s.generationProof != receipt.GenerationProof || s.runtime != receipt.RuntimeAfter || s.receiptIdentity != identity || s.receipt == nil || !reflect.DeepEqual(s.receipt, receipt) {
 		return ErrNodeRecoveryRequired
 	}
 	return finishRecoveryCompletion(m.recoveryDir(), receipt.Digest, fence, os.Remove, syncNodeDirectory)
@@ -657,7 +666,9 @@ func (m *Manager) RecoverCurrent(ctx context.Context, digest string, runtime Rec
 		return ErrNodeRecoveryRequired
 	}
 	activation, cancelActivation := context.WithTimeout(ctx, budget.Activation)
+	started := time.Now()
 	err = m.tx.Activator.Restart(activation)
+	recordStageTiming(&receipt.ActivationTiming, "restart", time.Since(started), 0)
 	if err == nil {
 		receipt.Stage = "post-runtime"
 		id, e := runtime.Snapshot(activation)
@@ -670,13 +681,18 @@ func (m *Manager) RecoverCurrent(ctx context.Context, digest string, runtime Rec
 	if err == nil {
 		receipt.Stage = "readiness"
 		if err = save(); err == nil {
-			err = m.tx.Activator.WaitReady(activation)
+			allowance, ready := activationReadiness(activation, m.tx.Activator)
+			started = time.Now()
+			err = ready()
+			recordStageTiming(&receipt.ActivationTiming, "readiness", time.Since(started), allowance)
 		}
 	}
 	if err == nil {
 		receipt.Stage = "inventory"
 		if err = save(); err == nil {
+			started = time.Now()
 			err = m.tx.Activator.VerifyOutboundTags(activation, enabledTags(s.registry))
+			recordStageTiming(&receipt.ActivationTiming, "inventory", time.Since(started), 0)
 		}
 	}
 	cancelActivation()

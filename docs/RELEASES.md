@@ -13,7 +13,7 @@ Protected [run37945046129](https://github.com/popiposter/xkeen-control/actions/r
 
 [PR177](https://github.com/popiposter/xkeen-control/pull/177) delivers [#176](https://github.com/popiposter/xkeen-control/issues/176): bounded in-process ListRule readiness without extra Xray processes, bounded transport establishment and truthful durable failure classes. Exact source review and local FULL bind `39637508529c03fea609eb2ec08b21705dfbc172`; the released merge tree matches. Later documentation changes do not alter released source.
 
-Signed0.4.8 installation and a new controlled subscription transaction remain **NOTRUN**. Signed0.4.7 installation and its separately verified recovery settlement passed, but a later automatic subscription transaction retained a new previous-branch readiness failure. The source repair and publication do not establish its cause or settle that attempt. Controlled resource/client acceptance remains separate; no failed operation may be replayed.
+Signed0.4.8 installation and zero-lifecycle settlement subsequently passed [hardware readback](https://github.com/popiposter/xkeen-control/issues/176#issuecomment-6083701295). One new browser subscription transaction failed readiness in both candidate and rollback branches, retaining a new inspection-required previous-branch receipt. Later VPN health does not settle it. [#179](https://github.com/popiposter/xkeen-control/issues/179) follows up startup allocation and timing; its source changes are not part of this immutable release. Controlled resource/client acceptance remains separate; no failed operation may be replayed.
 
 ## Previous stable 0.4.7
 

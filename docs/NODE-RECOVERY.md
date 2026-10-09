@@ -1,5 +1,24 @@
 # Offline recovery of an interrupted node operation
 
+## Node startup allocation (#179; source, not yet released)
+
+Only the node activation coordinator extends Linux MIPS readiness: it keeps the
+legacy allowance for short phases, and can use up to70seconds when the remaining
+120-second phase leaves50seconds for inventory and local proof budget slack.
+A100-second remainder permits50seconds of readiness;80seconds or less retains
+the legacy30-second limit (or a shorter caller/override). ARM64 and generic
+WaitReady are unchanged. Verify-existing keeps legacy readiness and invokes no
+lifecycle action. Validation, activation, rollback and total ceilings do not grow.
+The5-second local slack is not a wall-clock guarantee for filesystem sync calls.
+
+Optional activationTiming/rollbackTiming record restart, readiness, inventory and
+allocated readiness milliseconds. Missing fields mean unvisited/unrecorded;
+a present zero means a visited sub-millisecond step. No-op/metadata changes add
+no activation timings. Existing durable transitions publish the evidence without
+per-probe writes; later verification preserves the original values. New code
+reads old receipts without timing fields. Older binaries may reject new fields
+under strict decoding: a panel downgrade is not receipt migration authority.
+
 ## Readiness follow-up (#176; signed 0.4.8)
 
 Node transactions and offline recovery use the same in-process, read-only
@@ -13,8 +32,9 @@ Receipts retain safe readiness classes for deadline, cancellation, unavailable
 service, unsupported RPC, permission and protocol failures. Raw RPC details and
 rule contents are not recorded. Successful later verification preserves the
 original activation/rollback failure. Signed [0.4.8](RELEASES.md) passed independent source review, hosted FULL and
-public verification; installation and a new subscription transaction remain
-pending. These changes do not establish the
+public verification. Signed installation and zero-lifecycle settlement passed;
+a later new subscription transaction failed readiness in both branches
+([hardware evidence](https://github.com/popiposter/xkeen-control/issues/176#issuecomment-6083701295)). These changes do not establish the
 cause of earlier hardware failures or prove successful subscription activation.
 
 ## Ordinary transaction proof (#171; signed 0.4.7)
@@ -50,7 +70,7 @@ passed installation and [explicit recovery settlement](https://github.com/popipo
 The later Observatory Apply completed, but a new automatic subscription attempt
 retained a transaction/previous receipt with candidate and rollback readiness
 failures. Healthy VPN afterward does not settle that newer attempt.
-[#176](https://github.com/popiposter/xkeen-control/issues/176) tracks readiness
+[#179](https://github.com/popiposter/xkeen-control/issues/179) tracks startup-budget
 resource bounds and failure classification; subscription hardware acceptance
 remains pending.
 

@@ -514,7 +514,22 @@ func (t Transaction) activateTracked(ctx context.Context, r Registry, j *transac
 				return "generation-drift", errors.Join(xkeen.ErrLifecycleUnknown, ErrNodeRecoveryRequired)
 			}
 		}
-		if err := step.run(); err != nil {
+		run := step.run
+		allowance := time.Duration(0)
+		if step.stage == "readiness" {
+			allowance, run = activationReadiness(ctx, t.Activator)
+		}
+		started := time.Now()
+		err := run()
+		elapsed := time.Since(started)
+		if j != nil {
+			target := &j.r.ActivationTiming
+			if j.r.Branch == "previous" {
+				target = &j.r.RollbackTiming
+			}
+			recordStageTiming(target, step.stage, elapsed, allowance)
+		}
+		if err != nil {
 			return step.stage, err
 		}
 		if j != nil && step.stage == "restart" {
