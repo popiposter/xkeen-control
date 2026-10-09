@@ -60,6 +60,35 @@ func TestVerifyExistingLegacyProofNoLifecycleAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestVerifyExistingRejectsActualPriorReceiptHistory(t *testing.T) {
+	m, a, r := recoveryFixture(t)
+	prior := &recoveryReceipt{Schema: 1, Phase: "completed", Digest: strings.Repeat("d", 64), Marker: strings.Repeat("f", 64), RuntimeBefore: strings.Repeat("c", 64), RuntimeAfter: r.identity}
+	if err := saveRecoveryReceipt(m.recoveryDir(), prior); err != nil {
+		t.Fatal(err)
+	}
+	// A later operation's marker differs from the old completed receipt. The
+	// real pre-intent digest includes that old receipt and its inode identity.
+	s, err := m.recoverySnapshot(context.Background(), r)
+	if err != nil || !s.view.CanActivate || s.markerDigest == prior.Marker {
+		t.Fatal(s.view, err)
+	}
+	intent := &recoveryReceipt{Schema: 1, Phase: "activation-intent", Digest: s.view.Digest, Marker: s.markerDigest, RuntimeBefore: r.identity}
+	if err = saveRecoveryReceipt(m.recoveryDir(), intent); err != nil {
+		t.Fatal(err)
+	}
+	r.identity = strings.Repeat("b", 64)
+	v, err := m.InspectRecovery(context.Background(), r)
+	if err != nil || v.CanVerify || v.CanActivate || v.Reason != "generation-or-runtime-unproven" {
+		t.Fatal(v, err)
+	}
+	if m.VerifyExistingRecovery(context.Background(), v.Digest, r) == nil || a.restarts != 0 || a.readyCalls != 0 || a.validatedPath != "" {
+		t.Fatal("unavailable prior receipt was guessed")
+	}
+	if !RecoveryNeedsInspection(m.recoveryDir()) {
+		t.Fatal("historical mismatch lost fence")
+	}
+}
+
 func TestVerifyExistingRejectsDriftAndUnprovenHistory(t *testing.T) {
 	for _, scenario := range []string{"bytes", "equal-byte-inode", "previous", "absence", "added-config", "removed-config", "marker", "runtime-before", "runtime-old", "runtime-stopped", "runtime-unknown", "malformed-hash", "prior-receipt", "receipt-inode", "stale-preview", "readiness", "inventory", "writer", "cancel"} {
 		t.Run(scenario, func(t *testing.T) {
