@@ -1,5 +1,37 @@
 # Offline recovery of an interrupted node operation
 
+## Ordinary transaction proof (#171; source qualification pending)
+
+Node changes and explicit runtime reconciliation now use the same protected
+receipt and completion fence as offline recovery. A receipt distinguishes the
+candidate from a restored previous generation, retains activation and rollback
+failure stages separately, and binds native configuration, registry, marker and
+process identity. An unchanged subscription creates no transaction; metadata
+changes do not restart Xray or rewrite outbounds. Scheduling and deadlines stay
+unchanged. The fixed inspection CLI reports sanitized stages and elapsed times.
+
+Rollback may restart only after restoration and its readback succeed. Unknown
+native outcomes retain inspection-required state without another lifecycle call.
+New recorded attempts support explicit zero-lifecycle verification of their own
+branch proof. A stopped metadata continuation verifies unchanged files/process
+state without requiring Xray's API. Fresh recovery after a completed predecessor
+records direct generation proof before activation. Two fixed predecessor slots
+preserve the currently referenced receipt while staging its successor; storage
+is bounded and there is no subscription-content history.
+
+This source change cannot prove an older unrecorded transaction from equal
+current/previous files or healthy VPN traffic. Such a case remains blocked
+pending a separately approved new activation of the inspected current generation.
+Never remove the marker or replay the historical action.
+
+Signed0.4.6 installation and the original explicit verification passed
+[hardware readback](https://github.com/popiposter/xkeen-control/issues/168#issuecomment-6080313195).
+A later automatic subscription operation created a different unresolved marker;
+the [resource experiment](https://github.com/popiposter/xkeen-control/issues/157#issuecomment-6080560450)
+stopped before Save/Apply. These are separate outcomes. #171 is not yet installed
+or hardware-qualified.
+
+
 Signed 0.4.5 retains [#158](https://github.com/popiposter/xkeen-control/issues/158),
 first delivered in 0.4.3, and adds [durable panel update outcomes](OPERATIONS.md#durable-update-outcomes-162).
 Source review, local/hosted FULL and signed publication passed. One hardware
@@ -77,8 +109,8 @@ No reboot, WAN opening or native code patch is part of this procedure.
 
 ## Verify an existing attempt (#168; signed 0.4.6)
 
-Signed0.4.6 adds a separate offline action for a retained attempt. Its hardware
-settlement remains NOTRUN:
+Signed0.4.6 adds a separate offline action for a retained attempt. The original
+hardware settlement passed; it does not settle later transactions:
 
 ```sh
 /opt/sbin/xkeen-control nodes recovery inspect

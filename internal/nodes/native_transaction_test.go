@@ -50,7 +50,11 @@ func testNativeTimeout(t *testing.T, fallback bool) {
 	if err := store.Save(old); err != nil {
 		t.Fatal(err)
 	}
-	active := filepath.Join(dir, "04_outbounds.json")
+	configDir := filepath.Join(dir, "configs")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	active := filepath.Join(configDir, "04_outbounds.json")
 	before, _ := Render(old)
 	if err := os.WriteFile(active, before, 0600); err != nil {
 		t.Fatal(err)
@@ -137,7 +141,11 @@ func TestMetadataChangesPreserveRuntimeBytesAndNeverRestart(t *testing.T) {
 	if err := store.Save(old); err != nil {
 		t.Fatal(err)
 	}
-	active := filepath.Join(dir, "04_outbounds.json")
+	configDir := filepath.Join(dir, "configs")
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	active := filepath.Join(configDir, "04_outbounds.json")
 	before, _ := Render(old)
 	before = append([]byte("// untouched native comment\n"), before...)
 	if err := os.WriteFile(active, before, 0600); err != nil {

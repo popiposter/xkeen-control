@@ -12,7 +12,11 @@ import (
 func TestTransactionNativePreservationAndConcurrentEdit(t *testing.T) {
 	for _, concurrent := range []bool{false, true} {
 		dir := t.TempDir()
-		active := filepath.Join(dir, "04_outbounds.json")
+		configDir := filepath.Join(dir, "configs")
+		if err := os.MkdirAll(configDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		active := filepath.Join(configDir, "04_outbounds.json")
 		initial := []byte(`{"extension":true,"outbounds":[{"tag":"custom","protocol":"freedom"}]}`)
 		if err := os.WriteFile(active, initial, 0600); err != nil {
 			t.Fatal(err)
@@ -28,7 +32,7 @@ func TestTransactionNativePreservationAndConcurrentEdit(t *testing.T) {
 		if concurrent {
 			activator.validate = func(context.Context) error { return os.WriteFile(active, changed, 0600) }
 		}
-		tx := Transaction{Store: store, ActiveOutboundsPath: active, ConfigDir: dir, PreviousDir: filepath.Join(t.TempDir(), "previous"), Activator: activator}
+		tx := Transaction{Store: store, ActiveOutboundsPath: active, ConfigDir: configDir, PreviousDir: filepath.Join(t.TempDir(), "previous"), Activator: activator}
 		err := tx.Apply(context.Background(), next)
 		got, _ := os.ReadFile(active)
 		if concurrent {

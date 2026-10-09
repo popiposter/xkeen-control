@@ -8,7 +8,9 @@ Architecture belongs in the active GitHub issue; implementation details belong i
 
 ### Operator / owner
 
-Chooses priorities, authorizes risky production actions and explicitly authorizes merge.
+Chooses priorities and authorizes risky production actions. The standing operator
+authority in `AGENTS.md` covers required checks, independently reviewed merges
+and necessary protected signed releases without repeated confirmation.
 
 ### Architecture / review agent
 
@@ -21,12 +23,15 @@ Owns framing, architecture, sequencing and review quality:
 5. put concrete `P1`/`P2` findings in the PR;
 6. keep blocking PRs Draft;
 7. record `APPROVED / READY TO MERGE` only when clean;
-8. merge only after explicit operator authorization;
+8. merge under the standing operator authority unless the current task restricts it;
 9. refresh roadmap/master planning after merge.
 
 ### Implementation agent
 
-Owns code, tests, build/release artifacts and bounded qualification. It does not own the architecture contract and does not merge its own work.
+Owns code, tests, build/release artifacts and bounded qualification. It does not
+self-approve its architecture or implementation. The coordinating agent may
+merge its work after independent exact-HEAD approval and required qualification,
+under the standing operator authority in `AGENTS.md`.
 
 ## Slice lifecycle
 
@@ -86,7 +91,10 @@ Docs-only changes use proportional checks: links/references/Markdown consistency
 
 When no blocking finding remains, record `APPROVED / READY TO MERGE` and mark Ready.
 
-Merge only after explicit operator command and only if the approved HEAD has not moved. Prefer squash for feature/review series.
+Merge under the standing operator authority in `AGENTS.md` only if the independently
+approved HEAD has not moved and required qualification has passed. Do not request
+another operator command unless the current task restricts merge. Prefer squash
+for feature/review series.
 
 ### 7. Post-merge
 
@@ -99,6 +107,12 @@ Immediately:
 - refresh the next active issue against the new `main`.
 
 ## Public repository / release discipline
+
+Necessary releases for requested work are authorized by the standing operator
+authority in `AGENTS.md`. Run required checks and the protected release workflow
+without a separate permission prompt. Preserve independent review, exact source
+and artifact verification; failed or ambiguous runs do not authorize automatic
+retry or manual publication repair. Platform approval controls remain binding.
 
 `popiposter/xkeen-control` is the public source/release authority. Development qualification is local; the protected manual Release workflow is the only GitHub Actions workflow. The historical `popiposter/xkeen-keenetic` repository is private quarantine/history only and its Git history must never be imported here.
 
@@ -116,7 +130,6 @@ Implementation agents may perform only mutations authorized by the active issue.
 Without explicit issue/operator authority, do not:
 
 ```text
-merge
 rewrite shared history
 rotate production credentials
 opkg upgrade

@@ -5,6 +5,7 @@ package nodes
 import (
 	"context"
 	"errors"
+	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,6 +55,11 @@ func TestProcessRecoveryUsesNativeEnvironmentIdentityAndRefusesCron(t *testing.T
 	if _, err := r.Snapshot(context.Background()); err == nil {
 		t.Fatal("cron conflict ignored")
 	}
+	live, e := readLiveRuntimeIdentity(context.Background(), &xkeen.ConfigEditor{ProcRoot: root, XrayBinary: binary, Dir: config})
+	if e != nil || live != next {
+		t.Fatal("live process reader applied offline cron exclusion", e)
+	}
+
 	os.Remove(filepath.Join(cron, "cmdline"))
 	if _, err := r.Snapshot(context.Background()); err == nil {
 		t.Fatal("unknown process accepted")

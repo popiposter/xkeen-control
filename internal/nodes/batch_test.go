@@ -219,6 +219,7 @@ func TestBatchRemoveKeepsSubscriptionsAndIsOrderIndependent(t *testing.T) {
 func TestBatchActivationFailureUsesExistingCompleteRollback(t *testing.T) {
 	registry := batchRegistry(t)
 	manager, store, _ := testManager(t, &registry, nil)
+	seedNativeFixture(t, manager)
 	activator := &batchFailingActivator{}
 	manager.tx.Activator = activator
 	preview, err := manager.PreviewBatchState("csrf", []string{"node-11111111", "node-33333333"}, false)

@@ -33,10 +33,14 @@ func testManager(t *testing.T, registry *Registry, fetcher SubscriptionFetcher) 
 	dir := t.TempDir()
 	store := Store{Path: filepath.Join(dir, "secrets", "nodes.json")}
 	active := filepath.Join(dir, "xray", "04_outbounds.json")
+	if err := atomicWrite(filepath.Join(filepath.Dir(active), "05_routing.json"), []byte(`{"routing":{"rules":[]}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if registry != nil {
 		if err := store.Save(*registry); err != nil {
 			t.Fatal(err)
 		}
+
 	}
 	manager := NewManager(Config{
 		Store:   store,
@@ -138,7 +142,9 @@ func (*gateRollbackBudgetActivator) WaitReady(context.Context) error            
 func (*gateRollbackBudgetActivator) VerifyOutboundTags(context.Context, []string) error { return nil }
 
 func TestApplyGateWaitDoesNotConsumeRollbackBudget(t *testing.T) {
-	manager, _, _ := testManager(t, nil, nil)
+	before := NewRegistry()
+	manager, _, _ := testManager(t, &before, nil)
+	seedNativeFixture(t, manager)
 	manager.gateTimeout = 2 * time.Second
 	activator := &gateRollbackBudgetActivator{}
 	manager.tx.Activator = activator
