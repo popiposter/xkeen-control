@@ -23,4 +23,8 @@ DNS validation happens before native config commit; synchronization follows veri
 
 ## Navigation and tests
 
+[Router resource limits](ROUTER-RESOURCES.md) govern hardware-derived speed-test
+budgets, pressure cancellation and native periodic-test conflicts. Measurements
+retain the existing coordinator/probe cleanup owner; they do not own recovery.
+
 [Editors](CONFIG-EDITOR-WORKFLOWS.md), [nodes](NODE-LIFECYCLE.md), [transfer](NATIVE-TRANSFER.md), [Telegram](TELEGRAM-CONTROL.md), [UI design](UI-DESIGN.md), [development gate](DEVELOPMENT.md). Retired appliance/Setup/component APIs are not current product surfaces. Their original contract is [historical](archive/CONTROL-PLANE-before-0.3.1-cleanup.md).

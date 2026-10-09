@@ -6,6 +6,8 @@ import (
 	"math"
 	"sort"
 	"time"
+
+	"github.com/popiposter/xkeen-control/internal/resourcepolicy"
 )
 
 const (
@@ -166,9 +168,17 @@ type AdaptiveMeasurementTransport = BandwidthMeasurementTransport
 // ProbeRouter ownership used by Slice D. A transport failure invalidates one
 // candidate, while cancellation or cleanup failure terminates the generation.
 type AdaptiveRunner struct {
+	Resources *resourcepolicy.Guard
 	Probe     *ProbeRouter
 	Transport BandwidthMeasurementTransport
 	Now       func() time.Time
+}
+
+func (r *AdaptiveRunner) Limits(broad bool) resourcepolicy.Limits {
+	if r != nil && r.Resources != nil {
+		return r.Resources.Profile.Comparison(broad)
+	}
+	return (resourcepolicy.Profile{}).Comparison(broad)
 }
 
 func NewAdaptiveRunner(probe *ProbeRouter) *AdaptiveRunner {
@@ -203,9 +213,10 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 	if generation.NativeQuality {
 		candidateLimit = NativeQualityMaxAttempts
 	}
-	maxCandidates, maxBytes, maxWall := AdaptiveMaxCandidates, int64(AdaptiveMaxGenerationBytes), AdaptiveMaxGenerationWallTime
+	limits := r.Limits(generation.NativeQuality && generation.BroadSample)
+	maxCandidates, maxWall := limits.Candidates, limits.Wall()
 	if generation.NativeQuality && generation.BroadSample {
-		candidateLimit, maxCandidates, maxBytes, maxWall = NativeQualityBroadAttempts, NativeQualityBroadCandidates, NativeQualityBroadBytes, NativeQualityBroadWallTime
+		candidateLimit = limits.Attempts
 	}
 	emit := func() {
 		if publish != nil {
@@ -235,9 +246,18 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 		transport = newFixedMeasurementTransport()
 	}
 
-	generationContext, cancelGeneration := context.WithTimeout(parent, maxWall)
+	generationContext, cancelGeneration := context.WithTimeout(parent, maxWall-AdaptiveCleanupReserve)
 	defer cancelGeneration()
+	guarded, stop, admissionErr := r.Resources.Start(generationContext)
+	if admissionErr != nil {
+		return finishEarly("failed", resourceReason(admissionErr))
+	}
+	defer stop()
+	generationContext = guarded
 	queue := append(append([]AdaptiveCandidateInput(nil), generation.Candidates...), generation.Fallbacks...)
+	if len(queue) > limits.Attempts {
+		queue = queue[:limits.Attempts]
+	}
 	for _, input := range queue {
 		if generation.NativeQuality && countAdaptiveValid(result.Candidates) >= len(generation.Candidates) {
 			break
@@ -255,7 +275,7 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 			result.ReasonCode = AdaptiveReasonGenerationBudget
 			break
 		}
-		if !adaptiveCanAdmitCandidate(generationContext, result.AggregateBytes, maxBytes) {
+		if !canAdmitResourceCandidate(generationContext, result.AggregateBytes, limits) {
 			result.State = "failed"
 			if generation.NativeQuality && countAdaptiveValid(result.Candidates) >= 2 {
 				result.State = "completed"
@@ -265,12 +285,14 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 		}
 
 		candidateContext, cancelCandidate := context.WithTimeout(generationContext, AdaptiveWorkTimeout)
-		execution := &adaptiveExecution{transport: transport}
+		execution := &adaptiveExecution{transport: transport, limits: limits}
 		probeErr := r.Probe.WithTarget(candidateContext, AdaptiveMode, input.Tag, func(probeContext context.Context) error {
 			return execution.run(probeContext)
 		})
 		candidateErr := candidateContext.Err()
 		cancelCandidate()
+		// Account traffic before any cancellation or cleanup terminal branch.
+		result.AggregateBytes += execution.bytes
 
 		if r.Probe.Blocked() || errors.Is(probeErr, ErrProbeCleanup) || errors.Is(probeErr, ErrProbeBlocked) {
 			result.State = "cleanup-pending"
@@ -279,6 +301,10 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 			status.ReasonCode = result.ReasonCode
 			status.CompletedAt = adaptiveNow(r)
 			emit()
+			break
+		}
+		if cause := context.Cause(generationContext); errors.Is(cause, resourcepolicy.ErrPressure) || errors.Is(cause, resourcepolicy.ErrTelemetry) {
+			result.State, result.ReasonCode = "failed", resourceReason(cause)
 			break
 		}
 		if err := parent.Err(); err != nil {
@@ -303,13 +329,6 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 			UploadBPS:     execution.uploadBPS,
 			Valid:         probeErr == nil && candidateErr == nil && finitePositive(execution.downloadBPS) && finitePositive(execution.uploadBPS),
 			ErrorCode:     classifyAdaptiveCandidateError(probeErr, candidateErr, execution),
-		}
-		if candidate.Valid {
-			result.AggregateBytes += execution.bytes
-		} else if result.AggregateBytes+execution.bytes <= maxBytes {
-			// Invalid transport bytes are still bounded accounting; they never
-			// become score evidence or a persistence input.
-			result.AggregateBytes += maxInt64(execution.bytes, 0)
 		}
 		result.Candidates = append(result.Candidates, candidate)
 		if generation.NativeQuality {
@@ -351,6 +370,7 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 }
 
 type adaptiveExecution struct {
+	limits      resourcepolicy.Limits
 	transport   BandwidthMeasurementTransport
 	bytes       int64
 	downloadBPS float64
@@ -361,17 +381,46 @@ func (e *adaptiveExecution) run(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	download, err := e.runDirection(ctx, adaptiveDownloadStages[:], e.transport.Download)
+	down, up := e.limits.Download, e.limits.Upload
+	if down == nil {
+		down, up = adaptiveDownloadStages[:], adaptiveUploadStages[:]
+	}
+	download, err := e.runDirection(ctx, down, e.transport.Download)
 	if err != nil {
 		return err
 	}
 	e.downloadBPS = download
-	upload, err := e.runDirection(ctx, adaptiveUploadStages[:], e.transport.Upload)
+	upload, err := e.runDirection(ctx, up, e.transport.Upload)
 	if err != nil {
 		return err
 	}
 	e.uploadBPS = upload
 	return nil
+}
+
+func resourceReason(err error) string {
+	if errors.Is(err, resourcepolicy.ErrExternalBenchmark) {
+		return "native-speed-conflict"
+	}
+	if errors.Is(err, resourcepolicy.ErrPressure) {
+		return "resource-pressure"
+	}
+	if errors.Is(err, resourcepolicy.ErrTelemetry) {
+		return "resource-telemetry-unavailable"
+	}
+	return AdaptiveReasonCancelled
+}
+
+func canAdmitResourceCandidate(ctx context.Context, used int64, limits resourcepolicy.Limits) bool {
+	var bytes int64
+	for _, n := range limits.Download {
+		bytes += n
+	}
+	for _, n := range limits.Upload {
+		bytes += n
+	}
+	deadline, ok := ctx.Deadline()
+	return used >= 0 && used <= limits.Bytes-bytes && ok && time.Until(deadline) >= AdaptiveWorkTimeout
 }
 
 func (e *adaptiveExecution) runDirection(ctx context.Context, stages []int64, transfer func(context.Context, int64) (ManualTransfer, error)) (float64, error) {
@@ -649,7 +698,7 @@ func safeAdaptiveReason(reason string) string {
 		AdaptiveReasonGenerationBudget, AdaptiveReasonCancelled, AdaptiveReasonCleanupPending,
 		AdaptiveReasonStaleGeneration, AdaptiveReasonCurrentInvalid, AdaptiveReasonNoChallenger,
 		AdaptiveReasonMinimumDwell, AdaptiveReasonHysteresis, AdaptiveReasonNoSwitch,
-		AdaptiveReasonAdaptiveQuality:
+		AdaptiveReasonAdaptiveQuality, "resource-pressure", "resource-telemetry-unavailable", "native-speed-conflict":
 		return reason
 	default:
 		return AdaptiveReasonUnavailable

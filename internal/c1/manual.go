@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/popiposter/xkeen-control/internal/resourcepolicy"
 )
 
 const (
@@ -83,6 +85,7 @@ type ManualMeasurementTransport interface {
 // ManualPerformanceStatus is the bounded RAM-only projection for one manual
 // diagnostic. It contains only a safe node identity and fixed-plan metrics.
 type ManualPerformanceStatus struct {
+	MaxWallSeconds   int       `json:"maxWallSeconds"`
 	Mode             string    `json:"mode"`
 	State            string    `json:"state"`
 	Phase            string    `json:"phase"`
@@ -107,6 +110,14 @@ type ManualNodeRunner struct {
 	Probe     *ProbeRouter
 	Transport ManualMeasurementTransport
 	Now       func() time.Time
+	Resources *resourcepolicy.Guard
+}
+
+func (r *ManualNodeRunner) Limits() resourcepolicy.Limits {
+	if r != nil && r.Resources != nil {
+		return r.Resources.Profile.Manual()
+	}
+	return (resourcepolicy.Profile{}).Manual()
 }
 
 func NewManualNodeRunner(probe *ProbeRouter) *ManualNodeRunner {
@@ -122,14 +133,16 @@ func (r *ManualNodeRunner) Run(parent context.Context, node NodeState, publish f
 		now = r.Now
 	}
 	started := now().UTC()
+	limits := r.Limits()
 	validTarget := validManualNode(node)
 	status := ManualPerformanceStatus{
-		Mode:          ManualMode,
-		State:         "running",
-		Phase:         "latency",
-		StartedAt:     started,
-		PlannedStages: ManualPlannedStages,
-		BytesPlanned:  ManualMaxDownloadBytes + ManualMaxUploadBytes,
+		MaxWallSeconds: limits.Seconds,
+		Mode:           ManualMode,
+		State:          "running",
+		Phase:          "latency",
+		StartedAt:      started,
+		PlannedStages:  ManualLatencySamples + len(limits.Download) + len(limits.Upload),
+		BytesPlanned:   limits.Bytes,
 	}
 	if validTarget {
 		status.TargetNodeID = node.ID
@@ -152,10 +165,27 @@ func (r *ManualNodeRunner) Run(parent context.Context, node NodeState, publish f
 	if transport == nil {
 		transport = newFixedManualTransport()
 	}
-	workContext, cancel := context.WithTimeout(parent, ManualWorkTimeout)
+	workContext, cancel := context.WithTimeout(parent, limits.Wall()-ManualCleanupReserve)
 	defer cancel()
+	guarded, stop, admissionErr := r.Resources.Start(workContext)
+	if admissionErr != nil {
+		state, code := manualContextOutcome(admissionErr, workContext)
+		if errors.Is(admissionErr, resourcepolicy.ErrExternalBenchmark) {
+			state, code = "failed", "native-speed-conflict"
+		}
+		if errors.Is(admissionErr, resourcepolicy.ErrPressure) {
+			state, code = "failed", "resource-pressure"
+		}
+		if errors.Is(admissionErr, resourcepolicy.ErrTelemetry) {
+			state = "failed"
+			code = "resource-telemetry-unavailable"
+		}
+		return manualTerminal(status, state, "done", code, emit)
+	}
+	defer stop()
+	workContext = guarded
 
-	execution := &manualExecution{status: &status, emit: emit, transport: transport}
+	execution := &manualExecution{status: &status, emit: emit, transport: transport, limits: limits}
 	err := r.Probe.WithTarget(workContext, "manual-node", node.Tag, func(probeContext context.Context) error {
 		return execution.run(probeContext)
 	})
@@ -168,8 +198,21 @@ func (r *ManualNodeRunner) Run(parent context.Context, node NodeState, publish f
 		emit()
 		return status
 	}
+	if cause := context.Cause(workContext); errors.Is(cause, resourcepolicy.ErrPressure) || errors.Is(cause, resourcepolicy.ErrTelemetry) {
+		status.State, status.Phase, status.CurrentStage = "failed", "done", ""
+		status.ErrorCode = resourceReason(cause)
+		status.ElapsedMS = elapsedMilliseconds(started, now())
+		emit()
+		return status
+	}
 	if err != nil && status.State == "running" {
 		state, code := manualContextOutcome(err, workContext)
+		if errors.Is(context.Cause(workContext), resourcepolicy.ErrPressure) {
+			code = "resource-pressure"
+		}
+		if errors.Is(context.Cause(workContext), resourcepolicy.ErrTelemetry) {
+			code = "resource-telemetry-unavailable"
+		}
 		status.State = state
 		status.Phase = "done"
 		status.CurrentStage = ""
@@ -194,6 +237,7 @@ func (r *ManualNodeRunner) Run(parent context.Context, node NodeState, publish f
 }
 
 type manualExecution struct {
+	limits    resourcepolicy.Limits
 	status    *ManualPerformanceStatus
 	emit      func()
 	transport ManualMeasurementTransport
@@ -245,12 +289,19 @@ func (e *manualExecution) run(ctx context.Context) error {
 		e.setFirstError("latency-failed")
 	}
 
-	if err := e.runDirection(ctx, "download", manualDownloadStages[:], func(stageContext context.Context, payload int64) (ManualTransfer, error) {
+	download, upload := e.limits.Download, e.limits.Upload
+	if download == nil {
+		download = manualDownloadStages[:]
+	}
+	if upload == nil {
+		upload = manualUploadStages[:]
+	}
+	if err := e.runDirection(ctx, "download", download, func(stageContext context.Context, payload int64) (ManualTransfer, error) {
 		return e.transport.Download(stageContext, payload)
 	}); err != nil {
 		return err
 	}
-	if err := e.runDirection(ctx, "upload", manualUploadStages[:], func(stageContext context.Context, payload int64) (ManualTransfer, error) {
+	if err := e.runDirection(ctx, "upload", upload, func(stageContext context.Context, payload int64) (ManualTransfer, error) {
 		return e.transport.Upload(stageContext, payload)
 	}); err != nil {
 		return err
@@ -303,7 +354,11 @@ func (e *manualExecution) runDirection(ctx context.Context, direction string, st
 			reportedBytes = payload
 			err = errors.New("oversized transfer result")
 		}
-		remaining := ManualMaxDownloadBytes + ManualMaxUploadBytes - e.status.BytesTransferred
+		planned := e.status.BytesPlanned
+		if planned == 0 {
+			planned = ManualMaxDownloadBytes + ManualMaxUploadBytes
+		}
+		remaining := planned - e.status.BytesTransferred
 		if reportedBytes > remaining {
 			reportedBytes = maxInt64(remaining, 0)
 			err = errors.New("manual transfer ceiling exceeded")

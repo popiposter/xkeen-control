@@ -76,6 +76,41 @@ func NewReader() Reader {
 	}
 }
 
+// NativeSpeedConflict is a bounded read, not exclusion of external cron/CLI.
+// Recognize even redirected native invocations conservatively, without exposing
+// arbitrary cron contents in the panel projection.
+func (r Reader) NativeSpeedConflict() (bool, error) {
+	path := r.CronPath
+	if path == "" {
+		path = "/opt/var/spool/cron/crontabs/root"
+	}
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxCronSize+1))
+	if err != nil {
+		return false, err
+	}
+	if len(data) > maxCronSize {
+		return false, io.ErrShortBuffer
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.Contains(line, "xkeen") && strings.Contains(line, "-sbt") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (r Reader) Snapshot(ctx context.Context) Snapshot {
 	_ = ctx
 	if r.ProcRoot == "" {

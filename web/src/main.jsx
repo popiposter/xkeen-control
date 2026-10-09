@@ -178,6 +178,9 @@ const manualPhaseLabels = {
   done: 'Done',
 }
 const manualErrorLabels = {
+  'resource-pressure': 'Stopped because the router is busy or memory is low. Partial measurements are retained.',
+  'resource-telemetry-unavailable': 'Router load could not be checked safely. No further test traffic was sent.',
+  'native-speed-conflict': 'A native periodic speed test is configured. Quiesce it before running another test.',
   'invalid-target': 'The selected node is no longer enabled or available.',
   'runtime-busy': 'The runtime is busy with another operation.',
   'probe-unavailable': 'The diagnostic probe is unavailable.',
@@ -828,7 +831,7 @@ function ManualPerformanceCard({ status, node }) {
     <div className="manual-performance-target"><span>Target</span><strong>{visibleNodeName(node) || 'Unavailable'}</strong>{status.targetNodeId && <code>{status.targetNodeId}</code>}{status.targetTag && <code>{status.targetTag}</code>}</div>
     <div className="manual-progress-grid">
       <div><span>Stages</span><strong>{status.completedStages || 0} / {status.plannedStages || 0}</strong></div>
-      <div><span>Bytes</span><strong>{formatManualBytes(status.bytesTransferred)} / {formatManualBytes(status.bytesPlanned)}</strong></div>
+      <div><span>Bytes</span><strong>{formatManualBytes(status.bytesTransferred)} / {formatManualBytes(status.bytesPlanned)}</strong>{status.maxWallSeconds > 0 && <small>Up to {status.maxWallSeconds} seconds including cleanup</small>}</div>
       <div><span>Latency</span><strong>{formatAdaptiveLatency(status.latencyMs)}</strong></div>
       <div><span>Download</span><strong>{formatManualRate(status.downloadBps)}</strong></div>
       <div><span>Upload</span><strong>{formatManualRate(status.uploadBps)}</strong></div>
