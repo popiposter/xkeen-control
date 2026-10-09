@@ -10,7 +10,7 @@ includes the MIPS soft-float panel. Source review, hosted FULL, exact ten-file
 public verification, both signatures and actual published MIPS emulated startup
 passed; see [release evidence](RELEASES.md). Signed0.4.5 installation and native
 preservation passed on KN1810; its node activation failed with retained intent.
-Signed0.4.6 and0.4.7 installation and their separately verified recovery settlements passed. A later automatic subscription transaction retained a new previous-branch readiness failure. Signed0.4.8 delivers the readiness repair, but its installation and new subscription transaction acceptance remain NOTRUN. Broader RSS/auth/PTY/LAN acceptance remains incomplete. Stable0.4.0
+Signed0.4.6 and0.4.7 installation and their separately verified recovery settlements passed. A later automatic subscription transaction retained a new previous-branch readiness failure. Signed0.4.8 installation and zero-lifecycle settlement passed; a new subscription transaction failed both readiness phases and retained an inspection-required receipt ([evidence](https://github.com/popiposter/xkeen-control/issues/176#issuecomment-6083701295)). Startup-budget follow-up #179 remains source-only. Broader RSS/auth/PTY/LAN acceptance remains incomplete. Stable0.4.0
 remains ARM64-only. No unsigned binary copy, architecture override, signature
 bypass or modification of0.4.0 assets. Fresh
 `--setup` remains unsupported for KN1810 and existing installations.
@@ -56,9 +56,9 @@ Keep private credentials and backup contents out of chat/public evidence.
 For an existing older panel helper, 0.4.8 provides the separate
 [verified maintenance delivery](OPERATIONS.md#durable-update-outcomes-162) path.
 The observed 0.4.3 attempt rolled back to 0.4.2; do not replay that old updater
-or treat a transient candidate version as successful installation. Actual 0.4.8
-installation and the next controlled subscription transaction remain NOTRUN;
-earlier signed installation/recovery evidence cannot settle the new marker.
+or treat a transient candidate version as successful installation. Actual0.4.8 installation passed, but the next subscription transaction failed
+readiness; earlier signed installation/recovery evidence cannot settle its new
+marker. Follow [the current recovery boundary](NODE-RECOVERY.md).
 
 ## Validation and prerequisite repair delivered in0.4.2 (#154)
 

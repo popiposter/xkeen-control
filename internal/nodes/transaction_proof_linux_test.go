@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -284,7 +285,7 @@ func TestPredecessorStagingFailurePreservesCurrentReference(t *testing.T) {
 		t.Fatal("fault ignored")
 	}
 	after, e := m.recoverySnapshot(context.Background(), r)
-	if e != nil || !after.view.CanActivate || *after.receipt != *before {
+	if e != nil || !after.view.CanActivate || !reflect.DeepEqual(after.receipt, before) {
 		t.Fatal("prior proof destroyed", after.view, e)
 	}
 	if a.restarts != 2 {

@@ -69,7 +69,12 @@ readiness failure. [#176](https://github.com/popiposter/xkeen-control/issues/176
 is delivered in [PR177](https://github.com/popiposter/xkeen-control/pull/177)
 and signed0.4.8: bounded in-process readiness and truthful failure classification.
 Independent review, local/hosted FULL and public verification passed; signed0.4.8
-installation and a new subscription transaction remain pending. The Observatory experiment applied,
+installation and zero-lifecycle settlement passed [hardware readback](https://github.com/popiposter/xkeen-control/issues/176#issuecomment-6083701295).
+One new browser subscription transaction failed both candidate and rollback
+readiness; the working runtime returned, but the new previous-branch receipt
+remains inspection-required. [#179](https://github.com/popiposter/xkeen-control/issues/179)
+adds a MIPS activation-phase allowance within existing budgets and bounded stage
+timing; this source slice is not yet released or hardware-qualified. The Observatory experiment applied,
 but its first resource sample overlapped that automatic transaction. Later quiet
 measurements are observational, not controlled causal proof; see the
 [resource follow-up](https://github.com/popiposter/xkeen-control/issues/157#issuecomment-6082714508).
