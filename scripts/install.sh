@@ -67,6 +67,12 @@ if [ "$TEST_MODE" != "1" ]; then
 	[ "$(id -u)" = "0" ] || fail "root is required"
 fi
 [ -d "$OPT_ROOT" ] || fail "/opt is required"
+if [ -e "$STATE_DIR/panel-update-active.json" ] || [ -L "$STATE_DIR/panel-update-active.json" ]; then
+	fail "panel update requires receipt inspection; installer will not replay it"
+fi
+if [ -e "$STATE_DIR/panel-update-result.json" ] || [ -L "$STATE_DIR/panel-update-result.json" ]; then
+	[ -x "$BIN" ] && "$BIN" self-update inspect >/dev/null 2>&1 || fail "panel update result requires inspection"
+fi
 command -v opkg >/dev/null 2>&1 || fail "Entware opkg is required"
 [ -w "$OPT_ROOT" ] || fail "/opt is not writable"
 
@@ -118,6 +124,11 @@ need_tool curl curl
 need_tool jq jq
 need_tool sha256sum coreutils-sha256sum
 need_tool stat coreutils-stat
+need_tool sync coreutils-sync
+need_tool timeout coreutils-timeout
+# Check semantics, not just command presence: BusyBox sync may lack -f.
+sync -f "$(command -v sync)" && sync -f "$OPT_ROOT" || fail "file/directory sync -f required; install coreutils-sync and select /opt/bin/sync"
+timeout -k 1 1 true || fail "bounded timeout -k support required; install coreutils-timeout"
 
 validate_buildinfo_json() {
 	jq -e -s '

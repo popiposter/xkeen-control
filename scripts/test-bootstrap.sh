@@ -220,7 +220,8 @@ done
 missing_bin="$tmp/missing-bin"
 missing_root="$tmp/missing-stat"
 mkdir -p "$missing_bin" "$missing_root/opt" "$missing_root/tmp"
-for tool in id grep awk sha256sum; do ln -s "$(command -v "$tool")" "$missing_bin/$tool"; done
+for tool in id grep awk sha256sum sync timeout; do ln -s "$(command -v "$tool")" "$missing_bin/$tool"; done
+ln -s /bin/true "$missing_bin/true"
 for tool in uname df curl; do cp "$fakebin/$tool" "$missing_bin/$tool"; done
 printf '#!/bin/sh\nexit 1\n' > "$missing_bin/jq"
 cat > "$missing_bin/opkg" <<'EOF_MISSING_OPKG'
@@ -262,6 +263,11 @@ fi
 [ ! -e "$setup_root/opt/sbin/xkeen-control" ]
 
 run_installer "$testroot" >/dev/null
+sh_c_root="$tmp/sh-c-root"
+mkdir -p "$sh_c_root/opt" "$sh_c_root/tmp"
+PATH="$fakebin:$PATH" XKEEN_CONTROL_TEST_MODE=1 XKEEN_CONTROL_TEST_ROOT="$sh_c_root" \
+	XKEEN_CONTROL_FIXTURE_DIR="$fixture" sh -c "$(cat "$installer")" >/dev/null
+[ -x "$sh_c_root/opt/sbin/xkeen-control" ]
 
 [ -x "$testroot/opt/sbin/xkeen-control" ]
 [ -x "$testroot/opt/etc/init.d/S99xkeen-control" ]

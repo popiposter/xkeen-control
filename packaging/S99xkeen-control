@@ -11,9 +11,12 @@ LOG="${XKEEN_CONTROL_LOG:-/tmp/xkeen-control.log}"
 
 pid_is_control() {
 	pid="$1"
-	# procps needs an explicit all-process selection; minimal router BusyBox
-	# only supports w and already lists all processes.
-	(ps -eo pid,args 2>/dev/null || ps w 2>/dev/null) | awk -v wanted_pid="$pid" -v wanted_bin="$BIN" '$1 == wanted_pid && index($0, wanted_bin) { found = 1 } END { exit found ? 0 : 1 }'
+	case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+	[ "$(readlink "/proc/$pid/exe" 2>/dev/null)" = "$BIN" ] || return 1
+	# Only the no-argument daemon is a service process. version/setup/updater
+	# CLI invocations must never be mistaken for it or killed by stop.
+	[ -r "/proc/$pid/cmdline" ] || return 1
+	tr '\000' '\n' < "/proc/$pid/cmdline" | awk -v bin="$BIN" 'NR == 1 { valid = ($0 == bin) } END { exit !(valid && NR == 1) }'
 }
 
 read_pid() {
@@ -43,14 +46,10 @@ start() {
 	# manufactures ownership from the persisted listener file.
 	nohup "$BIN" >> "$LOG" 2>&1 &
 	child="$!"
-	printf '%s\n' "$child" > "$PIDFILE"
-	sleep 1
-	if ! pid_is_control "$child"; then
-		rm -f "$PIDFILE"
-		echo "xkeen-control failed to start; see $LOG" >&2
-		return 1
-	fi
-	echo "xkeen-control started: $child"
+	printf '%s\n' "$child" > "$PIDFILE" || return 1
+	# Spawn acknowledgement only. The update owner independently verifies bounded
+	# readiness, process identity and the complete installed generation.
+	echo "xkeen-control spawned: $child"
 }
 
 stop() {

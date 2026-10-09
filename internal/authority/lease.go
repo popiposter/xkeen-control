@@ -15,9 +15,10 @@ var (
 )
 
 type Lease struct {
-	gate  chan struct{}
-	mu    sync.RWMutex
-	block bool
+	gate      chan struct{}
+	mu        sync.RWMutex
+	block     bool
+	Admission func() error
 }
 
 func NewLease() *Lease { return &Lease{gate: make(chan struct{}, 1)} }
@@ -31,6 +32,9 @@ func (l *Lease) acquire(ctx context.Context, timeout time.Duration, immediate, r
 	}
 	if l == nil {
 		return func() {}, nil
+	}
+	if l.Admission != nil && l.Admission() != nil {
+		return nil, ErrBlocked
 	}
 	if !recovery && l.isBlocked() {
 		return nil, ErrBlocked
@@ -61,6 +65,10 @@ func (l *Lease) acquire(ctx context.Context, timeout time.Duration, immediate, r
 		return nil, err
 	}
 	if !recovery && l.isBlocked() {
+		release()
+		return nil, ErrBlocked
+	}
+	if l.Admission != nil && l.Admission() != nil {
 		release()
 		return nil, ErrBlocked
 	}

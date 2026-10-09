@@ -74,12 +74,13 @@ type PanelListenerService interface {
 }
 
 type Server struct {
-	collector *controlruntime.Collector
-	auth      *auth.Manager
-	nodes     *nodes.Manager
-	assets    http.Handler
-	start     time.Time
-	benchmark interface {
+	mutationReady func() error
+	collector     *controlruntime.Collector
+	auth          *auth.Manager
+	nodes         *nodes.Manager
+	assets        http.Handler
+	start         time.Time
+	benchmark     interface {
 		TriggerBenchmark() error
 	}
 	manual interface {
@@ -104,12 +105,13 @@ type Server struct {
 }
 
 type Config struct {
-	Collector *controlruntime.Collector
-	Auth      *auth.Manager
-	Nodes     *nodes.Manager
-	Assets    http.Handler
-	StartedAt time.Time
-	Benchmark interface {
+	MutationReady func() error
+	Collector     *controlruntime.Collector
+	Auth          *auth.Manager
+	Nodes         *nodes.Manager
+	Assets        http.Handler
+	StartedAt     time.Time
+	Benchmark     interface {
 		TriggerBenchmark() error
 	}
 	Manual interface {
@@ -136,13 +138,17 @@ func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, native: config.Native, nativeJobs: config.NativeJobs, nativeConfig: config.NativeConfig, geodata: config.Geodata, splitDNS: config.SplitDNS, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, nativeTransfer: config.NativeTransfer, nativeQuality: config.NativeQuality, performancePolicy: config.PerformancePolicy, listener: config.Listener, transferPreviewGate: make(chan struct{}, 1)}
+	return &Server{mutationReady: config.MutationReady, collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, native: config.Native, nativeJobs: config.NativeJobs, nativeConfig: config.NativeConfig, geodata: config.Geodata, splitDNS: config.SplitDNS, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, nativeTransfer: config.NativeTransfer, nativeQuality: config.NativeQuality, performancePolicy: config.PerformancePolicy, listener: config.Listener, transferPreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	setSecurityHeaders(w, strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/healthz")
 	if !requestAuthorityAllowed(r) {
 		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && r.URL.Path != "/api/v1/session/login" && r.URL.Path != "/api/v1/session/logout" && s.mutationReady != nil && s.mutationReady() != nil {
+		writeError(w, http.StatusConflict, "panel update requires receipt inspection")
 		return
 	}
 

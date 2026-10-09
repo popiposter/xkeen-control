@@ -31,6 +31,8 @@ type Lifecycle interface {
 }
 
 type Paths struct {
+	BinaryPath   string
+	InitPath     string
 	CandidateDir string
 	PreviousDir  string
 	MarkerPath   string
@@ -46,6 +48,8 @@ type Policy struct {
 }
 
 type Status struct {
+	Receipt                      *Receipt       `json:"receipt,omitempty"`
+	InspectionRequired           bool           `json:"inspectionRequired"`
 	Installed                    buildinfo.Info `json:"installed"`
 	Channel                      string         `json:"channel"`
 	LatestCompatible             string         `json:"latestCompatibleVersion"`
@@ -102,6 +106,12 @@ type Manager struct {
 }
 
 func NewManager(config Config) *Manager {
+	if config.Paths.BinaryPath == "" {
+		config.Paths.BinaryPath = "/opt/sbin/xkeen-control"
+	}
+	if config.Paths.InitPath == "" {
+		config.Paths.InitPath = "/opt/etc/init.d/S99xkeen-control"
+	}
 	if config.Current.Product == "" {
 		config.Current = buildinfo.Current()
 	}
@@ -150,6 +160,9 @@ func (m *Manager) Status(_ context.Context) Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	status := Status{Installed: installed, Channel: policy.Channel, Policy: policy, SigningKeyConfigured: m.client != nil && m.clientSigningKeyConfigured(), LastCheckResult: m.lastResult}
+	var receiptErr error
+	status.Receipt, receiptErr = m.Receipt()
+	status.InspectionRequired = receiptErr != nil || status.Receipt != nil && status.Receipt.Phase != "installed-verified" && status.Receipt.Phase != "rolled-back-verified"
 	status.Scheduler = notifyPolicyStatus(policy)
 	if m.notify != nil {
 		status.Scheduler = m.notify.statusFor(policy)
@@ -165,7 +178,7 @@ func (m *Manager) Status(_ context.Context) Status {
 		status.ReleaseNotesURL = release.ReleaseNotesURL(m.latest.Version)
 	}
 	status.RollbackVerificationRequired = m.rollbackVerificationRequired
-	if !m.rollbackAdmissionClaimed && !m.rollbackVerificationRequired && release.BinaryArtifact(m.client.Architecture()) != "" {
+	if !status.InspectionRequired && !m.rollbackAdmissionClaimed && !m.rollbackVerificationRequired && release.BinaryArtifact(m.client.Architecture()) != "" {
 		_, rollbackErr := os.Stat(filepath.Join(m.paths.PreviousDir, release.BinaryArtifact(m.client.Architecture())))
 		status.RollbackAvailable = rollbackErr == nil
 	}
@@ -243,6 +256,9 @@ func (m *Manager) SetPolicy(policy Policy) (Status, error) {
 // returns. The helper owns all post-stop commit/rollback work; the serving Go
 // process must not be required to execute code after it has been stopped.
 func (m *Manager) Apply(ctx context.Context, channel, version string) error {
+	if _, err := m.Receipt(); err != nil {
+		return err
+	}
 	channel, err := release.ParseChannel(channel)
 	if err != nil {
 		return err
@@ -285,6 +301,9 @@ func (m *Manager) ValidateChecked(ctx context.Context, channel, version string) 
 // replayed with the same check. The candidate remains consumed if a later
 // fetch/stage/helper step fails; the operator must run a fresh Check.
 func (m *Manager) ApplyChecked(ctx context.Context, channel, version string) error {
+	if _, err := m.Receipt(); err != nil {
+		return err
+	}
 	checked, err := m.claimChecked(ctx, channel, version)
 	if err != nil {
 		return err
@@ -331,12 +350,15 @@ func (m *Manager) applyCandidate(ctx context.Context, candidate release.Candidat
 	if err != nil {
 		return err
 	}
+	if err := m.reserve(candidate); err != nil {
+		releaseToken()
+		return err
+	}
 	if err := m.stage(candidate); err != nil {
 		releaseToken()
 		return err
 	}
 	if err := m.launchHelper("install", releaseToken); err != nil {
-		_ = os.RemoveAll(m.paths.CandidateDir)
 		return errors.New("panel update helper could not start")
 	}
 	return nil
@@ -356,6 +378,9 @@ func validateVersionRequest(channel, version string) error {
 // returns so the HTTP layer can deliver 202 before the helper's bounded handoff
 // grace expires and process replacement begins.
 func (m *Manager) Rollback(ctx context.Context) error {
+	if _, err := m.Receipt(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	if m.rollbackVerificationRequired {
 		m.mu.Unlock()
@@ -389,6 +414,20 @@ func (m *Manager) Rollback(ctx context.Context) error {
 	m.mu.Unlock()
 	releaseToken, err := m.beginLifecycle(ctx)
 	if err != nil {
+		m.mu.Lock()
+		m.rollbackAdmissionClaimed = false
+		m.mu.Unlock()
+		return err
+	}
+	legacy := protectedPath(filepath.Join(m.paths.PreviousDir, ".helper-absent"))
+	var admissionErr error
+	if legacy {
+		admissionErr = m.durabilityReady()
+	} else {
+		admissionErr = m.reserveRollback()
+	}
+	if err := admissionErr; err != nil {
+		releaseToken()
 		m.mu.Lock()
 		m.rollbackAdmissionClaimed = false
 		m.mu.Unlock()
@@ -445,6 +484,13 @@ func (m *Manager) launchHelper(action string, releaseToken func()) error {
 }
 
 func (m *Manager) stage(candidate release.Candidate) error {
+	parent := filepath.Dir(m.paths.CandidateDir)
+	if err := os.MkdirAll(parent, 0700); err != nil {
+		return err
+	}
+	if runtime.GOOS == "linux" && !protectedDirectory(parent) {
+		return ErrInspectionRequired
+	}
 	if err := os.RemoveAll(m.paths.CandidateDir); err != nil {
 		return errors.New("candidate cleanup failed")
 	}

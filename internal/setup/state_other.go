@@ -2,6 +2,10 @@
 
 package setup
 
+import "os"
+
+func MaintenanceFile() (*os.File, error) { return nil, ErrUnsupported }
+
 func PanelInstallGuard() error { return ErrUnsupported }
 
 func acquireLock(string, bool) (func(), error)         { return nil, ErrUnsupported }
