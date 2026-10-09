@@ -75,16 +75,17 @@ blocked state for read-only diagnosis; that does not settle recovery. A failed
 settlement or unknown activation needs a separate reviewed recovery decision.
 No reboot, WAN opening or native code patch is part of this procedure.
 
-## Verify an existing attempt (#168; not in signed 0.4.5)
+## Verify an existing attempt (#168; signed 0.4.6)
 
-The proposed delivery adds a separate offline action for a retained attempt:
+Signed0.4.6 adds a separate offline action for a retained attempt. Its hardware
+settlement remains NOTRUN:
 
 ```sh
 /opt/sbin/xkeen-control nodes recovery inspect
 /opt/sbin/xkeen-control nodes recovery verify-existing --digest DIGEST_FROM_INSPECT
 ```
 
-Use only a subsequently verified signed release containing this command. The
+Use a verified signed release containing this command. The
 same maintenance exclusion and external-writer quiescence apply. `canVerify`
 is separate from `canActivate`; an unresolved activation never permits replay.
 Verification invokes no Restart, Start, Stop, Apply, rendering or restoration.

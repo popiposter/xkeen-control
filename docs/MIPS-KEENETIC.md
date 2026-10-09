@@ -5,11 +5,13 @@ KeeneticOS5.1.7, `uname -m: mips`, Entware `mipsel-3.4`/`mipsel-3.4_kn`,
 stock XKeen2.0.1 Beta/Xray26.7.28. Reported memory values indicate about249MiB
 RAM/105MiB available and1GiB swap; these are not panel hardware qualification.
 
-Signed stable [0.4.5](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.5)
+Signed stable [0.4.6](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.6)
 includes the MIPS soft-float panel. Source review, hosted FULL, exact ten-file
 public verification, both signatures and actual published MIPS emulated startup
-passed; see [release evidence](RELEASES.md). KN1810 hardware installation,
-RSS/auth/PTY/native preservation and LAN behavior remain NOTRUN. Stable0.4.0
+passed; see [release evidence](RELEASES.md). Signed0.4.5 installation and native
+preservation passed on KN1810; its node activation failed with retained intent.
+Signed0.4.6 installation/settlement and broader RSS/auth/PTY/LAN acceptance remain
+incomplete. Stable0.4.0
 remains ARM64-only. No unsigned binary copy, architecture override, signature
 bypass or modification of0.4.0 assets. Fresh
 `--setup` remains unsupported for KN1810 and existing installations.
@@ -41,21 +43,21 @@ Only after the inventory and protected snapshot above, run the published
 panel-only installer:
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.5/install.sh) && sh -c "$xkeen_installer"
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.6/install.sh) && sh -c "$xkeen_installer"
 ```
 
 The initial installer trusts GitHub HTTPS and checks manifest/size/hash consistency;
 installed self-updates verify the pinned Ed25519 signature. Do not confuse these
 trust steps. After installation, `/opt/sbin/xkeen-control version --json` must
-report0.4.5/stable/source `5cc498f79d337fb723f5ac90fd21f6dcce3f0eeb`.
+report0.4.6/stable/source `9d1c516cb3744ba7cb4fa4e4585f6e795e51d72e`.
 The MIPS binary SHA256 is
-`fffe6620d38fced79081657feca6d99e8f728ddf5560488d6ef49d25c9161f53`.
+`a18701d11107e71d63a31d11e89f56d5a99af5dbe8f3c1693efab5c83780320c`.
 Keep private credentials and backup contents out of chat/public evidence.
 
-For an existing older panel helper, 0.4.5 provides the separate
+For an existing older panel helper, 0.4.6 provides the separate
 [verified maintenance delivery](OPERATIONS.md#durable-update-outcomes-162) path.
 The observed 0.4.3 attempt rolled back to 0.4.2; do not replay that old updater
-or treat a transient candidate version as successful installation. Actual 0.4.5
+or treat a transient candidate version as successful installation. Actual 0.4.6
 installation and node recovery remain NOTRUN.
 
 ## Validation and prerequisite repair delivered in0.4.2 (#154)
