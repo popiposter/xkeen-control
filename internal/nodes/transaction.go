@@ -76,12 +76,13 @@ func (e *RollbackError) Error() string { return ErrRollbackFailed.Error() }
 func (e *RollbackError) Unwrap() error { return ErrRollbackFailed }
 
 type Transaction struct {
-	Store               Store
-	ActiveOutboundsPath string
-	ConfigDir           string
-	PreviousDir         string
-	Activator           Activator
-	Budget              TransactionBudget
+	Store                   Store
+	ActiveOutboundsPath     string
+	ConfigDir               string
+	PreviousDir             string
+	Activator               Activator
+	Budget                  TransactionBudget
+	syncGenerationDirectory func(string) error
 }
 
 func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {

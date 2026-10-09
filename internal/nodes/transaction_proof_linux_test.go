@@ -410,3 +410,41 @@ func TestReconcileJournalCannotRebaseValidationOntoNewConfig(t *testing.T) {
 	}
 	assertGeneration(t, tx.Store, tx.ActiveOutboundsPath, old)
 }
+
+func TestGenerationDirectorySyncFailurePreventsLifecycle(t *testing.T) {
+	for _, rollback := range []bool{false, true} {
+		t.Run(map[bool]string{false: "commit", true: "rollback"}[rollback], func(t *testing.T) {
+			a := &fakeActivator{}
+			if rollback {
+				a.restartErr = errors.New("known activation failure")
+			}
+			tx, next, _, _ := rollbackFixture(t, a)
+			synced := map[string]bool{}
+			tx.syncGenerationDirectory = func(path string) error {
+				if (!rollback && a.restarts == 0) || (rollback && a.restarts == 1) {
+					return errors.New("directory sync fixture")
+				}
+				synced[path] = true
+				return syncNodeDirectory(path)
+			}
+			err := tx.Apply(context.Background(), next)
+			if !errors.Is(err, ErrNodeRecoveryRequired) {
+				t.Fatal(err)
+			}
+			want := 0
+			if rollback {
+				want = 1
+				if !synced[filepath.Dir(tx.Store.Path)] || !synced[filepath.Dir(tx.ActiveOutboundsPath)] {
+					t.Fatal("activation preceded durable parents")
+				}
+			}
+			if a.restarts != want {
+				t.Fatal("sync failure allowed lifecycle", a.restarts)
+			}
+			receipt, e := readRecoveryReceipt(tx.PreviousDir)
+			if e != nil || receipt.Phase != "inspection-required" {
+				t.Fatal(receipt, e)
+			}
+		})
+	}
+}

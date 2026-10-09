@@ -27,6 +27,10 @@ func (a CommandActivator) RuntimeIdentity(ctx context.Context) (string, error) {
 		dir = filepath.Dir(a.ActiveOutboundsPath)
 	}
 	editor := &xkeen.ConfigEditor{XrayBinary: binary, Dir: dir}
+	return readLiveRuntimeIdentity(ctx, editor)
+}
+
+func readLiveRuntimeIdentity(ctx context.Context, editor *xkeen.ConfigEditor) (string, error) {
 	before, err := editor.ReadConfigProcess(ctx)
 	if err != nil {
 		return "", ErrNodeRecoveryRequired

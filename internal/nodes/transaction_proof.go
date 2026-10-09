@@ -345,6 +345,28 @@ func (j *transactionJournal) finish(ctx context.Context) error {
 	return m.completeRecovery(ctx, r, &j.r, writeRecoveryReceipt)
 }
 
+// Persist renamed files and newly created parent entries before claiming an
+// active generation. This is fixed, bounded data storage, not a general writer.
+func (t Transaction) syncGeneration() error {
+	syncDir := t.syncGenerationDirectory
+	if syncDir == nil {
+		syncDir = syncNodeDirectory
+	}
+	seen := map[string]bool{}
+	for _, dir := range []string{filepath.Dir(t.Store.Path), filepath.Dir(t.ActiveOutboundsPath)} {
+		for _, path := range []string{dir, filepath.Dir(dir)} {
+			if seen[path] {
+				continue
+			}
+			seen[path] = true
+			if syncDir(path) != nil {
+				return ErrNodeRecoveryRequired
+			}
+		}
+	}
+	return nil
+}
+
 func (t Transaction) commitTracked(ctx context.Context, registry Registry, rendered []byte, runtimeChanged bool, previous Registry, previousExists bool, old []byte, oldExists bool, intent *nodeIntent) error {
 	if ctx.Err() != nil {
 		return errors.Join(ErrNodeRecoveryRequired, ctx.Err())
@@ -371,6 +393,14 @@ func (t Transaction) commitTracked(ctx context.Context, registry Registry, rende
 	err = t.Store.Save(registry)
 	if err == nil && runtimeChanged {
 		err = atomicWrite(t.ActiveOutboundsPath, rendered, 0600)
+	}
+	if err == nil {
+		if e := t.syncGeneration(); e != nil {
+			if j != nil {
+				return j.failure("commit", e)
+			}
+			return e
+		}
 	}
 	stage := "commit"
 	if err == nil && j != nil {
@@ -428,6 +458,12 @@ func (t Transaction) commitTracked(ctx context.Context, registry Registry, rende
 		}
 	}
 	if e := restoreErr; e != nil {
+		if j != nil {
+			return errors.Join(&RollbackError{Cause: err, Recovery: e}, j.failure("restore", e))
+		}
+		return &RollbackError{Cause: err, Recovery: e}
+	}
+	if e := t.syncGeneration(); e != nil {
 		if j != nil {
 			return errors.Join(&RollbackError{Cause: err, Recovery: e}, j.failure("restore", e))
 		}
