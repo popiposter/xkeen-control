@@ -13,7 +13,9 @@ Components and schedules use allowlisted native commands. Interactive prompts re
 An interrupted node/subscription transaction has a separate
 [offline typed recovery procedure](NODE-RECOVERY.md). Native-job inspection does
 not own its pending marker. Stop/quiesce, inspect and explicitly activate one
-coherent current generation; never delete the marker or replay an unknown action.
+coherent current generation only when activation is admitted. A retained attempted
+activation instead needs explicit `verify-existing` in signed0.4.6 with fresh
+proof; never delete the marker or replay an unknown action.
 
 For existing installations, optional standard mosdns and a Keenetic DNS profile are installed/configured separately. The explicit [fresh `--setup` route](FRESH-KEENETIC.md) prepares them only within its restricted capability matrix. Keenetic retains LAN port53/local names; VPN DNS uses the existing loopback Xray SOCKS/native pool, DIRECT DoH is independent of Xray. VPN names have no DIRECT fallback. Do not replace all firmware DNS with an Xray-only listener.
 
@@ -31,9 +33,10 @@ For publication: exact reviewed remote main, available version/tag, protected Re
 
 ### Durable update outcomes (#162)
 
-Signed [0.4.5](RELEASES.md) retains the following commands and the #162 update
-contract introduced in 0.4.4. Published 0.4.3 does not provide them. Hardware acceptance of 0.4.5 is
-still NOTRUN; publication alone does not establish an installed generation.
+Signed [0.4.6](RELEASES.md) retains the following commands and the #162 update
+contract introduced in 0.4.4. Published 0.4.3 does not provide them. Signed0.4.5
+capability checks and installation passed on KN1810; signed0.4.6 installation is
+still NOTRUN. Publication alone does not establish an installed generation.
 
 ```sh
 xkeen-control self-update inspect
