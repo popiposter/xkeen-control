@@ -92,22 +92,48 @@ func TestAdaptiveInitialFailureConsumesOpportunityAndBusyDoesNot(t *testing.T) {
 	delays := []int64{100, 100}
 	s, _, _, _ := adaptiveEvidenceFixture(t, tags[0], now.Add(-time.Hour), supervisorPolicy(), tags, delays, now)
 	seedAdaptiveEvidence(s, tags, now, delays)
-	transport := &adaptiveTransportStub{duration: time.Second, failedDownload: 0, failedUpload: -1}
+	release := make(chan struct{})
+	transport := &adaptiveTransportStub{duration: time.Second, failedDownload: 0, failedUpload: -1, started: make(chan struct{}), block: release}
 	c := NewCoordinator(supervisorPolicy(), s, nil, nil)
 	c.SetAdaptiveRunner(&AdaptiveRunner{Probe: s.probe, Transport: transport})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	defer c.Stop()
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
 	c.EnterMaintenance()
-	c.runAdaptiveAdmission(context.Background(), true)
+	c.runAdaptiveAdmission(ctx, true)
 	if len(transport.callList()) != 0 {
 		t.Fatal("busy startup transferred")
 	}
+	c.mu.Lock()
+	consumed, generation, busyDone := c.adaptiveInitialDone, c.adaptiveGeneration, c.benchmarkDone
+	c.mu.Unlock()
+	if consumed || generation != 0 || busyDone != nil {
+		t.Fatal("busy admission consumed initial opportunity")
+	}
 	c.ExitMaintenance()
-	c.runAdaptiveAdmission(context.Background(), true)
+	c.runAdaptiveAdmission(ctx, true)
+	select {
+	case <-transport.started:
+	case <-time.After(time.Second):
+		t.Fatal("initial generation did not reach transfer")
+	}
+	// Hold the worker until its completion channel is captured: a finished
+	// generation legitimately clears benchmarkDone before this goroutine runs.
 	c.mu.Lock()
 	done := c.benchmarkDone
+	consumed, generation = c.adaptiveInitialDone, c.adaptiveGeneration
 	c.mu.Unlock()
-	if done == nil {
+	if done == nil || !consumed || generation != 1 {
 		t.Fatal("busy consumed initial opportunity")
 	}
+	close(release)
 	select {
 	case <-done:
 	case <-time.After(time.Second):
@@ -120,8 +146,9 @@ func TestAdaptiveInitialFailureConsumesOpportunityAndBusyDoesNot(t *testing.T) {
 	c.runAdaptiveAdmission(context.Background(), true)
 	c.mu.Lock()
 	running := c.benchmarkDone != nil
+	consumed, generation = c.adaptiveInitialDone, c.adaptiveGeneration
 	c.mu.Unlock()
-	if running || len(transport.callList()) != calls {
+	if running || !consumed || generation != 1 || len(transport.callList()) != calls {
 		t.Fatal("failed initial generation retried before cadence")
 	}
 }
