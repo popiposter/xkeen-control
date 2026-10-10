@@ -212,7 +212,7 @@ flowchart LR
 
 | Task | Description | Completed | Date |
 | --- | --- | --- | --- |
-| TASK-004 | Unify `internal/nativequality/sweep.go`, `subset.go`, `pool_decision.go` and `auto_apply.go` for ARM64/MIPS. Preserve the fair rotating cursor, manual-override exclusion and one verified two-document Apply. Cap candidates/bytes/wall/batch size via `internal/resourcepolicy/policy.go` only. | | |
+| TASK-004 | Unify `internal/nativequality/sweep.go`, `subset.go`, `pool_decision.go` and `auto_apply.go` for ARM64/MIPS. Preserve the fair rotating cursor, manual-override exclusion and one verified two-document Apply. Cap candidates/bytes/wall/batch size via `internal/resourcepolicy/policy.go` only. | Pipeline and REQ-008 limits shared by manual and automatic reviews on both profiles: unified-review PR. Standard-profile automatic Apply and the 1/24 h quota follow with TASK-001. | |
 | TASK-005 | Add a distinct no-healthy-member recovery branch that can validate and apply one to six freshly probed members without a speed score. Keep its receipt, reason and later regular speed review distinct from an optimized pool. | | |
 | TASK-006 | Update Performance, Nodes and Overview status to expose configured, recommended, verified applied and provisional states, coverage and due/deferral reasons. Do not represent saved legacy weights as measured throughput. | | |
 

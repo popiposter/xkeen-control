@@ -25,7 +25,6 @@ var ErrUnavailable = errors.New("native quality comparison unavailable")
 
 type Measurement interface {
 	MeasureNativeQuality(context.Context, c1.AdaptiveGeneration, func(c1.AdaptivePerformanceStatus)) (c1.AdaptiveResult, error)
-	NativeQualityEvidence(xrayapi.Snapshot) map[string]c1.AdaptiveCandidateInput
 	MeasureRTT(context.Context, []string) ([]c1.RTTSample, error)
 }
 
@@ -126,8 +125,8 @@ func (s *Service) Read() Status {
 	value := s.status
 	activeReview := s.cancel != nil || s.autoApplying
 	value.ResourceProfile = s.profile()
-	value.Limits = s.profile().Comparison(value.Generation == 0 || value.ManualSample)
-	value.ManualAllowanceBytes = s.profile().Comparison(true).Bytes
+	value.Limits = s.profile().Comparison(false)
+	value.ManualAllowanceBytes = s.profile().Review().Bytes
 	if s.AutomaticDisabled {
 		value.AutomaticReason = "operator-disabled"
 	} else if !value.ResourceProfile.Automatic {
@@ -207,7 +206,7 @@ func (s *Service) Read() Status {
 		value.NativeSelected, value.NativeSelectedState = "", "unavailable"
 	}
 	if value.ResourceProfile.Constrained && value.ResourceProfile.Automatic {
-		if q, err := quotaState(s.QuotaPath, time.Now().UTC()); err == nil {
+		if q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes); err == nil {
 			value.QuotaState = "available"
 			value.QuotaUsedBytes, value.QuotaRemainingBytes = q.UsedBytes, q.RemainingBytes
 			value.QuotaReviewsUsed, value.QuotaNextResetAt = q.ReviewsUsed, q.NextResetAt
@@ -319,7 +318,7 @@ func (s *Service) SetManualOverride(ctx context.Context, target string) error {
 		return ErrUnavailable
 	}
 	if s.profile().Constrained && s.profile().Automatic {
-		if q, err := quotaState(s.QuotaPath, time.Now().UTC()); err != nil || q.InspectionRequired {
+		if q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes); err != nil || q.InspectionRequired {
 			return ErrUnavailable
 		}
 	}
@@ -377,122 +376,7 @@ func (s *Service) SetManualOverride(ctx context.Context, target string) error {
 // through diagnostic cleanup. The coordinator supplies the existing performance
 // single-flight. External CLI/cron are not serialized: digest drift rejects Stage.
 func (s *Service) Start(ctx context.Context) error {
-	return s.start(ctx, true)
-}
-
-func (s *Service) start(ctx context.Context, broad bool) error {
-	if s.Editor == nil || s.Lease == nil || s.Reader == nil || s.Nodes == nil || s.Measurement == nil {
-		return ErrUnavailable
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.cancel != nil || s.autoApplying || s.closed || s.status.InspectionRequired {
-		return c1.ErrManualBusy
-	}
-	if s.profile().Constrained && s.profile().Automatic {
-		if q, err := quotaState(s.QuotaPath, time.Now().UTC()); err != nil || q.InspectionRequired {
-			return c1.ErrManualBusy
-		}
-	}
-	s.status.StartReason = ""
-	if err := s.Resources.CheckConflict(); err != nil {
-		s.status.StartReason = "resource-telemetry-unavailable"
-		if errors.Is(err, resourcepolicy.ErrExternalBenchmark) {
-			s.status.StartReason = "native-speed-conflict"
-		}
-		return err
-	}
-	release, err := s.Lease.TryAcquire()
-	if err != nil {
-		return c1.ErrManualBusy
-	}
-	w, err := s.Editor.Workspace(ctx)
-	if err != nil || w.Pending != nil || !w.TargetsComplete {
-		release()
-		return ErrUnavailable
-	}
-	pool, index, err := measurementPool(w.Documents["05_routing.json"].Text, s.Nodes(ctx), w.Targets)
-	if err != nil {
-		release()
-		return err
-	}
-	activePool, _, activeErr := routingPool(w.Documents["05_routing.json"].Text, s.Nodes(ctx), w.Targets)
-	if activeErr != nil {
-		release()
-		return activeErr
-	}
-	snapshot := s.Reader.Snapshot(ctx)
-	mode := 0
-	if broad {
-		mode = 1
-	}
-	criteria, err := readCriteria(w.Documents["05_routing.json"].Text, w.Documents["07_observatory.json"].Text, index, w.Targets)
-	if err != nil {
-		release()
-		return err
-	}
-	generation, err := prepareWithCriteria(snapshot, pool, s.status.Generation+1, mode, time.Now().UTC(), criteria)
-	if err != nil {
-		release()
-		return err
-	}
-	retainHealthEvidence(&generation, s.Measurement.NativeQualityEvidence(snapshot))
-	limits := s.profile().Comparison(broad)
-	all := append(append([]c1.AdaptiveCandidateInput(nil), generation.Candidates...), generation.Fallbacks...)
-	initial, end := min(len(all), limits.Candidates), min(len(all), limits.Attempts)
-	generation.Candidates, generation.Fallbacks = all[:initial], all[initial:end]
-	startedAt := time.Now().UTC()
-	if s.profile().Constrained && s.profile().Automatic {
-		if err := recordComparisonStart(s.QuotaPath, startedAt); err != nil {
-			release()
-			return ErrUnavailable
-		}
-	}
-	s.lastStartedAt = startedAt
-	job, cancel := context.WithTimeout(context.Background(), limits.Wall())
-	s.cancel = cancel
-	done := make(chan struct{})
-	s.done = done
-	s.pool = append([]string(nil), pool...)
-	s.result = c1.AdaptiveResult{}
-	latencyCeiling := criteria.maxRTT
-	if broad {
-		latencyCeiling = min(latencyCeiling, max(int64(300), 2*generation.Candidates[0].RTTMS))
-	}
-	s.status = Status{State: "running", Digest: w.Digest, Generation: generation.Generation, PoolCount: len(pool), ActivePoolCount: len(activePool), ActivePool: append([]string(nil), activePool...), ActivePoolState: "frozen-at-review", ManualSample: broad, LatencyLimitMS: latencyCeiling, LatencySource: criteria.latencySource, EligibleCount: len(all), Progress: c1.AdaptivePerformanceStatus{State: "running", ShortlistCount: len(generation.Candidates)}}
-	observeNativeSelection(&s.status, snapshot, startedAt)
-	go func() {
-		defer close(done)
-		result, runErr := s.Measurement.MeasureNativeQuality(job, generation, func(progress c1.AdaptivePerformanceStatus) {
-			s.mu.Lock()
-			s.status.Progress = progress
-			s.mu.Unlock()
-		})
-		cancel()
-		release()
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.cancel = nil
-		s.result = result
-		s.status.State = result.State
-		if runErr != nil {
-			s.status.State = "failed"
-			s.status.Progress.State = "failed"
-			s.status.Progress.ReasonCode = "busy-or-unavailable"
-		}
-	}()
-	return nil
-}
-
-func retainHealthEvidence(generation *c1.AdaptiveGeneration, evidenceByTag map[string]c1.AdaptiveCandidateInput) {
-	for _, candidates := range [][]c1.AdaptiveCandidateInput{generation.Candidates, generation.Fallbacks} {
-		for i, candidate := range candidates {
-			if evidence, ok := evidenceByTag[candidate.Tag]; ok {
-				candidates[i].Samples = evidence.Samples
-				candidates[i].HealthPenalty = evidence.HealthPenalty
-			}
-		}
-	}
+	return s.startReview(ctx, "manual", true)
 }
 
 func (s *Service) Stop() {
@@ -727,92 +611,6 @@ func resolveActivePool(text string, nodes []c1.NodeState, targets []xkeen.Config
 	sort.Strings(pool)
 	sort.Strings(orphans)
 	return pool, orphans, index, nil
-}
-
-func prepare(snapshot xrayapi.Snapshot, pool []string, id uint64, mode int, now time.Time) (c1.AdaptiveGeneration, error) {
-	return prepareWithCriteria(snapshot, pool, id, mode, now, observationCriteria{maxRTT: c1.AdaptiveMaximumRTTMS, freshness: 2 * time.Minute})
-}
-
-func prepareWithCriteria(snapshot xrayapi.Snapshot, pool []string, id uint64, mode int, now time.Time, criteria observationCriteria) (c1.AdaptiveGeneration, error) {
-	if !snapshot.APIReachable || !snapshot.RoutingReachable || !snapshot.ObservatoryReachable || snapshot.Balancer.Override != "" {
-		return c1.AdaptiveGeneration{}, ErrUnavailable
-	}
-	known := map[string]bool{}
-	for _, tag := range pool {
-		known[tag] = true
-	}
-	var eligible []c1.AdaptiveCandidateInput
-	seen := map[string]bool{}
-	for _, h := range snapshot.OutboundHealth {
-		if !known[h.Tag] {
-			continue
-		}
-		if criteria.observed != nil && !criteria.observed[h.Tag] {
-			continue
-		}
-		if seen[h.Tag] {
-			return c1.AdaptiveGeneration{}, ErrUnavailable
-		}
-		seen[h.Tag] = true
-		if !h.Alive || h.DelayMS <= 0 || h.DelayMS > criteria.maxRTT || h.LastTry.IsZero() || h.LastTry.After(now) || now.Sub(h.LastTry) > criteria.freshness {
-			continue
-		}
-		// One observation is not a stability window. No invented loss/jitter evidence.
-		eligible = append(eligible, c1.AdaptiveCandidateInput{Tag: h.Tag, RTTMS: h.DelayMS, LatestAt: h.LastTry})
-	}
-	sort.Slice(eligible, func(i, j int) bool {
-		if eligible[i].RTTMS == eligible[j].RTTMS {
-			return eligible[i].Tag < eligible[j].Tag
-		}
-		return eligible[i].RTTMS < eligible[j].RTTMS
-	})
-	if len(eligible) < 2 {
-		return c1.AdaptiveGeneration{}, ErrUnavailable
-	}
-	broad := mode == 1
-	limit := criteria.maxRTT
-	if broad {
-		limit = min(limit, max(int64(300), 2*eligible[0].RTTMS))
-	}
-	eligible = eligible[:sort.Search(len(eligible), func(i int) bool { return eligible[i].RTTMS > limit })]
-	if len(eligible) < 2 {
-		return c1.AdaptiveGeneration{}, ErrUnavailable
-	}
-	maxCandidates, maxAttempts := c1.AdaptiveMaxCandidates, c1.NativeQualityMaxAttempts
-	if broad {
-		maxCandidates, maxAttempts = c1.NativeQualityBroadCandidates, c1.NativeQualityBroadAttempts
-	}
-	initial := min(len(eligible), maxCandidates)
-	end := min(len(eligible), maxAttempts)
-	return c1.AdaptiveGeneration{Generation: id, StartedAt: now, CurrentTarget: snapshot.Balancer.NativeSelected,
-		NativeQuality: true, BroadSample: broad, Candidates: eligible[:initial], Fallbacks: eligible[initial:end]}, nil
-}
-
-func latencyLimit(lowest int64, broad bool) int64 {
-	if !broad {
-		return c1.AdaptiveMaximumRTTMS
-	}
-	return min(int64(c1.AdaptiveMaximumRTTMS), max(int64(300), 2*lowest))
-}
-
-func eligibleCount(snapshot xrayapi.Snapshot, pool []string, broad bool, now time.Time) int {
-	known := map[string]bool{}
-	for _, tag := range pool {
-		known[tag] = true
-	}
-	lowest := int64(c1.AdaptiveMaximumRTTMS)
-	for _, h := range snapshot.OutboundHealth {
-		if known[h.Tag] && h.Alive && h.DelayMS > 0 && h.DelayMS <= lowest && !h.LastTry.IsZero() && !h.LastTry.After(now) && now.Sub(h.LastTry) <= 2*time.Minute {
-			lowest = h.DelayMS
-		}
-	}
-	count := 0
-	for _, h := range snapshot.OutboundHealth {
-		if known[h.Tag] && h.Alive && h.DelayMS > 0 && h.DelayMS <= latencyLimit(lowest, broad) && !h.LastTry.IsZero() && !h.LastTry.After(now) && now.Sub(h.LastTry) <= 2*time.Minute {
-			count++
-		}
-	}
-	return count
 }
 
 // A restricted active selector must not restrict future diagnostic samples.

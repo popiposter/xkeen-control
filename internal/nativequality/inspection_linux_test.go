@@ -110,7 +110,7 @@ func TestExplicitQualityInspectionRequiresConcreteReadbacks(t *testing.T) {
 	if err := restarted.InspectAndResolve(context.Background()); err == nil {
 		t.Fatal("unhealthy Xray cleared inspection")
 	}
-	if q, err := quotaState(s.QuotaPath, time.Now().UTC()); err != nil || !q.InspectionRequired {
+	if q, err := quotaState(s.QuotaPath, time.Now().UTC(), testReviewBytes); err != nil || !q.InspectionRequired {
 		t.Fatal("failed inspection lost fence", err)
 	}
 	s.Reader.(*sweepReader).failAfterFile = ""
@@ -121,7 +121,7 @@ func TestExplicitQualityInspectionRequiresConcreteReadbacks(t *testing.T) {
 	if err := restarted.InspectAndResolve(context.Background()); err == nil {
 		t.Fatal("failed probe cleanup cleared inspection")
 	}
-	if q, err := quotaState(s.QuotaPath, time.Now().UTC()); err != nil || !q.InspectionRequired {
+	if q, err := quotaState(s.QuotaPath, time.Now().UTC(), testReviewBytes); err != nil || !q.InspectionRequired {
 		t.Fatal("failed cleanup lost fence", err)
 	}
 	control.removeFails = false
@@ -129,7 +129,7 @@ func TestExplicitQualityInspectionRequiresConcreteReadbacks(t *testing.T) {
 	if err := restarted.InspectAndResolve(context.Background()); err == nil {
 		t.Fatal("reported successful but ineffective probe removal cleared inspection")
 	}
-	if q, err := quotaState(s.QuotaPath, time.Now().UTC()); err != nil || !q.InspectionRequired {
+	if q, err := quotaState(s.QuotaPath, time.Now().UTC(), testReviewBytes); err != nil || !q.InspectionRequired {
 		t.Fatal("ineffective removal lost fence", err)
 	}
 	control.removeNoop = false
@@ -137,7 +137,7 @@ func TestExplicitQualityInspectionRequiresConcreteReadbacks(t *testing.T) {
 	if err := restarted.InspectAndResolve(context.Background()); err == nil {
 		t.Fatal("unknown panel probe rule cleared inspection")
 	}
-	if q, err := quotaState(s.QuotaPath, time.Now().UTC()); err != nil || !q.InspectionRequired {
+	if q, err := quotaState(s.QuotaPath, time.Now().UTC(), testReviewBytes); err != nil || !q.InspectionRequired {
 		t.Fatal("unknown panel probe rule lost fence", err)
 	}
 	control.rules = nil // Simulate separate inspected removal of the unknown rule.
@@ -150,7 +150,7 @@ func TestExplicitQualityInspectionRequiresConcreteReadbacks(t *testing.T) {
 	if err := probe.WithTarget(context.Background(), "adaptive", "proxy-a", nil); err != nil {
 		t.Fatal("next same-process measurement remained blocked", err)
 	}
-	q, err := quotaState(s.QuotaPath, time.Now().UTC())
+	q, err := quotaState(s.QuotaPath, time.Now().UTC(), testReviewBytes)
 	if err != nil || q.InspectionRequired || q.ReviewsUsed != 1 || q.LastStartedAt.IsZero() {
 		t.Fatal("settlement reset cadence or quota", q, err)
 	}

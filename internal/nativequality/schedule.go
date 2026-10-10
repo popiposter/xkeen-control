@@ -62,7 +62,7 @@ func (s *Schedule) Run(ctx context.Context) {
 		last := s.service.lastStartedAt
 		s.service.mu.Unlock()
 		if s.service.profile().Constrained {
-			if q, err := quotaState(s.service.QuotaPath, time.Now().UTC()); err == nil && q.LastStartedAt.After(last) {
+			if q, err := quotaState(s.service.QuotaPath, time.Now().UTC(), s.service.profile().Review().Bytes); err == nil && q.LastStartedAt.After(last) {
 				last = q.LastStartedAt
 				s.service.mu.Lock()
 				s.service.lastStartedAt = last
@@ -94,7 +94,7 @@ func (s *Schedule) Run(ctx context.Context) {
 			last = s.service.lastStartedAt
 			s.service.mu.Unlock()
 			if s.service.profile().Constrained {
-				if q, err := quotaState(s.service.QuotaPath, time.Now().UTC()); err == nil && q.LastStartedAt.After(last) {
+				if q, err := quotaState(s.service.QuotaPath, time.Now().UTC(), s.service.profile().Review().Bytes); err == nil && q.LastStartedAt.After(last) {
 					last = q.LastStartedAt
 				} else if err != nil {
 					next = time.Now().Add(10 * time.Minute)
@@ -113,7 +113,9 @@ func (s *Schedule) Run(ctx context.Context) {
 			if s.service.profile().Constrained {
 				startErr = s.service.startSweep(ctx, trigger)
 			} else {
-				startErr = s.service.start(ctx, false)
+				// The standard profile measures only; applying is the operator's
+				// explicit Stage until both profiles share automatic Apply.
+				startErr = s.service.startReview(ctx, trigger, true)
 			}
 			if startErr != nil {
 				next = now.Add(10 * time.Minute)

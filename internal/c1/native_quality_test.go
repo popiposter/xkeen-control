@@ -74,13 +74,8 @@ func TestQualityFastDownloadCanBeatLowPing(t *testing.T) {
 	}
 }
 
-func TestQualityPenalizesRepeatedFailuresAndJitter(t *testing.T) {
-	now := time.Now()
-	values := []sample{{now.Add(-3 * time.Minute), 30, true}, {now.Add(-2 * time.Minute), 90, true}, {now.Add(-time.Minute), 60, false}, {now, 60, true}}
-	penalty := adaptiveWindowPenalty(values, now.Add(-5*time.Minute), now, 60)
-	if penalty <= 2 || !finitePositive(penalty) {
-		t.Fatalf("failure/jitter penalty=%g", penalty)
-	}
+func TestQualityHealthPenaltyOutweighsBurstSpeed(t *testing.T) {
+	penalty := 3.0
 	results := []AdaptiveCandidateResult{
 		{Tag: "proxy-stable", RTTMS: 60, DownloadBPS: 10e6, UploadBPS: 10e6, Valid: true},
 		{Tag: "proxy-flaky", RTTMS: 60, DownloadBPS: 20e6, UploadBPS: 20e6, Valid: true, HealthPenalty: penalty},

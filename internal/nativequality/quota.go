@@ -15,9 +15,12 @@ import (
 )
 
 const (
-	defaultQuotaPath   = "/tmp/xkeen-control/native-quality-quota.json"
-	maxSweepBytes      = 144 * resourcepolicy.MiB
-	maxDailySweepBytes = 288 * resourcepolicy.MiB
+	defaultQuotaPath = "/tmp/xkeen-control/native-quality-quota.json"
+	// maxReservationBytes bounds any stored reservation; profiles reserve
+	// their own Review().Bytes, never more than this.
+	maxReservationBytes = 288 * resourcepolicy.MiB
+	// dailyReviews is the rolling 24-hour automatic review count.
+	dailyReviews = 2
 )
 
 var errQuota = errors.New("native quality quota unavailable")
@@ -46,7 +49,7 @@ type quotaView struct {
 	FairCursor         int
 }
 
-func quotaState(path string, now time.Time) (quotaView, error) {
+func quotaState(path string, now time.Time, reviewBytes int64) (quotaView, error) {
 	if path == "" {
 		path = defaultQuotaPath
 	}
@@ -59,11 +62,11 @@ func quotaState(path string, now time.Time) (quotaView, error) {
 	if err != nil {
 		return quotaView{}, err
 	}
-	return viewQuota(q, now), nil
+	return viewQuota(q, now, reviewBytes), nil
 }
 
-func viewQuota(q quotaReceipt, now time.Time) quotaView {
-	v := quotaView{RemainingBytes: maxDailySweepBytes, LastStartedAt: q.LastComparisonStartedAt, InspectionRequired: q.InspectionRequired, FairCursor: q.FairCursor}
+func viewQuota(q quotaReceipt, now time.Time, reviewBytes int64) quotaView {
+	v := quotaView{RemainingBytes: dailyReviews * reviewBytes, LastStartedAt: q.LastComparisonStartedAt, InspectionRequired: q.InspectionRequired, FairCursor: q.FairCursor}
 	for _, r := range q.Reservations {
 		if now.Sub(r.At) < 24*time.Hour {
 			v.UsedBytes += r.Bytes
@@ -87,6 +90,11 @@ func recordComparisonStart(path string, now time.Time) error {
 		return errQuota
 	}
 	defer release()
+	return recordComparisonStartLocked(path, now)
+}
+
+// recordComparisonStartLocked requires the quota lock held by the caller.
+func recordComparisonStartLocked(path string, now time.Time) error {
 	q, err := readQuotaLocked(path, now)
 	if err != nil || q.InspectionRequired {
 		return errQuota
@@ -111,7 +119,7 @@ func settleSweepLocked(path string, now time.Time, inspected bool) error {
 // reserveSweep charges the full worst-case transfer before the first byte is
 // sent. A crash or unknown outcome therefore cannot reset the rolling cap.
 // Reservations are deliberately not refunded after a partial review.
-func reserveSweep(path string, now time.Time) (int64, error) {
+func reserveSweep(path string, now time.Time, reviewBytes int64) (int64, error) {
 	if path == "" {
 		path = defaultQuotaPath
 	}
@@ -120,24 +128,27 @@ func reserveSweep(path string, now time.Time) (int64, error) {
 		return 0, errQuota
 	}
 	defer release()
-	return reserveSweepLocked(path, now)
+	return reserveSweepLocked(path, now, reviewBytes)
 }
 
 // Caller holds the separate fixed-inode quota lock. The sweep retains that
 // lock until all measurement and native application readback has settled.
-func reserveSweepLocked(path string, now time.Time) (int64, error) {
-	return reserveSweepPlannedLocked(path, now, nil)
+func reserveSweepLocked(path string, now time.Time, reviewBytes int64) (int64, error) {
+	return reserveSweepPlannedLocked(path, now, nil, reviewBytes)
 }
 
 // A planned reservation charges traffic, records the recovery intent and
 // advances fairness in one private durable write before any transfer starts.
-func reserveSweepPlannedLocked(path string, now time.Time, plan *sweepPlan) (int64, error) {
+func reserveSweepPlannedLocked(path string, now time.Time, plan *sweepPlan, reviewBytes int64) (int64, error) {
+	if reviewBytes <= 0 || reviewBytes > maxReservationBytes {
+		return 0, errQuota
+	}
 	q, err := readQuotaLocked(path, now)
 	if err != nil {
 		return 0, errQuota
 	}
-	v := viewQuota(q, now)
-	if !quotaAdmits(q, now) {
+	v := viewQuota(q, now, reviewBytes)
+	if !quotaAdmits(q, now, reviewBytes) {
 		return v.UsedBytes, errQuota
 	}
 	kept := make([]quotaReservation, 0, 2)
@@ -146,7 +157,7 @@ func reserveSweepPlannedLocked(path string, now time.Time, plan *sweepPlan) (int
 			kept = append(kept, r)
 		}
 	}
-	q.Reservations = append(kept, quotaReservation{At: now, Bytes: maxSweepBytes})
+	q.Reservations = append(kept, quotaReservation{At: now, Bytes: reviewBytes})
 	q.LastComparisonStartedAt = now
 	q.InspectionRequired = true
 	if plan != nil {
@@ -156,16 +167,16 @@ func reserveSweepPlannedLocked(path string, now time.Time, plan *sweepPlan) (int
 	if err := writeQuotaLocked(path, q); err != nil {
 		return v.UsedBytes, errQuota
 	}
-	return v.UsedBytes + maxSweepBytes, nil
+	return v.UsedBytes + reviewBytes, nil
 }
 
 // quotaAdmits reports, without writing, whether a review could reserve now.
-func quotaAdmits(q quotaReceipt, now time.Time) bool {
+func quotaAdmits(q quotaReceipt, now time.Time, reviewBytes int64) bool {
 	if q.InspectionRequired || (!q.LastComparisonStartedAt.IsZero() && now.Sub(q.LastComparisonStartedAt) < 6*time.Hour) {
 		return false
 	}
-	v := viewQuota(q, now)
-	return v.UsedBytes <= maxDailySweepBytes-maxSweepBytes && v.ReviewsUsed < 2
+	v := viewQuota(q, now, reviewBytes)
+	return v.UsedBytes+reviewBytes <= dailyReviews*reviewBytes && v.ReviewsUsed < dailyReviews
 }
 
 func readQuotaLocked(path string, now time.Time) (quotaReceipt, error) {
@@ -214,7 +225,7 @@ func readQuotaLocked(path string, now time.Time) (quotaReceipt, error) {
 		return quotaReceipt{}, errQuota
 	}
 	for _, r := range q.Reservations {
-		if r.At.IsZero() || r.At.After(now) || r.Bytes != maxSweepBytes {
+		if r.At.IsZero() || r.At.After(now) || r.Bytes <= 0 || r.Bytes > maxReservationBytes {
 			return quotaReceipt{}, errQuota
 		}
 	}

@@ -6,47 +6,59 @@ import (
 	"time"
 
 	"github.com/popiposter/xkeen-control/internal/c1"
+	"github.com/popiposter/xkeen-control/internal/resourcepolicy"
 )
 
-const (
-	sweepMaxEligible = 18
-	sweepMaxBatches  = 6
-	sweepWall        = 30 * time.Minute
-	sweepBatchPause  = 3 * time.Minute
-)
-
-// batchSizes covers each frozen candidate once, without a one-node final
-// generation (the shared measurement runner requires at least two candidates).
-func batchSizes(count int) ([]int, error) {
-	if count < 2 || count > sweepMaxEligible {
+// batchSizes splits the admitted candidates into near-equal sequential
+// batches of at most maxBatch, never leaving a one-node batch (the shared
+// measurement runner needs at least two candidates).
+func batchSizes(count, maxBatch int) ([]int, error) {
+	if count < 2 || maxBatch < 2 || count > c1.NativeQualityBroadAttempts {
 		return nil, ErrUnavailable
 	}
-	var sizes []int
-	for count > 0 {
-		size := min(3, count)
-		if count == 4 {
-			size = 2
+	batches := (count + maxBatch - 1) / maxBatch
+	sizes := make([]int, batches)
+	for i := range sizes {
+		sizes[i] = count / batches
+		if i < count%batches {
+			sizes[i]++
 		}
-		sizes = append(sizes, size)
-		count -= size
-	}
-	if len(sizes) > sweepMaxBatches {
-		return nil, ErrUnavailable
+		if sizes[i] < 2 {
+			return nil, ErrUnavailable
+		}
 	}
 	return sizes, nil
 }
 
+// startSweep starts an automatic review. Kept as the scheduler entry point.
 func (s *Service) startSweep(parent context.Context, trigger string) error {
-	if s.Editor == nil || s.Lease == nil || s.Reader == nil || s.Nodes == nil || s.Measurement == nil || s.Resources == nil || !s.profile().Constrained || !s.profile().Automatic || s.AutomaticDisabled {
+	return s.startReview(parent, trigger, false)
+}
+
+// startReview freezes candidates and starts one review on either profile. An
+// automatic review reserves the daily quota and may apply its decision; a
+// manual review (the operator's speed test) records its start for the shared
+// six-hour gap and leaves the recommendation for an explicit Stage.
+func (s *Service) startReview(parent context.Context, trigger string, manual bool) error {
+	if s.Editor == nil || s.Lease == nil || s.Reader == nil || s.Nodes == nil || s.Measurement == nil || s.Resources == nil {
+		return ErrUnavailable
+	}
+	if !manual && (!s.profile().Automatic || s.AutomaticDisabled) {
 		return ErrUnavailable
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed || s.cancel != nil || s.autoApplying || s.status.InspectionRequired {
-		return ErrUnavailable
+		return c1.ErrManualBusy
 	}
 	if err := s.Resources.CheckConflict(); err != nil {
 		s.status.ReviewReason = "native-speed-conflict-or-unavailable"
+		if manual {
+			s.status.StartReason = "resource-telemetry-unavailable"
+			if errors.Is(err, resourcepolicy.ErrExternalBenchmark) {
+				s.status.StartReason = "native-speed-conflict"
+			}
+		}
 		return err
 	}
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
@@ -90,21 +102,22 @@ func (s *Service) startSweep(parent context.Context, trigger string) error {
 		s.status.ReviewReason = "quota-busy-or-unavailable"
 		return errQuota
 	}
+	limits := s.profile().Review()
 	previous, err := readQuotaLocked(quotaPath, now)
-	if err != nil || !quotaAdmits(previous, now) {
+	if err != nil || previous.InspectionRequired || !manual && !quotaAdmits(previous, now, limits.Bytes) {
 		quotaUnlock()
 		s.status.ReviewReason = "quota-unavailable-or-exhausted"
 		return errQuota
 	}
-	plan, err := planSweep(pool, activePool, snapshot.Balancer.NativeSelected, previous.FairCursor, previous.EligibleSetHash)
+	plan, err := planSweep(pool, activePool, snapshot.Balancer.NativeSelected, previous.FairCursor, previous.EligibleSetHash, limits.Candidates)
 	if err != nil {
 		quotaUnlock()
 		s.status.ReviewReason = "eligible-unavailable"
 		return err
 	}
-	// The speed phase is capped at sweepWall; the RTT pre-phase and the
+	// The speed phase is capped at the profile wall; the RTT pre-phase and the
 	// separate native Apply have their own bounded margins.
-	job, cancelJob := context.WithTimeout(parent, sweepWall+time.Duration(len(plan.Candidates))*c1.RTTProbeTimeout+6*time.Minute)
+	job, cancelJob := context.WithTimeout(context.WithoutCancel(parent), limits.Wall+time.Duration(len(plan.Candidates))*c1.RTTProbeTimeout+6*time.Minute)
 	done := make(chan struct{})
 	s.cancel, s.done = cancelJob, done
 	s.lastStartedAt = now
@@ -113,7 +126,7 @@ func (s *Service) startSweep(parent context.Context, trigger string) error {
 	s.orphans = append([]string(nil), orphans...)
 	s.rttAlive = nil
 	s.result = c1.AdaptiveResult{}
-	s.status = Status{State: "running", Digest: w.Digest, Generation: s.status.Generation + 1, PoolCount: len(pool), ActivePoolCount: len(activePool), ActivePool: append([]string(nil), activePool...), OrphanedPool: append([]string(nil), orphans...), ActivePoolState: "frozen-at-review", EligibleCount: plan.TotalEligible, TotalEligible: plan.TotalEligible, SelectedForSpeed: len(plan.Candidates), DeferredForFutureReview: plan.Deferred, SubsetState: "all-eligible", FairCursor: plan.NextCursor, FairCursorState: plan.CursorState, LatencyLimitMS: criteria.maxRTT, LatencySource: criteria.latencySource, ReviewTrigger: trigger, ReviewPhase: "rtt", Progress: c1.AdaptivePerformanceStatus{State: "running"}, AppliedState: "not-attempted"}
+	s.status = Status{State: "running", Digest: w.Digest, Generation: s.status.Generation + 1, PoolCount: len(pool), ActivePoolCount: len(activePool), ActivePool: append([]string(nil), activePool...), OrphanedPool: append([]string(nil), orphans...), ActivePoolState: "frozen-at-review", EligibleCount: plan.TotalEligible, TotalEligible: plan.TotalEligible, SelectedForSpeed: len(plan.Candidates), DeferredForFutureReview: plan.Deferred, SubsetState: "all-eligible", FairCursor: plan.NextCursor, FairCursorState: plan.CursorState, LatencyLimitMS: criteria.maxRTT, LatencySource: criteria.latencySource, ReviewTrigger: trigger, ReviewPhase: "rtt", ManualSample: manual, Progress: c1.AdaptivePerformanceStatus{State: "running"}, AppliedState: "not-attempted"}
 	observeNativeSelection(&s.status, snapshot, now)
 	if plan.Deferred > 0 {
 		s.status.SubsetState = "subset-selected"
@@ -122,7 +135,7 @@ func (s *Service) startSweep(parent context.Context, trigger string) error {
 		s.status.PoolDecision = "first-pool-initialization"
 	}
 	frozen := c1.AdaptiveGeneration{NativeQuality: true, Generation: s.status.Generation, StartedAt: now, CurrentTarget: snapshot.Balancer.NativeSelected}
-	go s.runSweep(job, cancelJob, done, frozen, plan, criteria.maxRTT, w.Digest, quotaPath, quotaUnlock)
+	go s.runSweep(job, cancelJob, done, frozen, plan, criteria.maxRTT, w.Digest, quotaPath, quotaUnlock, manual)
 	return nil
 }
 
@@ -180,7 +193,8 @@ func (s *Service) rttPrePhase(ctx context.Context, tags []string, maxRTT int64, 
 	return admitted, alive, ""
 }
 
-func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done chan struct{}, frozen c1.AdaptiveGeneration, plan sweepPlan, maxRTT int64, digest, quotaPath string, quotaUnlock func()) {
+func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done chan struct{}, frozen c1.AdaptiveGeneration, plan sweepPlan, maxRTT int64, digest, quotaPath string, quotaUnlock func(), manual bool) {
+	limits := s.profile().Review()
 	defer close(done)
 	defer cancel()
 	if quotaUnlock != nil {
@@ -201,16 +215,21 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 		reason = "rtt-candidates-insufficient"
 	}
 	reserved := false
-	if reason == "" && quotaUnlock != nil {
+	if reason == "" && quotaUnlock != nil && manual {
+		// A manual review records its start for the shared six-hour gap only.
+		if err := recordComparisonStartLocked(quotaPath, time.Now().UTC()); err != nil {
+			reason = "quota-unavailable-or-exhausted"
+		}
+	} else if reason == "" && quotaUnlock != nil {
 		// Reserve only now: a review that cannot reach the speed phase must not
 		// spend the day's quota or advance the fair cursor.
 		now := time.Now().UTC()
-		if _, err := reserveSweepPlannedLocked(quotaPath, now, &plan); err != nil {
+		if _, err := reserveSweepPlannedLocked(quotaPath, now, &plan, limits.Bytes); err != nil {
 			reason = "quota-unavailable-or-exhausted"
 		} else {
 			reserved = true
 			if receipt, err := readQuotaLocked(quotaPath, now); err == nil {
-				quota := viewQuota(receipt, now)
+				quota := viewQuota(receipt, now, limits.Bytes)
 				s.mu.Lock()
 				s.status.QuotaState = "available"
 				s.status.QuotaUsedBytes, s.status.QuotaRemainingBytes = quota.UsedBytes, quota.RemainingBytes
@@ -234,14 +253,21 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 	s.mu.Lock()
 	s.status.ReviewPhase = "speed"
 	s.mu.Unlock()
-	sizes, _ := batchSizes(len(ordered))
+	sizes, err := batchSizes(len(ordered), limits.BatchSize)
+	if err != nil {
+		reason = "eligible-unavailable"
+	}
+	batchWall := s.profile().Comparison(false).Wall() + c1.AdaptiveCleanupReserve
 	result := c1.AdaptiveResult{NativeQuality: true, Sweep: true, SweepEligibleCount: len(ordered), Generation: frozen.Generation, StartedAt: time.Now().UTC(), CurrentTarget: frozen.CurrentTarget, State: "running"}
 	position := 0
-	pause := sweepBatchPause
+	pause := limits.Pause
 	if s.batchPause > 0 {
 		pause = s.batchPause
 	}
 	for batchIndex, size := range sizes {
+		if reason != "" {
+			break
+		}
 		if batchIndex > 0 {
 			timer := time.NewTimer(pause)
 			select {
@@ -287,7 +313,7 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 			break
 		}
 		batch := c1.AdaptiveGeneration{NativeQuality: true, Generation: frozen.Generation, StartedAt: time.Now().UTC(), CurrentTarget: frozen.CurrentTarget, Candidates: ordered[position : position+size]}
-		batchCtx, batchCancel := context.WithTimeout(ctx, 90*time.Second)
+		batchCtx, batchCancel := context.WithTimeout(ctx, batchWall)
 		measured, measureErr := s.Measurement.MeasureNativeQuality(batchCtx, batch, func(progress c1.AdaptivePerformanceStatus) {
 			s.mu.Lock()
 			s.status.Progress = progress
@@ -296,7 +322,7 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 		batchCancel()
 		release()
 		result.AggregateBytes += measured.AggregateBytes
-		if measured.AggregateBytes < 0 || result.AggregateBytes > maxSweepBytes {
+		if measured.AggregateBytes < 0 || result.AggregateBytes > limits.Bytes {
 			reason = "review-budget-exceeded"
 			break
 		}
@@ -335,7 +361,7 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 			result.ValidCount++
 		}
 	}
-	if reason == "" && len(result.Candidates) == len(ordered) && result.CompletedAt.Sub(result.StartedAt) <= sweepWall {
+	if reason == "" && len(result.Candidates) == len(ordered) && result.CompletedAt.Sub(result.StartedAt) <= limits.Wall {
 		result.State = "completed"
 		if _, err := c1.NativeQualityCosts(result, result.CompletedAt, s.pool); err != nil {
 			reason = "review-insufficient-or-expired"
@@ -357,18 +383,19 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 	if result.State == "completed" && s.status.DeferredForFutureReview > 0 {
 		s.status.SubsetState = "subset-complete"
 	}
-	if result.State == "completed" && ctx.Err() == nil {
+	apply := result.State == "completed" && ctx.Err() == nil && !manual
+	if apply {
 		s.autoApplying = true
 		s.status.State = "applying"
 	}
 	s.mu.Unlock()
-	if result.State == "completed" && ctx.Err() == nil {
+	if apply {
 		s.applySweep(ctx, result, digest, append([]string(nil), s.pool...))
 	}
 	s.mu.Lock()
 	s.autoApplying = false
 	s.cancel = nil
-	if result.State == "completed" {
+	if apply {
 		if s.status.AppliedState == "applied" || s.status.AppliedState == "no-op" {
 			s.status.State = "completed"
 		} else {

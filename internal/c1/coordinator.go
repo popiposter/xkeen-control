@@ -36,11 +36,6 @@ type Coordinator struct {
 	nodes          NodeReader
 	lifecycle      chan struct{}
 
-	// evidence keeps RAM-only Observatory RTT history for native quality
-	// review; evidenceMu guards it separately from the lifecycle state.
-	evidenceMu sync.Mutex
-	evidence   *PolicyEngine
-
 	mu sync.Mutex
 	// benchmarkCancel/Done are the shared performance owner for the manual
 	// diagnostic and native quality measurement.
@@ -63,7 +58,7 @@ type Coordinator struct {
 
 func NewCoordinator(policy Policy, nodes NodeReader) *Coordinator {
 	policy = policy.normalized()
-	c := &Coordinator{policy: policy, nodes: nodes, lifecycle: make(chan struct{}, 1), evidence: NewPolicyEngine(policy), clock: func() time.Time { return time.Now().UTC() }}
+	c := &Coordinator{policy: policy, nodes: nodes, lifecycle: make(chan struct{}, 1), clock: func() time.Time { return time.Now().UTC() }}
 	c.lifecycle <- struct{}{}
 	c.manual = idleManualPerformanceStatus()
 	c.adaptive = idleAdaptivePerformanceStatus()
@@ -388,9 +383,6 @@ func (c *Coordinator) beginApply(ctx context.Context, recovery bool) (func(), er
 		clearPending()
 		return nil, err
 	}
-	// An explicit lifecycle mutation invalidates transient RTT evidence, so
-	// clear it before the transaction starts.
-	c.resetEvidence()
 	select {
 	case token := <-c.lifecycle:
 		c.mu.Lock()

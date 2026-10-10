@@ -13,10 +13,10 @@ import (
 func TestSweepQuotaPersistsWorstCaseAndRefusesThirdReview(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "private", "quota.json")
 	now := time.Now().UTC()
-	if used, err := reserveSweep(path, now); err != nil || used != maxSweepBytes {
+	if used, err := reserveSweep(path, now, testReviewBytes); err != nil || used != testReviewBytes {
 		t.Fatalf("first reservation: %d %v", used, err)
 	}
-	if q, err := quotaState(path, now.Add(time.Second)); err != nil || q.UsedBytes != maxSweepBytes || q.RemainingBytes != maxSweepBytes || q.ReviewsUsed != 1 || !q.NextResetAt.Equal(now.Add(24*time.Hour)) || !q.InspectionRequired {
+	if q, err := quotaState(path, now.Add(time.Second), testReviewBytes); err != nil || q.UsedBytes != testReviewBytes || q.RemainingBytes != testReviewBytes || q.ReviewsUsed != 1 || !q.NextResetAt.Equal(now.Add(24*time.Hour)) || !q.InspectionRequired {
 		t.Fatalf("quota status omitted reservation or intent: %+v %v", q, err)
 	}
 	release, err := acquireQuotaLock(path)
@@ -27,10 +27,10 @@ func TestSweepQuotaPersistsWorstCaseAndRefusesThirdReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	release()
-	if used, err := reserveSweep(path, now.Add(6*time.Hour)); err != nil || used != maxDailySweepBytes {
+	if used, err := reserveSweep(path, now.Add(6*time.Hour), testReviewBytes); err != nil || used != (dailyReviews*testReviewBytes) {
 		t.Fatalf("second reservation: %d %v", used, err)
 	}
-	if _, err := reserveSweep(path, now.Add(12*time.Hour)); err == nil {
+	if _, err := reserveSweep(path, now.Add(12*time.Hour), testReviewBytes); err == nil {
 		t.Fatal("third review escaped rolling cap")
 	}
 	release, err = acquireQuotaLock(path)
@@ -41,7 +41,7 @@ func TestSweepQuotaPersistsWorstCaseAndRefusesThirdReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	release()
-	if used, err := reserveSweep(path, now.Add(24*time.Hour)); err != nil || used != maxDailySweepBytes {
+	if used, err := reserveSweep(path, now.Add(24*time.Hour), testReviewBytes); err != nil || used != (dailyReviews*testReviewBytes) {
 		t.Fatalf("expired reservation not retired: %d %v", used, err)
 	}
 }
@@ -52,11 +52,11 @@ func TestManualComparisonStartPersistsAcrossServiceLifetime(t *testing.T) {
 	if err := recordComparisonStart(path, now); err != nil {
 		t.Fatal(err)
 	}
-	q, err := quotaState(path, now.Add(time.Second))
-	if err != nil || !q.LastStartedAt.Equal(now) || q.UsedBytes != 0 || q.RemainingBytes != maxDailySweepBytes {
+	q, err := quotaState(path, now.Add(time.Second), testReviewBytes)
+	if err != nil || !q.LastStartedAt.Equal(now) || q.UsedBytes != 0 || q.RemainingBytes != (dailyReviews*testReviewBytes) {
 		t.Fatalf("manual start not represented in receipt: %+v %v", q, err)
 	}
-	if _, err := reserveSweep(path, now.Add(time.Hour)); err == nil {
+	if _, err := reserveSweep(path, now.Add(time.Hour), testReviewBytes); err == nil {
 		t.Fatal("manual start did not postpone automatic review")
 	}
 }
@@ -70,7 +70,7 @@ func TestQuotaLockExcludesConcurrentReviewOwners(t *testing.T) {
 	if _, err := acquireQuotaLock(path); err == nil {
 		t.Fatal("second review acquired fixed lock")
 	}
-	if _, err := reserveSweep(path, time.Now()); err == nil {
+	if _, err := reserveSweep(path, time.Now(), testReviewBytes); err == nil {
 		t.Fatal("reservation bypassed active owner")
 	}
 	release()
@@ -79,7 +79,12 @@ func TestQuotaLockExcludesConcurrentReviewOwners(t *testing.T) {
 	accepted := make(chan bool, 3)
 	for i := 0; i < 3; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); <-start; _, e := reserveSweep(path, time.Now().UTC()); accepted <- e == nil }()
+		go func() {
+			defer wg.Done()
+			<-start
+			_, e := reserveSweep(path, time.Now().UTC(), testReviewBytes)
+			accepted <- e == nil
+		}()
 	}
 	close(start)
 	wg.Wait()
@@ -101,16 +106,16 @@ func TestSweepQuotaCorruptionAndSymlinkFailClosed(t *testing.T) {
 	if os.WriteFile(path, []byte("{broken"), 0600) != nil {
 		t.Fatal("fixture")
 	}
-	if _, err := reserveSweep(path, time.Now()); err == nil {
+	if _, err := reserveSweep(path, time.Now(), testReviewBytes); err == nil {
 		t.Fatal("corruption admitted")
 	}
-	if _, err := quotaState(path, time.Now()); err == nil {
+	if _, err := quotaState(path, time.Now(), testReviewBytes); err == nil {
 		t.Fatal("corrupt receipt exposed zero quota")
 	}
 	if os.Remove(path) != nil || os.Symlink(filepath.Join(dir, "target"), path) != nil {
 		t.Fatal("fixture")
 	}
-	if _, err := reserveSweep(path, time.Now()); err == nil {
+	if _, err := reserveSweep(path, time.Now(), testReviewBytes); err == nil {
 		t.Fatal("symlink admitted")
 	}
 }
