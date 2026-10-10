@@ -2,6 +2,19 @@
 
 ## Current release
 
+Signed stable [v0.4.11](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.11), published 2026-10-10T00:09:07Z, from independently reviewed source `42404d7a3c29f45e2ab8726936f98632a08f0337`, tree `110f32a01921906f22b953a1752d8be2f44d070f`, source epoch 1791590438.
+
+Protected [run38007239482](https://github.com/popiposter/xkeen-control/actions/runs/38007239482) passed hosted FULL and publication. Independent public verification passed for exactly ten assets, both pinned signatures/manifests, hashes/sizes, static ARM64/MIPS soft-float identity and the published MIPS version under emulation.
+
+| Binary | Bytes | SHA256 |
+| --- | ---: | --- |
+| linux/arm64 | 16,646,304 | `bf284b8421f2f606792f8b68407e078c94a518de301613a6ad3aa74b7134b4ef` |
+| linux/mipsle soft-float | 19,267,775 | `fa1ed8298e5e909eee56748dc0d4da220e41ed81e38a48a7452a525587d6f30b` |
+
+[PR192](https://github.com/popiposter/xkeen-control/pull/192) delivers [#191](https://github.com/popiposter/xkeen-control/issues/191): when more than 18 nodes meet the native RTT criterion, an automatic MIPS review samples an 18-node subset with a durable rotating share, shows deferred nodes separately and avoids a native restart for unchanged or insufficiently improved pools. Independent exact-source review and local FULL passed. The pure synthetic planner fixture also passed on KN1810 in a guarded pre-release MIPS test binary; it used no live node/config/Apply path. Signed0.4.11 installation on KN1810 passed exact public MIPS SHA/source, panel health and Xray/native-hash preservation readback. Live 18-node review/Apply acceptance remains pending.
+
+## Previous stable 0.4.10
+
 Signed stable [v0.4.10](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.10), published 2026-10-09T23:08:58Z, from independently reviewed source `2f91286af6738a101daa5b0de1b90deb378bc649`, tree `46d2537955d486ec076904c37bb519e09430bcb2`, source epoch 1791586859.
 
 Protected [run38002356078](https://github.com/popiposter/xkeen-control/actions/runs/38002356078) passed hosted FULL and publication. Fresh unauthenticated downloads verified exactly ten assets, both source-pinned signatures/manifests, hashes/sizes, static ELF/MIPS soft-float identity and the published MIPS version under emulation.
@@ -93,13 +106,13 @@ Subsequent signed0.4.5 hardware capability checks and installation passed; node 
 Package targets:`linux/arm64` and `linux/mipsle` soft-float with confirmed Entware `mipsel-3.4`/`mipsel-3.4_kn`. For an existing stock XKeen/Xray with Entware, install only the panel. Existing KN1810 preparation and hardware limits are described in [MIPS Keenetic](MIPS-KEENETIC.md):
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.10/install.sh) && sh -c "$xkeen_installer"
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.11/install.sh) && sh -c "$xkeen_installer"
 ```
 
 For a genuinely new supported Ultra KN1811/5.01.C.6.0-1, one private IPv4 bridge/one WAN and no host/custom DNS exceptions, use the explicit guided mode:
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.10/install.sh) && sh -c "$xkeen_installer" -- --setup
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.11/install.sh) && sh -c "$xkeen_installer" -- --setup
 ```
 
 It privately imports the source, prepares stock2.1 native components, the panel and compact selective routing with ordinary Keenetic DNS, then assigns HOME last. [Fresh prerequisites, ordering and interrupted setup](FRESH-KEENETIC.md) govern this restricted route; it never patches native code or reinstalls existing components. Other firmware/model/topology support remains unavailable.
