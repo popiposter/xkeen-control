@@ -179,6 +179,11 @@ func reserveSweepPlannedLocked(path string, now time.Time, plan *sweepPlan, revi
 // of the six-hour gap after the last start, or the expiry of the oldest
 // reservation inside the rolling day, whichever is later.
 func quotaRetryAt(q quotaReceipt, now time.Time, reviewBytes int64) time.Time {
+	if q.InspectionRequired {
+		// Held until explicit inspection; recheck hourly rather than every
+		// ten minutes.
+		return now.Add(time.Hour)
+	}
 	at := now
 	if !q.LastComparisonStartedAt.IsZero() && q.LastComparisonStartedAt.Add(6*time.Hour).After(at) {
 		at = q.LastComparisonStartedAt.Add(6 * time.Hour)

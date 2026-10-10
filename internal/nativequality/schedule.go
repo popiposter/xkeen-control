@@ -78,6 +78,10 @@ func (s *Schedule) Run(ctx context.Context) {
 		if next.Before(startupFloor) {
 			next = startupFloor
 		}
+		// Show the real start: a review inside the quota window waits for it.
+		if retry, ok := s.service.quotaRetryAt(time.Now()); ok && retry.After(next) {
+			next = retry
+		}
 		s.service.mu.Lock()
 		s.service.status.NextDueAt = next
 		s.service.mu.Unlock()

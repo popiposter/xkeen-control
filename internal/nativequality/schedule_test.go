@@ -69,4 +69,8 @@ func TestQuotaRetryAtWaitsForTheGapAndTheRollingDay(t *testing.T) {
 	if quotaAdmits(used, now, bytes) {
 		t.Fatal("a second automatic review was admitted inside 24 hours")
 	}
+	fenced := quotaReceipt{Version: 1, InspectionRequired: true}
+	if got := quotaRetryAt(fenced, now, bytes); !got.Equal(now.Add(time.Hour)) {
+		t.Fatalf("inspection-held retry = %s", got)
+	}
 }

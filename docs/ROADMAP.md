@@ -14,8 +14,16 @@ five-member KN1810 pool has not yet been automatically replaced. The
 (subscription churn) and #198 (imported-pool initialization) into this target;
 both are closed. Dead code was removed in #202 and FULL was shortened to
 about three minutes in #203. Phase 0 removed the never-started `c1`
-supervisor/benchmark generation in #204; Phase 1 is next. No router change or release is part of
-documenting this target.
+supervisor/benchmark generation in #204. Phase 1 is in source on `main`: targeted RTT
+probing before every review (#205), orphaned selectors as unhealthy members (#206), one
+pipeline for manual and automatic reviews (#207) and one automatic policy for both
+profiles (#208). Joint 05+07 narrowing (TASK-002 part 2) remains.
+
+**Release gate:** since #208, `main` makes the ARM64 automatic review apply verified
+pools and restart XKeen without operator action. Do not cut a release from `main` until
+TASK-008 step 1 (a read-only baseline and a bounded unsigned synthetic candidate on both
+router types, with no change to live routing) has passed and been reviewed. The natural
+automatic review and Apply on hardware can only be observed after that signed build.
 
 ## Delivered
 
