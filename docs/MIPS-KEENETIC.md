@@ -5,12 +5,12 @@ KeeneticOS5.1.7, `uname -m: mips`, Entware `mipsel-3.4`/`mipsel-3.4_kn`,
 stock XKeen2.0.1 Beta/Xray26.7.28. Reported memory values indicate about249MiB
 RAM/105MiB available and1GiB swap; these are not panel hardware qualification.
 
-Signed stable [0.4.11](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.11)
+Signed stable [0.4.12](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.12)
 includes the MIPS soft-float panel. Source review, hosted FULL, exact ten-file
 public verification, both signatures and actual published MIPS emulated startup
 passed; see [release evidence](RELEASES.md). Signed0.4.5 installation and native
 preservation passed on KN1810; its node activation failed with retained intent.
-Signed0.4.6 and0.4.7 installation and their separately verified recovery settlements passed. A later automatic subscription transaction retained a previous-branch readiness failure;0.4.8 delivered that repair. Signed0.4.9 installation and one bounded manual speed test passed on KN1810. Signed0.4.10 installation passed with matching binary/source/receipt and unchanged native configuration. A disposable pre-release MIPS test of the 0.4.11 fair-subset planner passed on KN1810 with synthetic data only. Signed0.4.11 installation is now verified against its exact public MIPS hash/source, panel health and preserved Xray/native hashes; live 18-node sweep/Apply acceptance remains pending. Broader RSS/auth/PTY/LAN acceptance remains incomplete. Stable0.4.0
+Signed0.4.6 and0.4.7 installation and their separately verified recovery settlements passed. A later automatic subscription transaction retained a previous-branch readiness failure;0.4.8 delivered that repair. Signed0.4.9 installation and one bounded manual speed test passed on KN1810. Signed0.4.10 and0.4.11 installation passed with matching binary/source/receipt and unchanged native configuration. The first live 0.4.11 scheduled review attempted 18 nodes, obtained 16 valid samples and transferred 37.8 MiB, but safely retained the five-node pool without Apply because incumbents lacked comparable fresh evidence. A disposable pre-release MIPS test of the 0.4.12 admission check passed on KN1810 with synthetic data only. Signed0.4.12 installation is verified against its exact public MIPS hash/source, `installed-verified` receipt, panel health and preserved Xray/native hashes. Natural 0.4.12 review and automatic Apply acceptance remain pending. Broader RSS/auth/PTY/LAN acceptance remains incomplete. Stable0.4.0
 remains ARM64-only. No unsigned binary copy, architecture override, signature
 bypass or modification of0.4.0 assets. Fresh
 `--setup` remains unsupported for KN1810 and existing installations.
@@ -44,23 +44,24 @@ Only after the inventory and protected snapshot above, run the published
 panel-only installer:
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.11/install.sh) && sh -c "$xkeen_installer"
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.12/install.sh) && sh -c "$xkeen_installer"
 ```
 
 The initial installer trusts GitHub HTTPS and checks manifest/size/hash consistency;
 installed self-updates verify the pinned Ed25519 signature. Do not confuse these
 trust steps. After installation, `/opt/sbin/xkeen-control version --json` must
-report0.4.11/stable/source `42404d7a3c29f45e2ab8726936f98632a08f0337`.
+report0.4.12/stable/source `0079e13e41693a544d4d0fd18365687f91aa5ea6`.
 The MIPS binary SHA256 is
-`fa1ed8298e5e909eee56748dc0d4da220e41ed81e38a48a7452a525587d6f30b`.
+`17a39b25eea5fa9fd4061f536ec8873372f16679ead5500cfe8b7d621b416b70`.
 Keep private credentials and backup contents out of chat/public evidence.
 
-For an existing older panel helper, 0.4.11 provides the separate
+For an existing older panel helper, 0.4.12 provides the separate
 [verified maintenance delivery](OPERATIONS.md#durable-update-outcomes-162) path.
 The observed 0.4.3 attempt rolled back to 0.4.2; do not replay that old updater
-or treat a transient candidate version as successful installation. Actual 0.4.11
+or treat a transient candidate version as successful installation. Actual 0.4.12
 installation passed with independent binary/source and native-preservation
-readback; automatic comparison and native Apply need separate live proof.
+readback; a live 0.4.11 comparison completed without Apply. A natural 0.4.12
+review and automatic Apply need separate proof.
 
 ## Validation and prerequisite repair delivered in0.4.2 (#154)
 
@@ -80,7 +81,7 @@ setup still requires preinstalled tools and remains ARM64-only.
 
 ## Before configuring nodes or routing
 
-Stable 0.4.3 added [constrained resource limits](ROUTER-RESOURCES.md). Stable0.4.11
+Stable 0.4.3 added [constrained resource limits](ROUTER-RESOURCES.md). Stable0.4.12
 retains bounded sequential automatic comparisons on MIPS and selects at most 18
 fresh eligible nodes per review, rotating the deferred alternatives; explicit single-node tests
 remain limited to 4 MiB / 20 seconds and each comparison batch to 24 MiB / 90 seconds. Pressure admission
