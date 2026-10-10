@@ -13,10 +13,10 @@ import { Disclosure } from './ui'
 
 const TextEditor = lazy(() => import('./native-config-text.jsx'))
 const fields = [
-  { file: '02_dns.json', area: 'dns', field: 'queryStrategy', label: 'DNS address family', options: ['UseIP', 'UseIPv4', 'UseIPv6'] },
-  { file: '02_dns.json', area: 'dns', field: 'disableCache', label: 'Disable DNS cache', boolean: true },
-  { file: '02_dns.json', area: 'dns', field: 'disableFallback', label: 'Disable DNS fallback', boolean: true },
-  { file: '05_routing.json', area: 'routing', field: 'domainStrategy', label: 'Routing domain resolution', options: ['AsIs', 'IPIfNonMatch', 'IPOnDemand'] },
+  { file: '02_dns.json', area: 'dns', field: 'queryStrategy', label: 'DNS address family', options: ['UseIP', 'UseIPv4', 'UseIPv6'], help: 'Which addresses Xray asks for: IPv4 and IPv6, IPv4 only or IPv6 only.' },
+  { file: '02_dns.json', area: 'dns', field: 'disableCache', label: 'Disable DNS cache', boolean: true, help: 'Xray caches answers by default.' },
+  { file: '02_dns.json', area: 'dns', field: 'disableFallback', label: 'Disable DNS fallback', boolean: true, help: 'With several resolvers, Xray otherwise tries the others when the matching one fails.' },
+  { file: '05_routing.json', area: 'routing', field: 'domainStrategy', label: 'Routing domain resolution', options: ['AsIs', 'IPIfNonMatch', 'IPOnDemand'], help: 'AsIs: never look names up; IP rules use the address the device resolved. IPIfNonMatch: if no rule matched at all, look the name up with Xray DNS and try the IP rules again (shipped default). IPOnDemand: look the name up as soon as an IP rule is checked.' },
   { file: '07_observatory.json', area: 'observatory', field: 'probeInterval', label: 'Node probe interval (for example 30s)' },
   { file: '07_observatory.json', area: 'observatory', field: 'enableConcurrency', label: 'Concurrent node probes', boolean: true },
 ]
@@ -48,7 +48,8 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, on
   }, [csrfToken])
   const text = drafts[file] ?? ''
   const parsed = inspectDocument(text)
-  const changed = workspace && Object.keys(drafts).some((id) => drafts[id] !== workspace.documents[id]?.text)
+  const changedFiles = workspace ? Object.keys(drafts).filter((id) => drafts[id] !== workspace.documents[id]?.text) : []
+  const changed = changedFiles.length > 0
   useEffect(() => { onWorkingChange?.(!!changed) }, [changed, onWorkingChange])
   const changedDocuments = Object.fromEntries(Object.entries(drafts).filter(([id, value]) => value !== workspace?.documents[id]?.text))
   const invalidChanged = Object.values(changedDocuments).some((value) => inspectDocument(value).error)
@@ -226,7 +227,7 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, on
             else setWorkspace((previous) => ({ ...previous, pending: { ...previous.pending, applyId: job.id, applyState: 'unknown' } }))
             setNotice('Existing Apply inspected without restarting. Check its configuration or inspect console output.')
           })}><IconRefresh data-icon="inline-start" />Inspect existing Apply</Button>}
-          <Button disabled={locked || !pending || !!pending.drift || pending.applyState === 'unknown'} onClick={() => void run(applySaved)}><IconPlayerPlay data-icon="inline-start" />Apply saved configurations</Button>
+          {(pending || applying) && <Button disabled={locked || !pending || !!pending.drift || pending.applyState === 'unknown'} onClick={() => void run(applySaved)}><IconPlayerPlay data-icon="inline-start" />Apply saved configurations</Button>}
           {onOpenConsole && (applyJob || pending?.applyId || pending?.applyState === 'unknown') && <Button className="self-start" variant="outline" onClick={onOpenConsole}>View native console</Button>}
           {pending && <Button className="self-start" variant="outline" disabled={locked || !!pending.drift} onClick={() => void run(async () => { await request('restore-saved', { digest: workspace.digest }); await syncWorkspace(); setNotice(restoreNeedsRestart ? 'Pre-apply files restored. Use Apply to restart with this restored set.' : 'Saved changes discarded. The running service was not restarted.') })}><IconRestore data-icon="inline-start" />{restoreNeedsRestart ? 'Restore pre-apply configurations' : 'Discard saved changes'}</Button>}
           {pending?.applyId && pending.applyState !== 'running' && <Button className="self-start" variant="outline" disabled={locked} onClick={() => void run(async () => { await request('inspect', { id: pending.applyId }); await syncWorkspace(); setNotice('Saved configuration and a new running process were independently confirmed. No Restart was repeated.') })}><IconRefresh data-icon="inline-start" />Check applied configuration</Button>}
@@ -242,14 +243,14 @@ export function NativeConfigSection({ csrfToken, onUnauthorized, onNativeJob, on
         {storedDraft !== undefined && <div className="flex flex-wrap items-center gap-2"><span>A saved draft is available.</span><Button className="self-start" variant="outline" disabled={locked} onClick={() => edit(storedDraft)}><IconRestore data-icon="inline-start" />Resume draft</Button><Button className="self-start" variant="outline" disabled={locked} onClick={() => void run(async () => { await request('draft', { file, discard: true }); setWorkspace((previous) => ({ ...previous, documents: { ...previous.documents, [file]: { text: previous.documents[file].text } } })) })}><IconTrash data-icon="inline-start" />Discard saved draft</Button></div>}
         {parsed.error && <p role="alert">{parsed.error}</p>}
         {mode === 'text' ? <Suspense fallback={<p>Loading text editor…</p>}><TextEditor text={text} disabled={locked} onChange={edit} onUndo={() => step('undo')} onRedo={() => step('redo')} /></Suspense> : !parsed.error && <div className="flex flex-col gap-3">
-          <Disclosure defaultOpen title="General settings">{fields.filter((item) => item.file === file).map((item) => <NativeField key={item.field} item={item} current={documentField(parsed.tree, item.area, item.field)} disabled={locked} onChange={(value) => { try { edit(editDocumentField(text, item.area, item.field, value)) } catch (error) { setNotice(error.message) } }} />)}</Disclosure>
           <NativeConfigForm key={file} file={file} text={text} tree={parsed.tree} disabled={locked} onChange={edit} onError={setNotice} request={request} targets={workspace.targets || []} />
+          <Disclosure defaultOpen title={file === '05_routing.json' ? 'Domain resolution' : file === '02_dns.json' ? 'Resolver behaviour' : 'General settings'}>{fields.filter((item) => item.file === file).map((item) => <NativeField key={item.field} item={item} current={documentField(parsed.tree, item.area, item.field)} disabled={locked} onChange={(value) => { try { edit(editDocumentField(text, item.area, item.field, value)) } catch (error) { setNotice(error.message) } }} />)}</Disclosure>
           <p className="text-sm text-muted-foreground">Additional native properties are available in Text mode. Unknown fields and comments are preserved.</p>
         </div>}
         <div className="flex flex-wrap gap-2">
           {changed && <p className="w-full text-sm text-muted-foreground">Unfinished working edits are excluded from Apply until you save them.</p>}
           <Button disabled={locked || !!parsed.error || !!pending?.drift || pending?.applyState === 'unknown' || text === workspace.documents[file]?.text} onClick={() => void run(save)}><IconDeviceFloppy data-icon="inline-start" />Save configuration</Button>
-          <Button className="self-start" variant="outline" disabled={locked || !changed || invalidChanged || !!pending?.drift || pending?.applyState === 'unknown'} onClick={() => void run(saveAll)}>Save all configurations</Button>
+          {changedFiles.some((id) => id !== file) && <Button className="self-start" variant="outline" disabled={locked || !changed || invalidChanged || !!pending?.drift || pending?.applyState === 'unknown'} onClick={() => void run(saveAll)}>Save all configurations</Button>}
           <Button className="self-start" variant="outline" disabled={locked} onClick={() => void run(async () => { await request('draft', { file, text }); setWorkspace((previous) => ({ ...previous, documents: { ...previous.documents, [file]: { ...previous.documents[file], draft: text } } })); setNotice('Draft saved. Native files and the running service are unchanged.') })}><IconDeviceFloppy data-icon="inline-start" />Save draft</Button>
           <Button className="self-start" variant="outline" disabled={locked || text === workspace.documents[file]?.text} onClick={() => edit(workspace.documents[file].text)}><IconTrash data-icon="inline-start" />Discard working edits</Button>
         </div>
@@ -263,5 +264,6 @@ function NativeField({ item, current, disabled, onChange }) {
   const id = `native-config-${item.area}-${item.field}`
   return <Field><FieldLabel htmlFor={id}>{item.label}</FieldLabel>
     {item.options || item.boolean ? <NativeSelect id={id} value={String(current ?? '')} disabled={disabled} onChange={(event) => onChange(event.target.value === '' ? undefined : item.boolean ? event.target.value === 'true' : event.target.value)}><option value="">Native default / unspecified</option>{(item.options || ['false', 'true']).map((option) => <option key={option} value={option}>{item.boolean ? option === 'true' ? 'Yes' : 'No' : option}</option>)}</NativeSelect> : <Input id={id} value={current ?? ''} maxLength={32} disabled={disabled} onChange={(event) => onChange(event.target.value)} />}
+    {item.help && <p className="text-xs text-muted-foreground">{item.help}</p>}
   </Field>
 }

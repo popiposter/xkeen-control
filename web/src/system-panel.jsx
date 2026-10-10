@@ -1,5 +1,5 @@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { IconLock, IconKey, IconPackage, IconBell, IconActivity, IconRefresh, IconDeviceFloppy, IconPlayerPlay, IconArrowBackUp } from '@tabler/icons-react'
+import { IconLock, IconKey, IconPackage, IconBell, IconActivity, IconRefresh, IconDeviceFloppy, IconPlayerPlay, IconArrowBackUp, IconHistory } from '@tabler/icons-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -483,14 +483,14 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
   }
 }
 
-export function SystemPanelSection({ controller, status }) {
-  const [page, setPage] = useState(() => ({ '#system-password': 'password', '#system-releases': 'releases', '#system-notifications': 'notifications', '#system-runtime': 'runtime' })[location.hash] || 'access')
+export function SystemPanelSection({ controller, status, backup }) {
+  const [page, setPage] = useState(() => ({ '#system-password': 'password', '#system-releases': 'releases', '#system-notifications': 'notifications', '#system-runtime': 'runtime', '#system-backup': 'backup' })[location.hash] || 'access')
   const listener = controller.listener
   const update = controller.update
   const lifecycleBlocked = lifecycleBlocksMutations(status?.lifecycle)
   return <div className="section-stack system-panel-section">
     {controller.result && <Alert variant={controller.result.tone === 'error' ? 'destructive' : 'default'} role={controller.result.tone === 'error' ? 'alert' : 'status'}><AlertDescription><strong>{controller.result.title}</strong> {controller.result.message}</AlertDescription></Alert>}
-    <Tabs value={page} onValueChange={(value) => { setPage(value); history.replaceState(null, '', `#system-${value}`) }}><TabsList className="h-auto flex-wrap justify-start">{[['access','Access',IconLock], ['password','Password',IconKey], ['releases','Releases',IconPackage], ['notifications','Notifications',IconBell], ['runtime','Runtime',IconActivity]].map(([value,label,Glyph]) => <TabsTrigger key={value} value={value} className="min-h-11 sm:min-h-0"><Glyph className="text-info" />{label}</TabsTrigger>)}</TabsList><TabsContent value="access" className="flex flex-col gap-4">
+    <Tabs value={page} onValueChange={(value) => { setPage(value); history.replaceState(null, '', `#system-${value}`) }}><TabsList className="h-auto flex-wrap justify-start">{[['access','Access',IconLock], ['password','Password',IconKey], ['releases','Releases',IconPackage], ['notifications','Notifications',IconBell], ['runtime','Runtime',IconActivity], ...(backup ? [['backup','Backup',IconHistory]] : [])].map(([value,label,Glyph]) => <TabsTrigger key={value} value={value} className="min-h-11 sm:min-h-0"><Glyph className="text-info" />{label}</TabsTrigger>)}</TabsList><TabsContent value="access" className="flex flex-col gap-4">
 
       <Card role="region" id="system-access" className="panel system-panel-card listener-card" aria-label="Management listener"><CardContent className="flex flex-col gap-4">
         <div className="system-card-heading"><div><span className="panel-label">Management listener</span><h2>{listener ? addressText(listener) : 'Reading listener…'}</h2></div>{listener && <Badge variant="secondary">{editabilityLabel(listener.editability)}</Badge>}</div>
@@ -560,7 +560,7 @@ export function SystemPanelSection({ controller, status }) {
         <div className="system-facts-grid"><Fact label="Control plane" value={status?.controlPlane?.version || 'dev'} /><Fact label="Runtime" value={status?.setup?.runtime || 'unknown'} /><Fact label="XKeen" value={status?.xkeen?.running ? 'Running' : 'Not detected'} /><Fact label="Xray" value={status?.xray?.running ? 'Running' : 'Not detected'} /><Fact label="Observatory" value={status?.observatory?.apiReachable ? 'Reachable' : 'Degraded'} /><Fact label="Uptime" value={formatUptime(status?.controlPlane?.uptimeSeconds)} /></div>
       </CardContent></Card></SettingsGroup>
 
-    </TabsContent></Tabs>
+    </TabsContent>{backup && <TabsContent value="backup">{backup}</TabsContent>}</Tabs>
   </div>
 }
 

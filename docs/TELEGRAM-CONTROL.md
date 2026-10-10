@@ -2,7 +2,7 @@
 
 The panel runs one optional Telegram long-poll receiver alongside outbound
 notifications. Bot control is off by default. Configure the bot token and chat
-in System / Panel, then explicitly enable control for one numeric Telegram user
+in System → Notifications, then explicitly enable control for one numeric Telegram user
 ID. Notifications and control have separate switches. Replacing credentials
 disables control. Credentials and the user/chat allowlist stay in the root-only
 notification authority and are excluded from portable backups.

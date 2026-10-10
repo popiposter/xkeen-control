@@ -1,12 +1,14 @@
 import { Modal, RowAction } from './ui'
 import { DestinationBadge } from './status-ui'
-import { IconPlus, IconSearch, IconPencil, IconShieldLock, IconWorld, IconBan, IconSitemap } from '@tabler/icons-react'
+import { IconPlus, IconSearch, IconPencil, IconShieldLock, IconBan, IconSitemap, IconRoute, IconServer } from '@tabler/icons-react'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Field, FieldLabel, FieldGroup, FieldSet, FieldLegend } from '@/components/ui/field'
 import { NativeSelect } from '@/components/ui/native-select'
+import { BalancerSummary, DnsOverview, RoutingOverview, RuleArrow, RuleConditions, SectionHeading, ruleConditions } from './native-config-visual.jsx'
 import { appendDocumentItem, documentNode, editDocumentPath, moveDocumentItem, nodeValue, prependDocumentItem } from './native-config-document'
 
 const GeodataBrowser = lazy(() => import('./native-geodata.jsx'))
@@ -54,11 +56,11 @@ export function NativeConfigForm({ file, text, tree, disabled, onChange, onError
   }
   const array = (path) => node(path)?.type === 'array' ? node(path).children || [] : []
   if (file === '02_dns.json') return <div className="flex flex-col gap-4">
-    <h3 className="flex items-center gap-2 font-semibold"><IconWorld className="text-info" />DNS resolvers</h3>
-    <p className="text-sm text-muted-foreground">Domain/geosite matches select resolvers. Network routing of resolver requests is separate; local transports bypass routing.</p>
-    <p className="text-sm text-muted-foreground">For split DNS, use a direct default resolver and domain/geosite matches on the VPN resolver. Route that resolver's traffic separately. IP-only traffic rules do not identify names before resolution. A resolver's hostname needs a reachable bootstrap path; avoid depending on the same unresolved VPN connection.</p>
-    <details className="disclosure"><summary>Advanced DNS behaviour</summary><div className="disclosure-body grid gap-4 sm:grid-cols-2">{stringField(['dns', 'tag'], 'DNS traffic tag for routing')}
-    {stringField(['dns', 'disableFallbackIfMatch'], 'Disable fallback after a domain match', { boolean: true })}</div></details>
+    <DnsOverview servers={array(['dns', 'servers']).length} />
+    <SectionHeading icon={IconServer} title="Xray resolvers" count={array(['dns', 'servers']).length} />
+    {!array(['dns', 'servers']).length && <p className="text-sm text-muted-foreground">No resolver configured: Xray uses the router’s DNS. This is the recommended setting.</p>}
+    <details className="disclosure"><summary>Advanced DNS behaviour</summary><div className="disclosure-body flex flex-col gap-3"><p className="text-sm text-muted-foreground">With several resolvers, a resolver’s domain / geosite matches decide which one answers a name; the first resolver is the default. How resolver traffic itself is routed is separate, and a resolver given by hostname needs a path that does not depend on the VPN it serves.</p><div className="grid gap-4 sm:grid-cols-2">{stringField(['dns', 'tag'], 'DNS traffic tag for routing')}
+    {stringField(['dns', 'disableFallbackIfMatch'], 'Disable fallback after a domain match', { boolean: true })}</div></div></details>
     {array(['dns', 'servers']).slice(0, 32).map((server, index) => <div key={index} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-4"><div className="flex min-w-0 items-start gap-3"><IconShieldLock className="shrink-0 text-info" /><div><strong className="break-all">{server.type === 'string' ? value(['dns', 'servers', index]) : value(['dns', 'servers', index, 'address']) || 'New resolver'}</strong><p className="text-sm text-muted-foreground">{(value(['dns', 'servers', index, 'domains']) || []).length ? `${value(['dns', 'servers', index, 'domains']).length} domain/category matches` : 'Default resolver'} · {value(['dns', 'servers', index, 'tag']) || 'Native transport'}</p></div></div><Button variant="outline" disabled={disabled} onClick={() => setEditingResolver(index)}><IconPencil />Edit resolver {index + 1}</Button>{editingResolver === index && <Modal label={`Resolver ${index + 1}`} busy={disabled} onCancel={() => setEditingResolver(null)}><h3 className="text-lg font-semibold">Resolver {index + 1}</h3><div className="flex flex-col gap-4">
       {server.type === 'string' ? stringField(['dns', 'servers', index], `Resolver ${index + 1} address`) : server.type === 'object' ? <>
         {stringField(['dns', 'servers', index, 'address'], `Resolver ${index + 1} address`)}
@@ -72,17 +74,21 @@ export function NativeConfigForm({ file, text, tree, disabled, onChange, onError
       <Button className="self-start" variant="outline" disabled={disabled} onClick={() => { edit(['dns', 'servers', index], undefined); setEditingResolver(null) }}>Remove resolver {index + 1}</Button>
     <Button className="self-start" onClick={() => setEditingResolver(null)}>Done</Button></div></Modal>}</div>)}
     {array(['dns', 'servers']).length > 32 && <p>Additional resolvers are available in Text mode.</p>}
-    <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={disabled} onClick={() => { const index = array(['dns', 'servers']).length; add(['dns', 'servers'], { address: '', domains: [], skipFallback: false }); setEditingResolver(index) }}><IconPlus />Add resolver</Button>{[['Google DoH', 'https://8.8.8.8/dns-query'], ['Cloudflare DoH', 'https://1.1.1.1/dns-query'], ['Router DNS', 'localhost']].map(([label,address]) => <Button key={label} variant="outline" disabled={disabled} onClick={() => { const index = array(['dns', 'servers']).length; add(['dns', 'servers'], { address, domains: [], skipFallback: address !== 'localhost', tag: address === 'localhost' ? 'dns-direct' : 'dns-vpn' }); setEditingResolver(index) }}>{label}</Button>)}</div>
+    <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={disabled} onClick={() => { const index = array(['dns', 'servers']).length; add(['dns', 'servers'], { address: '', domains: [], skipFallback: false }); setEditingResolver(index) }}><IconPlus />Add resolver</Button></div>
   </div>
-  if (file === '05_routing.json') return <div className="flex flex-col gap-4">
-    <Button className="self-start" variant="outline" disabled={disabled} onClick={() => setShowExample(!showExample)}>{showExample ? 'Close routing example' : 'Check a routing example'}</Button>
+  if (file === '05_routing.json') return <div className="flex flex-col gap-5">
+    <RoutingOverview />
+    <section className="flex flex-col gap-3 rounded-xl border p-4">
+    <SectionHeading icon={IconRoute} title="Traffic rules" count={array(['routing', 'rules']).length}>
+    <Button variant="outline" size="sm" disabled={disabled} onClick={() => setShowExample(!showExample)}>{showExample ? 'Close routing example' : 'Check a routing example'}</Button>
+    <Button variant="outline" size="sm" disabled={disabled} onClick={() => setBrowseGeodata(!browseGeodata)}>{browseGeodata ? 'Close geodata browser' : 'Browse installed geodata'}</Button>
+    </SectionHeading>
+    <p className="text-sm text-muted-foreground">Checked top to bottom; the first rule whose conditions all match decides. System rules keep the panel and forced-VPN devices working; change them only on purpose.</p>
     {showExample && <Modal label="Check routing example" busy={disabled} onCancel={() => setShowExample(false)}><Suspense fallback={<p>Loading routing example…</p>}><RoutingExample text={text} request={request} disabled={disabled} /></Suspense><Button variant="outline" onClick={() => setShowExample(false)}>Close example</Button></Modal>}
-    <Button className="self-start" variant="outline" disabled={disabled} onClick={() => setBrowseGeodata(!browseGeodata)}>{browseGeodata ? 'Close geodata browser' : 'Browse installed geodata'}</Button>
     {browseGeodata && <Modal label="Search installed geodata" busy={disabled} onCancel={() => setBrowseGeodata(false)}><Suspense fallback={<p>Loading geodata browser…</p>}><GeodataBrowser request={request} disabled={disabled} targets={[...targets, ...array(['routing', 'balancers']).map((_, index) => ({ kind: 'balancer', tag: value(['routing', 'balancers', index, 'tag']) })).filter((target) => typeof target.tag === 'string')]} onAdd={(rule, position) => {
       try { const rules = Array.isArray(rule) ? rule : [rule]; return onChange((position === 'first' ? [...rules].reverse() : rules).reduce((next, item) => (position === 'first' ? prependDocumentItem : appendDocumentItem)(next, ['routing', 'rules'], item), text)) } catch (error) { onError(error.message); return false }
     }} /></Suspense><Button className="self-start" variant="outline" onClick={() => setBrowseGeodata(false)}>Done browsing</Button></Modal>}
-    <h3 className="font-semibold">Traffic rules</h3><p className="text-sm text-muted-foreground">Xray uses the first matching rule. A rule's conditions are combined; different rules provide alternatives.</p>
-    {array(['routing', 'rules']).slice(0, shown).map((rule, index) => { const ruleValue = value(['routing', 'rules', index]) || {}; const tag = ruleValue.balancerTag || ruleValue.outboundTag || 'No destination'; const target = ruleValue.balancerTag ? { kind: 'balancer' } : targets.find((item) => item.tag === tag); const matches = ['domain', 'ip', 'protocol', 'network', 'port', 'inboundTag', 'source', 'sourcePort', 'user'].filter((key) => ruleValue[key]?.length).map((key) => `${key}: ${Array.isArray(ruleValue[key]) ? ruleValue[key].slice(0, 3).join(', ') + (ruleValue[key].length > 3 ? ` +${ruleValue[key].length-3}` : '') : ruleValue[key]}`); return <div key={index} className="rounded-lg border p-4"><div className="flex items-start gap-3"><span className="pt-1 text-sm text-muted-foreground">{index + 1}</span><div className="min-w-0 flex-1"><DestinationBadge tag={tag} target={target} /><p className="mt-2 break-words text-sm">{matches.join(' · ') || 'All traffic / custom native match'}</p></div><div className="flex flex-wrap gap-1"><Button size="icon" variant="outline" aria-label={`Edit rule ${index+1}`} disabled={disabled} onClick={() => setEditingRule(index)}><IconPencil /></Button><RowAction action="up" label={`Move rule ${index+1} up`} disabled={disabled || index === 0} onClick={() => move(['routing', 'rules'], index, index-1)} /><RowAction action="down" label={`Move rule ${index+1} down`} disabled={disabled || index+1 >= array(['routing', 'rules']).length} onClick={() => move(['routing', 'rules'], index, index+1)} /></div></div>{editingRule === index && <Modal label={`Edit rule ${index+1}`} busy={disabled} onCancel={() => setEditingRule(null)}><h3 className="text-lg font-semibold">Rule {index+1}</h3><div className="flex flex-col gap-4">
+    {array(['routing', 'rules']).slice(0, shown).map((rule, index) => { const ruleValue = value(['routing', 'rules', index]) || {}; const tag = ruleValue.balancerTag || ruleValue.outboundTag || 'No destination'; const target = ruleValue.balancerTag ? { kind: 'balancer' } : targets.find((item) => item.tag === tag); const { system } = ruleConditions(ruleValue); return <div key={index} data-rule={index + 1} className={`rounded-lg border p-3 ${system ? 'bg-muted/40' : ''}`}><div className="flex flex-wrap items-start gap-3"><span className="flex size-7 shrink-0 items-center justify-center rounded-full border text-xs text-muted-foreground">{index + 1}</span><div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{system && <Badge variant="outline">System</Badge>}<RuleConditions rule={ruleValue} /><RuleArrow /><DestinationBadge tag={tag} target={target} /></div><div className="flex flex-wrap gap-1 max-sm:w-full max-sm:justify-end"><Button size="icon" variant="outline" aria-label={`Edit rule ${index+1}`} disabled={disabled} onClick={() => setEditingRule(index)}><IconPencil /></Button><RowAction action="up" label={`Move rule ${index+1} up`} disabled={disabled || index === 0} onClick={() => move(['routing', 'rules'], index, index-1)} /><RowAction action="down" label={`Move rule ${index+1} down`} disabled={disabled || index+1 >= array(['routing', 'rules']).length} onClick={() => move(['routing', 'rules'], index, index+1)} /></div></div>{editingRule === index && <Modal label={`Edit rule ${index+1}`} busy={disabled} onCancel={() => setEditingRule(null)}><h3 className="text-lg font-semibold">Rule {index+1}</h3><div className="flex flex-col gap-4">
       {rule.type === 'object' && value(['routing', 'rules', index, 'type']) === 'field' ? <>
         {stringField(['routing', 'rules', index, 'domain'], `Rule ${index + 1} domains / geosite (one per line)`, { multiline: true })}
         {stringField(['routing', 'rules', index, 'ip'], `Rule ${index + 1} IP / CIDR / geoip (one per line)`, { multiline: true })}
@@ -93,10 +99,16 @@ export function NativeConfigForm({ file, text, tree, disabled, onChange, onError
     </div></Modal>}</div> })}
     {shown < array(['routing', 'rules']).length && <Button className="self-start" variant="outline" onClick={() => setShown(shown + 12)}>Show more rules</Button>}
     <Button className="self-start" variant="outline" disabled={disabled} onClick={() => { const index = array(['routing', 'rules']).length; add(['routing', 'rules'], { type: 'field', domain: [], outboundTag: targets.find((item) => item.protocol === 'freedom')?.tag || 'direct' }); setEditingRule(index); setShown(Math.max(shown,index+1)) }}><IconPlus />Add traffic rule</Button>
-    <details className="disclosure"><summary><IconSitemap className="text-info" />Pool & balancing settings</summary><div className="disclosure-body flex flex-col gap-4">
-    {array(['routing', 'balancers']).slice(0, 32).map((balancer, index) => <FieldSet key={index} className="flex flex-col gap-3 rounded-lg border p-3"><FieldLegend>Balancer {index + 1}</FieldLegend>
+    </section>
+    <section className="flex flex-col gap-3 rounded-xl border p-4">
+    <SectionHeading icon={IconSitemap} title="VPN pool & balancing" count={array(['routing', 'balancers']).length} />
+    <p className="text-sm text-muted-foreground">A rule with a VPN destination sends traffic to a balancer. Its members are VPN nodes; Xray picks a healthy one by the strategy. Automatic reviews in Performance keep the members and their weights up to date.</p>
+    {array(['routing', 'balancers']).slice(0, 32).map((balancer, index) => <div key={index} className="flex flex-col gap-3 rounded-lg border p-3">
+      <BalancerSummary balancer={value(['routing', 'balancers', index]) || {}} exact={(tag) => targets.some((item) => item.tag === tag)} />
+      <details className="disclosure"><summary>Edit balancer {index + 1}</summary><div className="disclosure-body flex flex-col gap-3">
       {balancer.type === 'object' ? <>{stringField(['routing', 'balancers', index, 'tag'], `Balancer ${index + 1} tag`)}{stringField(['routing', 'balancers', index, 'selector'], `Balancer ${index + 1} outbound prefixes (one per line)`, { multiline: true })}{stringField(['routing', 'balancers', index, 'strategy', 'type'], `Balancer ${index + 1} strategy`, { choices: ['random', 'roundRobin', 'leastPing', 'leastLoad'] })}{stringField(['routing', 'balancers', index, 'fallbackTag'], `Balancer ${index + 1} fallback outbound tag`)}</> : <p>Custom balancer; edit in Text.</p>}
-    </FieldSet>)}</div></details>
+    </div></details></div>)}
+    </section>
   </div>
   if (file === '07_observatory.json') return <div className="flex flex-col gap-3"><h3 className="font-semibold">Native health probes</h3>{stringField(['observatory', 'subjectSelector'], 'Probed outbound prefixes (one per line)', { multiline: true })}{stringField(['observatory', value(['observatory', 'probeURL']) !== undefined && value(['observatory', 'probeUrl']) === undefined ? 'probeURL' : 'probeUrl'], 'Probe URL')}</div>
   if (file === '01_log.json') return <FieldGroup>

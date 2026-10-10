@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { mountFeatureCompleteDashboard, featureCompleteRequests } from './fixtures/feature-complete-model.js'
-import { revealNavigation } from './fixtures/disclosures.js'
+import { revealDetails, revealNavigation } from './fixtures/disclosures.js'
 
 const complete = () => ({ state: 'completed', digest: 'a'.repeat(64), generation: 1, canStage: true, poolCount: 12, manualSample: true, latencyLimitMs: 300, eligibleCount: 12, ranking: [{tag:'proxy-b',rank:1},{tag:'proxy-a',rank:2}], progress: { state: 'completed', validCount:2, candidates: [
   { tag: 'proxy-a', rttMs: 20, downloadBps: 1e6, uploadBps: 1e6, valid: true },
@@ -20,6 +20,7 @@ test('constrained router shows actual ceilings and pressure without launching tr
     limits: { candidates: 3, attempts: 4, bytes: 24 * 1048576, seconds: 90 },
     automaticReason: 'constrained-device', progress: { ...complete().progress, reasonCode: 'resource-pressure' } }
   await open(page)
+  await revealDetails(page, 'How reviews work')
   await expect(page.getByText(/3 successful nodes and 4 attempts, 24 MiB and 90 seconds including cleanup/)).toBeVisible()
   await expect(page.getByText(/Automatic speed comparisons are disabled on this constrained router/)).toBeVisible()
   await expect(page.getByRole('alert').filter({ hasText: 'router resources are busy' })).toBeVisible()
@@ -49,9 +50,10 @@ test('deferred review explains a zero-traffic latency pre-phase refusal and next
   await open(page)
   await expect(page.getByRole('status').filter({ hasText: 'No speed test ran and no quota was used' })).toBeVisible()
   await expect(page.getByRole('status').filter({ hasText: 'deferred before measuring node speeds' })).toBeVisible()
-  await expect(page.getByText(/Automatic review: 18 of 18 selected nodes attempted/)).toHaveCount(0)
-  await expect(page.getByText(/Automatic pool application: applied/)).toHaveCount(0)
-  await expect(page.getByText(/Next automatic review:/)).toBeVisible()
+  await expect(page.getByText(/\d+ of \d+ valid/)).toHaveCount(0)
+  await expect(page.getByText(/· applied/)).toHaveCount(0)
+  await expect(page.getByText(new Date('2026-10-10T12:00:00Z').toLocaleString(), { exact: true })).toBeVisible()
+  await expect(page.getByText('Deferred', { exact: true })).toBeVisible()
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
 })
 
@@ -86,17 +88,20 @@ test('bounded automatic review separates full pool, coverage and applied state w
   model.quality = { ...complete(), resourceProfile: { name: 'constrained', constrained: true, automatic: true },
     limits: { candidates: 3, attempts: 4, bytes: 24 * 1048576, seconds: 90 },
     poolCount: 52, activePoolCount: 6, eligibleCount: 14, attemptedCount: 14, validCount: 12,
-    batchCount: 5, aggregateBytes: 44 * 1048576, reviewTrigger: 'subscription-refresh',
+    manualSample: false, batchCount: 5, aggregateBytes: 44 * 1048576, reviewTrigger: 'subscription-refresh',
     appliedState: 'applied', nextDueAt: '2026-10-10T12:00:00Z',
     quotaState: 'available', quotaUsedBytes: 72 * 1048576, quotaRemainingBytes: 0,
     quotaReviewsUsed: 1, quotaNextResetAt: '2026-10-11T01:00:00Z', manualAllowanceBytes: 72 * 1048576 }
   await open(page)
-  await expect(page.getByText(/Current active pool: 6 nodes. Enabled nodes available for comparison: 52/)).toBeVisible()
-  await expect(page.getByText(/14 of 14 selected nodes attempted, 12 valid; 5 batches and 44.0 MiB transferred/)).toBeVisible()
-  await expect(page.getByText(/Automatic pool application: applied/)).toBeVisible()
-  await expect(page.getByText(/Automatic reviews test eligible nodes in small sequential batches/)).toBeVisible()
-  await expect(page.getByText(/72 of 72 MiB reserved in the rolling 24 hours \(1 of 1 review\); 0 MiB remaining/)).toBeVisible()
-  await expect(page.getByText(/Manual speed tests have a separate limit of 72 MiB per run/)).toBeVisible()
+  await expect(page.getByText('6 nodes', { exact: true })).toBeVisible()
+  await expect(page.getByText(/Verified · 52 enabled/)).toBeVisible()
+  await expect(page.getByText('12 of 14 valid', { exact: true })).toBeVisible()
+  await expect(page.getByText(/44\.0 MiB · subscription-refresh · .*applied/)).toBeVisible()
+  await expect(page.getByText(/At most one automatic review per 24 hours/)).toBeVisible()
+  await expect(page.getByText('72 of 72 MiB', { exact: true })).toBeVisible()
+  await expect(page.getByText(/1 of 1 automatic review in 24 h/)).toBeVisible()
+  await revealDetails(page, 'How reviews work')
+  await expect(page.getByText(/within 72 MiB, the same limit as one manual speed test/)).toBeVisible()
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
 })
@@ -115,9 +120,10 @@ test('large eligible set shows bounded subset, deferred nodes and no-op without 
     quotaRemainingBytes: 144 * 1048576, quotaReviewsUsed: 1,
     manualAllowanceBytes: 24 * 1048576 }
   await open(page)
-  await expect(page.getByText(/Review scope: 18 of 46 fresh eligible nodes selected.*28 deferred/)).toBeVisible()
+  await expect(page.getByText('15 of 18 valid', { exact: true })).toBeVisible()
+  await revealDetails(page, 'How reviews work')
+  await expect(page.getByText(/Last scope: 18 of 46 eligible nodes, 28 deferred/)).toBeVisible()
   await expect(page.getByText(/bounded subset is not a global ranking/)).toBeVisible()
-  await expect(page.getByText(/18 of 18 selected nodes attempted, 15 valid/)).toBeVisible()
   await expect(page.getByText(/same pool members; no restart/)).toBeVisible()
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
 })
@@ -183,8 +189,8 @@ test('unavailable quota is shown as unknown rather than unused', async ({ page }
   model.quality = { ...complete(), resourceProfile: { name: 'constrained', constrained: true, automatic: true },
     quotaState: 'unavailable', manualAllowanceBytes: 24 * 1048576 }
   await open(page)
-  await expect(page.getByText(/Automatic traffic quota: unavailable; inspect the private receipt before another comparison/)).toBeVisible()
-  await expect(page.getByText(/0 of 288 MiB reserved/)).toHaveCount(0)
+  await expect(page.getByText(/Inspect the private receipt before another comparison/)).toBeVisible()
+  await expect(page.getByText(/0 of 288 MiB/)).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Run speed test', exact: true })).toBeDisabled()
 })
 
@@ -194,8 +200,8 @@ test('empty automatic quota does not display Go zero timestamp as a reset date',
     quotaState: 'available', quotaUsedBytes: 0, quotaRemainingBytes: 288 * 1048576,
     quotaReviewsUsed: 0, quotaNextResetAt: '0001-01-01T00:00:00Z', manualAllowanceBytes: 24 * 1048576 }
   await open(page)
-  await expect(page.getByText(/0 of 288 MiB reserved/)).toBeVisible()
-  await expect(page.getByText(/next reservation expires/)).toHaveCount(0)
+  await expect(page.getByText('0 of 288 MiB', { exact: true })).toBeVisible()
+  await expect(page.getByText(/frees/)).toHaveCount(0)
 })
 
 test('changed subscription generation explains stale recommendation without applying or retesting', async ({ page }) => {
@@ -225,8 +231,9 @@ test('speed test applies one recommendation and waits for verified configuration
   await page.route('**/api/v1/xkeen/jobs/read', (route) => route.fulfill({json:finished ? {...job,state:'completed',exitCode:0,configurationState:'applied'} : job}))
   await open(page)
   await page.getByRole('button', { name: 'Run speed test', exact: true }).click()
-  await expect(page.getByText('800.0 Mbps', { exact: true })).toBeVisible()
-  await expect(page.getByText(/12 eligible nodes, latency threshold 300 ms/)).toBeVisible()
+  await expect(page.getByText(/^800\.0 Mbps \//)).toBeVisible()
+  await revealDetails(page, 'How reviews work')
+  await expect(page.getByText(/latency criterion \(300 ms\)/)).toBeVisible()
   await page.getByRole('button', { name: 'Apply recommendation', exact: true }).click()
   await expect(page.getByRole('status').filter({hasText:'waiting for configuration verification'})).toBeVisible()
   await expect(page.getByText('Recommendation applied and configuration verified.',{exact:true})).toHaveCount(0)

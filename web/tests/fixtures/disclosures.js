@@ -16,3 +16,19 @@ export async function revealNavigation(page) {
   if (!await navigation.isVisible()) await page.getByRole('button', { name: 'Toggle navigation' }).click()
   return navigation
 }
+
+// Former navigation items now live inside Configuration, XKeen and System.
+const sectionRoutes = {
+  Routing: ['Configuration', 'Routing'], DNS: ['Configuration', 'DNS'], Configurations: ['Configuration', 'All files'],
+  'Backup & Restore': ['System', 'Backup'], 'Components / Updates': ['XKeen'], 'System / Panel': ['System'],
+}
+export async function openSection(page, name) {
+  const [item, tab] = sectionRoutes[name] || [name]
+  const target = tab && page.getByRole('tab', { name: tab, exact: true })
+  // Already inside the section: switch its tab only, like an operator would.
+  if (target && await target.isVisible()) return target.click()
+  const navigation = await revealNavigation(page)
+  const escaped = item.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  await navigation.getByRole('button', { name: sectionRoutes[name] ? item : new RegExp('^' + escaped), exact: Boolean(sectionRoutes[name]) }).first().click()
+  if (target) await target.click()
+}

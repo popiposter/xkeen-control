@@ -98,7 +98,7 @@ export function NativeTransferSection({ csrfToken, api, download, onUnauthorized
   return <div className="flex flex-col gap-4">
     {notice && <Alert><AlertDescription>{notice}</AlertDescription></Alert>}
     {diagnostic && <Card><CardHeader><CardTitle>Xray validation</CardTitle></CardHeader><CardContent><pre className="max-h-80 overflow-auto whitespace-pre-wrap">{diagnostic.output || diagnostic.message || JSON.stringify(diagnostic, null, 2)}</pre></CardContent></Card>}
-    <Card><CardHeader><CardTitle>Back up native settings</CardTitle><CardDescription>Encrypted Xray configuration, nodes and subscriptions. Executables, panel login, native operating mode and cron jobs are not copied.</CardDescription></CardHeader><CardContent>
+    <Card><CardHeader><CardTitle>Create a backup</CardTitle><CardDescription>Encrypted Xray configuration, nodes and subscriptions. Executables, panel login, native operating mode and cron jobs are not copied.</CardDescription></CardHeader><CardContent>
       <form onSubmit={exportBackup}><FieldGroup className="max-w-lg">
         <Field><FieldLabel htmlFor="transfer-password">Current panel password</FieldLabel><Input id="transfer-password" type="password" autoComplete="current-password" value={secret.currentPassword} disabled={busy} onChange={(e) => setSecret({ ...secret, currentPassword: e.target.value })} /></Field>
         <Field><FieldLabel htmlFor="transfer-export-passphrase">Encryption passphrase</FieldLabel><Input id="transfer-export-passphrase" type="password" autoComplete="new-password" value={secret.passphrase} disabled={busy} onChange={(e) => setSecret({ ...secret, passphrase: e.target.value })} /></Field>
@@ -106,11 +106,11 @@ export function NativeTransferSection({ csrfToken, api, download, onUnauthorized
         <Button className="self-start" type="submit" disabled={busy}>Download encrypted backup</Button>
       </FieldGroup></form>
     </CardContent></Card>
-    <Card><CardHeader><CardTitle>Transfer native settings</CardTitle><CardDescription>Preview never changes the router. Saving replaces the fixed configurations and managed nodes together, without restarting XKeen.</CardDescription></CardHeader><CardContent><FieldGroup className="max-w-lg">
+    <Card><CardHeader><CardTitle>Restore from backup</CardTitle><CardDescription>Preview never changes the router. Saving replaces the fixed configurations and managed nodes together, without restarting XKeen.</CardDescription></CardHeader><CardContent><FieldGroup className="max-w-lg">
       <Field><FieldLabel htmlFor="transfer-file">Backup bundle</FieldLabel><Input id="transfer-file" ref={upload} type="file" accept="application/json,.json" disabled={busy} onChange={(e) => { invalidate(); setFile(e.target.files?.[0] || null); setMapping({}); setPassphrase(''); setNotice('') }} /></Field>
       <Field><FieldLabel htmlFor="transfer-passphrase">Backup passphrase</FieldLabel><Input id="transfer-passphrase" type="password" autoComplete="off" value={passphrase} disabled={busy || Boolean(preview?.token)} onChange={(e) => { invalidate(); setPassphrase(e.target.value) }} /></Field>
       {preview?.mappingRequired && refs.map(({ source }) => <Field key={source}><FieldLabel htmlFor={`transfer-interface-${source}`}>Interface {source}</FieldLabel><NativeSelect id={`transfer-interface-${source}`} value={mapping[source] || ''} disabled={busy} onChange={(e) => { setMapping({ ...mapping, [source]: e.target.value }); setChecked(false) }}><option value="">Choose destination</option>{preview.interfaces.map((name) => <option key={name} value={name}>{name}</option>)}</NativeSelect></Field>)}
-      {!preview?.token && <Button className="self-start" type="button" onClick={previewUpload} disabled={busy || !file || !passphrase || preview?.mappingRequired && refs.some(({ source }) => !mapping[source])}>{busy ? 'Checking…' : 'Preview transfer'}</Button>}
+      {!preview?.token && <Button className="self-start" type="button" onClick={previewUpload} disabled={busy || !file || !passphrase || preview?.mappingRequired && refs.some(({ source }) => !mapping[source])}>{busy ? 'Checking…' : 'Preview restore'}</Button>}
       {preview?.token && <>
         <p>{preview.files.length} configuration files · {preview.nodes} nodes · {preview.subscriptions} subscriptions</p>
         <p>Interfaces: {refs.map((r) => `${r.source} в†’ ${r.destination}`).join(', ') || 'No fixed interface references'}</p>

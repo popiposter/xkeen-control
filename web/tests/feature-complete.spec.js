@@ -1,4 +1,4 @@
-import { revealDetails, revealSystemSettings, revealNavigation } from './fixtures/disclosures.js'
+import { revealDetails, revealSystemSettings, revealNavigation, openSection as openNamedSection } from './fixtures/disclosures.js'
 import { expect, test } from '@playwright/test'
 import { featureCompleteRequests, mountFeatureCompleteDashboard, PRIVATE_SENTINELS } from './fixtures/feature-complete-model.js'
 
@@ -10,7 +10,7 @@ const lazySettingsPaths = [
 ]
 
 const openSection = async (page, name) => {
-  await (await revealNavigation(page)).getByRole('button').filter({ hasText: name }).click()
+  await openNamedSection(page, name)
   if (name === 'System / Panel') await revealSystemSettings(page)
 }
 
@@ -33,9 +33,9 @@ test('composes the final navigation lazily and leaves settings out of the dashbo
   page.__featureCompleteModel = model
   await page.goto('/')
 
-  await expect(page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button')).toHaveCount(9)
+  await expect(page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button')).toHaveCount(6)
   expect(await page.getByRole('navigation', { name: 'Dashboard sections' }).getByRole('button').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))).toEqual([
-    'Overview', 'Nodes 1', 'Routing', 'DNS', 'Configurations', 'Performance', 'Components / Updates', 'Backup & Restore', 'System / Panel',
+    'Overview', 'Nodes 1', 'Performance', 'Configuration', 'XKeen', 'System',
   ])
   await page.clock.runFor(5_300)
   await expect.poll(() => featureCompleteRequests(model, '/api/v1/status', 'GET').length).toBeGreaterThan(1)
@@ -98,7 +98,7 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
   await openSection(page, 'Backup & Restore')
   await setBackupBundle(page)
   await page.getByLabel('Backup passphrase', { exact: true }).fill('synthetic transfer passphrase')
-  await expect(page.getByRole('button', { name: 'Preview transfer' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Preview restore' })).toBeEnabled()
 
   for (const [label, lifecycle] of [
     ['maintenance', { maintenance: true, applying: false }],
@@ -122,7 +122,7 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
     await openSection(page, 'Components / Updates')
     await expect(page.getByRole('heading', { name: 'XKeen and components' })).toBeVisible()
     await openSection(page, 'Backup & Restore')
-    await expect(page.getByRole('button', { name: 'Preview transfer' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Preview restore' })).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Download encrypted backup' })).toBeEnabled()
     await openSection(page, 'System / Panel')
     await expect(page.getByRole('button', { name: 'Preview rebind' })).toBeDisabled()
