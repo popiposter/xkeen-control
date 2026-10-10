@@ -1,3 +1,4 @@
+import { openSection } from './fixtures/disclosures.js'
 import { expect, test } from '@playwright/test'
 
 async function mountNativeCommands(page, { output = 'Native result\r\n', bootstrap } = {}) {
@@ -37,7 +38,7 @@ async function mountNativeCommands(page, { output = 'Native result\r\n', bootstr
     return json(value || {}, value ? 200 : 404)
   })
   await page.goto('/')
-  await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+  await openSection(page, 'Components / Updates')
   await expect(page.getByText('Native XKeen commands', { exact: true })).toBeVisible()
   return model
 }
@@ -46,7 +47,7 @@ test('configured start waits through preparation without replaying', async ({ pa
   await mountNativeCommands(page)
   await page.route('**/api/v1/xkeen/commands', (route) => route.fulfill({ json: [{ action: 'start', label: 'Start service', interactive: false }] }))
   await page.getByRole('button', { name: 'Overview', exact: true }).click()
-  await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+  await openSection(page, 'Components / Updates')
   await expect(page.getByRole('button', { name: 'Start service', exact: true })).toBeEnabled()
   await page.clock.install()
   let pendingRoute
@@ -78,7 +79,7 @@ test('waits for existing-job discovery and never starts a command on navigation'
   await page.getByRole('button', { name: 'Run native command', exact: true }).click()
   await expect.poll(() => model.starts).toEqual([{ action: 'status' }])
   await page.getByRole('button', { name: 'Overview', exact: true }).click()
-  await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+  await openSection(page, 'Components / Updates')
   await expect(page.getByText('status: completed', { exact: true })).toBeVisible()
   expect(model.starts).toHaveLength(1)
 })
@@ -127,7 +128,7 @@ test('late console 401 from an old session cannot sign out the new session', asy
     try { await route.fulfill({ status: 401, contentType: 'application/json', body: '{"error":"old session"}' }) } catch { /* The old request was aborted by cleanup. */ } finally { delivered() }
   })
   await page.getByRole('button', { name: 'Overview', exact: true }).click()
-  await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+  await openSection(page, 'Components / Updates')
   await page.getByRole('button', { name: 'Sign out', exact: true }).click()
   await expect(page.getByLabel('Panel password')).toBeVisible()
   await page.route('**/api/v1/session/login', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"csrfToken":"synthetic-new-session"}' }))
@@ -136,7 +137,7 @@ test('late console 401 from an old session cannot sign out the new session', asy
   await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
   release()
   await finished
-  await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+  await openSection(page, 'Components / Updates')
   await expect(page.getByRole('button', { name: 'Check status', exact: true })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
   expect(model.starts).toEqual([])
@@ -156,7 +157,7 @@ test('stalled terminal input has a bounded queue and never sends queued answers 
   expect(sent).toBe(1)
   await page.getByRole('button', { name: 'Overview', exact: true }).click()
   release()
-  await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+  await openSection(page, 'Components / Updates')
   await expect(page.getByText('geodata-schedule: running', { exact: true })).toBeVisible()
   expect(sent).toBe(1)
   expect(model.starts).toHaveLength(1)

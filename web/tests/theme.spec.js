@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { mountFeatureCompleteDashboard } from './fixtures/feature-complete-model.js'
-import { revealNavigation } from './fixtures/disclosures.js'
+import { revealNavigation, openSection } from './fixtures/disclosures.js'
 
 async function fixture(page) {
   const model = await mountFeatureCompleteDashboard(page)
@@ -57,7 +57,7 @@ for (const theme of ['light', 'dark']) test(`all workspaces use one readable ${t
   const output = process.env.XKEEN_UI_SCREENSHOT_DIR
   if (output) await mkdir(output, { recursive: true })
   for (const [index, name] of ['Overview', 'Nodes 1', 'Routing', 'DNS', 'Performance', 'Components / Updates', 'Backup & Restore', 'System / Panel'].entries()) {
-    await (await revealNavigation(page)).getByRole('button', { name, exact: true }).click()
+    await openSection(page, name)
     if (name === 'Routing' || name === 'DNS') await expect(page.getByLabel('Configuration file', { exact: true })).toHaveCount(0)
     await expect(page.locator('.workspace')).toBeVisible()
     await expect(page.locator('.legacy-workspace')).toHaveCount(0)
@@ -70,7 +70,7 @@ for (const theme of ['light', 'dark']) test(`all workspaces use one readable ${t
   if (theme === 'light') {
     await page.setViewportSize({ width: 320, height: 900 })
     for (const name of ['Overview', 'Nodes 1', 'Routing', 'DNS', 'Backup & Restore', 'System / Panel']) {
-      await (await revealNavigation(page)).getByRole('button', { name, exact: true }).click()
+      await openSection(page, name)
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), name).toBe(true)
     }
   }

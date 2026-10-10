@@ -29,6 +29,9 @@ export function SplitDNSSection({ csrfToken, onUnauthorized, readbackKey }) {
     return () => { alive = false; controller.abort() }
   }, [csrfToken, onUnauthorized, readbackKey, refresh])
   const legacy = status && !['unconfigured', 'retired'].includes(status.state)
+  // Fresh installs use the router's DNS only; this card exists only while an
+  // old separate resolver still runs on an existing install.
+  if (!legacy) return null
   return <Card>
     <CardHeader><CardTitle className="flex items-center gap-2"><IconWorld className="size-5 text-blue-500" />Router DNS</CardTitle><CardDescription>New installations keep the router’s normal DNS settings. No separate resolver or DNS-over-VPN rules are added.</CardDescription></CardHeader>
     <CardContent className="space-y-4">

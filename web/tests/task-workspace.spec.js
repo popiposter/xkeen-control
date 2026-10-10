@@ -1,10 +1,9 @@
 import { expect, test } from '@playwright/test'
 import { mountFeatureCompleteDashboard, featureCompleteRequests } from './fixtures/feature-complete-model.js'
-import { revealDetails, revealNavigation, revealSystemSettings } from './fixtures/disclosures.js'
+import { openSection, revealDetails, revealNavigation, revealSystemSettings } from './fixtures/disclosures.js'
 
 async function openTask(page, name) {
-  const navigation = await revealNavigation(page)
-  await navigation.getByRole('button', { name, exact: true }).click()
+  await openSection(page, name)
 }
 
 test.afterEach(async ({ page }) => {

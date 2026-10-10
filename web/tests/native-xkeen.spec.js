@@ -1,3 +1,4 @@
+import { openSection } from './fixtures/disclosures.js'
 import { expect, test } from '@playwright/test'
 
 for (const width of [375]) {
@@ -26,7 +27,7 @@ for (const width of [375]) {
     await expect(page.getByText('Setup is unavailable', { exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Prepare setup' })).toHaveCount(0)
     if (width < 800) await page.getByRole('button', { name: 'Toggle navigation' }).click()
-    await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+    await openSection(page, 'Components / Updates')
     await expect(page.getByRole('heading', { name: 'XKeen and components' })).toBeVisible()
     await expect(page.getByText('Configured in XKeen', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Open panel settings' })).toBeVisible()
@@ -54,7 +55,7 @@ for (const [installation, panelIntegration, running] of [[undefined, undefined],
     await expect(page.getByRole('heading', { name: running ? 'XKeen is running' : 'Check XKeen status' })).toBeVisible()
     await expect(page.getByText('Use the official XKeen installer, then refresh this page.')).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Manage VPN profiles', exact: true })).toHaveCount(0)
-    await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+    await openSection(page, 'Components / Updates')
     await expect(page.getByRole('heading', { name: running ? 'XKeen is running' : 'Check XKeen status' })).toBeVisible()
     if (running) await expect(page.getByText('The native installation state is unavailable. Inspect XKeen and refresh status.')).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Preview update', exact: true })).toHaveCount(0)

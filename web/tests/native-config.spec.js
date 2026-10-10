@@ -1,5 +1,9 @@
+import { openSection } from './fixtures/disclosures.js'
 async function selectConfig(page, file) {
-  await page.getByRole('button', { name: 'Configurations', exact: true }).click()
+  await openSection(page, 'Configurations')
+  // Opening Configuration first shows Routing; read back fixture edits made since.
+  const reload = page.getByRole('button', { name: 'Reload current configuration', exact: true })
+  if (await reload.isEnabled()) await reload.click()
   await page.getByLabel('Configuration file', { exact: true }).selectOption(file)
 }
 import { expect, test } from '@playwright/test'
@@ -50,9 +54,9 @@ async function mountEditor(page) {
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ digest: state.digest, saved: true, restartRequired: true }) })
   })
   await page.goto('/')
-  await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+  await openSection(page, 'Components / Updates')
   expect(reads).toBe(0)
-  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await openSection(page, 'DNS')
   await expect(page.getByLabel('DNS address family', { exact: true })).toHaveValue('UseIP')
   return { model, writes, original, state, documents }
 }
@@ -88,7 +92,7 @@ test('Form/Text share edits, formatting and undo without saving or restarting', 
   await page.getByRole('button', { name: 'Form', exact: true }).click()
   await expect(page.getByLabel('DNS address family', { exact: true })).toHaveValue('UseIPv4')
   await page.getByRole('button', { name: 'Overview', exact: true }).click()
-  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await openSection(page, 'DNS')
   await expect(page.getByLabel('DNS address family', { exact: true })).toHaveValue('UseIPv4')
   await page.getByRole('button', { name: 'Save configuration', exact: true }).click()
   await expect(page.getByRole('status').filter({ hasText: 'Saved and validated' })).toBeVisible()
@@ -106,7 +110,7 @@ test('quality Apply is blocked by unfinished native editor work and does not era
   await page.getByRole('button',{name:'Performance',exact:true}).click()
   await expect(page.getByRole('button',{name:'Apply recommendation',exact:true})).toBeDisabled()
   await expect(page.getByText('Save or discard unfinished configuration edits before applying the recommendation.',{exact:true})).toBeVisible()
-  await page.getByRole('button',{name:'DNS',exact:true}).click()
+  await openSection(page, 'DNS')
   await expect(page.getByLabel('DNS address family',{exact:true})).toHaveValue('UseIPv6')
   expect(writes).toEqual([])
   expect(model.requests.filter(({path})=>path==='/api/v1/performance/quality/apply')).toEqual([])
@@ -114,15 +118,15 @@ test('quality Apply is blocked by unfinished native editor work and does not era
 
 test('DNS and Routing navigation use one native workspace and retain edits across pages and console navigation', async ({ page }) => {
   const { model, writes } = await mountEditor(page)
-  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await openSection(page, 'DNS')
   await page.getByLabel('DNS address family', { exact: true }).selectOption('UseIPv6')
-  await page.getByRole('button', { name: 'Routing', exact: true }).click()
+  await openSection(page, 'Routing')
   await expect(page.getByLabel('Configuration file', { exact: true })).toHaveCount(0)
   await page.getByLabel('Routing domain resolution', { exact: true }).selectOption('IPIfNonMatch')
-  await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
-  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await openSection(page, 'Components / Updates')
+  await openSection(page, 'DNS')
   await expect(page.getByLabel('DNS address family', { exact: true })).toHaveValue('UseIPv6')
-  await page.getByRole('button', { name: 'Routing', exact: true }).click()
+  await openSection(page, 'Routing')
   await expect(page.getByLabel('Routing domain resolution', { exact: true })).toHaveValue('IPIfNonMatch')
   expect(writes).toEqual([])
   expect(model.requests.filter(({ path }) => /^\/api\/v1\/appliance\/(policy|dns-observatory)/.test(path))).toEqual([])
@@ -350,7 +354,8 @@ test('purposeful native forms retain unknown fields, numeric types and exact pro
     '07_observatory.json': { text: '{"observatory":{"subjectSelector":["proxy-"],"probeUrl":"https://example.test/204","probeInterval":"30s"}}' },
     '08_api.json': { text: '{"api":{"tag":"api","services":["RoutingService"]},"inbounds":[]}' },
   })
-  await page.getByRole('button', { name: 'Reload current configuration', exact: true }).click()
+  const reload = page.getByRole('button', { name: 'Reload current configuration', exact: true })
+  if (await reload.isEnabled()) await reload.click()
   await selectConfig(page, '01_log.json')
   await page.getByLabel('Log detail', { exact: true }).selectOption('info')
   await page.getByRole('button', { name: 'Text', exact: true }).click()

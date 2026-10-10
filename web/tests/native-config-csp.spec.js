@@ -1,3 +1,4 @@
+import { openSection } from './fixtures/disclosures.js'
 import { expect, test } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -16,7 +17,7 @@ test('production text editor keeps its layout and syntax styles under document C
   })
   await page.route('http://127.0.0.1:*/', (route) => route.fulfill({ body: html, contentType: 'text/html', headers: { 'Content-Security-Policy': policy } }))
   await page.goto('/')
-  await page.getByRole('button', { name: 'DNS', exact: true }).click()
+  await openSection(page, 'DNS')
   await page.getByRole('button', { name: 'Text', exact: true }).click()
   await expect(page.getByRole('textbox', { name: 'Configuration text' })).toBeVisible()
   await expect(page.locator('.cm-scroller')).toHaveCSS('display', 'flex')

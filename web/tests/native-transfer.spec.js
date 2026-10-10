@@ -1,3 +1,4 @@
+import { openSection } from './fixtures/disclosures.js'
 import { expect, test } from '@playwright/test'
 
 const csrfToken = 'synthetic-transfer-csrf'
@@ -34,13 +35,13 @@ async function prepare(page, { mapping = false, stageStatus = 200, delay = null,
     }
   })
   await page.goto('/')
-  await page.getByRole('button', { name: 'Backup & Restore', exact: true }).click()
+  await openSection(page, 'Backup & Restore')
   return state
 }
 async function upload(page) {
   await page.getByLabel('Backup bundle').setInputFiles({ name: 'synthetic.json', mimeType: 'application/json', buffer: Buffer.from('{}') })
   await page.getByLabel('Backup passphrase', { exact: true }).fill('synthetic transfer passphrase')
-  await page.getByRole('button', { name: 'Preview transfer' }).click()
+  await page.getByRole('button', { name: 'Preview restore' }).click()
 }
 
 test('native transfer stages token only, clears secrets and leaves Restart explicit', async ({ page }) => {
@@ -63,9 +64,9 @@ test('missing interfaces retain private upload until validated mapping; new file
   await upload(page)
   await expect(page.getByLabel('Interface old0')).toBeVisible()
   await expect(page.getByLabel('Backup passphrase', { exact: true })).toHaveValue('synthetic transfer passphrase')
-  await expect(page.getByRole('button', { name: 'Preview transfer' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Preview restore' })).toBeDisabled()
   await page.getByLabel('Interface old0').selectOption('eth0')
-  await page.getByRole('button', { name: 'Preview transfer' }).click()
+  await page.getByRole('button', { name: 'Preview restore' }).click()
   await expect(page.getByText('Validated preview ready.', { exact: false })).toBeVisible()
   expect(state.requests.filter(r => r.path.endsWith('/preview'))[1].upload).toContain('"old0":"eth0"')
   await page.getByLabel('Backup bundle').setInputFiles({ name: 'other.json', mimeType: 'application/json', buffer: Buffer.from('{}') })
@@ -85,20 +86,20 @@ test('failed Stage is consumed locally and requires inspection, with no automati
 
 test('transfer readback uses the retained editor and preserves unfinished drafts through navigation', async ({ page }) => {
   const state = await prepare(page)
-  await page.getByRole('button', { name: 'Routing', exact: true }).click()
+  await openSection(page, 'Routing')
   await expect(page.getByLabel('Configuration file', { exact: true })).toHaveCount(0)
   await expect(page.getByText('Routing configuration', { exact: true })).toBeVisible()
   await page.getByLabel('Routing domain resolution', { exact: true }).selectOption('IPIfNonMatch')
-  await page.getByRole('button', { name: 'Backup & Restore', exact: true }).click()
+  await openSection(page, 'Backup & Restore')
   await upload(page)
   await page.getByRole('checkbox', { name: /I checked this router/ }).check()
   await page.getByRole('button', { name: 'Save transferred settings' }).click()
   await page.getByRole('button', { name: 'Review saved configurations' }).click()
   await expect(page.getByLabel('Routing domain resolution', { exact: true })).toHaveValue('IPIfNonMatch')
   await expect(page.getByText('05_routing.json', { exact: false }).first()).toBeVisible()
-  await page.getByRole('button', { name: 'Components / Updates', exact: true }).click()
+  await openSection(page, 'Components / Updates')
   await page.getByRole('button', { name: 'Overview', exact: true }).click()
-  await page.getByRole('button', { name: 'Routing', exact: true }).click()
+  await openSection(page, 'Routing')
   await expect(page.getByLabel('Routing domain resolution', { exact: true })).toHaveValue('IPIfNonMatch')
   expect(state.requests.filter(r => /config\/(save|text|apply)|jobs\/start/.test(r.path))).toEqual([])
 })

@@ -8,21 +8,21 @@ import { nativeXkeenState } from './native-xkeen-state.js'
 export function NativeXkeenStatus({ facts = {}, onOpenNodes }) {
   const { installed, title, description, canManageProfiles } = nativeXkeenState(facts)
   return <Card role="region" aria-label="Native XKeen">
-    <CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle><h2>{title}</h2></CardTitle><StatusBadge tone={installed && facts.xrayRunning ? 'success' : 'warning'}>{installed ? `XKeen ${facts.version} - ${facts.channel}` : 'Installation not confirmed'}</StatusBadge></div>
+    <CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle><h2>{title}</h2></CardTitle><StatusBadge tone={installed && facts.xrayRunning ? 'success' : 'warning'}>{installed ? `XKeen ${facts.version} · ${facts.channel}` : 'Installation not confirmed'}</StatusBadge></div>
       <CardDescription>{description}</CardDescription></CardHeader>
     {canManageProfiles && onOpenNodes && <CardContent><Button variant="outline" onClick={onOpenNodes}>Manage VPN profiles</Button></CardContent>}
   </Card>
 }
 export function NativeXkeenSection({ facts, onRefresh, onOpenSystem, csrfToken, onUnauthorized, jobNotification }) {
+  const { installed, title, description } = nativeXkeenState(facts || {})
   return <div className="section-stack">
-    <NativeXkeenStatus facts={facts} />
-    <Card><CardHeader><CardTitle><h2>XKeen and components</h2></CardTitle><CardDescription>Updates and their schedules are managed by XKeen.</CardDescription></CardHeader><CardContent className="flex flex-col gap-4">
+    <Card><CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle><h2>{title}</h2></CardTitle><StatusBadge tone={installed && facts?.xrayRunning ? 'success' : 'warning'}>{installed ? `XKeen ${facts.version} · ${facts.channel}` : 'Installation not confirmed'}</StatusBadge></div><CardDescription>{description}</CardDescription></CardHeader><CardContent className="flex flex-col gap-4">
+      <h3 className="font-medium">XKeen and components</h3><p className="-mt-3 text-sm text-muted-foreground">Updates and their schedules are managed by XKeen.</p>
       <dl className="system-facts-grid"><div><dt>Core</dt><dd>{facts?.core || 'Not detected'}</dd></div><div><dt>Geodata files</dt><dd>{facts?.geodataFiles ?? 'Unknown'}</dd></div><div><dt>Native geodata schedule</dt><dd>{facts?.geodataCron === 'available' ? 'Configured in XKeen' : facts?.geodataCron === 'missing' ? 'Not configured' : 'Unknown'}</dd></div></dl>
       <div className="flex flex-col gap-2"><h3 className="flex items-center gap-2 font-medium"><IconCalendar className="text-info" />Native schedules</h3>{facts?.schedules?.length ? facts.schedules.map((task, i) => <div key={`${task.action}-${i}`} className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-3"><strong>{task.action === 'update-geodata' ? 'Geodata updates' : 'Native speed test'}</strong><span>{scheduleLabel(task.expression)}</span><code>{task.expression}</code></div>) : <p className="text-sm text-muted-foreground">{facts?.geodataCron === 'unknown' ? 'Schedule could not be read.' : 'No supported native cron jobs found.'}</p>}<p className="text-xs text-muted-foreground">Times use the router’s local timezone. Change these schedules with the native commands below.</p></div>
-      <div><Button variant="outline" onClick={onRefresh}>Refresh status</Button></div>
+      <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={onRefresh}>Refresh status</Button><Button variant="ghost" onClick={onOpenSystem}>Open panel settings</Button></div>
     </CardContent></Card>
     {csrfToken && <NativeCommands csrfToken={csrfToken} onUnauthorized={onUnauthorized} onRefresh={onRefresh} jobNotification={jobNotification} />}
-    <Card><CardHeader><CardTitle>Panel updates</CardTitle><CardDescription>XKeen Control updates are separate from native components.</CardDescription></CardHeader><CardContent><Button variant="outline" onClick={onOpenSystem}>Open panel settings</Button></CardContent></Card>
   </div>
 }
 
