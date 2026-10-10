@@ -36,6 +36,25 @@ test('constrained automatic-disabled status does not hide manual native cron ref
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
 })
 
+test('deferred review explains zero-traffic incumbent preflight and next due', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), state: 'deferred', canStage: false, appliedState: 'not-attempted',
+    progress: { state: 'idle', candidates: [] }, ranking: [], selectedForSpeed: 0,
+    attemptedCount: 0, validCount: 0, batchCount: 0, aggregateBytes: 0,
+    resourceProfile: { name: 'constrained', constrained: true, automatic: true },
+    limits: { candidates: 3, attempts: 4, bytes: 24 * 1048576, seconds: 90 },
+    reviewReason: 'incumbent-evidence-unavailable', nextDueAt: '2026-10-10T12:00:00Z',
+    aggregateBytes: 0, quotaState: 'available', quotaUsedBytes: 0,
+    quotaRemainingBytes: 288 * 1048576, quotaReviewsUsed: 0 }
+  await open(page)
+  await expect(page.getByRole('status').filter({ hasText: 'before any traffic or quota reservation' })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'deferred before measuring node speeds' })).toBeVisible()
+  await expect(page.getByText(/Automatic review: 18 of 18 selected nodes attempted/)).toHaveCount(0)
+  await expect(page.getByText(/Automatic pool application: applied/)).toHaveCount(0)
+  await expect(page.getByText(/Next automatic review:/)).toBeVisible()
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
+})
+
 test('bounded automatic review separates full pool, coverage and applied state without starting traffic from the browser', async ({ page }) => {
   const model = await mountFeatureCompleteDashboard(page)
   model.quality = { ...complete(), resourceProfile: { name: 'constrained', constrained: true, automatic: true },

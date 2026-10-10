@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/popiposter/xkeen-control/internal/c1"
+	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
 
 const (
@@ -48,6 +49,53 @@ func rotateCandidates(inputs []c1.AdaptiveCandidateInput, offset int) []c1.Adapt
 	return append(out, inputs[:offset]...)
 }
 
+// A bounded pool cannot be compared safely when an incumbent has no current
+// native observation. Refuse before reserving traffic; the final pool decision
+// still owns transfer failures and the material-improvement check.
+func incumbentsComparable(active []string, eligible []c1.AdaptiveCandidateInput, snapshot xrayapi.Snapshot, criteria observationCriteria, now time.Time) bool {
+	if len(active) > 6 {
+		return true // broad-selector first initialization has a separate policy
+	}
+	if len(active) < 2 {
+		return false
+	}
+	ready := make(map[string]bool, len(eligible))
+	for _, candidate := range eligible {
+		ready[candidate.Tag] = true
+	}
+	needed := make(map[string]bool, len(active))
+	for _, tag := range active {
+		if needed[tag] {
+			return false
+		}
+		needed[tag] = true
+	}
+	health := make(map[string]xrayapi.OutboundHealth, len(active))
+	for _, observation := range snapshot.OutboundHealth {
+		if !needed[observation.Tag] {
+			continue
+		}
+		if _, duplicate := health[observation.Tag]; duplicate {
+			return false
+		}
+		health[observation.Tag] = observation
+	}
+	for _, tag := range active {
+		observation, found := health[tag]
+		if !found || criteria.observed != nil && !criteria.observed[tag] || observation.LastTry.IsZero() || observation.LastTry.After(now) || now.Sub(observation.LastTry) > criteria.freshness {
+			return false
+		}
+		if observation.Alive {
+			if observation.DelayMS <= 0 || observation.DelayMS > criteria.maxRTT || !ready[tag] {
+				return false
+			}
+		} else if ready[tag] {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Service) startSweep(parent context.Context, trigger string) error {
 	if s.Editor == nil || s.Lease == nil || s.Reader == nil || s.Nodes == nil || s.Measurement == nil || s.Resources == nil || !s.profile().Constrained || !s.profile().Automatic || s.AutomaticDisabled {
 		return ErrUnavailable
@@ -87,6 +135,20 @@ func (s *Service) startSweep(parent context.Context, trigger string) error {
 	if err != nil {
 		s.status.ReviewReason = "eligible-unavailable-or-over-limit"
 		return err
+	}
+	if !incumbentsComparable(activePool, generation.Candidates, snapshot, criteria, now) {
+		previous := s.status
+		s.status = Status{
+			State: "deferred", ReviewReason: "incumbent-evidence-unavailable",
+			Generation: previous.Generation, NextDueAt: previous.NextDueAt,
+			PoolCount: len(pool), ActivePoolCount: len(activePool),
+			ActivePool: append([]string(nil), activePool...), ActivePoolState: "verified",
+			AppliedState: "not-attempted",
+		}
+		observeNativeSelection(&s.status, snapshot, now)
+		s.result = c1.AdaptiveResult{}
+		s.pool = nil
+		return ErrUnavailable
 	}
 	retainHealthEvidence(&generation, s.Measurement.NativeQualityEvidence(snapshot))
 	quotaPath := s.QuotaPath
