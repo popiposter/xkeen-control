@@ -149,7 +149,7 @@ func TestNativePinUsesEnabledPoolAndReadbackWithoutConfigWrites(t *testing.T) {
 	lease := authority.NewLease()
 	editor := &xkeen.ConfigEditor{Dir: dir, XrayBinary: validator, Lease: lease, PreviousDir: filepath.Join(t.TempDir(), "previous")}
 	runtime := &pinRuntime{reachable: true}
-	service := &Service{Editor: editor, Lease: lease, Reader: runtime, Control: runtime, Nodes: func(context.Context) []c1.NodeState {
+	service := &Service{Editor: editor, Lease: lease, Reader: runtime, Control: runtime, QuotaPath: filepath.Join(t.TempDir(), "quota", "receipt.json"), Nodes: func(context.Context) []c1.NodeState {
 		return []c1.NodeState{{Tag: "proxy-a", Enabled: true}, {Tag: "proxy-b", Enabled: true}, {Tag: "proxy-disabled"}}
 	}}
 	for _, invalid := range []string{"proxy-disabled", "foreign"} {

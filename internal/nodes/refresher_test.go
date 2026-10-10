@@ -123,42 +123,42 @@ func TestSubscriptionRefresherStartupAndRescanTiming(t *testing.T) {
 	}
 }
 
-func TestRefreshNotifiesQualityOnlyAfterSuccessfulManualOrAutomaticResult(t *testing.T) {
+// REQ-005: only a committed change to the effective outbounds signals the
+// quality scheduler; a manual or automatic no-op refresh does not.
+func TestQualitySignalOnlyFollowsCommittedRuntimeChanges(t *testing.T) {
 	registry := refresherRegistry(t, true)
 	registry.Nodes[0].Enabled = false
 	manager, store, _ := testManager(t, &registry, &countingSubscriptionFetcher{body: []byte(syntheticProfile)})
 	calls := 0
-	manager.OnSubscriptionRefresh = func() { calls++ }
+	manager.SetRuntimeChangeHook(func() { calls++ })
 	preview, err := manager.PreviewRefresh(context.Background(), "csrf", "sub-12345678", "", "")
 	if err != nil || !preview.Noop {
 		t.Fatalf("disabled member changed: %v", err)
 	}
-	if calls != 0 {
-		t.Fatal("preview launched comparison")
-	}
 	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); err != nil {
 		t.Fatal(err)
-	}
-	if calls != 1 {
-		t.Fatal("manual no-op refresh did not notify")
-	}
-	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); err == nil {
-		t.Fatal("consumed preview replay succeeded")
-	}
-	if calls != 1 {
-		t.Fatal("failed apply notified")
 	}
 	r := NewSubscriptionRefresher(manager)
 	if err := r.reconcile(time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	r.runAttempt(context.Background(), "sub-12345678")
-	if calls != 2 {
-		t.Fatal("automatic no-op refresh did not notify")
+	if calls != 0 {
+		t.Fatal("a no-op refresh signalled a review", calls)
 	}
 	current, err := store.Load()
 	if err != nil || current.Nodes[0].Enabled {
 		t.Fatal("refresh re-enabled disabled member")
+	}
+	enable, err := manager.PreviewState("csrf", current.Nodes[0].ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Apply(context.Background(), "csrf", enable.Token, false); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatal("enabling a node did not signal exactly one review", calls)
 	}
 }
 

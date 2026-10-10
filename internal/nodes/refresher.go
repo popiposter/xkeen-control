@@ -427,9 +427,6 @@ func (r *SubscriptionRefresher) runAttempt(ctx context.Context, id string) {
 		return
 	}
 	r.finish(id, r.clock(), result, err)
-	if err == nil && r.manager.OnSubscriptionRefresh != nil {
-		r.manager.OnSubscriptionRefresh()
-	}
 }
 
 func (r *SubscriptionRefresher) finishCanceled(id string, now time.Time) {

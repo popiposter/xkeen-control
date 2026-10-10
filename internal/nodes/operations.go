@@ -59,17 +59,16 @@ const DefaultApplyGateWaitTimeout = 15 * time.Second
 
 type Manager struct {
 	// Set once before serving requests. Notification only; never starts work inline.
-	OnSubscriptionRefresh func()
-	store                 Store
-	legacyPath            string
-	tx                    Transaction
-	fetcher               SubscriptionFetcher
-	beforeCommit          func(context.Context) error
-	ttl                   time.Duration
-	maxPreviews           int
-	now                   func() time.Time
-	gateTimeout           time.Duration
-	coordinator           interface {
+	store        Store
+	legacyPath   string
+	tx           Transaction
+	fetcher      SubscriptionFetcher
+	beforeCommit func(context.Context) error
+	ttl          time.Duration
+	maxPreviews  int
+	now          func() time.Time
+	gateTimeout  time.Duration
+	coordinator  interface {
 		BeginApply(context.Context) (func(), error)
 	}
 	managedCoordinator interface {
@@ -717,12 +716,14 @@ func buildSubscriptionCandidate(before Registry, target Subscription, parsed []P
 	return candidate, nil
 }
 
+// SetRuntimeChangeHook registers the callback run after every committed node
+// transaction that changed the effective outbounds. It is set once during
+// process wiring, before any operation starts.
+func (m *Manager) SetRuntimeChangeHook(hook func()) {
+	m.tx.OnRuntimeChange = hook
+}
+
 func (m *Manager) Apply(ctx context.Context, binding, token string, acceptMissing bool) (result ApplyResult, resultErr error) {
-	defer func() {
-		if resultErr == nil && result.Operation == "subscription-refresh" && m.OnSubscriptionRefresh != nil {
-			m.OnSubscriptionRefresh()
-		}
-	}()
 	if ctx == nil {
 		ctx = context.Background()
 	}

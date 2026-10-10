@@ -157,12 +157,16 @@ func TestMetadataChangesPreserveRuntimeBytesAndNeverRestart(t *testing.T) {
 	next.Subscriptions = append([]Subscription(nil), old.Subscriptions...)
 	next.Subscriptions[0].Name = "Renamed provider"
 	a := &fakeActivator{validateErr: errors.New("must not validate metadata"), restartErr: errors.New("must not restart metadata")}
-	tx := Transaction{Store: store, ActiveOutboundsPath: active, PreviousDir: filepath.Join(dir, "previous"), Activator: a}
+	signals := 0
+	tx := Transaction{Store: store, ActiveOutboundsPath: active, PreviousDir: filepath.Join(dir, "previous"), Activator: a, OnRuntimeChange: func() { signals++ }}
 	if err := tx.Apply(context.Background(), next); err != nil {
 		t.Fatal(err)
 	}
 	if a.restarts != 0 || a.validatedPath != "" {
 		t.Fatal("metadata invoked native service")
+	}
+	if signals != 0 {
+		t.Fatal("a metadata-only commit signalled a quality review")
 	}
 	if got, _ := os.ReadFile(active); !bytes.Equal(got, before) {
 		t.Fatal("metadata rewrote runtime bytes")
@@ -179,5 +183,17 @@ func TestMetadataChangesPreserveRuntimeBytesAndNeverRestart(t *testing.T) {
 	}
 	if a.restarts != 1 || a.validatedPath == "" {
 		t.Fatal("real runtime change skipped activation")
+	}
+	if signals != 1 {
+		t.Fatal("a committed runtime change did not signal exactly once", signals)
+	}
+	// A transaction refused by validation commits nothing and must not signal.
+	next.Nodes[0].Enabled = true
+	a.validateErr = errors.New("synthetic validation refusal")
+	if err := tx.Apply(context.Background(), next); err == nil {
+		t.Fatal("refused transaction committed")
+	}
+	if signals != 1 {
+		t.Fatal("a refused transaction signalled a quality review", signals)
 	}
 }

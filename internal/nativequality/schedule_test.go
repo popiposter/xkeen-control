@@ -52,14 +52,25 @@ func TestScheduleCoalescesRefreshAndStopsBeforeMeasurement(t *testing.T) {
 	}
 }
 
-func TestStandardRefreshCannotPullAReviewInsideTwentyFourHours(t *testing.T) {
+func TestQuotaRetryAtWaitsForTheGapAndTheRollingDay(t *testing.T) {
 	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
-	last := now.Add(-7 * time.Hour)
-	requested := refreshDue(now, now.Add(-time.Hour), now.Add(17*time.Hour))
-	if due := comparisonDue(now, requested, last, standardCadence); !due.Equal(last.Add(24 * time.Hour)) {
-		t.Fatalf("standard refresh pulled the review to %s", due)
+	bytes := testReviewBytes
+	if got := quotaRetryAt(quotaReceipt{Version: 1}, now, bytes); !got.Equal(now) {
+		t.Fatalf("empty receipt retry = %s", got)
 	}
-	if due := comparisonDue(now, requested, last, qualityCadence); !due.Equal(requested) {
-		t.Fatalf("constrained refresh after the six-hour gap was delayed to %s", due)
+	manual := quotaReceipt{Version: 1, LastComparisonStartedAt: now.Add(-2 * time.Hour)}
+	if got := quotaRetryAt(manual, now, bytes); !got.Equal(now.Add(4 * time.Hour)) {
+		t.Fatalf("six-hour gap retry = %s", got)
+	}
+	used := quotaReceipt{Version: 1, LastComparisonStartedAt: now.Add(-7 * time.Hour), Reservations: []quotaReservation{{At: now.Add(-7 * time.Hour), Bytes: bytes}}}
+	if got := quotaRetryAt(used, now, bytes); !got.Equal(now.Add(17 * time.Hour)) {
+		t.Fatalf("rolling-day retry = %s", got)
+	}
+	if quotaAdmits(used, now, bytes) {
+		t.Fatal("a second automatic review was admitted inside 24 hours")
+	}
+	fenced := quotaReceipt{Version: 1, InspectionRequired: true}
+	if got := quotaRetryAt(fenced, now, bytes); !got.Equal(now.Add(time.Hour)) {
+		t.Fatalf("inspection-held retry = %s", got)
 	}
 }
