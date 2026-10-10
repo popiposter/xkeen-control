@@ -50,3 +50,42 @@ func TestResolveActivePoolStillRefusesUnweightedOrBroadMismatches(t *testing.T) 
 		}
 	}
 }
+
+func TestStrictPoolIgnoresMalformedCostsAndRejectsDuplicateSelectors(t *testing.T) {
+	_, nodes, targets := orphanFixture(`[]`, `[]`)
+	leastPing := `{"routing":{"balancers":[{"tag":"bal-proxy","selector":["proxy-node-"],"strategy":{"type":"leastPing","settings":{"costs":[{"regexp":"yes"}]}}}]}}`
+	if pool, _, err := routingPool(leastPing, nodes, targets); err != nil || len(pool) != 3 {
+		t.Fatalf("malformed costs blocked the strict pool: %v %v", pool, err)
+	}
+	if pool, _, _, err := resolveActivePool(leastPing, nodes, targets, true); err != nil || len(pool) != 3 {
+		t.Fatalf("malformed costs blocked the review pool: %v %v", pool, err)
+	}
+	duplicate, _, _ := orphanFixture(`["proxy-node-a","proxy-node-b","proxy-node-gone","proxy-node-gone"]`, threeCosts)
+	if _, _, _, err := resolveActivePool(duplicate, nodes, targets, true); err == nil {
+		t.Fatal("duplicate orphan selectors accepted")
+	}
+}
+
+func TestDisabledMemberOrphanIsExactRegistryMemberAndOrderIndependent(t *testing.T) {
+	costs := `[{"regexp":true,"match":"^proxy-node-a$","value":1},{"regexp":true,"match":"^proxy-node-b$","value":1}]`
+	routing := `{"routing":{"balancers":[{"tag":"bal-proxy","selector":["proxy-node-a","proxy-node-b"],"strategy":{"type":"leastLoad","settings":{"costs":` + costs + `}}}]}}`
+	nodes := []c1.NodeState{{Tag: "proxy-node-a", Enabled: true}, {Tag: "proxy-node-b", Enabled: false}, {Tag: "proxy-node-bx", Enabled: true}}
+	for _, order := range [][]string{{"proxy-node-a", "proxy-node-b", "proxy-node-bx"}, {"proxy-node-bx", "proxy-node-b", "proxy-node-a"}} {
+		var targets []xkeen.ConfigTarget
+		for _, tag := range order {
+			targets = append(targets, xkeen.ConfigTarget{Kind: "outbound", Tag: tag})
+		}
+		// proxy-node-b also prefixes the enabled proxy-node-bx, so it is not an
+		// exact orphan in either outbound order.
+		if _, orphans, _, err := resolveActivePool(routing, nodes, targets, true); err == nil {
+			t.Fatalf("order %v: prefix-colliding disabled member classified: %v", order, orphans)
+		}
+	}
+	// An outbound with the selector's name that is not a registry member is
+	// unmanaged, never an orphan.
+	unmanaged := []c1.NodeState{{Tag: "proxy-node-a", Enabled: true}}
+	targets := []xkeen.ConfigTarget{{Kind: "outbound", Tag: "proxy-node-a"}, {Kind: "outbound", Tag: "proxy-node-b"}}
+	if _, orphans, _, err := resolveActivePool(routing, unmanaged, targets, true); err == nil {
+		t.Fatalf("unmanaged outbound classified as orphan: %v", orphans)
+	}
+}

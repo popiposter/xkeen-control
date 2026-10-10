@@ -4,6 +4,7 @@ package nativequality
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"regexp"
@@ -179,13 +180,12 @@ func (s *Service) Read() Status {
 				value.StageReason = "measurement-expired-or-incomplete"
 			}
 		}
-		value.ActivePool, value.ActivePoolCount, value.ActivePoolState = nil, 0, "unavailable"
+		value.ActivePool, value.ActivePoolCount, value.ActivePoolState, value.OrphanedPool = nil, 0, "unavailable", nil
 		if err == nil && w.Pending == nil && w.TargetsComplete {
 			nodes := s.Nodes(ctx)
-			if pool, orphans, index, poolErr := resolveActivePool(w.Documents["05_routing.json"].Text, nodes, w.Targets, true); poolErr == nil && len(orphans) > 0 {
+			if pool, orphans, _, poolErr := resolveActivePool(w.Documents["05_routing.json"].Text, nodes, w.Targets, true); poolErr == nil && len(orphans) > 0 {
 				value.ActivePool, value.ActivePoolCount, value.ActivePoolState = pool, len(pool), "degraded-orphaned"
 				value.OrphanedPool = orphans
-				_ = index
 			} else if pool, index, poolErr := routingPool(w.Documents["05_routing.json"].Text, nodes, w.Targets); poolErr == nil {
 				value.ActivePool, value.ActivePoolCount, value.ActivePoolState = pool, len(pool), "verified"
 				value.AppliedRanking = appliedRankingFromWorkspace(w, pool, index)
@@ -198,7 +198,7 @@ func (s *Service) Read() Status {
 	} else if activeReview {
 		value.ActivePoolState = "frozen-at-review"
 	} else {
-		value.ActivePool, value.ActivePoolCount, value.ActivePoolState = nil, 0, "unavailable"
+		value.ActivePool, value.ActivePoolCount, value.ActivePoolState, value.OrphanedPool = nil, 0, "unavailable", nil
 		if value.CanStage {
 			value.CanStage, value.StageReason = false, "configuration-unavailable"
 		}
@@ -577,12 +577,7 @@ func resolveActivePool(text string, nodes []c1.NodeState, targets []xkeen.Config
 			Balancers []struct {
 				Tag      string
 				Selector []string
-				Strategy struct {
-					Type     string
-					Settings struct {
-						Costs []c1.NativeQualityCost `json:"costs"`
-					} `json:"settings"`
-				}
+				Strategy struct{ Type string }
 			}
 		}
 	}
@@ -591,7 +586,6 @@ func resolveActivePool(text string, nodes []c1.NodeState, targets []xkeen.Config
 	}
 	index := -1
 	var selectors []string
-	exactCost := map[string]bool{}
 	for i, b := range doc.Routing.Balancers {
 		if b.Tag == "bal-proxy" {
 			if index >= 0 || (b.Strategy.Type != "leastPing" && b.Strategy.Type != "leastLoad") {
@@ -599,15 +593,48 @@ func resolveActivePool(text string, nodes []c1.NodeState, targets []xkeen.Config
 			}
 			index = i
 			selectors = b.Selector
-			for _, cost := range b.Strategy.Settings.Costs {
-				if cost.Regexp {
+		}
+	}
+	if index < 0 || len(selectors) == 0 {
+		return nil, nil, 0, ErrUnavailable
+	}
+	exactCost := map[string]bool{}
+	if allowOrphans {
+		// Only the review path reads costs, and tolerantly: a malformed entry
+		// simply does not mark its selector as quality-owned.
+		var costs struct {
+			Routing struct {
+				Balancers []struct {
+					Strategy struct {
+						Settings struct {
+							Costs []json.RawMessage `json:"costs"`
+						} `json:"settings"`
+					} `json:"strategy"`
+				} `json:"balancers"`
+			} `json:"routing"`
+		}
+		if configjson.Decode([]byte(text), &costs) == nil && index < len(costs.Routing.Balancers) {
+			for _, raw := range costs.Routing.Balancers[index].Strategy.Settings.Costs {
+				var cost c1.NativeQualityCost
+				if json.Unmarshal(raw, &cost) == nil && cost.Regexp {
 					exactCost[cost.Match] = true
 				}
 			}
 		}
 	}
-	if index < 0 || len(selectors) == 0 {
-		return nil, nil, 0, ErrUnavailable
+	// P3-3: a duplicated selector can never be repaired by one review.
+	distinct := make(map[string]bool, len(selectors))
+	for _, selector := range selectors {
+		if distinct[selector] {
+			return nil, nil, 0, ErrUnavailable
+		}
+		distinct[selector] = true
+	}
+	disabled := map[string]bool{}
+	for _, n := range nodes {
+		if !n.Enabled {
+			disabled[n.Tag] = true
+		}
 	}
 	orphanable := func(selector string) bool {
 		return allowOrphans && exactCost["^"+regexp.QuoteMeta(selector)+"$"]
@@ -650,6 +677,7 @@ func resolveActivePool(text string, nodes []c1.NodeState, targets []xkeen.Config
 		return nil, nil, 0, ErrUnavailable
 	}
 	var orphans []string
+	disabledExact := make([]bool, len(selectors))
 	matched := map[string]bool{}
 	for _, target := range targets {
 		if target.Kind != "outbound" {
@@ -663,10 +691,10 @@ func resolveActivePool(text string, nodes []c1.NodeState, targets []xkeen.Config
 			continue
 		}
 		if !seen[target.Tag] {
-			// A disabled member whose outbound is still present.
-			if target.Tag == selectors[selector] && orphanable(target.Tag) && !selectorMatched[selector] {
-				selectorMatched[selector] = true
-				orphans = append(orphans, target.Tag)
+			// A disabled registry member whose outbound is still present. It is
+			// classified after the loop so outbound order cannot change it.
+			if target.Tag == selectors[selector] && orphanable(target.Tag) && disabled[target.Tag] {
+				disabledExact[selector] = true
 				continue
 			}
 			return nil, nil, 0, ErrUnavailable
@@ -682,6 +710,10 @@ func resolveActivePool(text string, nodes []c1.NodeState, targets []xkeen.Config
 	}
 	for i, ok := range selectorMatched {
 		if ok {
+			if disabledExact[i] {
+				// The selector also prefixes an enabled outbound: it is not exact.
+				return nil, nil, 0, ErrUnavailable
+			}
 			continue
 		}
 		if !orphanable(selectors[i]) {

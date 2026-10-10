@@ -720,4 +720,13 @@ func TestSweepOrphanedSelectorIsAnUnhealthyMemberAndReplaced(t *testing.T) {
 			}
 		}
 	}
+	// Once 05 no longer carries the orphan (here a manual repair; the fixture's
+	// native job cannot apply), status stops reporting it.
+	repaired, _ := json.Marshal(map[string]any{"routing": map[string]any{"rules": []any{}, "balancers": []any{map[string]any{"tag": "bal-proxy", "selector": selector[:5], "strategy": map[string]any{"type": "leastLoad", "settings": map[string]any{"maxRTT": "10s", "costs": costs[:5]}}}}}})
+	if err := os.WriteFile(filepath.Join(dir, "05_routing.json"), repaired, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if after := s.Read(); len(after.OrphanedPool) != 0 || after.ActivePoolState == "degraded-orphaned" {
+		t.Fatal("stale orphan list survived the repair", after.OrphanedPool, after.ActivePoolState)
+	}
 }
