@@ -28,7 +28,7 @@ func TestProbeRouteShadowedRequiresInboundScopedRules(t *testing.T) {
 }
 
 func TestShippedRoutingDoesNotShadowProbes(t *testing.T) {
-	for _, path := range []string{"../../config/xray/05_routing.json"} {
+	for _, path := range []string{"../../config/xray/05_routing.json", "../../config/presets/compact-selective-v1.json", "../../config/presets/ru-selective-v1.json"} {
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)

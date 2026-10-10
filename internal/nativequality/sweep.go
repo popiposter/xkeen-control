@@ -124,35 +124,55 @@ func (s *Service) startSweep(parent context.Context, trigger string) error {
 	return nil
 }
 
+// rttPrePhaseChunk bounds how long one pre-phase step holds the panel lease:
+// six probes at RTTProbeTimeout plus cleanup stay well under two minutes.
+const rttPrePhaseChunk = 6
+
 // rttPrePhase probes every frozen candidate once through the same fixed
 // endpoint and timeout. It returns the candidates admitted to the speed phase,
-// in plan order, and every probed tag's health. A tag slower than the native
-// maxRTT is alive but not admitted.
-func (s *Service) rttPrePhase(ctx context.Context, tags []string, maxRTT int64) ([]c1.AdaptiveCandidateInput, map[string]bool, string) {
-	release, err := s.Lease.TryAcquire()
-	if err != nil {
-		return nil, nil, "panel-busy"
-	}
-	defer release()
-	samples, err := s.Measurement.MeasureRTT(ctx, tags)
-	if err != nil {
-		if errors.Is(err, c1.ErrProbeCleanup) || errors.Is(err, c1.ErrProbeBlocked) {
-			return nil, nil, "probe-cleanup-pending"
-		}
-		return nil, nil, "rtt-probe-unavailable"
-	}
-	if len(samples) != len(tags) {
-		return nil, nil, "rtt-probe-incomplete"
-	}
-	alive := make(map[string]bool, len(samples))
+// in plan order, and every probed tag's health. A tag that does not answer, or
+// answers slower than the native maxRTT, is unhealthy: native Xray would not
+// select it either. Probes run in chunks; each chunk holds the panel lease
+// only for its own duration and first rechecks the frozen configuration.
+func (s *Service) rttPrePhase(ctx context.Context, tags []string, maxRTT int64, digest string) ([]c1.AdaptiveCandidateInput, map[string]bool, string) {
+	alive := make(map[string]bool, len(tags))
 	var admitted []c1.AdaptiveCandidateInput
-	for i, sample := range samples {
-		if sample.Tag != tags[i] {
+	for start := 0; start < len(tags); start += rttPrePhaseChunk {
+		chunk := tags[start:min(start+rttPrePhaseChunk, len(tags))]
+		if ctx.Err() != nil {
+			return nil, nil, "review-timeout-or-cancelled"
+		}
+		release, err := s.Lease.TryAcquire()
+		if err != nil {
+			return nil, nil, "panel-busy"
+		}
+		wctx, stop := context.WithTimeout(ctx, 10*time.Second)
+		w, err := s.Editor.Workspace(wctx)
+		stop()
+		if err != nil || w.Pending != nil || !w.TargetsComplete || w.Digest != digest {
+			release()
+			return nil, nil, "configuration-changed-or-pending"
+		}
+		samples, err := s.Measurement.MeasureRTT(ctx, chunk)
+		release()
+		if err != nil {
+			if errors.Is(err, c1.ErrProbeCleanup) || errors.Is(err, c1.ErrProbeBlocked) {
+				return nil, nil, "probe-cleanup-pending"
+			}
+			return nil, nil, "rtt-probe-unavailable"
+		}
+		if len(samples) != len(chunk) {
 			return nil, nil, "rtt-probe-incomplete"
 		}
-		alive[sample.Tag] = sample.Valid
-		if sample.Valid && sample.RTTMS > 0 && sample.RTTMS <= maxRTT {
-			admitted = append(admitted, c1.AdaptiveCandidateInput{Tag: sample.Tag, RTTMS: sample.RTTMS, LatestAt: sample.SampledAt})
+		for i, sample := range samples {
+			if sample.Tag != chunk[i] {
+				return nil, nil, "rtt-probe-incomplete"
+			}
+			healthy := sample.Valid && sample.RTTMS > 0 && sample.RTTMS <= maxRTT
+			alive[sample.Tag] = healthy
+			if healthy {
+				admitted = append(admitted, c1.AdaptiveCandidateInput{Tag: sample.Tag, RTTMS: sample.RTTMS, LatestAt: sample.SampledAt})
+			}
 		}
 	}
 	return admitted, alive, ""
@@ -164,10 +184,9 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 	if quotaUnlock != nil {
 		defer quotaUnlock()
 	}
-	ordered, alive, reason := s.rttPrePhase(ctx, plan.Candidates, maxRTT)
+	ordered, alive, reason := s.rttPrePhase(ctx, plan.Candidates, maxRTT, digest)
 	s.mu.Lock()
 	s.rttAlive = alive
-	s.status.ReviewPhase = "speed"
 	s.status.RTTValidCount = len(ordered)
 	s.mu.Unlock()
 	if reason == "" && len(ordered) < 2 {
@@ -198,13 +217,15 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 		s.status.State = "deferred"
 		s.status.ReviewReason = reason
 		s.status.Progress = c1.AdaptivePerformanceStatus{State: "deferred"}
-		if reason == "probe-cleanup-pending" {
-			s.status.InspectionRequired = true
-		}
+		// A closed probe gate is retried before the next probe is admitted, so
+		// it needs no inspection flag of its own.
 		s.cancel = nil
 		s.mu.Unlock()
 		return
 	}
+	s.mu.Lock()
+	s.status.ReviewPhase = "speed"
+	s.mu.Unlock()
 	sizes, _ := batchSizes(len(ordered))
 	result := c1.AdaptiveResult{NativeQuality: true, Sweep: true, SweepEligibleCount: len(ordered), Generation: frozen.Generation, StartedAt: time.Now().UTC(), CurrentTarget: frozen.CurrentTarget, State: "running"}
 	position := 0

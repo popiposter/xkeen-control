@@ -69,6 +69,15 @@ to6batches/24attempts/144MiB/30min and two reviews/288MiB per rolling24h.
 If eligibility exceeds18 nodes, coverage or 80% validity fails, evidence expires,
 or resource/configuration state is uncertain, the running pool is preserved.
 Manual Apply still uses the same editor and native restart job from this screen.
+Source after #205 (not yet released): the constrained review no longer uses
+Observatory for eligibility or incumbent health. It freezes every incumbent
+plus a fair rotation of the other enabled nodes, probes each with one targeted
+zero-byte RTT request (10s, in chunks of six under the panel lease), and only
+then reserves quota and speed-tests the candidates that answered within native
+maxRTT. A candidate that does not answer, or is slower than maxRTT, is
+unhealthy evidence for the pool decision. Reviews refuse with
+probe-route-shadowed when any routing rule lacks an inbound restriction. The
+next paragraph describes the released Observatory-based behaviour.
 Eligible nodes need fresh, alive native observations within the configured finite
 RTT criterion. Manual tests additionally require RTT no more than twice the
 lowest fresh RTT, with a300ms floor. Comparison candidates come from all enabled

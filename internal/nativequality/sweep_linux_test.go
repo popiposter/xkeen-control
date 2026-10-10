@@ -63,7 +63,9 @@ func (r *sweepReader) ProbeReachable(context.Context) bool {
 type sweepMeasurement struct {
 	rttCalls     [][]string
 	rttDown      map[string]bool
+	rttSlow      map[string]bool
 	rttErr       error
+	onRTT        func(int)
 	calls        [][]string
 	validLimit   int
 	failBatch    int
@@ -89,8 +91,14 @@ func (m *sweepMeasurement) MeasureRTT(_ context.Context, tags []string) ([]c1.RT
 		sample := c1.RTTSample{Tag: tag, SampledAt: time.Now().UTC()}
 		if !m.rttDown[tag] {
 			sample.Valid, sample.RTTMS = true, int64(100+index)
+			if m.rttSlow[tag] {
+				sample.RTTMS = 20000
+			}
 		}
 		out = append(out, sample)
+	}
+	if m.onRTT != nil {
+		m.onRTT(len(m.rttCalls))
 	}
 	return out, nil
 }
@@ -234,8 +242,8 @@ func TestSweepStaleObservatoryNoLongerDefersBecauseEveryCandidateIsProbed(t *tes
 	}
 	v := waitSweep(t, s)
 	m := s.Measurement.(*sweepMeasurement)
-	if len(m.rttCalls) != 1 || len(m.rttCalls[0]) != 18 || v.RTTValidCount != 18 || v.State != "completed" || v.PoolDecision != "pool-unchanged" {
-		t.Fatal("RTT pre-phase did not freeze and probe the bounded set", len(m.rttCalls), v.RTTValidCount, v.State, v.PoolDecision)
+	if len(m.rttCalls) != 3 || len(m.rttCalls[0]) != 6 || len(m.rttCalls[2]) != 6 || v.RTTValidCount != 18 || v.State != "completed" || v.PoolDecision != "pool-unchanged" || v.ReviewPhase != "speed" {
+		t.Fatal("RTT pre-phase did not freeze and probe the bounded set in chunks", len(m.rttCalls), v.RTTValidCount, v.State, v.PoolDecision)
 	}
 	for _, tag := range m.rttCalls[0][:6] {
 		if tag < "proxy-00" || tag > "proxy-05" {
@@ -303,6 +311,58 @@ func TestSweepIncumbentFailingRTTIsUnhealthyAndReplaced(t *testing.T) {
 				t.Fatal("RTT-failed candidate entered the speed phase")
 			}
 		}
+	}
+}
+
+func TestSweepProbeGateFailureDefersWithoutAnInspectionFence(t *testing.T) {
+	s, _, digest, _ := sweepFixture(t, true)
+	s.Measurement.(*sweepMeasurement).rttErr = c1.ErrProbeCleanup
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal(err)
+	}
+	v := waitSweep(t, s)
+	if v.State != "deferred" || v.ReviewReason != "probe-cleanup-pending" || v.InspectionRequired || v.ReviewPhase != "rtt" {
+		t.Fatal("probe gate failure fenced the service", v.State, v.ReviewReason, v.InspectionRequired, v.ReviewPhase)
+	}
+	assertNoQuotaOrTransfer(t, s, digest)
+	// The next review is admitted: nothing outside a restart could clear a fence.
+	s.Measurement.(*sweepMeasurement).rttErr = nil
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal("review after a transient probe failure was refused", err, s.Read().ReviewReason)
+	}
+	waitSweep(t, s)
+}
+
+func TestSweepIncumbentAboveNativeMaxRTTIsUnhealthy(t *testing.T) {
+	s, _, _, _ := sweepFixture(t, true)
+	s.Measurement.(*sweepMeasurement).rttSlow = map[string]bool{"proxy-05": true}
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal(err)
+	}
+	v := waitSweep(t, s)
+	if v.RTTValidCount != 13 || v.PoolDecision != "unhealthy-incumbent-replaced" {
+		t.Fatal("over-maxRTT incumbent was kept as healthy", v.RTTValidCount, v.PoolDecision, v.ReviewReason)
+	}
+}
+
+func TestSweepPrePhaseRechecksConfigurationBetweenChunks(t *testing.T) {
+	s, _, digest, dir := sweepFixture(t, true)
+	m := s.Measurement.(*sweepMeasurement)
+	m.onRTT = func(calls int) {
+		if calls == 1 {
+			_ = os.WriteFile(filepath.Join(dir, "06_policy.json"), []byte(`{"policy":{}}`), 0600)
+		}
+	}
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal(err)
+	}
+	v := waitSweep(t, s)
+	if v.State != "deferred" || v.ReviewReason != "configuration-changed-or-pending" || len(m.rttCalls) != 1 {
+		t.Fatal("configuration drift between chunks was not detected", v.State, v.ReviewReason, len(m.rttCalls))
+	}
+	_ = digest
+	if len(m.calls) != 0 {
+		t.Fatal("drifted review transferred data")
 	}
 }
 
