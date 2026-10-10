@@ -763,7 +763,6 @@ func TestManualReviewMeasuresWithoutApplyOrAutomaticQuota(t *testing.T) {
 	}
 }
 
-
 func TestManualReviewFailureDoesNotFenceLaterReviews(t *testing.T) {
 	s, _, _, _ := sweepFixture(t, false)
 	s.Resources.Profile = resourcepolicy.ForPlatform("arm64", 1<<20)
