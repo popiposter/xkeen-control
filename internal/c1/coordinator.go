@@ -145,7 +145,7 @@ func (c *Coordinator) Stop() {
 }
 
 // TriggerManualNode admits one safe node ID into the same performance
-// single-flight used by the legacy full benchmark. Target resolution happens
+// single-flight used by native quality measurement. Target resolution happens
 // after that shared ownership is acquired, so an Apply cannot mutate the
 // authoritative registry between selection validation and the diagnostic.
 func (c *Coordinator) TriggerManualNode(nodeID string) error {
@@ -156,6 +156,13 @@ func (c *Coordinator) TriggerManualNode(nodeID string) error {
 		return ErrManualInvalidTarget
 	}
 	c.mu.Lock()
+	if c.manualRunner != nil {
+		probe := c.manualRunner.Probe
+		c.mu.Unlock()
+		// Retry a closed probe gate before refusing; nothing else would.
+		probe.Recover(context.Background())
+		c.mu.Lock()
+	}
 	runner := c.manualRunner
 	if runner == nil || !c.policy.Enabled {
 		c.mu.Unlock()

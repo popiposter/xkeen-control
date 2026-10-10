@@ -35,6 +35,12 @@ func TestNativeQualityEvidenceCountsUniqueObservationsAndResetsOnApply(t *testin
 			t.Fatalf("evidence after three unique samples = %+v", got)
 		}
 	}
+	// Samples older than the 15-minute window are pruned: one fresh sample
+	// after a long gap is not enough evidence on its own.
+	clock = now.Add(2*time.Minute + DefaultLatencyWindow + time.Minute)
+	if got := c.NativeQualityEvidence(evidenceSnapshot(clock, 105)); len(got) != 0 {
+		t.Fatalf("stale samples survived the window = %+v", got)
+	}
 	if got := c.NativeQualityEvidence(xrayapi.Snapshot{}); len(got) != 0 {
 		t.Fatalf("unreachable Observatory produced evidence = %+v", got)
 	}

@@ -99,6 +99,12 @@ const openApplication = async (page, options = {}) => {
 
 const performanceRequests = (scenario) => scenario.requests.filter((request) => request.path === '/api/v1/performance')
 
+test('Overview shows the native selected node', async ({ page }) => {
+  await openApplication(page)
+  await expect(page.getByRole('region', { name: 'Active node' })).toContainText('Alpha')
+  await expect(page.getByRole('region', { name: 'Active node' })).toContainText('Native automatic selection')
+})
+
 test('manual diagnostic polling remains Nodes-only', async ({ page }) => {
   const performance = performanceFixture(waitingAdaptive(), { manual: { state: 'running', phase: 'download' } })
   const scenario = await openApplication(page, { performance })

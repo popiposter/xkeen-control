@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
 
 type manualTransportStub struct {
@@ -391,4 +393,28 @@ func TestCoordinatorManualCleanupFailureBlocksUnsafeReuse(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("cleanup did not become pending: %+v", coordinator.ManualSnapshot())
+}
+
+func TestCoordinatorManualRecoversProbeGateAfterTransientCleanupFailure(t *testing.T) {
+	api := &benchmarkProbeAPI{failRemove: true, rules: map[string]xrayapi.Rule{ManualPerformanceRuleTag: {RuleTag: ManualPerformanceRuleTag}}}
+	probe := NewProbeRouter(api)
+	// A startup reconcile while Xray cannot remove rules closes the gate.
+	if err := probe.Reconcile(context.Background()); err == nil || !probe.Blocked() {
+		t.Fatalf("failed reconcile did not close the gate: err=%v blocked=%v", err, probe.Blocked())
+	}
+	transport := &manualTransportStub{stageDuration: 300 * time.Millisecond, failedDownload: -1}
+	coordinator := NewCoordinator(DefaultPolicy(), func(context.Context) []NodeState { return []NodeState{validManualTestNode()} })
+	coordinator.SetManualRunner(&ManualNodeRunner{Probe: probe, Transport: transport})
+	if err := coordinator.TriggerManualNode(validManualTestNode().ID); !errors.Is(err, ErrManualCleanupPending) {
+		t.Fatalf("admission while cleanup still fails = %v", err)
+	}
+	api.mu.Lock()
+	api.failRemove = false
+	api.mu.Unlock()
+	if err := coordinator.TriggerManualNode(validManualTestNode().ID); err != nil {
+		t.Fatalf("admission after Xray recovered = %v", err)
+	}
+	if probe.Blocked() {
+		t.Fatal("recovered gate is still closed")
+	}
 }

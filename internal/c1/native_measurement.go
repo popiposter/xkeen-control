@@ -8,6 +8,13 @@ import (
 // transfer runner.
 func (c *Coordinator) MeasureNativeQuality(ctx context.Context, generation AdaptiveGeneration, publish func(AdaptivePerformanceStatus)) (AdaptiveResult, error) {
 	c.mu.Lock()
+	if c.adaptiveRunner != nil {
+		probe := c.adaptiveRunner.Probe
+		c.mu.Unlock()
+		// Retry a closed probe gate before refusing; nothing else would.
+		probe.Recover(ctx)
+		c.mu.Lock()
+	}
 	runner := c.adaptiveRunner
 	if !c.policy.Enabled || runner == nil || runner.Probe == nil {
 		c.mu.Unlock()

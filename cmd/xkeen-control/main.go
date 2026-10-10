@@ -375,7 +375,8 @@ func main() {
 			return
 		}
 		// Remove temporary probe rules a previous process may have left in Xray.
-		// On failure the probe gate stays closed and the next probe retries.
+		// On failure the probe gate stays closed; the next manual or quality
+		// measurement retries cleanup before it is admitted.
 		reconcileContext, cancelReconcile := context.WithTimeout(runtimeContext, 10*time.Second)
 		if err := probeRouter.Reconcile(reconcileContext); err != nil {
 			log.Print("probe rule reconciliation deferred")
