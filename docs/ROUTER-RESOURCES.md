@@ -6,7 +6,7 @@ qualification, not measured router throughput capacity.
 
 | Profile | Single node | Comparison | Automatic comparisons |
 | --- | --- | --- | --- |
-| MIPS, RAM at most 256 MiB, or unknown total RAM | 4 MiB / 20 seconds | 3 successful nodes, 4 attempts, 24 MiB / 90 seconds per batch | Bounded sequential sweep in0.4.10; live sweep/Apply acceptance pending |
+| MIPS, RAM at most 256 MiB, or unknown total RAM | 4 MiB / 20 seconds | 3 successful nodes, 4 attempts, 24 MiB / 90 seconds per batch | At most 18 selected nodes per review in0.4.11; live sweep/Apply acceptance pending |
 | Other supported routers | 48 MiB / 45 seconds | Manual: 12 successful / 18 attempts, 288 MiB / 360 seconds; automatic: 6 / 12, 144 MiB / 180 seconds | At most every 6 hours |
 
 Wall ceilings include the existing three-second probe cleanup reserve. Failed
@@ -31,8 +31,8 @@ probe rules through their shared owner, then separately verifies rule absence
 and its in-memory gate cleared;
 it never reruns Apply or the speed test. If any
 readback remains uncertain, the fence persists for operator investigation.
-Only fresh, healthy, RTT-eligible nodes are candidates. An automatic pool change
-requires a complete review with every frozen eligible candidate attempted,
+Only fresh, healthy, RTT-eligible nodes are candidates. In0.4.11 an automatic
+pool change requires a complete review with every frozen selected candidate attempted,
 at least 80% valid fresh measurements, unchanged registry/configuration and one
 verified native Apply. A partial three-node manual sample does not meet this
 condition. The current native pool remains in effect on incomplete or uncertain
@@ -41,13 +41,17 @@ outcomes. These source limits do not establish live hardware acceptance.
 The first signed0.4.10 scheduled KN1810 attempt at 02:24 MSK on
 2026-10-10 found 46 fresh eligible nodes and refused the old 18-node
 admission limit before any transfer or Apply (0 MiB, unchanged configuration).
-Issue [#191](https://github.com/popiposter/xkeen-control/issues/191) changes
-the source planner to review at most 18 each time: current pool members, up to
+Issue [#191](https://github.com/popiposter/xkeen-control/issues/191), published
+in signed0.4.11, changes the planner to review at most 18 each time: current pool members, up to
 six low-RTT challengers, then a durable rotating share. The status distinguishes
 the selected subset from nodes deferred to later reviews. All selected nodes
 must be attempted, with at least 80% valid; an unchanged pool avoids restart,
 and replacing a healthy member needs at least 15% measured score improvement.
-The 0.4.10 refusal remains the live outcome until new signed hardware proof.
+The 0.4.10 refusal remains its historical live outcome. A pure synthetic MIPS
+planner fixture passed on KN1810 before0.4.11 release, without reading live
+nodes or applying configuration. Signed0.4.11 installation passed exact
+source/hash, panel health and native-preservation checks; live bounded
+review/Apply remains unverified pending separate hardware readback.
 
 The existing measurement owners share a read-only hardware profile and an
 on-demand `/proc` sampler. No new daemon, persistent settings authority or timer

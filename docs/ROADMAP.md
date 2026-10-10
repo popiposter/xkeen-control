@@ -4,7 +4,7 @@ This is the current sequencing/status authority. Issues contain detailed task co
 
 ## Delivered
 
-**Stable0.4.10 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, guided fresh setup #145/PR147, MIPS panel delivery #150/PR151 and compact fresh routing #181/PR182 are delivered. #183/PR184 fixes MIPS speed telemetry, #185/PR186 pins the protected release image, and #188/PR189 adds bounded MIPS automatic pool review. [Release evidence](RELEASES.md) binds the exact source and public bytes. Signed0.4.10 installation passed on KN1810; a bounded manual test passed under0.4.9. Live automatic sweep/Apply and fresh setup remain untested.
+**Stable0.4.11 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, guided fresh setup #145/PR147, MIPS panel delivery #150/PR151 and compact fresh routing #181/PR182 are delivered. #183/PR184 fixes MIPS speed telemetry, #185/PR186 pins the protected release image, #188/PR189 adds bounded MIPS automatic pool review, and #191/PR192 selects a rotating subset when more than 18 nodes qualify. [Release evidence](RELEASES.md) binds the exact source and public bytes. Signed0.4.11 installation passed on KN1810 with source/hash and native preservation readback; a bounded manual test passed under0.4.9. Live 18-node sweep/Apply and fresh setup remain untested.
 
 - Stock XKeen owns installation, components/interception, service and cron; its code stays unmodified.
 - Native jobs/private console, Form/Text config editors and shared pending/Apply/Discard/previous restore.
@@ -31,7 +31,7 @@ The first adapter is restricted to the observed KN1811/5.01.C.6.0-1 CLI family;
 unsupported topology/schema stops before provisioning. Stock commands remain
 installation/update owners. [PR147](https://github.com/popiposter/xkeen-control/pull/147)
 records independent exact-source review and exact FULL evidence separately.
-Stable0.4.10 retains the installer/CLI; protected hosted FULL and independent
+Stable0.4.11 retains the installer/CLI; protected hosted FULL and independent
 ten-public-asset/both-signature verification passed. Fresh hardware acceptance remains
 [NOTRUN](https://github.com/popiposter/xkeen-control/issues/148). Source delivery
 does not certify fresh installation or client/outage behavior.
@@ -57,8 +57,13 @@ The first signed0.4.10 scheduled attempt on KN1810 at 02:24 MSK on
 2026-10-10 refused before transfer or Apply because 46 fresh eligible nodes
 exceeded its 18-node admission limit. It transferred 0 MiB and did not change
 the active configuration. [#191](https://github.com/popiposter/xkeen-control/issues/191)
-implements a bounded, rotating 18-of-46 review and material-change gate in
-source; this is not yet a released or live-accepted fix.
+in [PR192](https://github.com/popiposter/xkeen-control/pull/192) implements a
+bounded, rotating 18-of-46 review and material-change gate. Independent source
+review, local/hosted FULL, ten public assets and both signatures passed for
+signed0.4.11. A pure synthetic MIPS planner fixture ran on KN1810 before release;
+it did not read live nodes or apply configuration. Signed0.4.11 installation
+passed exact source/hash, panel health and native-preservation checks. A
+complete live subset review/Apply still needs separate hardware readback.
 
 ## Remaining acceptance
 
