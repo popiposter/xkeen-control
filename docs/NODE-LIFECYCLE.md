@@ -92,7 +92,10 @@ the manual recommendation) writes 05_routing.json and 07_observatory.json in one
 validated save: native Observatory then observes exactly the pool members every
 10s, concurrently on the standard profile and sequentially on constrained
 profiles (MIPS, and ARM64 with 256 MiB or less or unknown memory). Unchanged members with a
-stale 07 are repaired by the same joint Apply.
+stale 07 are repaired by the same joint Apply. A review that keeps the running exact
+pool by policy (no challenger 15% better, an unmeasured incumbent, too few valid
+results) also narrows a wider 07 to that pool through the same validated Apply,
+keeping 05 byte for byte.
 No-healthy-member recovery (unreleased, REQ-009): every 10 minutes the panel
 checks whether native Observatory reports every pool member down, or every
 member has vanished from the registry. A member without an Observatory record is

@@ -917,3 +917,51 @@ func TestSweepImportedFiveMemberPoolIsFilledToSix(t *testing.T) {
 		}
 	}
 }
+
+// A review that keeps the running pool by policy still narrows a broad 07 to
+// that pool, keeping 05 byte for byte.
+func TestSweepKeptPoolWithBroadObservatoryRepairsOnly07(t *testing.T) {
+	s, _, _, dir := sweepFixture(t, true)
+	kept := []string{"proxy-01", "proxy-02", "proxy-03", "proxy-04", "proxy-05", "proxy-06"}
+	var costs []c1.NativeQualityCost
+	for i, tag := range kept {
+		costs = append(costs, c1.NativeQualityCost{Regexp: true, Match: "^" + regexp.QuoteMeta(tag) + "$", Value: float64(i + 1)})
+	}
+	// proxy-00 measures faster than proxy-06, but by less than the 15% margin.
+	routing, _ := json.Marshal(map[string]any{"routing": map[string]any{"rules": []any{}, "balancers": []any{map[string]any{"tag": "bal-proxy", "selector": kept, "strategy": map[string]any{"type": "leastLoad", "settings": map[string]any{"maxRTT": "10s", "costs": costs}}}}}})
+	for name, data := range map[string][]byte{"05_routing.json": routing, "07_observatory.json": []byte(`{"observatory":{"subjectSelector":["proxy-"],"probeInterval":"10s","enableConcurrency":false}}`)} {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal(err, s.Read().ReviewReason)
+	}
+	v := waitSweep(t, s)
+	if v.PoolDecision != "observatory-repair" {
+		t.Fatal("broad 07 kept after a policy no-change", v.PoolDecision, v.ReviewReason)
+	}
+	w, err := s.Editor.Workspace(context.Background())
+	if err != nil || w.Pending == nil {
+		t.Fatal("07 repair was not saved", err)
+	}
+	if w.Documents["05_routing.json"].Text != string(routing) {
+		t.Fatal("observatory repair changed 05")
+	}
+	if !observatoryMatchesPool(w.Documents["07_observatory.json"].Text, kept, false) {
+		t.Fatal("saved 07 does not observe exactly the kept pool", w.Documents["07_observatory.json"].Text)
+	}
+}
+
+// A kept broad selector is not narrowed by an observatory repair.
+func TestSweepBroadSelectorIsNotNarrowedByObservatoryRepair(t *testing.T) {
+	s, _, _, _ := sweepFixture(t, false)
+	s.Measurement.(*sweepMeasurement).validLimit = 5 // too few results to rank a new pool
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal(err, s.Read().ReviewReason)
+	}
+	v := waitSweep(t, s)
+	if v.PoolDecision == "observatory-repair" {
+		t.Fatal("a broad selector was narrowed through an observatory repair")
+	}
+}
