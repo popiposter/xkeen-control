@@ -33,7 +33,6 @@ async function mountNativeCommands(page, { output = 'Native result\r\n', bootstr
       '/api/v1/status': { controlPlane: {}, xray: {}, xkeen: {}, balancer: {}, observatory: {}, benchmark: { controlPlane: {} }, selection: {}, lifecycle: { applying: false, maintenance: false }, native: { installation: 'available', version: '2.0.1', channel: 'beta', core: 'xray', panelIntegration: 'available', xrayRunning: true } },
       '/api/v1/nodes': { total: 0, nodes: [], subscriptions: [] },
       '/api/v1/performance': { nodes: [] },
-      '/api/v1/config-summary': { routing: {}, dns: {}, observatory: {} },
     }[path]
     return json(value || {}, value ? 200 : 404)
   })

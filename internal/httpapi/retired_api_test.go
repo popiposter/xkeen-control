@@ -11,7 +11,8 @@ import (
 func TestRetiredComponentSetupAndApplianceRestoreRoutesAreAbsent(t *testing.T) {
 	server := httptest.NewServer(New(Config{}))
 	defer server.Close()
-	paths := []string{"components", "components/check", "components/policy", "components/preview", "components/apply", "components/rollback", "components/cancel", "setup/preview", "setup/apply", "setup/cancel", "backup/import/preview", "backup/import/apply", "backup/import/cancel"}
+	paths := []string{"components", "components/check", "components/policy", "components/preview", "components/apply", "components/rollback", "components/cancel", "setup/preview", "setup/apply", "setup/cancel", "backup/import/preview", "backup/import/apply", "backup/import/cancel",
+		"backup/export", "config-summary", "benchmark/run", "performance/policy", "performance/policy/preview", "performance/policy/apply", "performance/policy/cancel"}
 	for _, path := range paths {
 		for _, method := range []string{http.MethodGet, http.MethodPost} {
 			request, _ := http.NewRequest(method, server.URL+"/api/v1/"+path, strings.NewReader(`{}`))
