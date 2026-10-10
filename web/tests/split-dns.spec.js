@@ -32,3 +32,22 @@ test('an unreadable DNS status stays visible instead of hiding a possible legacy
  await page.getByRole('button',{name:'Refresh DNS status'}).click()
  await expect(page.getByText('DNS status is unavailable.')).toHaveCount(0)
 })
+
+test('refreshing a legacy resolver status keeps its warning visible until the next answer', async ({ page }) => {
+ await mountFeatureCompleteDashboard(page)
+ let release
+ let hold = false
+ await page.route('**/api/v1/dns/split', async route => {
+   if (hold) await new Promise(resolve => { release = resolve })
+   return route.fulfill({json:{state:'pending', running:true}})
+ })
+ await page.goto('/')
+ await openSection(page, 'DNS')
+ await expect(page.getByText(/legacy LAN resolver is still configured/)).toBeVisible()
+ hold = true
+ await page.getByRole('button',{name:'Refresh DNS status'}).click()
+ await expect.poll(() => typeof release).toBe('function')
+ await expect(page.getByText(/legacy LAN resolver is still configured/)).toBeVisible()
+ release()
+ await expect(page.getByText('Waiting for Apply',{exact:true})).toBeVisible()
+})

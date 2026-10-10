@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 
-const labels = { synced: 'Legacy resolver active', checking: 'Checking', pending: 'Waiting for Apply', failed: 'Needs attention', unconfigured: 'No separate resolver', retired: 'Retired' }
+const labels = { synced: 'Legacy resolver active', checking: 'Checking', pending: 'Waiting for Apply', failed: 'Needs attention' }
 
 export function SplitDNSSection({ csrfToken, onUnauthorized, readbackKey }) {
   const [status, setStatus] = useState(null)
@@ -13,8 +13,7 @@ export function SplitDNSSection({ csrfToken, onUnauthorized, readbackKey }) {
   useEffect(() => {
     const controller = new AbortController()
     let alive = true
-    setStatus(null)
-    setNotice('')
+    // Keep the last answer on screen until the next one arrives.
     const read = async () => {
       try {
         const response = await fetch('/api/v1/dns/split', { credentials: 'same-origin', cache: 'no-store', signal: controller.signal })
@@ -22,8 +21,8 @@ export function SplitDNSSection({ csrfToken, onUnauthorized, readbackKey }) {
         if (response.status === 401) { onUnauthorized?.(); return }
         if (!response.ok) throw new Error('Unavailable')
         const value = await response.json()
-        if (alive) setStatus(value)
-      } catch (error) { if (alive && error.name !== 'AbortError') setNotice('DNS status is unavailable.') }
+        if (alive) { setStatus(value); setNotice('') }
+      } catch (error) { if (alive && error.name !== 'AbortError') { setStatus(null); setNotice('DNS status is unavailable.') } }
     }
     void read()
     return () => { alive = false; controller.abort() }
@@ -37,14 +36,11 @@ export function SplitDNSSection({ csrfToken, onUnauthorized, readbackKey }) {
   return <Card>
     <CardHeader><CardTitle className="flex items-center gap-2"><IconWorld className="size-5 text-blue-500" />Old separate DNS resolver</CardTitle><CardDescription>New installations keep the router’s normal DNS settings. No separate resolver or DNS-over-VPN rules are added.</CardDescription></CardHeader>
     <CardContent className="space-y-4">
-      <Badge variant="outline">{labels[status?.state] || (notice ? 'Unavailable' : 'Loading')}</Badge>
-      {<>
-        <p className="text-sm text-muted-foreground">A legacy LAN resolver is still configured. Its status is read-only here. Complete the supported DNS retirement before stopping it; router clients may still depend on it.</p>
-        <p className="text-sm text-muted-foreground">DNS service {status.running ? 'running' : 'not confirmed'}</p>
-        {status.message && <p role="status" className="text-sm text-amber-600 dark:text-amber-400">{status.message}</p>}
-      </>}
+      <Badge variant="outline">{labels[status.state] || status.state}</Badge>
+      <p className="text-sm text-muted-foreground">A legacy LAN resolver is still configured. Its status is read-only here. Complete the supported DNS retirement before stopping it; router clients may still depend on it.</p>
+      <p className="text-sm text-muted-foreground">DNS service {status.running ? 'running' : 'not confirmed'}</p>
+      {status.message && <p role="status" className="text-sm text-amber-600 dark:text-amber-400">{status.message}</p>}
       <Button variant="outline" onClick={() => setRefresh(value => value + 1)}><IconRefresh />Refresh DNS status</Button>
-      {notice && <p role="status" className="text-sm text-amber-600 dark:text-amber-400">{notice}</p>}
     </CardContent>
   </Card>
 }
