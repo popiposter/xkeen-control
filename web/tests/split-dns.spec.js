@@ -37,17 +37,32 @@ test('refreshing a legacy resolver status keeps its warning visible until the ne
  await mountFeatureCompleteDashboard(page)
  let release
  let hold = false
+ let answer = { state: 'pending', running: true }
  await page.route('**/api/v1/dns/split', async route => {
    if (hold) await new Promise(resolve => { release = resolve })
-   return route.fulfill({json:{state:'pending', running:true}})
+   return answer ? route.fulfill({ json: answer }) : route.fulfill({ status: 500, json: { error: 'unavailable' } })
  })
  await page.goto('/')
  await openSection(page, 'DNS')
- await expect(page.getByText(/legacy LAN resolver is still configured/)).toBeVisible()
+ await expect(page.getByText('Waiting for Apply', { exact: true })).toBeVisible()
+ // A different answer after a held Refresh: the old card stays until it arrives.
  hold = true
- await page.getByRole('button',{name:'Refresh DNS status'}).click()
+ answer = { state: 'failed', running: false, message: 'Synthetic resolver warning' }
+ await page.getByRole('button', { name: 'Refresh DNS status' }).click()
  await expect.poll(() => typeof release).toBe('function')
+ await expect(page.getByText('Waiting for Apply', { exact: true })).toBeVisible()
  await expect(page.getByText(/legacy LAN resolver is still configured/)).toBeVisible()
+ release(); release = undefined
+ await expect(page.getByText('Needs attention', { exact: true })).toBeVisible()
+ await expect(page.getByText('Synthetic resolver warning')).toBeVisible()
+ await expect(page.getByText('Waiting for Apply', { exact: true })).toHaveCount(0)
+ // A failed read during Refresh replaces the card with the unavailable line.
+ answer = null
+ await page.getByRole('button', { name: 'Refresh DNS status' }).click()
+ await expect.poll(() => typeof release).toBe('function')
+ await expect(page.getByText('Needs attention', { exact: true })).toBeVisible()
  release()
- await expect(page.getByText('Waiting for Apply',{exact:true})).toBeVisible()
+ await expect(page.getByRole('status').filter({ hasText: 'DNS status is unavailable.' })).toBeVisible()
+ await expect(page.getByText(/legacy LAN resolver is still configured/)).toHaveCount(0)
+ await expect(page.getByRole('button', { name: 'Refresh DNS status' })).toBeVisible()
 })
