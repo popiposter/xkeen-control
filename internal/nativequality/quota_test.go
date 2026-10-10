@@ -5,6 +5,7 @@ package nativequality
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -125,6 +126,16 @@ func TestRankedSettleClearsProvisionalLabel(t *testing.T) {
 	}
 	if q, _ := readQuotaLocked(path, now); q.ProvisionalAt.IsZero() {
 		t.Fatal("an unranked settle cleared the provisional label")
+	}
+	// A receipt without a provisional pool stays readable by v0.4.12.
+	if err := writeQuotaLocked(path, quotaReceipt{Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(path); strings.Contains(string(raw), "provisionalAt") {
+		t.Fatal("a zero provisionalAt was written", string(raw))
+	}
+	if err := writeQuotaLocked(path, quotaReceipt{Version: 1, ProvisionalAt: now.Add(-time.Hour)}); err != nil {
+		t.Fatal(err)
 	}
 	if err := settleSweepLocked(path, now, false, true); err != nil {
 		t.Fatal(err)

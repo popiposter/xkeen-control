@@ -753,7 +753,7 @@ func TestManualReviewMeasuresWithoutApplyOrAutomaticQuota(t *testing.T) {
 			m := s.Measurement.(*sweepMeasurement)
 			batch := s.profile().Review().BatchSize
 			if !v.ManualSample || v.State != "completed" || v.AppliedState != "not-attempted" || !v.CanStage || len(m.calls) == 0 || len(m.calls[0]) != batch || v.SelectedForSpeed != 12 {
-				t.Fatal("manual review state", v.ManualSample, v.State, v.AppliedState, v.CanStage, len(m.calls), v.SelectedForSpeed)
+				t.Fatal("manual review state", v.ReviewReason, v.ManualSample, v.State, v.AppliedState, v.CanStage, len(m.calls), v.SelectedForSpeed)
 			}
 			q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes)
 			if err != nil || q.ReviewsUsed != 0 || q.LastStartedAt.IsZero() || q.FairCursor != v.FairCursor {

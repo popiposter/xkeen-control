@@ -83,7 +83,7 @@ type Status struct {
 	NativeSelectedAt        time.Time                    `json:"nativeSelectedAt,omitempty"`
 	// ProvisionalAt is set while the configured pool is a REQ-009 recovery
 	// pool that no speed review has ranked yet.
-	ProvisionalAt time.Time      `json:"provisionalAt,omitempty"`
+	ProvisionalAt time.Time      `json:"provisionalAt,omitzero"`
 	Recovery      RecoveryStatus `json:"recovery"`
 }
 

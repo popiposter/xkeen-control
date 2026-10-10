@@ -28,7 +28,7 @@ const (
 type RecoveryStatus struct {
 	State     string    `json:"state,omitempty"`
 	Reason    string    `json:"reason,omitempty"`
-	CheckedAt time.Time `json:"checkedAt,omitempty"`
+	CheckedAt time.Time `json:"checkedAt,omitzero"`
 	Probed    int       `json:"probed"`
 	Verified  int       `json:"verified"`
 	Pool      []string  `json:"pool,omitempty"`
@@ -86,7 +86,9 @@ func (s *Service) recoverPool(parent context.Context) {
 }
 
 func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
-	deferred := func(reason string) RecoveryStatus { return RecoveryStatus{State: "deferred", Reason: reason} }
+	// Until the pool health is known, a refusal says nothing about an outage:
+	// it is "unchecked", not a deferred recovery.
+	deferred := func(reason string) RecoveryStatus { return RecoveryStatus{State: "unchecked", Reason: reason} }
 	path := s.QuotaPath
 	if path == "" {
 		path = defaultQuotaPath
@@ -124,6 +126,7 @@ func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
 	if !noHealthyMember(snapshot, resolved) {
 		return RecoveryStatus{State: "healthy"}
 	}
+	deferred = func(reason string) RecoveryStatus { return RecoveryStatus{State: "deferred", Reason: reason} }
 	// The operator's native override owns selection; recovery never clears or
 	// overwrites it.
 	if snapshot.Balancer.Override != "" {
@@ -206,7 +209,7 @@ func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
 	if err != nil || current.Pending != nil || !current.TargetsComplete || current.Digest != w.Digest {
 		return fail("deferred", "configuration-changed-or-pending")
 	}
-	if check := s.Reader.Snapshot(applyCtx); !check.APIReachable || !check.RoutingReachable || check.Balancer.Override != "" {
+	if check := s.Reader.Snapshot(applyCtx); !check.APIReachable || !check.RoutingReachable || !check.ObservatoryReachable || check.Balancer.Override != "" || !s.Reader.ProbeReachable(applyCtx) {
 		return fail("deferred", "native-override-or-unavailable")
 	}
 	// The durable intent precedes the save, so a crash before the proof is

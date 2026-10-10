@@ -149,8 +149,8 @@ flowchart LR
   candidate verified by actual outbound routing may form a labelled
   **provisional** pool of one to six members after full configuration and native
   runtime validation; this is availability recovery, not a speed ranking.
-  An active manual native override defers this automatic recovery and requires
-  operator inspection; it is never cleared or overwritten by the panel.
+  An active manual native override defers this automatic recovery until the
+  operator clears it; it is never cleared or overwritten by the panel.
   If no candidate or no proof exists, leave the current configuration intact,
   report VPN unavailable and keep the existing `block` fallback for proxied
   destinations. No silent DIRECT leak or repeated restart loop.

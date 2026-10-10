@@ -4,9 +4,12 @@ package nativequality
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -225,5 +228,60 @@ func TestRecoveryStandsDownDuringReviewOrInspection(t *testing.T) {
 	s.recoverPool(context.Background())
 	if len(m.rttCalls) != 0 || s.Read().Recovery.State != "" {
 		t.Fatal("recovery ran during inspection or a review Apply", m.rttCalls)
+	}
+}
+
+func TestRecoveryUnknownApplyOutcomeIsFenced(t *testing.T) {
+	s, _, _ := recoveryFixture(t)
+	// The fixture's native job runner is missing: the save succeeds and the
+	// Apply admission is unknown.
+	s.recoverPool(context.Background())
+	v := s.Read()
+	if v.Recovery.State != "inspection-required" || !v.InspectionRequired || !v.ProvisionalAt.IsZero() {
+		t.Fatal("unknown recovery Apply not fenced", v.Recovery, v.InspectionRequired)
+	}
+	if q, err := quotaState(s.QuotaPath, time.Now().UTC(), testReviewBytes); err != nil || !q.InspectionRequired {
+		t.Fatal("durable recovery fence missing", q, err)
+	}
+}
+
+func TestRecoveryReplacesAnAllOrphanedPool(t *testing.T) {
+	s, m, _ := recoveryFixture(t)
+	m.rttDown = map[string]bool{}
+	marker := setupNativeApply(t, s, s.Editor.Dir)
+	var gone []string
+	var costs []c1.NativeQualityCost
+	for i := 0; i < 3; i++ {
+		tag := fmt.Sprintf("proxy-gone-%d", i)
+		gone = append(gone, tag)
+		costs = append(costs, c1.NativeQualityCost{Regexp: true, Match: "^" + regexp.QuoteMeta(tag) + "$", Value: 1})
+	}
+	routing, _ := json.Marshal(map[string]any{"routing": map[string]any{"rules": []any{}, "balancers": []any{map[string]any{"tag": "bal-proxy", "selector": gone, "strategy": map[string]any{"type": "leastLoad", "settings": map[string]any{"maxRTT": "10s", "costs": costs}}}}}})
+	if err := os.WriteFile(filepath.Join(s.Editor.Dir, "05_routing.json"), routing, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s.recoverPool(context.Background())
+	v := s.Read()
+	if v.Recovery.State != "applied" || len(v.Recovery.Pool) != 6 || v.ProvisionalAt.IsZero() {
+		t.Fatal("all-orphaned pool not recovered", v.Recovery)
+	}
+	if calls, _ := os.ReadFile(marker); string(calls) != "x" {
+		t.Fatal("expected one native Apply", string(calls))
+	}
+}
+
+func TestRecoveryRefusalBeforeHealthIsNotReportedAsAnOutage(t *testing.T) {
+	s, m, _ := recoveryFixture(t)
+	p := filepath.Join(s.Editor.Dir, "05_routing.json")
+	b, _ := os.ReadFile(p)
+	if _, err := s.Editor.SaveTexts(context.Background(), s.status.Digest, map[string]string{"05_routing.json": string(b) + "\n"}); err != nil {
+		w, _ := s.Editor.Workspace(context.Background())
+		if _, err := s.Editor.SaveTexts(context.Background(), w.Digest, map[string]string{"05_routing.json": string(b) + "\n"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.recoverPool(context.Background())
+	if v := s.Read(); v.Recovery.State != "unchecked" || v.Recovery.Reason != "configuration-pending-or-unavailable" || len(m.rttCalls) != 0 {
+		t.Fatal("a pending draft was reported as a deferred recovery", v.Recovery)
 	}
 }

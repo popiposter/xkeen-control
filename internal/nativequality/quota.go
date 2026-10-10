@@ -39,8 +39,9 @@ type quotaReceipt struct {
 	EligibleSetHash         string             `json:"eligibleSetHash,omitempty"`
 	// ProvisionalAt is when REQ-009 recovery applied an unranked pool. The
 	// next complete automatic review that applies or keeps a measured pool
-	// clears it.
-	ProvisionalAt time.Time `json:"provisionalAt,omitempty"`
+	// clears it. omitzero keeps receipts without a provisional pool readable
+	// by v0.4.12, which rejects unknown fields (rollback target).
+	ProvisionalAt time.Time `json:"provisionalAt,omitzero"`
 }
 
 type quotaView struct {

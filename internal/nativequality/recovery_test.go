@@ -21,7 +21,9 @@ func TestProvisionalPoolIsReplacedByTheFirstRankedReview(t *testing.T) {
 	if got := poolDecision(result, costs, active, selected, plan, map[string]bool{"proxy-a": true}, "", now); got != "provisional-pool-replaced" {
 		t.Fatal("provisional pool decision =", got)
 	}
-	if got := poolDecision(result, costs, active, active, plan, nil, "", now); got != "pool-unchanged" {
+	// The same members still replace the equal recovery costs.
+	same := []string{"proxy-b", "proxy-c"}
+	if got := poolDecision(result, costs, same, same, plan, nil, "", now); got != "provisional-pool-replaced" {
 		t.Fatal("a ranked review that keeps the provisional members =", got)
 	}
 }
