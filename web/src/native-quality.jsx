@@ -67,6 +67,7 @@ const poolDecisionText = {
   'observatory-repair': 'same members; native health observation narrowed to the pool',
   'insufficient-valid-results': 'too few valid results to replace a full healthy pool',
   'provisional-pool-replaced': 'provisional recovery pool replaced by measured nodes',
+  'pool-filled': 'undersized pool filled with measured nodes, keeping every member',
 }
 const recoveryReasons = {
   'manual-override-active': 'a manual node override is active; clear it to allow recovery',

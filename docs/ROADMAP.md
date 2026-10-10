@@ -20,7 +20,8 @@ pipeline for manual and automatic reviews (#207) and one automatic policy for bo
 profiles (#208), with joint 05+07 narrowing of native Observatory to the pool completing
 Phase 1 in source. Phase 2 in source: no-healthy-member recovery with a labelled
 provisional pool (TASK-005) and "Not monitored", provisional and recovery states in
-the UI (TASK-006).
+the UI (TASK-006). Phase 3 fixtures (TASK-007) are in source; TASK-008 hardware
+acceptance remains.
 
 **Release gate:** since #208, `main` makes the ARM64 automatic review apply verified
 pools and restart XKeen without operator action. Do not cut a release from `main` until

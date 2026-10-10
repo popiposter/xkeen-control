@@ -6,7 +6,11 @@ import (
 )
 
 func TestReviewLimitsCoverTheLadderWorstCase(t *testing.T) {
-	for _, profile := range []Profile{ForPlatform("mipsle", 254472), ForPlatform("arm64", 1024*1024)} {
+	// MIPS, standard ARM64 and low-memory ARM64 (constrained limits).
+	for _, profile := range []Profile{ForPlatform("mipsle", 254472), ForPlatform("arm64", 1024*1024), ForPlatform("arm64", 200*1024)} {
+		if !profile.Automatic {
+			t.Fatalf("%s: every profile shares the automatic policy", profile.Name)
+		}
 		review, batch := profile.Review(), profile.Comparison(false)
 		worst := int64(0)
 		for _, n := range append(append([]int64(nil), batch.Download...), batch.Upload...) {

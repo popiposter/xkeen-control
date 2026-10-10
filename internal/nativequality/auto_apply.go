@@ -173,7 +173,7 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		s.applyOutcome("no-op", "pool-unchanged", false)
 		return
 	}
-	if decision != "first-pool-initialization" && decision != "material-improvement" && decision != "unhealthy-incumbent-replaced" && decision != "observatory-repair" && decision != "provisional-pool-replaced" {
+	if decision != "first-pool-initialization" && decision != "material-improvement" && decision != "unhealthy-incumbent-replaced" && decision != "observatory-repair" && decision != "provisional-pool-replaced" && decision != "pool-filled" {
 		s.applyOutcome("not-applied", decision, false)
 		return
 	}

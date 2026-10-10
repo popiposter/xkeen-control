@@ -886,3 +886,34 @@ func TestSweepAllOrphanedPoolWithNarrowedObservatoryIsReplaced(t *testing.T) {
 		}
 	}
 }
+
+// TASK-007: an imported five-member legacy pool (exact selectors without
+// panel costs) is reviewed and filled to six measured members in one save.
+func TestSweepImportedFiveMemberPoolIsFilledToSix(t *testing.T) {
+	s, _, _, dir := sweepFixture(t, true)
+	five := []string{"proxy-00", "proxy-01", "proxy-02", "proxy-03", "proxy-04"}
+	routing, _ := json.Marshal(map[string]any{"routing": map[string]any{"rules": []any{}, "balancers": []any{map[string]any{"tag": "bal-proxy", "selector": five, "strategy": map[string]any{"type": "leastLoad", "settings": map[string]any{"maxRTT": "10s"}}}}}})
+	if err := os.WriteFile(filepath.Join(dir, "05_routing.json"), routing, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal("imported five-member pool could not be reviewed", err, s.Read().ReviewReason)
+	}
+	v := waitSweep(t, s)
+	if v.PoolDecision != "pool-filled" {
+		t.Fatal("five-member pool decision", v.PoolDecision, v.ReviewReason)
+	}
+	w, err := s.Editor.Workspace(context.Background())
+	if err != nil || w.Pending == nil {
+		t.Fatal("filled pool was not saved", err)
+	}
+	pool, _, err := routingPool(w.Documents["05_routing.json"].Text, s.Nodes(context.Background()), w.Targets)
+	if err != nil || len(pool) != 6 {
+		t.Fatal("saved pool is not six members", pool, err)
+	}
+	for _, tag := range five {
+		if !strings.Contains(w.Documents["05_routing.json"].Text, `"`+tag+`"`) {
+			t.Fatal("an incumbent was dropped", tag)
+		}
+	}
+}
