@@ -20,3 +20,15 @@ test('legacy DNS is read-only and cannot regenerate split configuration', async 
  await expect(page.getByText(/legacy LAN resolver is still configured/)).toHaveCount(0)
  expect(writes).toBe(0)
 })
+
+test('an unreadable DNS status stays visible instead of hiding a possible legacy resolver', async ({ page }) => {
+ await mountFeatureCompleteDashboard(page)
+ let fail = true
+ await page.route('**/api/v1/dns/split', route => fail ? route.fulfill({status:500,json:{error:'unavailable'}}) : route.fulfill({json:{state:'unconfigured'}}))
+ await page.goto('/')
+ await openSection(page, 'DNS')
+ await expect(page.getByRole('status').filter({hasText:'DNS status is unavailable.'})).toBeVisible()
+ fail = false
+ await page.getByRole('button',{name:'Refresh DNS status'}).click()
+ await expect(page.getByText('DNS status is unavailable.')).toHaveCount(0)
+})

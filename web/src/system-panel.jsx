@@ -483,8 +483,8 @@ export function useSystemPanelController({ csrfToken, lifecycle, onUnauthorized,
   }
 }
 
-export function SystemPanelSection({ controller, status, backup, initialPage }) {
-  const [page, setPage] = useState(() => initialPage || ({ '#system-password': 'password', '#system-releases': 'releases', '#system-notifications': 'notifications', '#system-runtime': 'runtime', '#system-backup': 'backup' })[location.hash] || 'access')
+export function SystemPanelSection({ controller, status, backup }) {
+  const [page, setPage] = useState(() => ({ '#system-password': 'password', '#system-releases': 'releases', '#system-notifications': 'notifications', '#system-runtime': 'runtime', '#system-backup': 'backup' })[location.hash] || 'access')
   const listener = controller.listener
   const update = controller.update
   const lifecycleBlocked = lifecycleBlocksMutations(status?.lifecycle)

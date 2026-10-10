@@ -16,7 +16,7 @@ const fields = [
   { file: '02_dns.json', area: 'dns', field: 'queryStrategy', label: 'DNS address family', options: ['UseIP', 'UseIPv4', 'UseIPv6'], help: 'Which addresses Xray asks for: IPv4 and IPv6, IPv4 only or IPv6 only.' },
   { file: '02_dns.json', area: 'dns', field: 'disableCache', label: 'Disable DNS cache', boolean: true, help: 'Xray caches answers by default.' },
   { file: '02_dns.json', area: 'dns', field: 'disableFallback', label: 'Disable DNS fallback', boolean: true, help: 'With several resolvers, Xray otherwise tries the others when the matching one fails.' },
-  { file: '05_routing.json', area: 'routing', field: 'domainStrategy', label: 'Routing domain resolution', options: ['AsIs', 'IPIfNonMatch', 'IPOnDemand'], help: 'AsIs: match site names only. IPIfNonMatch: if no name rule matches, look the name up with Xray DNS and match IP rules (shipped default). IPOnDemand: look up as soon as any IP rule is checked.' },
+  { file: '05_routing.json', area: 'routing', field: 'domainStrategy', label: 'Routing domain resolution', options: ['AsIs', 'IPIfNonMatch', 'IPOnDemand'], help: 'AsIs: never look names up; IP rules use the address the device resolved. IPIfNonMatch: if no rule matched at all, look the name up with Xray DNS and try the IP rules again (shipped default). IPOnDemand: look the name up as soon as an IP rule is checked.' },
   { file: '07_observatory.json', area: 'observatory', field: 'probeInterval', label: 'Node probe interval (for example 30s)' },
   { file: '07_observatory.json', area: 'observatory', field: 'enableConcurrency', label: 'Concurrent node probes', boolean: true },
 ]

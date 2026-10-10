@@ -382,3 +382,21 @@ test('purposeful native forms retain unknown fields, numeric types and exact pro
   await expect(page.getByLabel('Enabled API services (one per line)', { exact: true })).toHaveValue('RoutingService')
   expect(writes).toEqual([])
 })
+
+test('routing summary names every rule condition and keeps catch-all wording for real catch-alls', async ({ page }) => {
+  const { documents } = await mountEditor(page)
+  documents['05_routing.json'].text = JSON.stringify({ routing: { rules: [
+    { type: 'field', source: ['192.168.1.50'], outboundTag: 'direct' },
+    { type: 'field', inboundTag: ['redirect'], localPort: '8080', outboundTag: 'direct' },
+    { type: 'field', domain: ['keyword:example'], outboundTag: 'direct' },
+    { type: 'field', network: 'tcp,udp', outboundTag: 'direct' },
+  ] } })
+  await selectConfig(page, '05_routing.json')
+  const row = (n) => page.locator(`[data-rule="${n}"]`)
+  await expect(row(1)).toContainText('Devices: 192.168.1.50')
+  await expect(row(1)).not.toContainText('Everything else')
+  await expect(row(2)).toContainText('Other conditions: localPort')
+  await expect(row(2)).not.toContainText('all traffic')
+  await expect(row(3)).toContainText('Sites: keyword:example')
+  await expect(row(4)).toContainText('Everything else')
+})

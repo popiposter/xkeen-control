@@ -23,7 +23,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Disclosure, MobileNavigationDrawer, Modal } from './ui.jsx'
-import { IconHome, IconServer, IconSitemap, IconWorld, IconChartBar, IconCube, IconHistory, IconSettings, IconLogout, IconMenu2 } from '@tabler/icons-react'
+import { IconHome, IconServer, IconSitemap, IconChartBar, IconCube, IconSettings, IconLogout, IconMenu2 } from '@tabler/icons-react'
 import { IconPlus, IconLink, IconRefresh, IconPencil, IconPower, IconTrash, IconX, IconChevronLeft, IconChevronRight, IconSearch, IconGauge, IconFocus2, IconArrowUp, IconArrowDown, IconArrowsSort, IconSquareCheck, IconPlayerPlay, IconPlayerPause } from '@tabler/icons-react'
 import { NativeQualitySection } from './native-quality.jsx'
 import { NativeXkeenStatus, NativeXkeenSection } from './native-xkeen.jsx'
@@ -401,8 +401,6 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const systemPanelController = useSystemPanelController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'system' })
   const openComponents = useCallback(() => setSection('components'), [])
   const openRouting = useCallback(() => setSection('routing'), [])
-  const openDNS = useCallback(() => setSection('dns'), [])
-  const openBackup = useCallback(() => setSection('backup'), [])
   const lifecycleBlocked = isLifecycleBlocked(status.lifecycle)
   const manualLifecycleBlocked = lifecycleBlocked
   const manualRunning = performance?.manual?.state === 'running'
@@ -439,7 +437,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     ['system', 'System', IconSettings, () => setSection('system')],
   ]
   // Routing, DNS and all files are one editor; Backup lives in System.
-  const navigationKey = { routing: 'configuration', dns: 'configuration', configs: 'configuration', backup: 'system' }[section] || section
+  const navigationKey = { routing: 'configuration', dns: 'configuration', configs: 'configuration' }[section] || section
   const pageTitle = sections.find(([key]) => key === navigationKey)?.[1]
   return <Shell>
     <a className="sr-only focus:not-sr-only focus:p-4" href="#workspace">Skip to workspace</a>
@@ -456,7 +454,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     {section === 'components' && <NativeXkeenSection facts={status.native} onRefresh={onRefresh} onOpenSystem={() => setSection('system')} csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} jobNotification={nativeConfigJob?.csrfToken === session.csrfToken ? nativeConfigJob.job : null} />}
     {section === 'dns' && <SplitDNSSection csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} readbackKey={configReadback} />}
     {(['components', 'routing', 'dns', 'configs'].includes(section) || configVisited) && <div hidden={!['routing', 'dns', 'configs'].includes(section)}><NativeConfigSection csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} onWorkingChange={setConfigWorking} readbackKey={configReadback} scopeFile={section === 'dns' ? '02_dns.json' : section === 'routing' ? '05_routing.json' : ''} focusFile={section === 'dns' ? '02_dns.json' : section === 'routing' ? '05_routing.json' : ''} onOpenConsole={openComponents} onNativeJob={receiveNativeJob} /></div>}
-    {navigationKey === 'system' && <SystemPanelSection controller={systemPanelController} status={status} initialPage={section === 'backup' ? 'backup' : undefined} backup={<NativeTransferSection csrfToken={session.csrfToken} api={api} download={download} onRefresh={onRefresh} onUnauthorized={onUnauthorized} onStaged={() => setConfigReadback((key) => key + 1)} onInspectConfigs={openRouting} />} />}
+    {navigationKey === 'system' && <SystemPanelSection controller={systemPanelController} status={status} backup={<NativeTransferSection csrfToken={session.csrfToken} api={api} download={download} onRefresh={onRefresh} onUnauthorized={onUnauthorized} onStaged={() => setConfigReadback((key) => key + 1)} onInspectConfigs={openRouting} />} />}
     </div></div></div>
   </Shell>
 }
@@ -795,7 +793,7 @@ function NodeWorkspace({ measurements, nodes, subscriptions, performance, manual
       <CSPProvider disableStyleElements><DropdownMenu><DropdownMenuTrigger render={<Button variant="outline" />} >Columns</DropdownMenuTrigger><DropdownMenuContent>{Object.entries({ address: 'Address', health: 'Health', latency: 'Latency', rank: 'Quality rank', download: 'Download', upload: 'Upload', role: 'Role', source: 'Source', subscription: 'Subscription' }).map(([key,label]) => <DropdownMenuCheckboxItem key={key} checked={showColumn(key)} onCheckedChange={(checked) => toggleColumn(key, checked)}>{label}</DropdownMenuCheckboxItem>)}</DropdownMenuContent></DropdownMenu></CSPProvider>
       <div className="flex items-center gap-1"><NodeActionButton icon="select" label={`Select all ${filtered.length} filtered`} onClick={toggleAllFiltered} disabled={busy || lifecycleBlocked || !filtered.length || allFilteredSelected} /><NodeActionButton icon="close" label="Clear selection" onClick={clearSelection} disabled={busy || lifecycleBlocked || !selectedIDs.size} /></div>
       <Separator orientation="vertical" className="h-6" /><div className="flex flex-wrap items-center gap-1">
-        <NodeActionButton icon="target" text={selectedManual ? 'Unpin' : 'Pin'} description={!selectedNode ? 'Select one enabled node first. A manual pin bypasses automatic failover until cleared or Xray restarts.' : 'Native Xray pin. Clear it to resume automatic selection and failover.'} label={selectedManual ? 'Clear manual override' : 'Set manual override'} active={Boolean(selectedManual)} onClick={() => setManualOverride(selectedManual ? '' : (selectedNode.outboundTag || selectedNode.tag))} disabled={busy || lifecycleBlocked || !selectionAvailable || !selectedNode || (!selectedManual && !selectedNode.enabled)} />
+        <NodeActionButton icon="target" text="Manual override" description={!selectedNode ? 'Select one enabled node first. A manual pin bypasses automatic failover until cleared or Xray restarts.' : 'Native Xray pin. Clear it to resume automatic selection and failover.'} label={selectedManual ? 'Clear manual override' : 'Set manual override'} active={Boolean(selectedManual)} onClick={() => setManualOverride(selectedManual ? '' : (selectedNode.outboundTag || selectedNode.tag))} disabled={busy || lifecycleBlocked || !selectionAvailable || !selectedNode || (!selectedManual && !selectedNode.enabled)} />
         <NodeActionButton icon="gauge" text="Speed test" label={manualRequestBusy ? 'Starting speed test…' : 'Full speed test'} onClick={runManualNode} disabled={busy || manualRequestBusy || manualLifecycleBlocked || manualRunning || adaptiveRunning || selectedNodes.length !== 1 || !selectedNode?.enabled} />
         <NodeActionButton icon="edit" text="Edit" label="Edit / replace profile" onClick={() => openEditor()} disabled={busy || lifecycleBlocked || selectedNodes.length !== 1} />
         <NodeActionButton icon="enable" text="Enable" label="Enable" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: true })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => node.enabled)} />
