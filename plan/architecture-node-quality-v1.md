@@ -66,23 +66,23 @@ flowchart LR
   This replaces the separate contracts of #194 and #198.
 - **REQ-004**: Enabled nodes outside the pool remain loaded in Xray and are
   reached by sequential, targeted, low-payload RTT probes through the existing
-  shared `ProbeRouter` owner (10 seconds / 1 KiB each). There is no standalone
+  shared `ProbeRouter` owner (one zero-byte HTTPS request, at most 10 seconds each). There is no standalone
   inventory pass, discovery store or discovery cursor. Probes run only (a) as
   the pre-phase of a review, for exactly the frozen candidates of REQ-007, and
   (b) during REQ-009 recovery. Their results live in that review's or
   recovery's evidence and are never presented as Observatory data or
   throughput. If fewer than six candidates qualify, report coverage and the
   partial pool honestly. Probe rules are Xray in-memory state that match only
-  the loopback `probe` inbound, so no durable fence is needed. Reconcile every
-  managed probe tag at panel start and before each probe run. An uncertain
-  install/cleanup skips that probe and marks the review incomplete.
-  Today the only startup reconcile is in `c1.Supervisor.Start`, which never
-  runs (`Coordinator.Start` is never called), so the live startup path must
-  add it.
+  the loopback `probe` inbound, so no durable probe-rule fence is needed. The
+  new probe tag joins `managedProbeRuleTags()`. Every managed probe tag is
+  reconciled at panel start (done in #204, after update readiness), and a
+  closed probe gate gets one bounded retry before any probe is admitted. An
+  uncertain install or cleanup stops the probe run and marks the review
+  incomplete.
 - **REQ-005**: Refresh subscriptions sequentially on the common existing
   schedule: a jittered first start, then six hours after each completed
   attempt. A failed fetch retains the previous known registry/outbounds.
-  Neither an automatic nor a manual no-op refresh launches discovery or speed
+  Neither an automatic nor a manual no-op refresh launches targeted probes or speed
   comparison. Every settled effective enabled membership/credential change,
   including manual add, enable, disable and delete, emits one change-aware
   signal after commit; metadata-only edits do not. Coalesce signals into one
@@ -92,19 +92,27 @@ flowchart LR
   sustained pool degradation or a daily due review. A trigger that arrives
   inside the window waits for the next allowed slot and never exceeds the limit;
   outage handling is REQ-009, not a speed review. A manual speed test and an
-  automatic review keep at least six hours between their starts. Do not launch a new speed test merely because the panel
-  restarted. Persist the last-start/quota/fence state across panel restarts.
-  Targeted RTT probes and Observatory do not consume speed-test quota.
-- **REQ-007**: A regular review freezes one candidate set: current healthy
-  incumbents (including unhealthy or orphaned ones, so they can be replaced)
-  and a rotating share of the remaining enabled nodes, using the existing fair
-  cursor. Missing evidence is never inferred as healthy: a candidate that
-  fails its pre-phase probe is dropped from this review. Before comparing scores, obtain a fresh RTT for
+  automatic review keep at least six hours between their starts. Do not
+  launch a new speed test merely because the panel restarted. The last-start,
+  quota and inspection state (the quota receipt) survives panel restarts. It
+  lives in tmpfs, so a router reboot clears it; a reboot also restarts Xray
+  from the configuration on disk. This "inspection" state is the review/Apply
+  outcome fence of REQ-010, not a probe-rule fence. Targeted RTT probes and
+  Observatory do not consume speed-test quota.
+- **REQ-007**: A regular review freezes one candidate set: every current
+  incumbent, healthy or not (an orphaned member has no outbound to probe and
+  counts as unhealthy), and a rotating share of the remaining enabled nodes,
+  using the existing fair cursor. Missing evidence is never inferred as
+  healthy: a candidate that fails its pre-phase probe is unhealthy for this
+  review and does not take part in the speed phase. Before comparing scores, obtain a fresh RTT for
   **every** frozen candidate through the same fixed targeted endpoint and
   timeout; do not compare native Observatory RTT with a different outsider
-  probe as though they were the same measurement. Attempt every selected
-  candidate's bounded speed transfer; require at least 80% fresh valid results
-  and six valid results before replacing a full healthy pool. Preserve a
+  probe as though they were the same measurement. Attempt the bounded speed
+  transfer of every candidate that passed the RTT pre-phase. Coverage is
+  counted over those candidates only: require valid speed results for at
+  least 80% of them, and at least six valid results, before replacing a full
+  healthy pool. Candidates dropped by the RTT pre-phase are evidence of
+  unhealth, not missing coverage. Preserve a
   healthy incumbent with invalid speed data. Rank all valid results and form
   the top-six candidate pool. Apply it only when its aggregate comparable score
   is at least 15% better than the incumbent pool's, or when it replaces an
@@ -115,21 +123,27 @@ flowchart LR
   existing per-candidate ladder and are not chosen independently.
   Measurement is sequential (one `ProbeRouter` lease, ≤30 s per node), so
   `bytes ≥ candidates × ladder worst case` and `wall ≥ candidates × 30 s +
-  pauses` must hold. A fast link otherwise exhausts the budget before 80%
+  pauses` must hold. The wall ceiling covers the speed phase only; the RTT
+  pre-phase is bounded separately by candidates × 10 s (≤ 2 minutes). A fast link otherwise exhausts the budget before 80%
   coverage, and the reviews most worth applying would fail. Initial
   **proposed ceilings**, subject to hardware acceptance:
-  ARM64 12 × 24 MiB (down 1/3/4/8, up 1/3/4) = 288 MiB and 8 minutes;
+  ARM64 12 × 24 MiB (down 1/3/4/8, up 1/3/4) = 288 MiB and 8 minutes, in
+  sequential batches of six with no pause;
   MIPS 12 × 6 MiB (down 1/3, up 0.5/1.5) = 72 MiB and 12 minutes, in
   sequential batches of three with a one-minute pause. ARM64 with ≤256 MiB
   RAM uses the MIPS limits and the same automatic policy, not a manual-only
   third profile. Failed and partial transfers count. Both profiles use the same admission,
   pressure cancellation, freshness, coverage, score, quota and Apply rules.
-  Initially require at least 64 MiB available memory on either router; refuse
+  Keep the existing available-memory floors (64 MiB standard, 32 MiB
+  constrained, from `resourcepolicy`); refuse
   when two consecutive CPU samples are each at least 85% busy or swap-out
   exceeds 1 MiB/s, and cancel after three consecutive pressured samples.
   These ceilings are maxima, not promised traffic use or proven optimums.
 - **REQ-009**: If no selected member is freshly healthy, run bounded targeted
-  discovery immediately, without waiting for the next speed review. A
+  RTT probes immediately, without waiting for the next speed review: at most
+  12 candidates per attempt from the same fair rotation, at most one attempt
+  every 10 minutes, under the same lifecycle token, so a manual test or Apply
+  is never blocked for longer than one attempt (≤ 2 minutes). A
   candidate verified by actual outbound routing may form a labelled
   **provisional** pool of one to six members after full configuration and native
   runtime validation; this is availability recovery, not a speed ranking.
@@ -145,12 +159,13 @@ flowchart LR
   fixed-editor candidate, run full Xray validation and one native Apply; prove
   its terminal receipt, process, runtime selector and observed set. This also
   applies to a provisional recovery pool.
-  An unknown result fences later automatic work for inspection. A no-change
+  An unknown result sets the quota receipt's inspection flag, which holds
+  later automatic work until inspection. A no-change
   recommendation does not restart Xray only when both effective 05 and 07
   already resolve to that pool; matching 05 membership with stale 07 requires
   the same validated joint repair. Subscription churn and imported legacy
   pools follow REQ-003; they have no separate contract.
-- **REQ-011**: UI distinguishes total/enabled/discovered/tested nodes,
+- **REQ-011**: UI distinguishes total/enabled/probed/tested nodes,
   configured pool, measured recommendation, verified applied pool and current
   native-selected member. Show the review trigger, coverage, consumed budget,
   next due time, last Apply proof and why work was deferred. An out-of-pool
@@ -188,7 +203,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | TASK-001 | Refactor `internal/nativequality/schedule.go` so both profiles use one due-time and review/auto-Apply path. Make the post-commit node owner signal only changes to effective enabled membership/credentials, covering automatic `internal/nodes/refresher.go` and manual `internal/nodes/operations.go` refresh plus add/enable/disable/delete; suppress manual and automatic no-ops. Reuse one durable last-start/quota/inspection owner for both profiles. | | |
 | TASK-002 | Stage `05_routing.json` and `07_observatory.json` together through fixed native config editing; validate exact prefix resolution against `04_outbounds.json` before and after one Apply. Update `internal/nativequality/criteria.go` to calculate freshness for the actual six-or-fewer targets. Update fresh setup's broad defaults in `internal/xkeen/attachment.go` and define one typed broad-to-bounded adoption for existing installations, preserving the inspected previous config. | | |
-| TASK-003 | Add a targeted RTT probe (fixed 1 KiB/10-second request) to the existing `internal/c1/probe.go` owner, using one managed probe-rule tag. `internal/nativequality/service.go` calls it as the review pre-phase for all frozen candidates and from REQ-009 recovery. Add the static `probe-route-shadowed` admission check (SEC-001). Do not add a discovery store, a cursor or a durable fence. | | |
+| TASK-003 | Add a targeted RTT probe (fixed zero-byte HTTPS request, 10-second bound) to the existing `internal/c1/probe.go` owner, using one managed probe-rule tag. `internal/nativequality/service.go` calls it as the review pre-phase for all frozen candidates and from REQ-009 recovery. Add the static `probe-route-shadowed` admission check (SEC-001). Do not add a discovery store, a cursor or a durable fence. | | |
 
 ### Implementation Phase 2
 

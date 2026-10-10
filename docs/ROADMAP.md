@@ -5,7 +5,7 @@ This is the current sequencing/status authority. Issues contain detailed task co
 ## Planned node-selection architecture
 
 [#199](https://github.com/popiposter/xkeen-control/issues/199) defines one
-subscription, discovery, speed-review, pool-Apply and Xray failover algorithm
+subscription, targeted-probe, speed-review, pool-Apply and Xray failover algorithm
 for ARM64 and MIPS. Only active-pool Observatory concurrency and bounded speed
 test breadth vary with hardware. The [target plan](../plan/architecture-node-quality-v1.md)
 is a proposal, not delivered behavior or router acceptance. The installed

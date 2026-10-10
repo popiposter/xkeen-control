@@ -19,7 +19,7 @@ Current sequencing is [ROADMAP](../docs/ROADMAP.md), not the latest paragraph of
 | Document | Status |
 | --- | --- |
 | [Node quality target](architecture-node-quality-v1.md) | Planned shared ARM64/MIPS lifecycle, #199; folds in #194/#198 |
-| [Simplification audit 2026-10-10](audit-project-2026-10-10.md) | Proposed removal of dead code, plus process, test and release simplifications |
+| [Simplification audit 2026-10-10](audit-project-2026-10-10.md) | Dead code removed (#202, #204) and FULL shortened (#203); process, docs and splitdns items open |
 
 ## Historical / superseded
 
