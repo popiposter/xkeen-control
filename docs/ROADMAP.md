@@ -50,8 +50,9 @@ after subscription refresh. Signed0.4.10 contains sequential bounded batches,
 complete fresh eligible-node coverage, a rolling traffic quota and at most one
 verified native Apply per complete review. Independent review, exact-HEAD FULL,
 MIPS synthetic hardware execution, public signature verification and signed
-KN1810 installation passed. The synthetic test did not access live nodes; live
-automatic sweep/Apply and resource acceptance still require separate readback.
+KN1810 installation passed. The synthetic test did not access live nodes. At
+0.4.10 publication, a live sweep had not completed; the later 0.4.11 review is
+recorded below. Automatic Apply and controlled resource acceptance remain unproven.
 
 The first signed0.4.10 scheduled attempt on KN1810 at 02:24 MSK on
 2026-10-10 refused before transfer or Apply because 46 fresh eligible nodes
