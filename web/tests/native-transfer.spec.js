@@ -18,7 +18,6 @@ async function prepare(page, { mapping = false, stageStatus = 200, delay = null,
       case '/api/v1/status': return json(route, status)
       case '/api/v1/nodes': return json(route, { total: 0, nodes: [], subscriptions: [] })
       case '/api/v1/performance': return json(route, { nodes: [] })
-      case '/api/v1/config-summary': return json(route, { routing: {}, dns: {}, observatory: {} })
       case '/api/v1/xkeen/transfer/preview':
         state.previews++
         if (delay) await delay()

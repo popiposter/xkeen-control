@@ -83,9 +83,8 @@ Full mode must run from the normal branch checkout. It fails before Docker work 
 Full mode covers each qualification class once:
 
 ```text
-uncached Go tests where configured
+go test -race -count=1 ./...   (the one uncached Go pass; also runs every test)
 go vet ./...
-go test -race ./...
 unique shell/runtime fixtures without repeating package tests
 npm ci
 one frontend production build + Node unit tests + complete Playwright suite
@@ -220,87 +219,13 @@ The release fixture also runs `TestReleaseBrowserBuildBoundary`: a narrow workfl
 
 These fixtures remain regression coverage after #2 completion; later slices must not weaken them.
 
-## Issue #4 component lifecycle focused fixture
-
-The component inventory, trusted metadata-check and internal transactional
-component lifecycle qualification fixture is:
-
-```sh
-bash scripts/test-components.sh
-```
-
-It uses temporary synthetic component paths and covers the fixed panel, XKeen,
-Xray, geodata, KeeneticOS and Entware projection, bounded version probing,
-strict parsing, unknown/manual geodata expressions, filesystem safety, no
-script/opkg execution, no writes, the authenticated read-only HTTP route and
-the Phase B trusted metadata-check contract. Phase B fixtures use offline
-synthetic upstream responses, verify fixed sources/digests/cache/security
-bounds, and never download artifact bodies or read/mutate a production
-Keenetic. Phase E0 fixtures additionally verify the component-specific
-`dev`/`stable` channel matrix, the fixed `jameszeroX/XKeen` source, signed
-automated build-commit plus exact tree/blob identity projection, rejection of
-the legacy `Skrill0/XKeen` release path, and `S05xkeen` versus explicit legacy
-`S24xray` inventory behavior. E0 remains metadata-only: it does not download
-the dev archive or add component mutation. Phase C fixtures additionally cover
-fresh exact-identity re-resolution, fixed HTTPS artifact transport, ZIP
-traversal/duplicate/non-regular rejection, complete candidate rendering and
-validation, shared Coordinator-to-authority lock order, stale authority
-rejection, one previous generation, journal fault injection, verified rollback,
-local-only startup recovery and restore-journal conflict. The Phase C primitive
-has no HTTP/UI mutation route and all source qualification remains
-offline/synthetic. Phase D fixtures additionally cover the complete six-file
-geodata transaction, fresh exact-set resolution, fixed-host artifact transport,
-staged Xray config validation, shared Xray/geodata recovery arbitration,
-whole-set rollback, unrelated-file preservation and fail-closed
-journal/maintenance behavior.
-
-Phase E1 fixtures additionally cover the internal transactional jameszeroX dev
-XKeen primitive: fixed exact build/tree/blob identity, bounded Git-blob
-downloader semantics, strict GNU-tar file-only/path/type/mode/trailing-data
-qualification, canonical `xkeen + .xkeen` generation hashing and marker
-coherence, purpose-specific `S05xkeen` runtime convergence without executing the
-candidate `xkeen`, preserved Xray/geodata/config/opkg/cron/Entware state,
-purpose-specific preserved-state bounds, uncompressed-generation free-space
-admission, shared `xray|geodata|xkeen` journal/recovery arbitration, one previous
-generation, activation-parent preservation, ordinary rollback and local-only
-startup recovery. Phase E2 independently pins the real `2.0.1/Beta` catalog
-entry's exact archive SHA-256, GNU-tar member manifest and canonical generation
-digest for the installable fixed identity.
-
-Phase E2 qualification keeps local and release qualification deterministic/offline. The reviewed
-`2.0.1/Beta` catalog entry pins the exact archive SHA-256, GNU-tar member
-manifest and canonical generation digest; any one-time immutable upstream
-retrieval/content-equivalence check remains separate review evidence and must
-not turn `test-components.sh` or normal qualification into a moving-network test. No
-Phase E2 production mutation or temporary operator mutation surface is
-authorized.
-
-Phase F1 fixtures cover the four authenticated backend routes, strict closed
-request/token bodies, exact `application/json` media type, trailing-data and
-unknown-field rejection, CSRF/origin enforcement, session/password preview
-invalidation, one-shot/TTL/bounded token retention and one in-flight preview.
-They prove fresh uncached preview resolution without artifact bodies, exact
-six-item geodata candidates, moving `jameszeroX/XKeen` `main` provenance mapped
-only to the reviewed installable catalog entry, typed Apply/Rollback dispatch,
-rollback target rotation/stale rejection and sanitized transaction errors. F1
-has no UI, persisted policy, scheduler, automatic update or production
-qualification; all fixtures remain offline/synthetic.
-
-Historical Phase F2's panel-owned component updater and Setup browser UI were
-removed under Issue121 together with their browser suites and standalone session
-fixture. Current native installation/status and component ownership coverage is
-`web/tests/native-xkeen.spec.js`; cross-workspace lifecycle gating remains in
-`feature-complete.spec.js`. Server-side historical component fixtures remain until
-their callers are retired; do not infer removal of all old backend code.
-
-
 ## Qualification inventory
 
 Issue #99 A focused outbound notification qualification uses synthetic local
 authorities, injected transport/DNS fixtures and locally signed release metadata:
 
 ```sh
-go test -count=1 ./internal/notifications ./internal/components ./internal/update ./internal/httpapi ./cmd/xkeen-control
+go test -count=1 ./internal/notifications ./internal/update ./internal/httpapi ./cmd/xkeen-control
 npm --prefix web run test:system-panel-ui
 ```
 
@@ -327,13 +252,11 @@ does not scale a wall-clock deadline or change production limits.
 
 | Entry point | Unique purpose | Aggregate full behavior |
 | --- | --- | --- |
-| `go test -count=1 ./...` | Complete normal Go package suite | Once |
-| `go test -race ./...` | Cross-package race detection | Full only, once |
-| `test-c1.sh`, `test-backup.sh` | Convenient focused package subsets | Not repeated after the complete Go suite |
-| `test-components.sh` | Focused component packages/race plus prohibited-surface assertions | Aggregate uses `--fixtures-only` |
+| `go test -count=1 <selected>` | Changed packages and reverse dependencies | Fast mode only |
+| `go test -race -count=1 ./...` | Complete Go suite with race detection | Full only, once |
 | `test-release.sh` | Focused release packages plus bootstrap/updater/legacy integration | Aggregate uses `--fixtures-only` |
 | `test-keenetic-env.ps1`, `test-keenetic-env.sh` | Synthetic operator-local environment parser and secret-output boundaries | Helper lane runs both host and container fixtures |
-| `test-benchmark-policy.sh`, `test-xkeen-foreground.sh` | Legacy-writer retirement and foreground runtime shell contracts | Retained when helpers/build paths change |
+| `test-xkeen-foreground.sh` | Foreground runtime shell contract | Retained when helpers/build paths change |
 | Playwright per-area scripts | Focused behavioral UI iteration | `test:ui` once in full mode |
 | `npm-audit.sh` | Bounded high-severity dependency audit with transient endpoint retries | Full only |
 

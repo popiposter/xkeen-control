@@ -2,43 +2,15 @@ package backup
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"os"
-	"os/exec"
-	"reflect"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/popiposter/xkeen-control/internal/appliance"
-	"github.com/popiposter/xkeen-control/internal/buildinfo"
-	"github.com/popiposter/xkeen-control/internal/nodes"
 )
-
-type testApplianceSource struct {
-	value appliance.Appliance
-	err   error
-}
-
-func (s testApplianceSource) Snapshot() (appliance.Appliance, error) {
-	return s.value, s.err
-}
-
-type testRegistrySource struct {
-	value nodes.Registry
-	err   error
-}
-
-func (s testRegistrySource) Snapshot(context.Context) (nodes.Registry, error) {
-	return s.value, s.err
-}
 
 type incrementingReader struct{ next byte }
 
@@ -50,304 +22,62 @@ func (r *incrementingReader) Read(value []byte) (int, error) {
 	return len(value), nil
 }
 
-func testBuild() buildinfo.Info {
-	return buildinfo.Info{
-		Product: "xkeen-control", Version: "1.2.3",
-		SourceCommit: strings.Repeat("a", 40), Channel: "stable",
-	}
+func fastDeriver(password, salt []byte, _, _ uint32, _ uint8, keyBytes uint32) []byte {
+	digest := sha256.Sum256(append(append([]byte(nil), password...), salt...))
+	return append([]byte(nil), digest[:keyBytes]...)
 }
 
-func testAppliance(t *testing.T) appliance.Appliance {
+const syntheticPassphrase = "correct synthetic passphrase"
+
+func openWith(t *testing.T, contents []byte, passphrase string) ([]byte, error) {
 	t.Helper()
-	value := appliance.Appliance{
-		SchemaVersion: appliance.SchemaVersion,
-		DNS: appliance.DNSPolicy{
-			Servers:       []appliance.DNSServer{{Address: "localhost"}},
-			QueryStrategy: "UseIPv4", ServeStale: true, ServeExpiredTTL: 3600,
-			DisableFallbackIfMatch: true, EnableParallelQuery: true, UseSystemHosts: true,
-		},
-		Routing: appliance.RoutingPolicy{
-			DomainStrategy: "IPIfNonMatch", DomainMatcher: "hybrid",
-			Rules: []appliance.RoutingRule{
-				{Type: "field", InboundTag: []string{"api"}, Action: appliance.RuleAction{OutboundTag: "api"}},
-				{Type: "field", InboundTag: []string{"tproxy"}, Action: appliance.RuleAction{BalancerTag: "bal-proxy"}},
-			},
-			Balancers: []appliance.Balancer{{
-				Tag: "bal-proxy", Selector: []string{"proxy-node-11111111"},
-				FallbackTag: "block", Strategy: appliance.BalancerStrategy{Type: "leastPing"},
-			}},
-		},
-		Observatory: appliance.ObservatoryPolicy{
-			SubjectSelector: []string{"proxy-node-11111111"}, ProbeInterval: "5m",
-		},
-	}
-	if err := value.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	return value
-}
-
-func testRegistry(t *testing.T) nodes.Registry {
-	t.Helper()
-	profile := nodes.VLESS{
-		UUID: "11111111-1111-4111-8111-111111111111", Host: "node.example.com", Port: 443,
-		Encryption: "none", Security: "reality", ServerName: "node.example.com", Fingerprint: "chrome",
-		PublicKey: "AAAAAAAAAAAAAAAA", ShortID: "0123456789abcdef", Network: "tcp",
-	}
-	const subscriptionID = "sub-11111111"
-	node, err := nodes.NewNodeWithID(profile, "Synthetic node", nodes.Source{Type: "subscription", SubscriptionID: subscriptionID}, "node-11111111")
-	if err != nil {
-		t.Fatal(err)
-	}
-	registry := nodes.NewRegistry()
-	registry.Subscriptions = []nodes.Subscription{{
-		ID: subscriptionID, Name: "Synthetic provider", URL: "https://subscription.example/synthetic-token", Enabled: true,
-	}}
-	registry.Nodes = []nodes.Node{node}
-	if err := registry.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	return registry
-}
-
-func testService(t *testing.T, random *incrementingReader, derive KeyDeriver) *Service {
-	t.Helper()
-	config := Config{
-		Appliance: testApplianceSource{value: testAppliance(t)},
-		Nodes:     testRegistrySource{value: testRegistry(t)},
-		Build:     testBuild(), Now: func() time.Time { return time.Unix(1_750_000_000, 0).UTC() },
-		Random: random, DeriveKey: derive, GOOS: "linux", GOARCH: "arm64",
-	}
-	return NewService(config)
-}
-
-func TestSafeBundleIsDeterministicAndSecretless(t *testing.T) {
-	service := testService(t, &incrementingReader{}, nil)
-	first, err := service.Export(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := service.Export(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(first, second) {
-		t.Fatal("safe export changed for fixed state and clock")
-	}
-	bundle, err := ParseBundle(first)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bundle.Manifest.ContainsSecrets || bundle.Nodes != nil || len(bundle.Manifest.Sections) != 1 || bundle.Manifest.Sections[0].Name != "appliance" {
-		t.Fatalf("safe bundle shape = %+v", bundle.Manifest)
-	}
-	applianceBytes, err := appliance.MarshalCanonical(bundle.Appliance)
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(applianceBytes)
-	section := bundle.Manifest.Sections[0]
-	if section.Size != int64(len(applianceBytes)) || section.SHA256 != hex.EncodeToString(digest[:]) {
-		t.Fatalf("safe section metadata = %+v", section)
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(first, &fields); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := fields["nodes"]; ok {
-		t.Fatal("safe export contains a nodes section")
-	}
-	for _, marker := range []string{
-		"11111111-1111-4111-8111-111111111111", "AAAAAAAAAAAAAAAA", "0123456789abcdef",
-		"https://subscription.example/synthetic-token", "synthetic-auth-password", "synthetic-auth-hash", "127.0.0.1:8787",
-	} {
-		if bytes.Contains(first, []byte(marker)) {
-			t.Fatalf("safe export contains secret marker %q", marker)
-		}
-	}
-}
-
-func TestSafeExportRequiresStoredApplianceAuthority(t *testing.T) {
-	service := NewService(Config{
-		Appliance: testApplianceSource{err: errors.New("authority missing")},
-		Build:     testBuild(), Now: func() time.Time { return time.Unix(1_750_000_000, 0).UTC() },
+	var opened []byte
+	err := openAndUse(contents, passphrase, fastDeriver, func(plaintext []byte) error {
+		opened = append([]byte(nil), plaintext...)
+		return nil
 	})
-	if _, err := service.Export(context.Background()); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("missing authority error = %v", err)
-	}
+	return opened, err
 }
 
-func TestBundleValidatesBuildProvenanceAndExplicitDevelopmentIdentity(t *testing.T) {
-	service := testService(t, &incrementingReader{}, nil)
-	contents, err := service.Export(context.Background())
+func TestEnvelopeRoundTripUsesFixedParametersAndFreshRandomness(t *testing.T) {
+	random := &incrementingReader{}
+	plaintext := []byte(`{"synthetic":"private-marker-0123456789abcdef"}`)
+	first, err := sealPayload(plaintext, syntheticPassphrase, random, fastDeriver)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var bundle Bundle
-	if err := decodeStrict(contents, &bundle); err != nil {
-		t.Fatal(err)
-	}
-	for _, test := range []struct {
-		name  string
-		build buildinfo.Info
-	}{
-		{name: "invalid version", build: buildinfo.Info{Product: "xkeen-control", Version: "banana", SourceCommit: strings.Repeat("a", 40), Channel: "stable"}},
-		{name: "short source commit", build: buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: "x", Channel: "stable"}},
-		{name: "unsupported channel", build: buildinfo.Info{Product: "xkeen-control", Version: "1.2.3", SourceCommit: strings.Repeat("a", 40), Channel: "nightly"}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			mutated := bundle
-			mutated.Manifest.Build = test.build
-			encoded, err := json.Marshal(mutated)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := ParseBundle(append(encoded, '\n')); !errors.Is(err, ErrInvalidBundle) {
-				t.Fatalf("invalid build was accepted: %v", err)
-			}
-		})
-	}
-
-	development := NewService(Config{
-		Appliance: testApplianceSource{value: testAppliance(t)}, Build: buildinfo.Info{
-			Product: "xkeen-control", Version: "dev", SourceCommit: "dev", Channel: "development",
-		}, Now: func() time.Time { return time.Unix(1_750_000_000, 0).UTC() },
-	})
-	if _, err := development.Export(context.Background()); err != nil {
-		t.Fatalf("explicit development identity was rejected: %v", err)
-	}
-}
-
-func TestBackupExportDoesNotCreateFilesOrEchoSensitiveInputs(t *testing.T) {
-	const helperEnv = "XKEEN_BACKUP_FILESYSTEM_HELPER"
-	if os.Getenv(helperEnv) == "1" {
-		service := testService(t, &incrementingReader{}, nil)
-		if _, err := service.ExportSecret(context.Background(), "correct synthetic passphrase"); err != nil {
-			t.Fatal(err)
-		}
-		return
-	}
-
-	temporary := t.TempDir()
-	command := exec.Command(os.Args[0], "-test.run", "^TestBackupExportDoesNotCreateFilesOrEchoSensitiveInputs$")
-	command.Dir = temporary
-	command.Env = replaceTestEnv(os.Environ(), helperEnv, "1")
-	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
-		command.Env = replaceTestEnv(command.Env, key, temporary)
-	}
-	output, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("isolated backup export failed: %v\n%s", err, output)
-	}
-	entries, err := os.ReadDir(temporary)
+	second, err := sealPayload(plaintext, syntheticPassphrase, random, fastDeriver)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 0 {
-		t.Fatalf("isolated backup export created filesystem entries: %v", entries)
-	}
-	for _, marker := range []string{"synthetic-current-password", "correct synthetic passphrase", "https://subscription.example/synthetic-token"} {
-		if bytes.Contains(output, []byte(marker)) {
-			t.Fatalf("isolated backup export echoed sensitive marker %q", marker)
-		}
-	}
-
-	const passphrase = "correct synthetic passphrase"
-	currentPassword := "synthetic-current-password"
-	registryMarker := "https://subscription.example/synthetic-token"
-	failed := NewService(Config{
-		Appliance: testApplianceSource{err: errors.New(currentPassword + " " + passphrase + " " + registryMarker)},
-		Nodes:     testRegistrySource{err: errors.New(registryMarker)},
-		Build:     testBuild(), Now: func() time.Time { return time.Unix(1_750_000_000, 0).UTC() },
-	})
-	if _, err := failed.ExportSecret(context.Background(), passphrase); err == nil || strings.Contains(err.Error(), currentPassword) || strings.Contains(err.Error(), passphrase) || strings.Contains(err.Error(), registryMarker) {
-		t.Fatalf("sensitive export error = %v", err)
-	}
-}
-
-func replaceTestEnv(environment []string, key, value string) []string {
-	prefix := key + "="
-	result := make([]string, 0, len(environment)+1)
-	replaced := false
-	for _, entry := range environment {
-		if strings.HasPrefix(entry, prefix) {
-			if !replaced {
-				result = append(result, prefix+value)
-				replaced = true
-			}
-			continue
-		}
-		result = append(result, entry)
-	}
-	if !replaced {
-		result = append(result, prefix+value)
-	}
-	return result
-}
-
-func TestEncryptedRoundTripUsesBoundedEnvelopeAndFreshRandomness(t *testing.T) {
-	service := testService(t, &incrementingReader{}, nil)
-	const passphrase = "correct synthetic passphrase"
-	first, err := service.ExportSecret(context.Background(), passphrase)
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := service.ExportSecret(context.Background(), passphrase)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bytes.Equal(first, second) {
-		t.Fatal("secret exports did not change salt/nonce")
-	}
-	if len(first) > MaxEncryptedEnvelope {
-		t.Fatalf("encrypted envelope size = %d", len(first))
+	if bytes.Equal(first, second) || bytes.Contains(first, []byte("private-marker")) || len(first) > MaxEncryptedEnvelope {
+		t.Fatalf("envelope reused randomness, leaked plaintext or exceeded bound (%d bytes)", len(first))
 	}
 	var envelope encryptedEnvelope
 	if err := json.Unmarshal(first, &envelope); err != nil {
 		t.Fatal(err)
 	}
 	if envelope.Format != EncryptedFormat || envelope.EnvelopeVersion != EnvelopeVersion || envelope.KDF.Name != KDFName || envelope.KDF.Version != Argon2Version || envelope.KDF.MemoryKiB != Argon2MemoryKiB || envelope.KDF.Iterations != Argon2Iterations || envelope.KDF.Parallelism != Argon2Parallelism || envelope.KDF.KeyBytes != Argon2KeyBytes || envelope.Cipher.Name != "XChaCha20-Poly1305" {
-		t.Fatalf("encrypted envelope parameters = %+v", envelope)
+		t.Fatalf("envelope parameters = %+v", envelope)
 	}
 	if salt, ok := decodeRawURL(envelope.KDF.Salt, Argon2SaltBytes); !ok {
-		t.Fatal("encrypted envelope salt is not the fixed length")
+		t.Fatal("salt is not the fixed length")
 	} else {
 		clearBytes(salt)
 	}
 	if nonce, ok := decodeRawURL(envelope.Cipher.Nonce, XChaCha20NonceBytes); !ok {
-		t.Fatal("encrypted envelope nonce is not the fixed length")
+		t.Fatal("nonce is not the fixed length")
 	} else {
 		clearBytes(nonce)
 	}
-	for _, marker := range []string{
-		"11111111-1111-4111-8111-111111111111", "AAAAAAAAAAAAAAAA", "0123456789abcdef",
-		"https://subscription.example/synthetic-token", "synthetic-auth-password", "synthetic-auth-hash", "127.0.0.1:8787",
-	} {
-		if bytes.Contains(first, []byte(marker)) {
-			t.Fatalf("encrypted envelope contains plaintext marker %q", marker)
-		}
-	}
-	bundle, err := OpenEncrypted(first, passphrase)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bundle.Nodes == nil || !bundle.Manifest.ContainsSecrets || len(bundle.Manifest.Sections) != 2 || bundle.Manifest.Sections[1].Name != "nodes" {
-		t.Fatalf("secret bundle shape = %+v", bundle.Manifest)
-	}
-	if !reflect.DeepEqual(*bundle.Nodes, testRegistry(t)) {
-		t.Fatal("encrypted roundtrip changed the typed registry")
+	opened, err := openWith(t, first, syntheticPassphrase)
+	if err != nil || !bytes.Equal(opened, plaintext) {
+		t.Fatalf("roundtrip = %q, %v", opened, err)
 	}
 }
 
-func TestEncryptedOpenRejectsWrongPassphraseAndTamperingBeforeReturningPlaintext(t *testing.T) {
-	derive := func(password, salt []byte, _, _ uint32, _ uint8, keyBytes uint32) []byte {
-		input := append(append([]byte(nil), password...), salt...)
-		digest := sha256.Sum256(input)
-		return append([]byte(nil), digest[:keyBytes]...)
-	}
-	service := testService(t, &incrementingReader{}, derive)
-	const passphrase = "correct synthetic passphrase"
-	original, err := service.ExportSecret(context.Background(), passphrase)
+func TestEnvelopeRejectsWrongPassphraseAndTamperingBeforePlaintext(t *testing.T) {
+	original, err := sealPayload([]byte(`{"synthetic":true}`), syntheticPassphrase, &incrementingReader{}, fastDeriver)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,98 +85,96 @@ func TestEncryptedOpenRejectsWrongPassphraseAndTamperingBeforeReturningPlaintext
 	if err := json.Unmarshal(original, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	cases := []struct {
-		name string
+	tamper := func(mutate func(*encryptedEnvelope)) []byte {
+		mutated := envelope
+		mutate(&mutated)
+		contents, err := json.Marshal(mutated)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return contents
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(original, &fields); err != nil {
+		t.Fatal(err)
+	}
+	fields["unexpected"] = json.RawMessage(`true`)
+	unknownField, _ := json.Marshal(fields)
+	cases := map[string]struct {
 		data []byte
 		pass string
 	}{
-		{name: "wrong passphrase", data: original, pass: "wrong synthetic passphrase"},
-		{name: "ciphertext tamper", data: tamperEnvelope(t, envelope, func(value *encryptedEnvelope) {
-			ciphertext, ok := decodeRawURL(value.Ciphertext, 0)
-			if !ok {
-				t.Fatal("fixture ciphertext did not decode")
-			}
+		"wrong passphrase": {original, "wrong synthetic passphrase"},
+		"ciphertext tamper": {tamper(func(value *encryptedEnvelope) {
+			ciphertext, _ := decodeRawURL(value.Ciphertext, 0)
 			ciphertext[0] ^= 1
 			value.Ciphertext = base64.RawURLEncoding.EncodeToString(ciphertext)
-		}), pass: passphrase},
-		{name: "AAD nonce tamper", data: tamperEnvelope(t, envelope, func(value *encryptedEnvelope) {
+		}), syntheticPassphrase},
+		"AAD nonce tamper": {tamper(func(value *encryptedEnvelope) {
 			value.Cipher.Nonce = base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x7f}, XChaCha20NonceBytes))
-		}), pass: passphrase},
-		{name: "unknown outer field", data: addUnknownEnvelopeField(t, original), pass: passphrase},
-		{name: "malformed base64", data: tamperEnvelope(t, envelope, func(value *encryptedEnvelope) { value.KDF.Salt = "%%%" }), pass: passphrase},
-		{name: "alternate KDF parameter", data: tamperEnvelope(t, envelope, func(value *encryptedEnvelope) { value.KDF.MemoryKiB++ }), pass: passphrase},
-		{name: "alternate cipher", data: tamperEnvelope(t, envelope, func(value *encryptedEnvelope) { value.Cipher.Name = "AES-GCM" }), pass: passphrase},
+		}), syntheticPassphrase},
+		"unknown outer field":     {unknownField, syntheticPassphrase},
+		"malformed base64":        {tamper(func(value *encryptedEnvelope) { value.KDF.Salt = "%%%" }), syntheticPassphrase},
+		"alternate KDF parameter": {tamper(func(value *encryptedEnvelope) { value.KDF.MemoryKiB++ }), syntheticPassphrase},
+		"alternate cipher":        {tamper(func(value *encryptedEnvelope) { value.Cipher.Name = "AES-GCM" }), syntheticPassphrase},
 	}
-	for _, test := range cases {
-		t.Run(test.name, func(t *testing.T) {
-			opened, err := openEncrypted(test.data, test.pass, derive)
-			if err == nil || !reflect.DeepEqual(opened, Bundle{}) {
-				t.Fatalf("tampered open = %+v, %v", opened, err)
+	for name, test := range cases {
+		t.Run(name, func(t *testing.T) {
+			if opened, err := openWith(t, test.data, test.pass); err == nil || opened != nil {
+				t.Fatalf("tampered open = %q, %v", opened, err)
 			}
 		})
 	}
 }
 
-func TestSecretEncryptionIsSingleFlight(t *testing.T) {
+func TestSecretOperationIsSingleFlight(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
 	var calls atomic.Int32
-	derive := func(_ []byte, _ []byte, _, _ uint32, _ uint8, keyBytes uint32) []byte {
+	derive := func(password, salt []byte, memoryKiB, iterations uint32, parallelism uint8, keyBytes uint32) []byte {
 		calls.Add(1)
 		once.Do(func() { close(started) })
 		<-release
-		return bytes.Repeat([]byte{0x42}, int(keyBytes))
+		return fastDeriver(password, salt, memoryKiB, iterations, parallelism, keyBytes)
 	}
-	service := testService(t, &incrementingReader{}, derive)
-	firstResult := make(chan error, 1)
+	archive, err := sealPayload([]byte(`{}`), syntheticPassphrase, &incrementingReader{}, fastDeriver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := make(chan error, 1)
 	go func() {
-		_, err := service.ExportSecret(context.Background(), "correct synthetic passphrase")
-		firstResult <- err
+		first <- openAndUse(archive, syntheticPassphrase, derive, func([]byte) error { return nil })
 	}()
 	select {
 	case <-started:
 	case <-time.After(5 * time.Second):
 		t.Fatal("first KDF did not start")
 	}
-	if _, err := service.ExportSecret(context.Background(), "second synthetic passphrase"); !errors.Is(err, ErrBusy) {
-		t.Fatalf("second concurrent export = %v", err)
+	if _, err := SealPayload([]byte(`{}`), "second synthetic passphrase"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("concurrent seal = %v", err)
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("KDF calls = %d", calls.Load())
 	}
 	close(release)
 	select {
-	case err := <-firstResult:
+	case err := <-first:
 		if err != nil {
 			t.Fatal(err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("first export did not finish")
+		t.Fatal("first operation did not finish")
 	}
 }
 
-func tamperEnvelope(t *testing.T, source encryptedEnvelope, mutate func(*encryptedEnvelope)) []byte {
-	t.Helper()
-	mutated := source
-	mutate(&mutated)
-	contents, err := json.Marshal(mutated)
-	if err != nil {
+func TestPassphraseBoundsAreBytesWithoutNormalization(t *testing.T) {
+	for _, value := range []string{"short", string(bytes.Repeat([]byte("a"), MaxPassphraseBytes+1)), "invalid \xff utf8 value"} {
+		if !errors.Is(ValidatePassphrase(value), ErrInvalidPassphrase) {
+			t.Fatalf("passphrase %q accepted", value)
+		}
+	}
+	if err := ValidatePassphrase(" " + syntheticPassphrase + " "); err != nil {
 		t.Fatal(err)
 	}
-	return contents
-}
-
-func addUnknownEnvelopeField(t *testing.T, contents []byte) []byte {
-	t.Helper()
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(contents, &fields); err != nil {
-		t.Fatal(err)
-	}
-	fields["unexpected"] = json.RawMessage(`true`)
-	result, err := json.Marshal(fields)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return result
 }

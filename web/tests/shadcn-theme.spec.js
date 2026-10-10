@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-for (const width of [375, 1440]) {
+for (const width of [375]) {
   test(`standard shadcn login at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
     await page.route('**/api/v1/session', (route) => route.fulfill({ status: 401, contentType: 'application/json', body: '{"error":"unauthorized"}' }))

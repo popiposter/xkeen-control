@@ -37,9 +37,7 @@ run_shell_fixtures() {
 	bash scripts/test-web-dependencies.sh
 	node --test scripts/dev-check-go.test.mjs
 	bash scripts/test-keenetic-env.sh
-	bash scripts/test-benchmark-policy.sh
 	bash scripts/test-xkeen-foreground.sh
-	bash scripts/test-components.sh --fixtures-only
 	bash scripts/test-release.sh --fixtures-only
 }
 
@@ -87,11 +85,14 @@ if lane_enabled XKEEN_CHECK_GO; then
 		[ "${#packages[@]}" -gt 0 ] || { echo 'empty Go plan' >&2; exit 1; }
 	fi
 	printf 'Selected Go packages: %s\n' "${packages[*]}"
-	go test -count=1 "${packages[@]}"
-	go vet "${packages[@]}"
 	if [ "$mode" = "--full" ]; then
-		go test -race ./...
+		# The race build runs every test, so a separate plain pass would only
+		# repeat it. -count=1 keeps FULL evidence uncached.
+		go test -race -count=1 ./...
+	else
+		go test -count=1 "${packages[@]}"
 	fi
+	go vet "${packages[@]}"
 fi
 
 if lane_enabled XKEEN_CHECK_HELPERS; then

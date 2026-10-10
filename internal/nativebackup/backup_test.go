@@ -134,10 +134,6 @@ func TestNativeArchiveRoundtripPreservesBytesAndRejectsWrongPassword(t *testing.
 	if _, err := Open(archive, "different passphrase"); !errors.Is(err, backup.ErrDecryptionFailed) {
 		t.Fatal(err)
 	}
-	// The old appliance importer cannot interpret this native-data payload.
-	if _, err := backup.OpenEncrypted(archive, "synthetic passphrase"); !errors.Is(err, backup.ErrDecryptionFailed) {
-		t.Fatal(err)
-	}
 }
 
 func TestNativeArchiveRejectsExecutablePathsAndRegistryMismatch(t *testing.T) {

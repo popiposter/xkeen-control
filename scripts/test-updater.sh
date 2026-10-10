@@ -17,6 +17,11 @@ cleanup() {
 trap cleanup EXIT
 fakebin="$tmp/fakebin"
 mkdir -p "$fakebin"
+# Readiness polling and handoff grace use real one-second sleeps. Fixture
+# health answers come from FIXTURE_HEALTH_SEQUENCE, not wall time, so an
+# instant sleep keeps every assertion while removing ~35 s of idle waiting.
+printf '#!/bin/sh\nexit 0\n' > "$fakebin/sleep"
+chmod 755 "$fakebin/sleep"
 
 # Exercise the real checked commit function under conditional invocation, where
 # POSIX shells disable errexit. A stale predictable marker must not mask failure.

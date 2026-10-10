@@ -1,31 +1,22 @@
+// Package backup owns the fixed portable encryption envelope (Argon2id +
+// XChaCha20-Poly1305) and its single-flight secret-operation budget. Callers own
+// their payload format.
 package backup
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
-	"runtime"
-	"strings"
-	"time"
 	"unicode/utf8"
 
-	"github.com/popiposter/xkeen-control/internal/appliance"
-	"github.com/popiposter/xkeen-control/internal/authority"
-	"github.com/popiposter/xkeen-control/internal/buildinfo"
-	"github.com/popiposter/xkeen-control/internal/nodes"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
 const (
-	Format                   = "xkeen-control-backup"
-	FormatVersion            = 1
 	EncryptedFormat          = "xkeen-control-backup-encrypted"
 	EnvelopeVersion          = 1
 	KDFName                  = "Argon2id"
@@ -41,10 +32,7 @@ const (
 	MinPassphraseBytes       = 12
 	MaxPassphraseBytes       = 256
 	MaxSecretRequestBody     = 16 << 10
-	AuthoritySnapshotTimeout = 15 * time.Second
-	SafeFilename             = "xkeen-control-backup.json"
 	SecretFilename           = "xkeen-control-backup-encrypted.json"
-	BackupMediaType          = "application/vnd.xkeen-control.backup+json"
 	EncryptedBackupMediaType = "application/vnd.xkeen-control.backup-encrypted+json"
 )
 
@@ -60,132 +48,9 @@ var (
 	secretOperationGate  = make(chan struct{}, 1)
 )
 
-// ApplianceSource is the narrow typed read boundary used by backup export.
-// It must not fall back to repository policy or runtime files.
-type ApplianceSource interface {
-	Snapshot() (appliance.Appliance, error)
-}
-
-// RegistrySource is the narrow coherent node read boundary used by secret
-// export. The implementation serializes the snapshot with node Apply.
-type RegistrySource interface {
-	Snapshot(context.Context) (nodes.Registry, error)
-}
-
-// registryUnderLeaseSource is implemented by nodes.Manager. It lets a
-// secret export hold one shared authority lease across both the appliance and
-// registry reads rather than taking two adjacent, independently-raceable
-// snapshots.
-type registryUnderLeaseSource interface {
-	SnapshotUnderLease(context.Context) (nodes.Registry, error)
-}
-
-type applianceUnderLeaseSource interface {
-	SnapshotUnderLease() (appliance.Appliance, error)
-}
-
 // KeyDeriver is injectable for bounded tests. Production always uses the
 // fixed Argon2id tuple passed to the function.
 type KeyDeriver func(password, salt []byte, memoryKiB, iterations uint32, parallelism uint8, keyBytes uint32) []byte
-
-type Config struct {
-	Appliance ApplianceSource
-	Nodes     RegistrySource
-	// AuthorityLease is shared with node Apply, restore Preview and restore
-	// Apply. Authority is a readable compatibility alias for callers using the
-	// shorter name.
-	AuthorityLease *authority.Lease
-	Authority      *authority.Lease
-	Build          buildinfo.Info
-	Now            func() time.Time
-	Random         io.Reader
-	DeriveKey      KeyDeriver
-	GOOS           string
-	GOARCH         string
-}
-
-type Service struct {
-	appliance applianceSource
-	nodes     RegistrySource
-	build     buildinfo.Info
-	now       func() time.Time
-	random    io.Reader
-	deriveKey KeyDeriver
-	goos      string
-	goarch    string
-	authority *authority.Lease
-}
-
-// applianceSource is kept separate from the exported interface so a nil
-// source can be handled as a typed service-unavailable result.
-type applianceSource interface {
-	Snapshot() (appliance.Appliance, error)
-}
-
-func NewService(config Config) *Service {
-	if config.Build.Product == "" {
-		config.Build = buildinfo.Current()
-	}
-	if config.Now == nil {
-		config.Now = time.Now
-	}
-	if config.Random == nil {
-		config.Random = rand.Reader
-	}
-	if config.DeriveKey == nil {
-		config.DeriveKey = argon2.IDKey
-	}
-	if config.GOOS == "" {
-		config.GOOS = runtime.GOOS
-	}
-	if config.GOARCH == "" {
-		config.GOARCH = runtime.GOARCH
-	}
-	lease := config.AuthorityLease
-	if lease == nil {
-		lease = config.Authority
-	}
-	return &Service{
-		appliance: config.Appliance,
-		nodes:     config.Nodes,
-		build:     config.Build,
-		now:       config.Now,
-		random:    config.Random,
-		deriveKey: config.DeriveKey,
-		goos:      config.GOOS,
-		goarch:    config.GOARCH,
-		authority: lease,
-	}
-}
-
-// New is a short compatibility constructor for package-local callers.
-func New(config Config) *Service { return NewService(config) }
-
-// Bundle is the typed plaintext backup package. Nodes is nil for the safe
-// export and present for the encrypted secret export only.
-type Bundle struct {
-	Format        string              `json:"format"`
-	FormatVersion int                 `json:"formatVersion"`
-	Manifest      Manifest            `json:"manifest"`
-	Appliance     appliance.Appliance `json:"appliance"`
-	Nodes         *nodes.Registry     `json:"nodes,omitempty"`
-}
-
-type Manifest struct {
-	ApplianceSchemaVersion int            `json:"applianceSchemaVersion"`
-	Build                  buildinfo.Info `json:"build"`
-	ExportedAt             string         `json:"exportedAt"`
-	GOOS                   string         `json:"goos"`
-	GOARCH                 string         `json:"goarch"`
-	Sections               []Section      `json:"sections"`
-	ContainsSecrets        bool           `json:"containsSecrets"`
-}
-
-type Section struct {
-	Name   string `json:"name"`
-	Size   int64  `json:"size"`
-	SHA256 string `json:"sha256"`
-}
 
 type encryptedEnvelope struct {
 	Format          string           `json:"format"`
@@ -215,141 +80,6 @@ type aadHeader struct {
 	EnvelopeVersion int              `json:"envelopeVersion"`
 	KDF             kdfParameters    `json:"kdf"`
 	Cipher          cipherParameters `json:"cipher"`
-}
-
-// Export returns the structurally secretless appliance bundle. Its typed
-// authority read is serialized through the same short lease as restore and
-// node Apply; encoding happens only after the lease is released.
-func (s *Service) Export(ctx context.Context) ([]byte, error) {
-	if s == nil || s.appliance == nil {
-		return nil, ErrUnavailable
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	value, err := s.snapshotAppliance(ctx)
-	if err != nil {
-		return nil, ErrUnavailable
-	}
-	return s.encodeBundle(value, nil, false)
-}
-
-func (s *Service) snapshotAppliance(ctx context.Context) (appliance.Appliance, error) {
-	var release func()
-	if s.authority != nil {
-		var err error
-		release, err = s.authority.Acquire(ctx, AuthoritySnapshotTimeout)
-		if err != nil {
-			return appliance.Appliance{}, err
-		}
-	}
-	var value appliance.Appliance
-	var err error
-	if source, ok := s.appliance.(applianceUnderLeaseSource); ok && release != nil {
-		value, err = source.SnapshotUnderLease()
-	} else {
-		value, err = s.appliance.Snapshot()
-	}
-	if release != nil {
-		release()
-	}
-	return value, err
-}
-
-// ExportSecret returns a one-request re-authenticated encrypted backup. The
-// caller performs session, CSRF and current-password checks before invoking
-// this method; this service never receives or persists the current password.
-func (s *Service) ExportSecret(ctx context.Context, passphrase string) ([]byte, error) {
-	if s == nil || s.appliance == nil || s.nodes == nil {
-		return nil, ErrUnavailable
-	}
-	if err := validatePassphrase(passphrase); err != nil {
-		return nil, err
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	release, ok := trySecretOperation()
-	if !ok {
-		return nil, ErrBusy
-	}
-	defer release()
-
-	// Keep the cross-authority read short. The expensive KDF and envelope
-	// encoding happen after the lease is released, while restore Apply holds
-	// this same lease across its complete authority/runtime commit.
-	var releaseAuthority func()
-	if s.authority != nil {
-		var acquireErr error
-		releaseAuthority, acquireErr = s.authority.Acquire(ctx, AuthoritySnapshotTimeout)
-		if acquireErr != nil {
-			return nil, ErrUnavailable
-		}
-	}
-	if releaseAuthority != nil {
-		defer func() {
-			if releaseAuthority != nil {
-				releaseAuthority()
-			}
-		}()
-	}
-	var err error
-	var applianceValue appliance.Appliance
-	if source, ok := s.appliance.(applianceUnderLeaseSource); ok && releaseAuthority != nil {
-		applianceValue, err = source.SnapshotUnderLease()
-	} else if releaseAuthority != nil {
-		return nil, ErrUnavailable
-	} else {
-		applianceValue, err = s.appliance.Snapshot()
-	}
-	if err != nil {
-		return nil, ErrUnavailable
-	}
-	var registry nodes.Registry
-	if source, ok := s.nodes.(registryUnderLeaseSource); ok && releaseAuthority != nil {
-		registry, err = source.SnapshotUnderLease(ctx)
-	} else if releaseAuthority != nil {
-		return nil, ErrUnavailable
-	} else {
-		registry, err = s.nodes.Snapshot(ctx)
-	}
-	if err != nil {
-		return nil, ErrUnavailable
-	}
-	if releaseAuthority != nil {
-		releaseAuthority()
-		releaseAuthority = nil
-	}
-	plaintext, err := s.encodeBundle(applianceValue, &registry, true)
-	if err != nil {
-		return nil, err
-	}
-	defer clearBytes(plaintext)
-
-	return s.sealPayload(plaintext, passphrase)
-}
-
-// OpenEncrypted is an internal strict decrypt/open path for Phase B tests and
-// later bounded import. It never returns plaintext when envelope validation or
-// AEAD authentication fails.
-func OpenEncrypted(contents []byte, passphrase string) (Bundle, error) {
-	return openEncrypted(contents, passphrase, argon2.IDKey)
-}
-
-func openEncrypted(contents []byte, passphrase string, deriveKey KeyDeriver) (Bundle, error) {
-	var bundle Bundle
-	err := openAndUse(contents, passphrase, deriveKey, func(plaintext []byte) error {
-		var err error
-		bundle, err = ParseBundle(plaintext)
-		if err != nil || !bundle.Manifest.ContainsSecrets || bundle.Nodes == nil {
-			return ErrDecryptionFailed
-		}
-		return nil
-	})
-	if err != nil {
-		return Bundle{}, err
-	}
-	return bundle, nil
 }
 
 // OpenProduced holds the same private-memory/KDF budget through authenticated
@@ -393,7 +123,7 @@ func SealPayload(plaintext []byte, passphrase string) ([]byte, error) {
 		return nil, ErrBusy
 	}
 	defer release()
-	return NewService(Config{}).sealPayload(plaintext, passphrase)
+	return sealPayload(plaintext, passphrase, rand.Reader, argon2.IDKey)
 }
 
 // SealProduced reserves the shared secret-operation budget before collecting
@@ -419,21 +149,15 @@ func SealProduced(passphrase string, produce func() ([]byte, error)) ([]byte, er
 	if len(plaintext) == 0 || len(plaintext) > MaxSecretPlaintext {
 		return nil, ErrInvalidBundle
 	}
-	return NewService(Config{}).sealPayload(plaintext, passphrase)
+	return sealPayload(plaintext, passphrase, rand.Reader, argon2.IDKey)
 }
 
-// OpenPayload authenticates a bounded envelope. Caller owns clearing returned
-// plaintext and strict validation of the expected application payload.
-func OpenPayload(contents []byte, passphrase string) ([]byte, error) {
-	return openPayload(contents, passphrase, argon2.IDKey)
-}
-
-func (s *Service) sealPayload(plaintext []byte, passphrase string) ([]byte, error) {
-	salt, err := s.randomBytes(Argon2SaltBytes)
+func sealPayload(plaintext []byte, passphrase string, random io.Reader, deriveKey KeyDeriver) ([]byte, error) {
+	salt, err := randomBytes(random, Argon2SaltBytes)
 	if err != nil {
 		return nil, ErrRandomUnavailable
 	}
-	nonce, err := s.randomBytes(XChaCha20NonceBytes)
+	nonce, err := randomBytes(random, XChaCha20NonceBytes)
 	if err != nil {
 		clearBytes(salt)
 		return nil, ErrRandomUnavailable
@@ -442,7 +166,7 @@ func (s *Service) sealPayload(plaintext []byte, passphrase string) ([]byte, erro
 	defer clearBytes(nonce)
 
 	password := []byte(passphrase)
-	key := s.deriveKey(password, salt, Argon2MemoryKiB, Argon2Iterations, Argon2Parallelism, Argon2KeyBytes)
+	key := deriveKey(password, salt, Argon2MemoryKiB, Argon2Iterations, Argon2Parallelism, Argon2KeyBytes)
 	clearBytes(password)
 	if len(key) != Argon2KeyBytes {
 		return nil, ErrEncryptionFailed
@@ -469,18 +193,6 @@ func (s *Service) sealPayload(plaintext []byte, passphrase string) ([]byte, erro
 		Ciphertext: base64.RawURLEncoding.EncodeToString(ciphertext),
 	}
 	return marshalEnvelope(envelope)
-}
-
-func openPayload(contents []byte, passphrase string, deriveKey KeyDeriver) ([]byte, error) {
-	if err := validatePassphrase(passphrase); err != nil {
-		return nil, err
-	}
-	release, ok := trySecretOperation()
-	if !ok {
-		return nil, ErrBusy
-	}
-	defer release()
-	return openPayloadReserved(contents, passphrase, deriveKey)
 }
 
 func openPayloadReserved(contents []byte, passphrase string, deriveKey KeyDeriver) ([]byte, error) {
@@ -512,152 +224,6 @@ func openPayloadReserved(contents []byte, passphrase string, deriveKey KeyDerive
 	return plaintext, nil
 }
 
-// ParseBundle strictly opens already-decoded typed bundle bytes. It is kept
-// separate from HTTP and is intentionally not an import capability.
-func ParseBundle(contents []byte) (Bundle, error) {
-	if len(contents) == 0 || len(contents) > MaxSecretPlaintext {
-		return Bundle{}, ErrInvalidBundle
-	}
-	var bundle Bundle
-	if err := decodeStrict(contents, &bundle); err != nil {
-		return Bundle{}, ErrInvalidBundle
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(contents, &fields); err != nil {
-		return Bundle{}, ErrInvalidBundle
-	}
-	_, hasNodes := fields["nodes"]
-	if !hasNodes && bundle.Manifest.ContainsSecrets {
-		return Bundle{}, ErrInvalidBundle
-	}
-	if hasNodes && bundle.Nodes == nil {
-		return Bundle{}, ErrInvalidBundle
-	}
-	if !bundle.Manifest.ContainsSecrets && hasNodes {
-		return Bundle{}, ErrInvalidBundle
-	}
-	if err := bundle.validate(); err != nil {
-		return Bundle{}, ErrInvalidBundle
-	}
-	return bundle, nil
-}
-
-func (s *Service) encodeBundle(value appliance.Appliance, registry *nodes.Registry, containsSecrets bool) ([]byte, error) {
-	applianceBytes, err := appliance.MarshalCanonical(value)
-	if err != nil {
-		return nil, ErrUnavailable
-	}
-	sections := []Section{sectionFor("appliance", applianceBytes)}
-	if containsSecrets {
-		if registry == nil {
-			return nil, ErrInvalidBundle
-		}
-		nodeBytes, err := nodes.MarshalCanonical(*registry)
-		if err != nil {
-			return nil, ErrUnavailable
-		}
-		sections = append(sections, sectionFor("nodes", nodeBytes))
-	}
-	now := time.Now()
-	if s.now != nil {
-		now = s.now()
-	}
-	exportedAt := now.UTC().Format(time.RFC3339Nano)
-	bundle := Bundle{
-		Format: Format, FormatVersion: FormatVersion,
-		Manifest: Manifest{
-			ApplianceSchemaVersion: value.SchemaVersion,
-			Build:                  s.build, ExportedAt: exportedAt, GOOS: s.goos, GOARCH: s.goarch,
-			Sections: sections, ContainsSecrets: containsSecrets,
-		},
-		Appliance: value, Nodes: registry,
-	}
-	return encodeBundle(bundle)
-}
-
-func encodeBundle(bundle Bundle) ([]byte, error) {
-	if err := bundle.validate(); err != nil {
-		return nil, err
-	}
-	contents, err := json.Marshal(bundle)
-	if err != nil || len(contents)+1 > MaxSecretPlaintext {
-		return nil, ErrInvalidBundle
-	}
-	return append(contents, '\n'), nil
-}
-
-func (b Bundle) validate() error {
-	if b.Format != Format || b.FormatVersion != FormatVersion || b.Manifest.ContainsSecrets != (b.Nodes != nil) {
-		return ErrInvalidBundle
-	}
-	if err := b.Appliance.Validate(); err != nil || b.Manifest.ApplianceSchemaVersion != b.Appliance.SchemaVersion {
-		return ErrInvalidBundle
-	}
-	if !validExportedAt(b.Manifest.ExportedAt) || !validHeaderToken(b.Manifest.GOOS) || !validHeaderToken(b.Manifest.GOARCH) {
-		return ErrInvalidBundle
-	}
-	if !validBuild(b.Manifest.Build) {
-		return ErrInvalidBundle
-	}
-	expectedSections := 1
-	if b.Nodes != nil {
-		expectedSections = 2
-	}
-	if len(b.Manifest.Sections) != expectedSections {
-		return ErrInvalidBundle
-	}
-	applianceBytes, err := appliance.MarshalCanonical(b.Appliance)
-	if err != nil || !matchesSection(b.Manifest.Sections[0], "appliance", applianceBytes) {
-		return ErrInvalidBundle
-	}
-	if b.Nodes != nil {
-		nodeBytes, err := nodes.MarshalCanonical(*b.Nodes)
-		if err != nil || !matchesSection(b.Manifest.Sections[1], "nodes", nodeBytes) {
-			return ErrInvalidBundle
-		}
-	}
-	return nil
-}
-
-func sectionFor(name string, contents []byte) Section {
-	digest := sha256.Sum256(contents)
-	return Section{Name: name, Size: int64(len(contents)), SHA256: hex.EncodeToString(digest[:])}
-}
-
-func matchesSection(section Section, name string, contents []byte) bool {
-	expected := sectionFor(name, contents)
-	return section == expected
-}
-
-func validBuild(value buildinfo.Info) bool {
-	if value.Channel == "development" {
-		// Development exports use the explicit identity retained by ordinary
-		// source builds; they do not pretend to carry release provenance.
-		return value.Product == "xkeen-control" && value.Version == "dev" && value.SourceCommit == "dev"
-	}
-	return value.Validate() == nil
-}
-
-func validHeaderToken(value string) bool {
-	if value == "" || len(value) > 256 {
-		return false
-	}
-	for _, r := range value {
-		if r < 0x20 || r == 0x7f || r > 0x7e {
-			return false
-		}
-	}
-	return true
-}
-
-func validExportedAt(value string) bool {
-	if !strings.HasSuffix(value, "Z") {
-		return false
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, value)
-	return err == nil && parsed.Location() == time.UTC
-}
-
 func validatePassphrase(value string) error {
 	length := len([]byte(value))
 	if !utf8.ValidString(value) || length < MinPassphraseBytes || length > MaxPassphraseBytes {
@@ -670,12 +236,12 @@ func validatePassphrase(value string) error {
 // normalizing the caller's passphrase.
 func ValidatePassphrase(value string) error { return validatePassphrase(value) }
 
-func (s *Service) randomBytes(size int) ([]byte, error) {
-	if s.random == nil {
+func randomBytes(random io.Reader, size int) ([]byte, error) {
+	if random == nil {
 		return nil, ErrRandomUnavailable
 	}
 	value := make([]byte, size)
-	if _, err := io.ReadFull(s.random, value); err != nil {
+	if _, err := io.ReadFull(random, value); err != nil {
 		clearBytes(value)
 		return nil, err
 	}

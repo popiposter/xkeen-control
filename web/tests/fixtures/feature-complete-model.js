@@ -2,7 +2,6 @@ const csrf = 'synthetic-feature-complete-csrf-1'
 
 // These lists describe safe DTOs, never copies of internal authority objects.
 const allowlist = (value, fields) => Object.fromEntries(fields.filter((field) => Object.hasOwn(value, field)).map((field) => [field, value[field]]))
-const performancePolicyFields = ['schemaVersion', 'probeIntervalSeconds', 'failureThreshold', 'adaptiveCadenceMinutes', 'adaptiveChallengerLimit', 'minimumDwellMinutes', 'qualityHysteresisPercent']
 const listenerProjection = (value) => allowlist(value, ['host', 'port', 'source', 'editability', 'allowedHosts'])
 const updateProjection = (value) => ({
   ...allowlist(value, ['channel', 'rollbackAvailable', 'signingKeyConfigured', 'latestCompatibleVersion', 'latestChannel', 'latestSource', 'latestSourceCommit', 'lastCheckAt']),
@@ -14,35 +13,6 @@ const json = (route, value, status = 200) => route.fulfill({
   status,
   contentType: 'application/json',
   body: JSON.stringify(value),
-})
-
-const defaultPerformancePolicy = () => ({
-  schemaVersion: 1,
-  probeIntervalSeconds: 60,
-  failureThreshold: 2,
-  adaptiveCadenceMinutes: 180,
-  adaptiveChallengerLimit: 5,
-  minimumDwellMinutes: 30,
-  qualityHysteresisPercent: 10,
-})
-
-const performanceProjection = (policy = defaultPerformancePolicy()) => ({
-  policy: allowlist(policy, performancePolicyFields),
-  source: 'default',
-  authorityState: 'editable',
-  persistedSource: 'default',
-  hardCeilings: {
-    maxCandidates: 6,
-    candidateDownloadMiB: 16,
-    candidateUploadMiB: 8,
-    candidateMaxSeconds: 30,
-    generationMaxMiB: 144,
-    generationMaxSeconds: 180,
-    transportIdentity: 'source-owned',
-    rttGuard: 'source-owned',
-    scoring: 'source-owned',
-  },
-  adaptive: { state: 'waiting', nextRunAt: new Date(Date.now() + 10_800_000).toISOString(), generation: 3 },
 })
 
 const componentState = (overrides = {}) => ({
@@ -125,7 +95,6 @@ export class FeatureCompleteModel {
       ],
     }
     this.observatory = { probeIntervalMinutes: 5 }
-    this.performancePolicy = defaultPerformancePolicy()
     this.listener = { host: '127.0.0.1', port: 8787, source: 'default', editability: 'editable', allowedHosts: ['127.0.0.1', '10.0.0.4'] }
     this.update = {
       channel: 'stable',
@@ -250,8 +219,6 @@ export class FeatureCompleteModel {
         return this.recordProjection(route, { total: this.nodes.length, nodes: this.nodes.map(nodeProjection), subscriptions: this.subscriptions.map((subscription) => allowlist(subscription, ['id', 'name'])) })
       case '/api/v1/performance':
         return this.recordProjection(route, { nodes: this.performance.nodes.map(nodeProjection), manual: allowlist(this.performance.manual, ['state', 'phase']), adaptive: allowlist(this.performance.adaptive, ['state']) })
-      case '/api/v1/config-summary':
-        return this.recordProjection(route, { routing: {}, dns: {}, observatory: {} })
       case '/api/v1/dns/split':
         if (entry.method !== 'GET') this.issues.push('LAN DNS status must be read-only')
         return this.recordProjection(route, { state: 'unconfigured', running: false, entries: 0, conditionalRules: 0 })
@@ -322,29 +289,6 @@ export class FeatureCompleteModel {
         return json(route, updateProjection(this.update))
       case '/api/v1/performance/quality':
         return json(route, this.quality || { state: 'idle', generation: 0, canStage: false, poolCount: 0, progress: { state: 'idle', candidates: [] } })
-      case '/api/v1/performance/policy':
-        return this.recordProjection(route, performanceProjection(this.performancePolicy))
-      case '/api/v1/performance/policy/preview': {
-        const candidate = body
-        const before = this.performancePolicy
-        const changes = Object.keys(before).filter((field) => field !== 'schemaVersion' && before[field] !== candidate[field])
-          .map((field) => ({ field, before: before[field], after: candidate[field] }))
-        const noop = changes.length === 0
-        const previewToken = this.createPreview('performance', candidate)
-        return json(route, { previewToken, expiresAt: new Date(Date.now() + 300_000).toISOString(), before, after: candidate, changes, noop, restartRequired: false, nextRunTimeChanges: !noop })
-      }
-      case '/api/v1/performance/policy/cancel': {
-        const token = body?.previewToken
-        this.previewTokens.delete(token)
-        this.cancelledTokens.push({ owner: 'performance', token, csrf: entry.csrf })
-        return json(route, { canceled: true })
-      }
-      case '/api/v1/performance/policy/apply': {
-        const pending = await this.applyPreview(route, entry, 'performance')
-        if (pending?.owner !== 'performance') return pending
-        this.performancePolicy = { ...pending.candidate }
-        return json(route, { policy: this.performancePolicy, source: 'persisted', changes: [], noop: false, restartRequired: false, nextRunTimeChanged: true })
-      }
       case '/api/v1/panel/listener/cancel': {
         const token = body?.previewToken
         this.previewTokens.delete(token)

@@ -89,10 +89,8 @@ async function mockApplication(page, options = {}) {
           : scenario.performance
         return jsonResponse(route, value)
       }
-      case '/api/v1/config-summary': return jsonResponse(route, { routing: {}, dns: {}, observatory: {} })
       case '/api/v1/update': return jsonResponse(route, { channel: 'stable', installed: { version: '0.2.0' } })
       case '/api/v1/performance/manual-node': return jsonResponse(route, { accepted: true, state: 'accepted' }, 202)
-      case '/api/v1/benchmark/run': return jsonResponse(route, { accepted: true, state: 'accepted' }, 202)
       default: return jsonResponse(route, { error: 'not found' }, 404)
     }
   })

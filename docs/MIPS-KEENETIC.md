@@ -97,8 +97,8 @@ panel export; preserve existing routing/DNS unless the operator requests a chang
 
 Inspect the watchdog before native configuration Apply. If it is a competing
 writer, back up its exact launch entry and quiesce that entry at the controlled
-transition. Do not delete unrelated cron jobs or run the historical blanket
-`install-watchdog.sh`. The panel does not install a replacement automatic
+transition. Do not delete unrelated cron jobs or blanket-remove cron entries.
+The panel does not install a replacement automatic
 supervisor: native Xray owns selection/health/failover. Since0.4.11 a complete,
 valid bounded automatic review can update the native pool once; a manual recommendation
 still requires explicit application and neither mode permanently pins rank one.

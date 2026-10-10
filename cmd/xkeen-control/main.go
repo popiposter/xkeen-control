@@ -19,7 +19,6 @@ import (
 	"github.com/popiposter/xkeen-control/internal/authority"
 	"github.com/popiposter/xkeen-control/internal/buildinfo"
 	"github.com/popiposter/xkeen-control/internal/c1"
-	"github.com/popiposter/xkeen-control/internal/components"
 	"github.com/popiposter/xkeen-control/internal/configview"
 	"github.com/popiposter/xkeen-control/internal/geodatareader"
 	"github.com/popiposter/xkeen-control/internal/httpapi"
@@ -28,7 +27,6 @@ import (
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	"github.com/popiposter/xkeen-control/internal/notifications"
 	"github.com/popiposter/xkeen-control/internal/panellistener"
-	"github.com/popiposter/xkeen-control/internal/performancepolicy"
 	"github.com/popiposter/xkeen-control/internal/resourcepolicy"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
 	initialsetup "github.com/popiposter/xkeen-control/internal/setup"
@@ -267,12 +265,7 @@ func main() {
 		log.Printf("panel listener startup initialization failed: %v", err)
 		os.Exit(1)
 	}
-	performancePolicyService := performancepolicy.NewService(performancepolicy.Config{Runtime: coordinator})
-	if err := performancePolicyService.InitializeRuntime(); err != nil {
-		log.Print("performance policy startup initialization failed")
-		os.Exit(1)
-	}
-	nativeConfig := &xkeen.ConfigEditor{DraftDir: getenv("XKEEN_NATIVE_CONFIG_DRAFT_DIR", "/opt/etc/xkeen-control/secrets/config-drafts"), Dir: getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir), XrayBinary: getenv("XKEEN_XRAY_BINARY", components.DefaultXrayBinary), Lease: authorityLease, PreviousDir: getenv("XKEEN_NATIVE_CONFIG_PREVIOUS_DIR", "/opt/etc/xkeen-control/previous/native-config"), AssetDir: getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)}
+	nativeConfig := &xkeen.ConfigEditor{DraftDir: getenv("XKEEN_NATIVE_CONFIG_DRAFT_DIR", "/opt/etc/xkeen-control/secrets/config-drafts"), Dir: getenv("XKEEN_XRAY_CONFIG_DIR", defaultXrayConfigDir), XrayBinary: getenv("XKEEN_XRAY_BINARY", defaultXrayBinary), Lease: authorityLease, PreviousDir: getenv("XKEEN_NATIVE_CONFIG_PREVIOUS_DIR", "/opt/etc/xkeen-control/previous/native-config"), AssetDir: getenv("XKEEN_XRAY_ASSET_DIR", defaultXrayAssetDir)}
 	nativeConfig.RegistryPath = getenv("XKEEN_NODES_PATH", defaultNodesPath)
 	nodeManager = newNodeManager(coordinator, authorityLease, nativeConfig)
 	nativeJobs := newNativeJobs(authorityLease)
@@ -324,27 +317,25 @@ func main() {
 	defer qualityService.Stop()
 	nativeTransfer := &nativebackup.Service{Editor: nativeConfig, Nodes: nodeManager, Lease: authorityLease}
 	handler := httpapi.New(httpapi.Config{
-		MutationReady:     panelupdate.MutationReady,
-		Native:            xkeen.Discovery{},
-		NativeJobs:        nativeJobs,
-		Geodata:           &geodatareader.Reader{Dir: getenv("XKEEN_XRAY_ASSET_DIR", components.DefaultXrayAssetDir)},
-		NativeConfig:      nativeConfig,
-		SplitDNS:          dnsIntegration,
-		Collector:         collector,
-		Auth:              authManager,
-		Nodes:             nodeManager,
-		Backup:            nativeTransfer,
-		NativeTransfer:    nativeTransfer,
-		NativeQuality:     qualityService,
-		Benchmark:         coordinator,
-		Selection:         qualityService, // Explicit native volatile pin; no panel selection loop.
-		Assets:            webassets.Handler(),
-		StartedAt:         startedAt,
-		Manual:            coordinator,
-		Updates:           updateManager,
-		Notifications:     notificationService,
-		PerformancePolicy: performancePolicyService,
-		Listener:          listenerService,
+		MutationReady:  panelupdate.MutationReady,
+		Native:         xkeen.Discovery{},
+		NativeJobs:     nativeJobs,
+		Geodata:        &geodatareader.Reader{Dir: getenv("XKEEN_XRAY_ASSET_DIR", defaultXrayAssetDir)},
+		NativeConfig:   nativeConfig,
+		SplitDNS:       dnsIntegration,
+		Collector:      collector,
+		Auth:           authManager,
+		Nodes:          nodeManager,
+		Backup:         nativeTransfer,
+		NativeTransfer: nativeTransfer,
+		NativeQuality:  qualityService,
+		Selection:      qualityService, // Explicit native volatile pin; no panel selection loop.
+		Assets:         webassets.Handler(),
+		StartedAt:      startedAt,
+		Manual:         coordinator,
+		Updates:        updateManager,
+		Notifications:  notificationService,
+		Listener:       listenerService,
 	})
 
 	server := &http.Server{
@@ -495,6 +486,8 @@ const (
 	defaultActiveOutbounds = "/opt/etc/xray/configs/04_outbounds.json"
 	defaultNodePreviousDir = "/opt/etc/xkeen-control/previous"
 	defaultXrayConfigDir   = "/opt/etc/xray/configs"
+	defaultXrayBinary      = "/opt/sbin/xray"
+	defaultXrayAssetDir    = "/opt/etc/xray/dat"
 )
 
 func newNodeManager(coordinator interface {

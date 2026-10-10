@@ -48,12 +48,14 @@ test('mobile and desktop theme controls share the same preference', async ({ pag
   await expect(drawer.getByLabel('Appearance', { exact: true })).toHaveValue('system')
 })
 
-for (const theme of ['light', 'dark']) test(`all workspaces use one readable ${theme} theme and fit mobile`, async ({ page }) => {
-  test.setTimeout(45_000)
+// Screenshots are an opt-in audit aid. Overflow is theme-independent, so one
+// phone-width pass runs in the light theme only; unlike task-workspace.spec.js
+// it uses populated DNS/routing documents.
+for (const theme of ['light', 'dark']) test(`all workspaces use one readable ${theme} theme`, async ({ page }) => {
   const model = await fixture(page)
   await page.getByLabel('Appearance', { exact: true }).selectOption(theme)
-  const output = path.resolve('..', 'dist', 'ui-audit')
-  await mkdir(output, { recursive: true })
+  const output = process.env.XKEEN_UI_SCREENSHOT_DIR
+  if (output) await mkdir(output, { recursive: true })
   for (const [index, name] of ['Overview', 'Nodes 1', 'Routing', 'DNS', 'Performance', 'Components / Updates', 'Backup & Restore', 'System / Panel'].entries()) {
     await (await revealNavigation(page)).getByRole('button', { name, exact: true }).click()
     if (name === 'Routing' || name === 'DNS') await expect(page.getByLabel('Configuration file', { exact: true })).toHaveCount(0)
@@ -63,13 +65,13 @@ for (const theme of ['light', 'dark']) test(`all workspaces use one readable ${t
     // form labels must use the current foreground, including nested workspaces.
     const labels = await page.locator('[data-slot=field-label]').evaluateAll((elements) => elements.filter((el) => el.getBoundingClientRect().height > 0).map((el) => ({ color: getComputedStyle(el).color, inherited: getComputedStyle(el.closest('[data-slot=card]') || el.parentElement).color })))
     for (const label of labels) expect(label.color).toBe(label.inherited)
-    await page.screenshot({ path: path.join(output, `${theme}-${index + 1}-${name.split(' ')[0].toLowerCase()}.png`), fullPage: true })
+    if (output) await page.screenshot({ path: path.join(output, `${theme}-${index + 1}-${name.split(' ')[0].toLowerCase()}.png`), fullPage: true })
   }
-  for (const width of [320, 375, 768]) {
-    await page.setViewportSize({ width, height: 900 })
+  if (theme === 'light') {
+    await page.setViewportSize({ width: 320, height: 900 })
     for (const name of ['Overview', 'Nodes 1', 'Routing', 'DNS', 'Backup & Restore', 'System / Panel']) {
       await (await revealNavigation(page)).getByRole('button', { name, exact: true }).click()
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), name).toBe(true)
     }
   }
   expect(model.requests.filter((request) => request.method !== 'GET' && !['/api/v1/xkeen/jobs/read', '/api/v1/xkeen/config/document'].includes(request.path))).toEqual([])

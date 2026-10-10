@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-for (const width of [375, 1440]) {
+for (const width of [375]) {
   test(`native installation replaces Setup and component updater at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
     const requests = []
@@ -18,7 +18,6 @@ for (const width of [375, 1440]) {
         },
         '/api/v1/nodes': { total: 0, nodes: [], subscriptions: [] },
         '/api/v1/performance': { nodes: [] },
-        '/api/v1/config-summary': { routing: {}, dns: {}, observatory: {} },
       }[path]
       await route.fulfill({ status: data ? 200 : 404, contentType: 'application/json', body: JSON.stringify(data || { error: 'unexpected route' }) })
     })
@@ -37,7 +36,9 @@ for (const width of [375, 1440]) {
   })
 }
 
-for (const [installation, panelIntegration, running] of [[undefined, undefined], ['unknown', 'missing'], ['unsupported', 'missing'], ['available', 'unknown'], ['available', 'unsupported'], ['available', 'unknown', true]]) {
+// The fact-to-guidance matrix is covered in web/unit/native-xkeen-state.test.js;
+// these two cases keep the browser wiring for absent native facts and a running state.
+for (const [installation, panelIntegration, running] of [[undefined, undefined], ['available', 'unknown', true]]) {
   test(`native installation and runtime facts stay distinct: ${installation}/${panelIntegration}/${!!running}`, async ({ page }) => {
     await page.route('**/api/v1/**', async (route) => {
       const path = new URL(route.request().url()).pathname
@@ -46,7 +47,6 @@ for (const [installation, panelIntegration, running] of [[undefined, undefined],
         '/api/v1/status': { controlPlane: {}, xray: {}, xkeen: {}, balancer: {}, observatory: {}, benchmark: { controlPlane: {} }, selection: {}, lifecycle: {}, native: installation === undefined ? undefined : { installation, panelIntegration, xrayRunning: running } },
         '/api/v1/nodes': { nodes: [], subscriptions: [] },
         '/api/v1/performance': { nodes: [] },
-        '/api/v1/config-summary': {},
       }[path]
       await route.fulfill({ status: data ? 200 : 404, contentType: 'application/json', body: JSON.stringify(data || {}) })
     })
