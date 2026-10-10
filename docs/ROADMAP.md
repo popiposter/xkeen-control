@@ -4,7 +4,7 @@ This is the current sequencing/status authority. Issues contain detailed task co
 
 ## Delivered
 
-**Stable0.4.11 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, guided fresh setup #145/PR147, MIPS panel delivery #150/PR151 and compact fresh routing #181/PR182 are delivered. #183/PR184 fixes MIPS speed telemetry, #185/PR186 pins the protected release image, #188/PR189 adds bounded MIPS automatic pool review, and #191/PR192 selects a rotating subset when more than 18 nodes qualify. [Release evidence](RELEASES.md) binds the exact source and public bytes. Signed0.4.11 installation passed on KN1810 with source/hash and native preservation readback; a bounded manual test passed under0.4.9. Live 18-node sweep/Apply and fresh setup remain untested.
+**Stable0.4.12 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, guided fresh setup #145/PR147, MIPS panel delivery #150/PR151 and compact fresh routing #181/PR182 are delivered. #183/PR184 fixes MIPS speed telemetry, #185/PR186 pins the protected release image, #188/PR189 adds bounded MIPS automatic pool review, #191/PR192 rotates an 18-node subset, and #195/PR196 defers futile reviews before traffic. [Release evidence](RELEASES.md) binds exact source and public bytes. Signed0.4.12 installation passed on KN1810 with source/hash and native preservation readback. A live 18-node comparison under0.4.11 completed but retained the five-node pool; automatic Apply and fresh setup remain untested.
 
 - Stock XKeen owns installation, components/interception, service and cron; its code stays unmodified.
 - Native jobs/private console, Form/Text config editors and shared pending/Apply/Discard/previous restore.
@@ -31,7 +31,7 @@ The first adapter is restricted to the observed KN1811/5.01.C.6.0-1 CLI family;
 unsupported topology/schema stops before provisioning. Stock commands remain
 installation/update owners. [PR147](https://github.com/popiposter/xkeen-control/pull/147)
 records independent exact-source review and exact FULL evidence separately.
-Stable0.4.11 retains the installer/CLI; protected hosted FULL and independent
+Stable0.4.12 retains the installer/CLI; protected hosted FULL and independent
 ten-public-asset/both-signature verification passed. Fresh hardware acceptance remains
 [NOTRUN](https://github.com/popiposter/xkeen-control/issues/148). Source delivery
 does not certify fresh installation or client/outage behavior.
@@ -42,7 +42,7 @@ does not certify fresh installation or client/outage behavior.
 
 PR180 remains held: the compact hardware constructor completed in 16.243 s, but that is not serving or retirement acceptance and does not justify releasing a timeout change first.
 
-## MIPS automatic pool review delivered; live acceptance pending
+## MIPS automatic pool review delivered; Apply acceptance pending
 
 [#188](https://github.com/popiposter/xkeen-control/issues/188) closes the source
 gap between the three-node constrained manual sample and automatic pool updates
@@ -62,8 +62,15 @@ bounded, rotating 18-of-46 review and material-change gate. Independent source
 review, local/hosted FULL, ten public assets and both signatures passed for
 signed0.4.11. A pure synthetic MIPS planner fixture ran on KN1810 before release;
 it did not read live nodes or apply configuration. Signed0.4.11 installation
-passed exact source/hash, panel health and native-preservation checks. A
-complete live subset review/Apply still needs separate hardware readback.
+passed exact source/hash, panel health and native-preservation checks. The first
+live subset review attempted 18/18 selected nodes, obtained 16 valid samples
+and transferred 37.8 MiB, then correctly retained the five-node pool without
+Apply because incumbents lacked comparable evidence. [#195](https://github.com/popiposter/xkeen-control/issues/195)
+in [PR196](https://github.com/popiposter/xkeen-control/pull/196) now defers such
+reviews before quota reservation and traffic while preserving the final Apply
+gate. Independent review, local/hosted FULL, a disposable synthetic MIPS
+fixture, signed0.4.12 publication and KN1810 installation passed. A natural
+review under0.4.12 and automatic Apply still need separate readback.
 
 ## Remaining acceptance
 
