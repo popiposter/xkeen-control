@@ -17,7 +17,9 @@ func ForPlatform(arch string, memoryKiB uint64) Profile {
 		return Profile{Name: "constrained", Constrained: true, Automatic: true}
 	}
 	if memoryKiB == 0 || memoryKiB <= 256*1024 {
-		return Profile{Name: "constrained", Constrained: true}
+		// A low-memory router uses the constrained limits with the same
+		// automatic policy as MIPS (plan A8).
+		return Profile{Name: "constrained", Constrained: true, Automatic: true}
 	}
 	return Profile{Name: "standard", Automatic: true}
 }

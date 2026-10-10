@@ -306,7 +306,7 @@ func main() {
 	})
 	qualityService := &nativequality.Service{Editor: nativeConfig, Lease: authorityLease, Reader: xrayReader, Nodes: nodeReader, Measurement: coordinator, Probe: probeRouter, Control: xrayReader, Resources: resources, Jobs: nativeJobs, AutomaticDisabled: getenv("XKEEN_QUALITY_AUTO", "") == "off"}
 	qualitySchedule := nativequality.NewSchedule(qualityService)
-	nodeManager.OnSubscriptionRefresh = qualitySchedule.NotifyRefresh
+	nodeManager.SetRuntimeChangeHook(qualitySchedule.NotifyRefresh)
 	defer qualityService.Stop()
 	nativeTransfer := &nativebackup.Service{Editor: nativeConfig, Nodes: nodeManager, Lease: authorityLease}
 	handler := httpapi.New(httpapi.Config{

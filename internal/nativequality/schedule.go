@@ -8,11 +8,9 @@ import (
 // qualityCadence is the minimum gap between any two review starts (REQ-006).
 const qualityCadence = 6 * time.Hour
 
-// constrainedCadence paces the automatic constrained review; standardCadence
-// paces the measure-only standard review, which reserves no quota, to one
-// full review per 24 hours.
-const constrainedCadence = 12 * time.Hour
-const standardCadence = 24 * time.Hour
+// reviewCadence is the daily due review (REQ-006). The quota allows one
+// automatic review per rolling 24 hours on both profiles.
+const reviewCadence = 24 * time.Hour
 
 // Schedule coalesces refreshes and admits at most one bounded review owner.
 type Schedule struct {
@@ -61,13 +59,9 @@ func (s *Schedule) Run(ctx context.Context) {
 	startupFloor := time.Now().Add(10 * time.Minute)
 	next := startupFloor
 	trigger := "startup"
-	// The measure-only standard review reserves no quota, so its minimum gap is
-	// the full 24 hours; the constrained automatic review keeps the shared
-	// six-hour gap and its daily quota.
-	cadence, minGap := standardCadence, standardCadence
-	if s.service.profile().Constrained {
-		cadence, minGap = constrainedCadence, qualityCadence
-	}
+	// One policy for both profiles: a daily due review, the six-hour gap after
+	// any start, and the rolling one-review quota (REQ-006).
+	cadence, minGap := reviewCadence, qualityCadence
 	for {
 		s.service.mu.Lock()
 		last := s.service.lastStartedAt
@@ -118,14 +112,13 @@ func (s *Schedule) Run(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			var startErr error
-			if s.service.profile().Constrained {
-				startErr = s.service.startSweep(ctx, trigger)
-			} else {
-				// The standard profile measures only; applying is the operator's
-				// explicit Stage until both profiles share automatic Apply.
-				startErr = s.service.startReview(ctx, trigger, true)
+			// A trigger inside the quota window waits for the next allowed slot
+			// instead of repeatedly reading configuration and Xray.
+			if retry, ok := s.service.quotaRetryAt(now); ok && retry.After(now) {
+				next = retry
+				continue
 			}
+			startErr := s.service.startSweep(ctx, trigger)
 			if startErr != nil {
 				next = now.Add(10 * time.Minute)
 			} else {

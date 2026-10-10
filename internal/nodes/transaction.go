@@ -76,12 +76,16 @@ func (e *RollbackError) Error() string { return ErrRollbackFailed.Error() }
 func (e *RollbackError) Unwrap() error { return ErrRollbackFailed }
 
 type Transaction struct {
-	Store                   Store
-	ActiveOutboundsPath     string
-	ConfigDir               string
-	PreviousDir             string
-	Activator               Activator
-	Budget                  TransactionBudget
+	Store               Store
+	ActiveOutboundsPath string
+	ConfigDir           string
+	PreviousDir         string
+	Activator           Activator
+	Budget              TransactionBudget
+	// OnRuntimeChange runs after a committed transaction changed the rendered
+	// outbounds, that is the effective enabled membership or credentials. A
+	// no-op or metadata-only commit does not call it (REQ-005).
+	OnRuntimeChange         func()
 	syncGenerationDirectory func(string) error
 }
 
@@ -210,8 +214,11 @@ func (t Transaction) Apply(ctx context.Context, registry Registry) (err error) {
 	if syncNodeDirectory(t.PreviousDir) != nil {
 		return ErrNodeRecoveryRequired
 	}
-	return t.commitTracked(transactionContext, registry, rendered, runtimeChanged, previousRegistry, previousRegistryExists, previousOutbounds, previousOutboundsExists, intent)
-
+	err = t.commitTracked(transactionContext, registry, rendered, runtimeChanged, previousRegistry, previousRegistryExists, previousOutbounds, previousOutboundsExists, intent)
+	if err == nil && runtimeChanged && t.OnRuntimeChange != nil {
+		t.OnRuntimeChange()
+	}
+	return err
 }
 
 func (t Transaction) savePrevious(registry Registry, registryExists bool, outbounds []byte, outboundsExists bool) error {

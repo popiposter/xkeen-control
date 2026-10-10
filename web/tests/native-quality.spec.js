@@ -72,15 +72,15 @@ test('bounded automatic review separates full pool, coverage and applied state w
     poolCount: 52, activePoolCount: 6, eligibleCount: 14, attemptedCount: 14, validCount: 12,
     batchCount: 5, aggregateBytes: 44 * 1048576, reviewTrigger: 'subscription-refresh',
     appliedState: 'applied', nextDueAt: '2026-10-10T12:00:00Z',
-    quotaState: 'available', quotaUsedBytes: 144 * 1048576, quotaRemainingBytes: 144 * 1048576,
-    quotaReviewsUsed: 1, quotaNextResetAt: '2026-10-11T01:00:00Z', manualAllowanceBytes: 24 * 1048576 }
+    quotaState: 'available', quotaUsedBytes: 72 * 1048576, quotaRemainingBytes: 0,
+    quotaReviewsUsed: 1, quotaNextResetAt: '2026-10-11T01:00:00Z', manualAllowanceBytes: 72 * 1048576 }
   await open(page)
   await expect(page.getByText(/Current active pool: 6 nodes. Enabled nodes available for comparison: 52/)).toBeVisible()
   await expect(page.getByText(/14 of 14 selected nodes attempted, 12 valid; 5 batches and 44.0 MiB transferred/)).toBeVisible()
   await expect(page.getByText(/Automatic pool application: applied/)).toBeVisible()
   await expect(page.getByText(/Automatic reviews test eligible nodes in small sequential batches/)).toBeVisible()
-  await expect(page.getByText(/144 of 288 MiB reserved in the rolling 24 hours \(1 of 2 reviews\); 144 MiB remaining/)).toBeVisible()
-  await expect(page.getByText(/Manual speed tests have a separate limit of 24 MiB per run/)).toBeVisible()
+  await expect(page.getByText(/72 of 72 MiB reserved in the rolling 24 hours \(1 of 1 review\); 0 MiB remaining/)).toBeVisible()
+  await expect(page.getByText(/Manual speed tests have a separate limit of 72 MiB per run/)).toBeVisible()
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
 })

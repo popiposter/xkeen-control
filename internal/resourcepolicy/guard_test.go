@@ -153,7 +153,7 @@ func TestProfilesDoNotScaleTrafficWithNodeInventory(t *testing.T) {
 		ram         uint64
 		constrained bool
 		automatic   bool
-	}{{"mipsle", 500000, true, true}, {"arm64", 254472, true, false}, {"arm64", 500924, false, true}, {"arm64", 0, true, false}} {
+	}{{"mipsle", 500000, true, true}, {"arm64", 254472, true, true}, {"arm64", 500924, false, true}, {"arm64", 0, true, true}} {
 		p := ForPlatform(tt.arch, tt.ram)
 		if p.Constrained != tt.constrained || p.Automatic != tt.automatic {
 			t.Fatal(p)

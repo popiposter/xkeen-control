@@ -10,13 +10,13 @@ import (
 	"time"
 )
 
-func TestSweepQuotaPersistsWorstCaseAndRefusesThirdReview(t *testing.T) {
+func TestSweepQuotaPersistsWorstCaseAndRefusesASecondReviewInTheDay(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "private", "quota.json")
 	now := time.Now().UTC()
 	if used, err := reserveSweep(path, now, testReviewBytes); err != nil || used != testReviewBytes {
 		t.Fatalf("first reservation: %d %v", used, err)
 	}
-	if q, err := quotaState(path, now.Add(time.Second), testReviewBytes); err != nil || q.UsedBytes != testReviewBytes || q.RemainingBytes != testReviewBytes || q.ReviewsUsed != 1 || !q.NextResetAt.Equal(now.Add(24*time.Hour)) || !q.InspectionRequired {
+	if q, err := quotaState(path, now.Add(time.Second), testReviewBytes); err != nil || q.UsedBytes != testReviewBytes || q.RemainingBytes != 0 || q.ReviewsUsed != 1 || !q.NextResetAt.Equal(now.Add(24*time.Hour)) || !q.InspectionRequired {
 		t.Fatalf("quota status omitted reservation or intent: %+v %v", q, err)
 	}
 	release, err := acquireQuotaLock(path)
@@ -27,21 +27,10 @@ func TestSweepQuotaPersistsWorstCaseAndRefusesThirdReview(t *testing.T) {
 		t.Fatal(err)
 	}
 	release()
-	if used, err := reserveSweep(path, now.Add(6*time.Hour), testReviewBytes); err != nil || used != (dailyReviews*testReviewBytes) {
-		t.Fatalf("second reservation: %d %v", used, err)
-	}
 	if _, err := reserveSweep(path, now.Add(12*time.Hour), testReviewBytes); err == nil {
-		t.Fatal("third review escaped rolling cap")
+		t.Fatal("second review escaped the rolling one-review cap")
 	}
-	release, err = acquireQuotaLock(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := settleSweepLocked(path, now.Add(6*time.Hour), true); err != nil {
-		t.Fatal(err)
-	}
-	release()
-	if used, err := reserveSweep(path, now.Add(24*time.Hour), testReviewBytes); err != nil || used != (dailyReviews*testReviewBytes) {
+	if used, err := reserveSweep(path, now.Add(24*time.Hour), testReviewBytes); err != nil || used != testReviewBytes {
 		t.Fatalf("expired reservation not retired: %d %v", used, err)
 	}
 }

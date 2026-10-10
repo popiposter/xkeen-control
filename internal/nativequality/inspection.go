@@ -11,7 +11,7 @@ import (
 // configuration, lifecycle and temporary probe state. It does not retry Apply,
 // assert that the previous recommendation won, or clear an unknown native job.
 func (s *Service) InspectAndResolve(parent context.Context) error {
-	if s.Editor == nil || s.Jobs == nil || s.Lease == nil || s.Reader == nil || s.Probe == nil || s.Control == nil || s.Nodes == nil || s.Resources == nil || !s.profile().Constrained || !s.profile().Automatic {
+	if s.Editor == nil || s.Jobs == nil || s.Lease == nil || s.Reader == nil || s.Probe == nil || s.Control == nil || s.Nodes == nil || s.Resources == nil || !s.profile().Automatic {
 		return ErrUnavailable
 	}
 	path := s.QuotaPath

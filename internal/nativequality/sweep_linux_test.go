@@ -808,3 +808,19 @@ func TestSuccessiveManualReviewsRotateCandidates(t *testing.T) {
 		}
 	}
 }
+
+func TestStandardProfileAutomaticReviewReachesApply(t *testing.T) {
+	s, _, _, _ := sweepFixture(t, false)
+	s.Resources.Profile = resourcepolicy.ForPlatform("arm64", 1<<20)
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal("standard automatic review refused", err, s.Read().ReviewReason)
+	}
+	v := waitSweep(t, s)
+	m := s.Measurement.(*sweepMeasurement)
+	if v.ManualSample || v.PoolDecision != "first-pool-initialization" || v.AppliedState == "not-attempted" || len(m.calls) != 2 || len(m.calls[0]) != 6 {
+		t.Fatal("standard automatic review did not use six-node batches and the Apply path", v.ManualSample, v.PoolDecision, v.AppliedState, len(m.calls))
+	}
+	if q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes); err != nil || q.ReviewsUsed != 1 || q.UsedBytes != s.profile().Review().Bytes {
+		t.Fatal("standard automatic review did not reserve its quota", q, err)
+	}
+}

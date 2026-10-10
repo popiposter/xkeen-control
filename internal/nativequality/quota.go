@@ -19,8 +19,8 @@ const (
 	// maxReservationBytes bounds any stored reservation; profiles reserve
 	// their own Review().Bytes, never more than this.
 	maxReservationBytes = 288 * resourcepolicy.MiB
-	// dailyReviews is the rolling 24-hour automatic review count.
-	dailyReviews = 2
+	// dailyReviews is the rolling 24-hour automatic review count (REQ-006).
+	dailyReviews = 1
 )
 
 var errQuota = errors.New("native quality quota unavailable")
@@ -175,6 +175,20 @@ func reserveSweepPlannedLocked(path string, now time.Time, plan *sweepPlan, revi
 	return v.UsedBytes + reviewBytes, nil
 }
 
+// quotaRetryAt returns when an automatic review could next reserve: the end
+// of the six-hour gap after the last start, or the expiry of the oldest
+// reservation inside the rolling day, whichever is later.
+func quotaRetryAt(q quotaReceipt, now time.Time, reviewBytes int64) time.Time {
+	at := now
+	if !q.LastComparisonStartedAt.IsZero() && q.LastComparisonStartedAt.Add(6*time.Hour).After(at) {
+		at = q.LastComparisonStartedAt.Add(6 * time.Hour)
+	}
+	if v := viewQuota(q, now, reviewBytes); v.ReviewsUsed >= dailyReviews && v.NextResetAt.After(at) {
+		at = v.NextResetAt
+	}
+	return at
+}
+
 // quotaAdmits reports, without writing, whether a review could reserve now.
 func quotaAdmits(q quotaReceipt, now time.Time, reviewBytes int64) bool {
 	if q.InspectionRequired || (!q.LastComparisonStartedAt.IsZero() && now.Sub(q.LastComparisonStartedAt) < 6*time.Hour) {
@@ -268,4 +282,22 @@ func writeQuotaLocked(path string, q quotaReceipt) error {
 		return errQuota
 	}
 	return nil
+}
+
+// quotaRetryAt reads the receipt and reports the next allowed automatic start.
+func (s *Service) quotaRetryAt(now time.Time) (time.Time, bool) {
+	path := s.QuotaPath
+	if path == "" {
+		path = defaultQuotaPath
+	}
+	release, err := acquireQuotaLock(path)
+	if err != nil {
+		return time.Time{}, false
+	}
+	defer release()
+	q, err := readQuotaLocked(path, now.UTC())
+	if err != nil {
+		return time.Time{}, false
+	}
+	return quotaRetryAt(q, now.UTC(), s.profile().Review().Bytes), true
 }

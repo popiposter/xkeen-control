@@ -205,7 +205,7 @@ func (s *Service) Read() Status {
 	if value.NativeSelectedAt.IsZero() || value.NativeSelectedAt.After(time.Now()) || time.Since(value.NativeSelectedAt) > 2*time.Minute {
 		value.NativeSelected, value.NativeSelectedState = "", "unavailable"
 	}
-	if value.ResourceProfile.Constrained && value.ResourceProfile.Automatic {
+	if value.ResourceProfile.Automatic {
 		if q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes); err == nil {
 			value.QuotaState = "available"
 			value.QuotaUsedBytes, value.QuotaRemainingBytes = q.UsedBytes, q.RemainingBytes
@@ -317,7 +317,7 @@ func (s *Service) SetManualOverride(ctx context.Context, target string) error {
 	if inspectionRequired {
 		return ErrUnavailable
 	}
-	if s.profile().Constrained && s.profile().Automatic {
+	if s.profile().Automatic {
 		if q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes); err != nil || q.InspectionRequired {
 			return ErrUnavailable
 		}
