@@ -917,3 +917,60 @@ func TestSweepImportedFiveMemberPoolIsFilledToSix(t *testing.T) {
 		}
 	}
 }
+
+// A review that keeps the running pool by policy still narrows a broad 07 to
+// that pool, keeping 05 byte for byte.
+func TestSweepKeptPoolWithBroadObservatoryRepairsOnly07(t *testing.T) {
+	s, _, _, dir := sweepFixture(t, true)
+	marker := setupNativeApply(t, s, dir)
+	s.Reader.(*sweepReader).mutate = func(snapshot *xrayapi.Snapshot) { snapshot.Balancer.NativeSelected = "proxy-01" }
+	kept := []string{"proxy-01", "proxy-02", "proxy-03", "proxy-04", "proxy-05", "proxy-06"}
+	var costs []c1.NativeQualityCost
+	for i, tag := range kept {
+		costs = append(costs, c1.NativeQualityCost{Regexp: true, Match: "^" + regexp.QuoteMeta(tag) + "$", Value: float64(i + 1)})
+	}
+	// proxy-00 measures faster than proxy-06, but by less than the 15% margin.
+	routing, _ := json.Marshal(map[string]any{"routing": map[string]any{"rules": []any{}, "balancers": []any{map[string]any{"tag": "bal-proxy", "selector": kept, "strategy": map[string]any{"type": "leastLoad", "settings": map[string]any{"maxRTT": "10s", "costs": costs}}}}}})
+	for name, data := range map[string][]byte{"05_routing.json": routing, "07_observatory.json": []byte(`{"observatory":{"subjectSelector":["proxy-"],"probeInterval":"10s","enableConcurrency":false}}`)} {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal(err, s.Read().ReviewReason)
+	}
+	v := waitSweep(t, s)
+	if v.PoolDecision != "observatory-repair" || v.AppliedState != "applied" || v.ReviewReason != "insufficient-challenger-margin" || v.InspectionRequired {
+		t.Fatal("broad 07 not repaired after a policy no-change", v.PoolDecision, v.AppliedState, v.ReviewReason)
+	}
+	if calls, _ := os.ReadFile(marker); string(calls) != "x" {
+		t.Fatal("expected one native Apply", string(calls))
+	}
+	w, err := s.Editor.Workspace(context.Background())
+	if err != nil || w.Pending != nil {
+		t.Fatal("07 repair was not applied", err)
+	}
+	if w.Documents["05_routing.json"].Text != string(routing) {
+		t.Fatal("observatory repair changed 05")
+	}
+	if !observatoryMatchesPool(w.Documents["07_observatory.json"].Text, kept, false) {
+		t.Fatal("saved 07 does not observe exactly the kept pool", w.Documents["07_observatory.json"].Text)
+	}
+}
+
+// A kept broad selector is not narrowed by an observatory repair.
+func TestSweepBroadSelectorIsNotNarrowedByObservatoryRepair(t *testing.T) {
+	// Six nodes behind the broad "proxy-" prefix resolve to six exact tags.
+	s, _, _, _ := sweepFixtureCount(t, false, 6)
+	s.Measurement.(*sweepMeasurement).validLimit = 5 // too few results to rank a new pool
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal(err, s.Read().ReviewReason)
+	}
+	v := waitSweep(t, s)
+	if v.PoolDecision == "observatory-repair" {
+		t.Fatal("a broad selector was narrowed through an observatory repair")
+	}
+	if w, err := s.Editor.Workspace(context.Background()); err != nil || w.Pending != nil {
+		t.Fatal("a broad selector review saved configuration", err)
+	}
+}

@@ -166,6 +166,21 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		// validated joint 05+07 Apply repairs it (REQ-010).
 		decision = "observatory-repair"
 	}
+	if keptByPolicy[decision] && len(orphans) == 0 && len(currentActive) <= 6 && samePoolMembers(balancerSelector(w.Documents["05_routing.json"].Text, index), currentActive) && exactSelectors(currentActive, w.Targets) && !observatoryMatchesPool(observatory, currentActive, concurrent) {
+		// The review keeps the running pool, but 07 still observes a wider
+		// set: narrow 07 to that pool and keep 05 byte for byte (REQ-003).
+		s.mu.Lock()
+		s.status.PoolDecision = "observatory-repair"
+		s.mu.Unlock()
+		s.recordPoolApply(s.applyPool(parent, digest, index, pool, currentActive, nil, true, w.Documents["05_routing.json"].Text, observatory, s.onApplyJob), currentActive)
+		s.mu.Lock()
+		if s.status.AppliedState == "applied" {
+			// Keep the policy that retained the pool visible to the operator.
+			s.status.ReviewReason = decision
+		}
+		s.mu.Unlock()
+		return
+	}
 	s.mu.Lock()
 	s.status.PoolDecision = decision
 	s.mu.Unlock()
@@ -177,12 +192,37 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		s.applyOutcome("not-applied", decision, false)
 		return
 	}
-	out := s.applyPool(parent, digest, index, pool, selected, selectedCosts, w.Documents["05_routing.json"].Text, observatory, func(jobState string) {
-		s.mu.Lock()
-		s.status.AppliedState = "running"
-		s.status.AppliedJobState = jobState
-		s.mu.Unlock()
-	})
+	s.recordPoolApply(s.applyPool(parent, digest, index, pool, selected, selectedCosts, false, w.Documents["05_routing.json"].Text, observatory, s.onApplyJob), selected)
+}
+
+// balancerSelector returns the literal selector entries of the balancer at
+// index; prefixes stay prefixes, unlike the resolved pool.
+func balancerSelector(text string, index int) []string {
+	var doc struct {
+		Routing struct {
+			Balancers []struct {
+				Selector []string `json:"selector"`
+			} `json:"balancers"`
+		} `json:"routing"`
+	}
+	if configjson.Decode([]byte(text), &doc) != nil || index < 0 || index >= len(doc.Routing.Balancers) {
+		return nil
+	}
+	return doc.Routing.Balancers[index].Selector
+}
+
+// keptByPolicy are decisions that deliberately keep the running pool.
+var keptByPolicy = map[string]bool{"insufficient-challenger-margin": true, "incumbent-unmeasured-or-unknown": true, "insufficient-valid-results": true, "healthy-target-sample-invalid": true}
+
+func (s *Service) onApplyJob(jobState string) {
+	s.mu.Lock()
+	s.status.AppliedState = "running"
+	s.status.AppliedJobState = jobState
+	s.mu.Unlock()
+}
+
+// recordPoolApply publishes one review Apply outcome.
+func (s *Service) recordPoolApply(out poolApply, selected []string) {
 	s.mu.Lock()
 	if out.jobState != "" {
 		s.status.AppliedJobState = out.jobState
@@ -212,14 +252,20 @@ type poolApply struct {
 // receipt, the readback of both documents and the runtime selection. It never
 // retries Save or the native restart; any error after the save is returned as
 // inspection-required (REQ-010). Reviews and REQ-009 recovery share it.
-func (s *Service) applyPool(parent context.Context, digest string, index int, pool, selected []string, selectedCosts []c1.NativeQualityCost, routing, observatory string, onJob func(string)) poolApply {
+// With keepRouting, 05 is kept byte for byte and only 07 is saved: the
+// observatory repair of a pool the review keeps.
+func (s *Service) applyPool(parent context.Context, digest string, index int, pool, selected []string, selectedCosts []c1.NativeQualityCost, keepRouting bool, routing, observatory string, onJob func(string)) poolApply {
 	concurrent := !s.profile().Constrained
 	fail := func(state, reason string) poolApply {
 		return poolApply{state: state, reason: reason, inspection: state == "inspection-required"}
 	}
-	proposed, err := replaceRecommendation(routing, index, selectedCosts, selected)
-	if err != nil {
-		return fail("not-applied", "recommendation-invalid")
+	proposed := []byte(routing)
+	if !keepRouting {
+		replaced, err := replaceRecommendation(routing, index, selectedCosts, selected)
+		if err != nil {
+			return fail("not-applied", "recommendation-invalid")
+		}
+		proposed = replaced
 	}
 	proposedObservatory, err := observatoryForPool(observatory, selected, concurrent)
 	if err != nil {
@@ -230,7 +276,11 @@ func (s *Service) applyPool(parent context.Context, digest string, index int, po
 		return fail("not-applied", "review-cancelled")
 	}
 	saveCtx, saveCancel := context.WithTimeout(parent, 180*time.Second)
-	saved, err := s.Editor.SaveTexts(saveCtx, digest, map[string]string{"05_routing.json": string(proposed), "07_observatory.json": string(proposedObservatory)})
+	texts := map[string]string{"07_observatory.json": string(proposedObservatory)}
+	if !keepRouting {
+		texts["05_routing.json"] = string(proposed)
+	}
+	saved, err := s.Editor.SaveTexts(saveCtx, digest, texts)
 	saveCancel()
 	if err != nil {
 		return fail("inspection-required", "save-outcome-unknown")
@@ -274,7 +324,8 @@ func (s *Service) applyPool(parent context.Context, digest string, index int, po
 		return out
 	}
 	verified, err := s.Editor.Workspace(readCtx)
-	if err != nil || verified.Pending != nil || verified.Digest != saved || !sameRecommendation(verified.Documents["05_routing.json"].Text, index, selected, selectedCosts) || !observatoryMatchesPool(verified.Documents["07_observatory.json"].Text, selected, concurrent) {
+	routingVerified := keepRouting && verified.Documents["05_routing.json"].Text == routing || !keepRouting && sameRecommendation(verified.Documents["05_routing.json"].Text, index, selected, selectedCosts)
+	if err != nil || verified.Pending != nil || verified.Digest != saved || !routingVerified || !observatoryMatchesPool(verified.Documents["07_observatory.json"].Text, selected, concurrent) {
 		out.reason = "applied-config-readback-mismatch"
 		return out
 	}

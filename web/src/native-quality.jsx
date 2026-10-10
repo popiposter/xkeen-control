@@ -65,7 +65,7 @@ const poolDecisionText = {
   'first-pool-initialization': 'first bounded pool',
   'material-improvement': 'measured improvement of at least 15%',
   'unhealthy-incumbent-replaced': 'unhealthy pool member replaced',
-  'observatory-repair': 'same members; native health observation narrowed to the pool',
+  'observatory-repair': 'running pool kept; native health observation narrowed to it',
   'insufficient-valid-results': 'too few valid results to replace a full healthy pool',
   'provisional-pool-replaced': 'provisional recovery pool replaced by measured nodes',
   'pool-filled': 'undersized pool filled with measured nodes, keeping every member',

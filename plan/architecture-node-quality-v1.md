@@ -165,7 +165,11 @@ flowchart LR
   later automatic work until inspection. A no-change
   recommendation does not restart Xray only when both effective 05 and 07
   already resolve to that pool; matching 05 membership with stale 07 requires
-  the same validated joint repair. Subscription churn and imported legacy
+  the same validated joint repair. When a complete review keeps the running
+  exact pool by policy (challenger margin, unmeasured incumbent, too few valid
+  results, invalid sample of the healthy target) and 07 still observes a wider
+  set, the same validated Apply narrows 07 to that pool and keeps 05 byte for
+  byte; a broad selector is never narrowed this way. Subscription churn and imported legacy
   pools follow REQ-003; they have no separate contract.
 - **REQ-011**: UI distinguishes total/enabled/probed/tested nodes,
   configured pool, measured recommendation, verified applied pool and current
