@@ -42,10 +42,8 @@ type Service struct {
 	previewBusy bool
 }
 
-// Every native config can contain private material. Plaintext export is not a
-// separate "safe settings" format and is deliberately unavailable.
-func (s *Service) Export(context.Context) ([]byte, error) { return nil, backup.ErrUnavailable }
-
+// ExportSecret is the only export: every native config can contain private
+// material, so there is no plaintext "safe settings" format.
 func (s *Service) ExportSecret(ctx context.Context, passphrase string) ([]byte, error) {
 	if err := backup.ValidatePassphrase(passphrase); err != nil {
 		return nil, err

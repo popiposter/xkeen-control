@@ -37,9 +37,7 @@ run_shell_fixtures() {
 	bash scripts/test-web-dependencies.sh
 	node --test scripts/dev-check-go.test.mjs
 	bash scripts/test-keenetic-env.sh
-	bash scripts/test-benchmark-policy.sh
 	bash scripts/test-xkeen-foreground.sh
-	bash scripts/test-components.sh --fixtures-only
 	bash scripts/test-release.sh --fixtures-only
 }
 

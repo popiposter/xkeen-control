@@ -85,13 +85,6 @@ func (httpFakeConfig) Read(context.Context) configview.Summary {
 	return configview.Summary{Available: true, Observatory: configview.ObservatorySummary{ProbeInterval: "5m"}}
 }
 
-type benchmarkRequestStub struct{ calls atomic.Int32 }
-
-func (stub *benchmarkRequestStub) TriggerBenchmark() error {
-	stub.calls.Add(1)
-	return nil
-}
-
 type selectionRequestStub struct{ target string }
 
 func (stub *selectionRequestStub) SetManualOverride(_ context.Context, target string) error {
@@ -169,37 +162,6 @@ func TestManualOverrideRouteRequiresCSRFAndPersistsTarget(t *testing.T) {
 	response := postJSON(t, client, server.URL+"/api/v1/selection/override", map[string]string{"target": "proxy-main-01"}, login.CSRFToken)
 	if response.StatusCode != http.StatusOK || selection.target != "proxy-main-01" {
 		t.Fatalf("manual override request = %d target=%q body=%s", response.StatusCode, selection.target, readBody(response))
-	}
-}
-
-func TestBenchmarkRunRequiresCSRFAndIsSingleFlightRequest(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "password.bcrypt")
-	if err := setHTTPTestPassword(path, []byte("synthetic-control-password")); err != nil {
-		t.Fatal(err)
-	}
-	benchmark := &benchmarkRequestStub{}
-	handler := New(Config{Auth: auth.NewManager(auth.Config{HashPath: path}), Benchmark: benchmark})
-	server := httptest.NewServer(handler)
-	defer server.Close()
-	client := &http.Client{Jar: mustCookieJar(t)}
-
-	loginResponse := postJSON(t, client, server.URL+"/api/v1/session/login", map[string]string{"password": "synthetic-control-password"}, "")
-	if loginResponse.StatusCode != http.StatusOK {
-		t.Fatalf("login = %d %s", loginResponse.StatusCode, readBody(loginResponse))
-	}
-	var login struct {
-		CSRFToken string `json:"csrfToken"`
-	}
-	decodeResponse(t, loginResponse, &login)
-
-	withoutCSRF := postJSON(t, client, server.URL+"/api/v1/benchmark/run", map[string]string{}, "")
-	if withoutCSRF.StatusCode != http.StatusForbidden {
-		t.Fatalf("benchmark without csrf = %d", withoutCSRF.StatusCode)
-	}
-
-	accepted := postJSON(t, client, server.URL+"/api/v1/benchmark/run", map[string]string{}, login.CSRFToken)
-	if accepted.StatusCode != http.StatusAccepted || benchmark.calls.Load() != 1 {
-		t.Fatalf("benchmark request = %d calls=%d body=%s", accepted.StatusCode, benchmark.calls.Load(), readBody(accepted))
 	}
 }
 

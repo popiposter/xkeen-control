@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,7 +19,6 @@ import (
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	"github.com/popiposter/xkeen-control/internal/notifications"
 	"github.com/popiposter/xkeen-control/internal/panellistener"
-	"github.com/popiposter/xkeen-control/internal/performancepolicy"
 	"github.com/popiposter/xkeen-control/internal/release"
 	controlruntime "github.com/popiposter/xkeen-control/internal/runtime"
 	"github.com/popiposter/xkeen-control/internal/splitdns"
@@ -29,17 +27,15 @@ import (
 )
 
 const (
-	maxLoginBody             = 16 << 10
-	maxMutationBody          = 384 << 10
-	maxManualNodeBody        = 1 << 10
-	maxPerformancePolicyBody = 4 << 10
-	maxPanelListenerBody     = 1 << 10
-	maxJSONResponse          = 512 << 10
-	csrfRequiredPath         = "/api/v1/session/logout"
+	maxLoginBody         = 16 << 10
+	maxMutationBody      = 384 << 10
+	maxManualNodeBody    = 1 << 10
+	maxPanelListenerBody = 1 << 10
+	maxJSONResponse      = 512 << 10
+	csrfRequiredPath     = "/api/v1/session/logout"
 )
 
 type BackupService interface {
-	Export(context.Context) ([]byte, error)
 	ExportSecret(context.Context, string) ([]byte, error)
 }
 
@@ -53,15 +49,6 @@ type NativeTransferService interface {
 
 type NativeDiscovery interface {
 	Inspect(context.Context) xkeen.Capabilities
-}
-
-type PerformancePolicyService interface {
-	Read(context.Context) (performancepolicy.Projection, error)
-	Preview(context.Context, string, c1.PerformancePolicy) (performancepolicy.Preview, error)
-	Apply(context.Context, string, string) (performancepolicy.ApplyResult, error)
-	Cancel(string, string)
-	Invalidate(string)
-	InvalidateAll()
 }
 
 type PanelListenerService interface {
@@ -80,10 +67,7 @@ type Server struct {
 	nodes         *nodes.Manager
 	assets        http.Handler
 	start         time.Time
-	benchmark     interface {
-		TriggerBenchmark() error
-	}
-	manual interface {
+	manual        interface {
 		TriggerManualNode(string) error
 	}
 	selection interface {
@@ -99,7 +83,6 @@ type Server struct {
 	backup              BackupService
 	nativeTransfer      NativeTransferService
 	nativeQuality       NativeQualityService
-	performancePolicy   PerformancePolicyService
 	listener            PanelListenerService
 	transferPreviewGate chan struct{}
 }
@@ -111,34 +94,30 @@ type Config struct {
 	Nodes         *nodes.Manager
 	Assets        http.Handler
 	StartedAt     time.Time
-	Benchmark     interface {
-		TriggerBenchmark() error
-	}
-	Manual interface {
+	Manual        interface {
 		TriggerManualNode(string) error
 	}
 	Selection interface {
 		SetManualOverride(context.Context, string) error
 	}
-	Native            NativeDiscovery
-	NativeJobs        *xkeen.Jobs
-	NativeConfig      *xkeen.ConfigEditor
-	Geodata           *geodatareader.Reader
-	SplitDNS          *splitdns.Service
-	Updates           panelupdate.Service
-	Notifications     *notifications.Service
-	Backup            BackupService
-	NativeTransfer    NativeTransferService
-	NativeQuality     NativeQualityService
-	PerformancePolicy PerformancePolicyService
-	Listener          PanelListenerService
+	Native         NativeDiscovery
+	NativeJobs     *xkeen.Jobs
+	NativeConfig   *xkeen.ConfigEditor
+	Geodata        *geodatareader.Reader
+	SplitDNS       *splitdns.Service
+	Updates        panelupdate.Service
+	Notifications  *notifications.Service
+	Backup         BackupService
+	NativeTransfer NativeTransferService
+	NativeQuality  NativeQualityService
+	Listener       PanelListenerService
 }
 
 func New(config Config) *Server {
 	if config.StartedAt.IsZero() {
 		config.StartedAt = time.Now().UTC()
 	}
-	return &Server{mutationReady: config.MutationReady, collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, benchmark: config.Benchmark, manual: config.Manual, selection: config.Selection, native: config.Native, nativeJobs: config.NativeJobs, nativeConfig: config.NativeConfig, geodata: config.Geodata, splitDNS: config.SplitDNS, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, nativeTransfer: config.NativeTransfer, nativeQuality: config.NativeQuality, performancePolicy: config.PerformancePolicy, listener: config.Listener, transferPreviewGate: make(chan struct{}, 1)}
+	return &Server{mutationReady: config.MutationReady, collector: config.Collector, auth: config.Auth, nodes: config.Nodes, assets: config.Assets, start: config.StartedAt, manual: config.Manual, selection: config.Selection, native: config.Native, nativeJobs: config.NativeJobs, nativeConfig: config.NativeConfig, geodata: config.Geodata, splitDNS: config.SplitDNS, updates: config.Updates, notifications: config.Notifications, backup: config.Backup, nativeTransfer: config.NativeTransfer, nativeQuality: config.NativeQuality, listener: config.Listener, transferPreviewGate: make(chan struct{}, 1)}
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -165,17 +144,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/v1/session/login", "/api/v1/session/logout", "/api/v1/session",
 		"/api/v1/xkeen",
 		"/api/v1/xkeen/commands", "/api/v1/xkeen/jobs/start", "/api/v1/xkeen/jobs/read", "/api/v1/xkeen/jobs/input", "/api/v1/xkeen/jobs/resize", "/api/v1/xkeen/jobs/cancel", "/api/v1/xkeen/jobs/resolve", "/api/v1/xkeen/config", "/api/v1/xkeen/config/save", "/api/v1/xkeen/config/workspace", "/api/v1/xkeen/config/text", "/api/v1/xkeen/config/draft", "/api/v1/xkeen/config/document", "/api/v1/xkeen/config/example", "/api/v1/xkeen/config/save-set", "/api/v1/xkeen/config/apply", "/api/v1/xkeen/config/inspect", "/api/v1/xkeen/config/restore-saved", "/api/v1/xkeen/config/restore-previous",
-		"/api/v1/geodata", "/api/v1/geodata/query", "/api/v1/status", "/api/v1/nodes", "/api/v1/performance", "/api/v1/config-summary",
+		"/api/v1/geodata", "/api/v1/geodata/query", "/api/v1/status", "/api/v1/nodes", "/api/v1/performance",
 		"/api/v1/dns/split", "/api/v1/dns/split/sync",
 
-		"/api/v1/performance/policy", "/api/v1/performance/policy/preview", "/api/v1/performance/policy/apply", "/api/v1/performance/policy/cancel",
 		"/api/v1/panel/listener", "/api/v1/panel/listener/preview", "/api/v1/panel/listener/apply", "/api/v1/panel/listener/cancel",
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
 		"/api/v1/notifications", "/api/v1/notifications/configure", "/api/v1/notifications/enabled", "/api/v1/notifications/control", "/api/v1/notifications/test", "/api/v1/notifications/clear",
 		"/api/v1/session/password",
 		"/api/v1/performance/quality", "/api/v1/performance/quality/start", "/api/v1/performance/quality/stage", "/api/v1/performance/quality/apply", "/api/v1/performance/quality/inspect",
-		"/api/v1/benchmark/run", "/api/v1/performance/manual-node",
-		"/api/v1/backup/export", "/api/v1/backup/export-secret",
+		"/api/v1/performance/manual-node",
+		"/api/v1/backup/export-secret",
 		"/api/v1/xkeen/transfer/preview", "/api/v1/xkeen/transfer/stage", "/api/v1/xkeen/transfer/cancel",
 
 		"/api/v1/nodes/import/preview", "/api/v1/nodes/replace/preview",
@@ -285,30 +263,6 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.readPerformance(w, r)
-	case "/api/v1/performance/policy":
-		if r.Method != http.MethodGet {
-			methodNotAllowed(w, http.MethodGet)
-			return
-		}
-		s.readPerformancePolicy(w, r)
-	case "/api/v1/performance/policy/preview":
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
-			return
-		}
-		s.previewPerformancePolicy(w, r)
-	case "/api/v1/performance/policy/apply":
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
-			return
-		}
-		s.applyPerformancePolicy(w, r)
-	case "/api/v1/performance/policy/cancel":
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
-			return
-		}
-		s.cancelPerformancePolicy(w, r)
 	case "/api/v1/panel/listener":
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w, http.MethodGet)
@@ -333,30 +287,12 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.cancelPanelListener(w, r)
-	case "/api/v1/config-summary":
-		if r.Method != http.MethodGet {
-			methodNotAllowed(w, http.MethodGet)
-			return
-		}
-		s.readOnly(w, r, func(view controlruntime.View) any { return view.ConfigSummary })
-	case "/api/v1/benchmark/run":
-		if r.Method != http.MethodPost {
-			methodNotAllowed(w, http.MethodPost)
-			return
-		}
-		s.runBenchmark(w, r)
 	case "/api/v1/performance/manual-node":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
 			return
 		}
 		s.runManualNode(w, r)
-	case "/api/v1/backup/export":
-		if r.Method != http.MethodGet {
-			methodNotAllowed(w, http.MethodGet)
-			return
-		}
-		s.exportBackup(w, r)
 	case "/api/v1/backup/export-secret":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
@@ -462,36 +398,6 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) runBenchmark(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.requireSession(w, r)
-	if !ok {
-		return
-	}
-	if !auth.ValidateCSRF(r, session) {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-	if s.benchmark == nil {
-		writeError(w, http.StatusServiceUnavailable, "benchmark unavailable")
-		return
-	}
-	if err := s.benchmark.TriggerBenchmark(); err != nil {
-		if errors.Is(err, c1.ErrBenchmarkBusy) {
-			writeJSON(w, http.StatusConflict, struct {
-				Accepted bool   `json:"accepted"`
-				State    string `json:"state"`
-			}{Accepted: false, State: "busy"})
-			return
-		}
-		writeError(w, http.StatusServiceUnavailable, "benchmark unavailable")
-		return
-	}
-	writeJSON(w, http.StatusAccepted, struct {
-		Accepted bool   `json:"accepted"`
-		State    string `json:"state"`
-	}{Accepted: true, State: "accepted"})
-}
-
 func (s *Server) runManualNode(w http.ResponseWriter, r *http.Request) {
 	session, ok := s.requireSession(w, r)
 	if !ok {
@@ -546,22 +452,6 @@ func writeManualError(w http.ResponseWriter, err error) {
 		Accepted bool   `json:"accepted"`
 		State    string `json:"state"`
 	}{Accepted: false, State: state})
-}
-
-func (s *Server) exportBackup(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireSession(w, r); !ok {
-		return
-	}
-	if s.backup == nil {
-		writeError(w, http.StatusServiceUnavailable, "backup unavailable")
-		return
-	}
-	contents, err := s.backup.Export(r.Context())
-	if err != nil {
-		writeBackupError(w, err)
-		return
-	}
-	writeBackupDownload(w, contents, backup.SafeFilename, backup.BackupMediaType)
 }
 
 func (s *Server) exportSecretBackup(w http.ResponseWriter, r *http.Request) {
@@ -681,9 +571,6 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if s.nodes != nil {
 		s.nodes.Invalidate(session.CSRFToken)
 	}
-	if s.performancePolicy != nil {
-		s.performancePolicy.Invalidate(session.CSRFToken)
-	}
 	if s.listener != nil {
 		s.listener.Invalidate(session.CSRFToken)
 	}
@@ -720,9 +607,6 @@ func (s *Server) replacePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.nativeTransfer != nil {
 		s.nativeTransfer.InvalidateAll()
-	}
-	if s.performancePolicy != nil {
-		s.performancePolicy.InvalidateAll()
 	}
 	if s.listener != nil {
 		s.listener.InvalidateAll()
@@ -1620,186 +1504,6 @@ func (s *Server) readPerformance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.collector.PerformanceSnapshot(r.Context()))
-}
-
-func (s *Server) readPerformancePolicy(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireSession(w, r); !ok {
-		return
-	}
-	if r.URL.RawQuery != "" {
-		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid performance policy request")
-		return
-	}
-	if s.performancePolicy == nil {
-		writePerformancePolicyError(w, performancepolicy.ErrUnavailable)
-		return
-	}
-	projection, err := s.performancePolicy.Read(r.Context())
-	if err != nil {
-		writePerformancePolicyError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, projection)
-}
-
-func (s *Server) previewPerformancePolicy(w http.ResponseWriter, r *http.Request) {
-	session, ok := s.requireSession(w, r)
-	if !ok {
-		return
-	}
-	if !auth.ValidateCSRF(r, session) {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-	if s.performancePolicy == nil {
-		writePerformancePolicyError(w, performancepolicy.ErrUnavailable)
-		return
-	}
-	contents, ok := decodePerformancePolicyBody(w, r)
-	if !ok {
-		return
-	}
-	policy, err := performancepolicy.DecodeRequest(contents)
-	if err != nil {
-		writePerformancePolicyError(w, err)
-		return
-	}
-	preview, err := s.performancePolicy.Preview(r.Context(), session.CSRFToken, policy)
-	if err != nil {
-		writePerformancePolicyError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, preview)
-}
-
-func (s *Server) applyPerformancePolicy(w http.ResponseWriter, r *http.Request) {
-	s.performancePolicyTokenAction(w, r, true)
-}
-
-func (s *Server) cancelPerformancePolicy(w http.ResponseWriter, r *http.Request) {
-	s.performancePolicyTokenAction(w, r, false)
-}
-
-func (s *Server) performancePolicyTokenAction(w http.ResponseWriter, r *http.Request, apply bool) {
-	session, ok := s.requireSession(w, r)
-	if !ok {
-		return
-	}
-	if !auth.ValidateCSRF(r, session) {
-		writeError(w, http.StatusForbidden, "forbidden")
-		return
-	}
-	if s.performancePolicy == nil {
-		writePerformancePolicyError(w, performancepolicy.ErrUnavailable)
-		return
-	}
-	contents, ok := decodePerformancePolicyBody(w, r)
-	if !ok {
-		return
-	}
-	token, err := decodePerformancePolicyToken(contents)
-	if err != nil {
-		writePerformancePolicyError(w, performancepolicy.ErrInvalidRequest)
-		return
-	}
-	if apply {
-		result, err := s.performancePolicy.Apply(r.Context(), session.CSRFToken, token)
-		if err != nil {
-			writePerformancePolicyError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, result)
-		return
-	}
-	s.performancePolicy.Cancel(session.CSRFToken, token)
-	writeJSON(w, http.StatusOK, struct {
-		Canceled bool `json:"canceled"`
-	}{Canceled: true})
-}
-
-func decodePerformancePolicyBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
-	contentTypes := r.Header.Values("Content-Type")
-	if len(contentTypes) != 1 || strings.TrimSpace(contentTypes[0]) != "application/json" {
-		writeCodedError(w, http.StatusUnsupportedMediaType, "invalid-request", "unsupported media type")
-		return nil, false
-	}
-	if r.URL.RawQuery != "" {
-		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid performance policy request")
-		return nil, false
-	}
-	if r.ContentLength > maxPerformancePolicyBody {
-		writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
-		return nil, false
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxPerformancePolicyBody)
-	defer r.Body.Close()
-	contents, err := io.ReadAll(r.Body)
-	if err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			writeCodedError(w, http.StatusRequestEntityTooLarge, "invalid-request", "request too large")
-		} else {
-			writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid performance policy request")
-		}
-		return nil, false
-	}
-	return contents, true
-}
-
-func decodePerformancePolicyToken(contents []byte) (string, error) {
-	decoder := json.NewDecoder(bytes.NewReader(contents))
-	token, err := decoder.Token()
-	if err != nil {
-		return "", err
-	}
-	if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
-		return "", performancepolicy.ErrInvalidRequest
-	}
-	previewToken := ""
-	seen := false
-	for decoder.More() {
-		key, err := decoder.Token()
-		if err != nil {
-			return "", err
-		}
-		name, ok := key.(string)
-		if !ok || name != "previewToken" || seen {
-			return "", performancepolicy.ErrInvalidRequest
-		}
-		seen = true
-		if err := decoder.Decode(&previewToken); err != nil {
-			return "", err
-		}
-	}
-	if _, err := decoder.Token(); err != nil {
-		return "", err
-	}
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); err != io.EOF || !seen || previewToken == "" {
-		return "", performancepolicy.ErrInvalidRequest
-	}
-	return previewToken, nil
-}
-
-func writePerformancePolicyError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, performancepolicy.ErrInvalidRequest):
-		writeCodedError(w, http.StatusBadRequest, "invalid-request", "invalid performance policy request")
-	case errors.Is(err, performancepolicy.ErrPreviewExpired):
-		writeCodedError(w, http.StatusConflict, "preview-expired", "performance policy preview expired or invalid")
-	case errors.Is(err, performancepolicy.ErrPreviewStale):
-		writeCodedError(w, http.StatusConflict, "preview-stale", "performance policy preview is stale")
-	case errors.Is(err, performancepolicy.ErrBusy):
-		writeCodedError(w, http.StatusConflict, "busy", "performance policy is busy")
-	case errors.Is(err, performancepolicy.ErrSave):
-		writeCodedError(w, http.StatusInternalServerError, "save-failed", "performance policy could not be saved")
-	case errors.Is(err, performancepolicy.ErrDriftDetected):
-		writeCodedError(w, http.StatusConflict, "drift-detected", "performance policy authority drift detected")
-	case errors.Is(err, performancepolicy.ErrUnavailable):
-		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "performance policy unavailable")
-	default:
-		writeCodedError(w, http.StatusServiceUnavailable, "unavailable", "performance policy unavailable")
-	}
 }
 
 func (s *Server) requireSession(w http.ResponseWriter, r *http.Request) (auth.Session, bool) {

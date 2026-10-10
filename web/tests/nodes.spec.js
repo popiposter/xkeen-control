@@ -195,7 +195,6 @@ async function prepare(page) {
         if (state.manual.state === 'running') state.manualPolls++
         return json(route, { nodes: [], manual: state.manual })
       }
-      case '/api/v1/config-summary': return json(route, { routing: {}, dns: {}, observatory: {} })
       case '/api/v1/update': return json(route, { channel: 'stable', installed: { version: '0.2.0' } })
       case '/api/v1/performance/manual-node': {
         state.manualPolls = 0
