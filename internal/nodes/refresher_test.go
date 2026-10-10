@@ -561,3 +561,39 @@ func TestRequestedSubscriptionRefreshUsesOneQueueAndEnabledEntries(t *testing.T)
 		t.Fatal("disabled subscription fetched")
 	}
 }
+
+// TASK-007: an automatic refresh signals one review for a partial and for a
+// complete subscription change, and none for an unchanged body.
+func TestAutomaticRefreshSignalsOnlyRealSubscriptionChanges(t *testing.T) {
+	registry := refresherRegistry(t, true)
+	fetcher := &countingSubscriptionFetcher{body: []byte(syntheticProfile)}
+	manager, store, _ := testManager(t, &registry, fetcher)
+	manager.managedCoordinator = &managedRefreshCoordinator{}
+	calls := 0
+	manager.SetRuntimeChangeHook(func() { calls++ })
+	r := NewSubscriptionRefresher(manager)
+	if err := r.reconcile(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		name  string
+		body  string
+		calls int
+		nodes int
+	}{
+		{"unchanged", syntheticProfile, 0, 1},
+		{"partial: one node added", syntheticProfile + "\n" + syntheticProfileTwo, 1, 2},
+		{"unchanged again", syntheticProfile + "\n" + syntheticProfileTwo, 1, 2},
+		{"complete: every node replaced", syntheticXHTTPFinalMaskProfile, 2, -1},
+	} {
+		fetcher.body = []byte(step.body)
+		r.runAttempt(context.Background(), "sub-12345678")
+		current, err := store.Load()
+		if err != nil {
+			t.Fatal(step.name, err)
+		}
+		if calls != step.calls || step.nodes >= 0 && len(current.Nodes) != step.nodes {
+			t.Fatalf("%s: signals=%d nodes=%d, want %d/%d (status %+v)", step.name, calls, len(current.Nodes), step.calls, step.nodes, r.AutoRefreshStatuses()["sub-12345678"])
+		}
+	}
+}

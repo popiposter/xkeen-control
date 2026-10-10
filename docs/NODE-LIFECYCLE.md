@@ -106,7 +106,9 @@ one recovery Apply runs per hour, so a failing provisional pool cannot become a
 restart loop. An active manual override defers recovery. If nothing answers,
 the configuration is left intact and proxied destinations keep the block
 fallback. The next complete automatic review replaces a provisional pool with its
-measured top six and clears the label. The Nodes table labels nodes without an
+measured top six and clears the label. An undersized pool (for example an
+imported five-member pool) grows to six measured members when the review keeps
+every incumbent (`pool-filled`); dropping a healthy member still needs the 15% margin. The Nodes table labels nodes without an
 Observatory record "Not monitored" rather than failed.
 Eligible nodes need fresh, alive native observations within the configured finite
 RTT criterion. Manual tests additionally require RTT no more than twice the

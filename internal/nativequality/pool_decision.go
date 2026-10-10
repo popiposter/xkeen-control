@@ -86,6 +86,21 @@ func poolDecision(result c1.AdaptiveResult, costs []c1.NativeQualityCost, active
 	for _, tag := range selected {
 		newPool[tag] = true
 	}
+	// An undersized pool (an imported legacy pool, or a partial pool from a
+	// review with too few qualified nodes) grows towards six when more
+	// measured nodes qualify, keeping every incumbent (REQ-002).
+	if len(active) < 6 && len(selected) > len(active) {
+		keepsAll := true
+		for _, tag := range active {
+			if !newPool[tag] {
+				keepsAll = false
+				break
+			}
+		}
+		if keepsAll {
+			return "pool-filled"
+		}
+	}
 	// A full, entirely healthy pool is replaced only on at least six valid
 	// speed results; a smaller sample cannot rank a complete alternative.
 	if len(active) >= 6 && len(valid) < 6 {
