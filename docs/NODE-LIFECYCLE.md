@@ -107,7 +107,7 @@ and orders eligible nodes by its RTT-deviation metric multiplied by sqrt(cost),
 with average RTT and health tie-breaks. Ordinary Observatory supplies delay as that
 metric; burst HealthPing data, if configured, supplies its deviation. Lowest eligible
 candidate handles new connections. This is native weighted choice, not a panel
-hysteresis/dwell loop; old supervisor constants do not govern this operating mode.
+hysteresis/dwell loop; the never-started C.1 supervisor and its constants were removed (#199 Phase 0).
 
 After a failed probe, future connections use another eligible node. Existing TCP
 sessions cannot be migrated; applications reconnect. If all candidates are unusable,

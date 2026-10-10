@@ -2,34 +2,10 @@ package c1
 
 import (
 	"context"
-	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
 
-// NativeQualityEvidence retains unique upstream observations in the existing
-// policy engine. It makes no routing call and starts no supervisor/poller.
-func (c *Coordinator) NativeQualityEvidence(snapshot xrayapi.Snapshot) map[string]AdaptiveCandidateInput {
-	result := map[string]AdaptiveCandidateInput{}
-	if c == nil || c.supervisor == nil || !snapshot.ObservatoryReachable {
-		return result
-	}
-	s := c.supervisor
-	s.policyMu.Lock()
-	defer s.policyMu.Unlock()
-	now := s.clock()
-	s.engine.Observe(now, adaptiveObservations(snapshot))
-	cutoff := now.Add(-s.policy.LatencyWindow)
-	for tag, samples := range s.engine.samples {
-		median, count, latest := adaptiveRTTEvidence(samples, cutoff, now)
-		if count < 3 {
-			continue
-		}
-		result[tag] = AdaptiveCandidateInput{Tag: tag, RTTMS: median, Samples: count, LatestAt: latest, HealthPenalty: adaptiveWindowPenalty(samples, cutoff, now, median)}
-	}
-	return result
-}
-
 // MeasureNativeQuality uses the existing diagnostic lifecycle and fixed bounded
-// transfer runner. It does not invoke the override-based adaptive supervisor.
+// transfer runner.
 func (c *Coordinator) MeasureNativeQuality(ctx context.Context, generation AdaptiveGeneration, publish func(AdaptivePerformanceStatus)) (AdaptiveResult, error) {
 	c.mu.Lock()
 	runner := c.adaptiveRunner

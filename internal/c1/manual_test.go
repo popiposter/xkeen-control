@@ -319,11 +319,11 @@ func (b *blockingManualTransport) Upload(ctx context.Context, _ int64) (ManualTr
 	return ManualTransfer{}, ctx.Err()
 }
 
-func TestCoordinatorManualUsesLegacyPerformanceSingleFlightAndApplyCancellation(t *testing.T) {
+func TestCoordinatorManualIsSingleFlightAndApplyCancelsIt(t *testing.T) {
 	api := &benchmarkProbeAPI{}
 	blocking := &blockingManualTransport{started: make(chan struct{})}
 	runner := &ManualNodeRunner{Probe: NewProbeRouter(api), Transport: blocking}
-	coordinator := NewCoordinator(DefaultPolicy(), nil, &BenchmarkRunner{}, func(context.Context) []NodeState { return []NodeState{validManualTestNode()} })
+	coordinator := NewCoordinator(DefaultPolicy(), func(context.Context) []NodeState { return []NodeState{validManualTestNode()} })
 	coordinator.SetManualRunner(runner)
 	if err := coordinator.TriggerManualNode(validManualTestNode().ID); err != nil {
 		t.Fatal(err)
@@ -332,8 +332,8 @@ func TestCoordinatorManualUsesLegacyPerformanceSingleFlightAndApplyCancellation(
 	if status := coordinator.ManualSnapshot(); status.State != "running" || status.TargetTag != validManualTestNode().Tag {
 		t.Fatalf("manual running status = %+v", status)
 	}
-	if err := coordinator.TriggerBenchmark(); !errors.Is(err, ErrBenchmarkBusy) {
-		t.Fatalf("legacy benchmark admission beside manual = %v", err)
+	if err := coordinator.TriggerManualNode(validManualTestNode().ID); !errors.Is(err, ErrManualBusy) {
+		t.Fatalf("second manual admission beside manual = %v", err)
 	}
 	if _, err := coordinator.TryBeginManagedApply(); !errors.Is(err, ErrLifecycleBusy) {
 		t.Fatalf("managed apply admission beside manual = %v", err)
@@ -359,7 +359,7 @@ func TestCoordinatorManualRechecksEnabledCanonicalTargetBeforeProbe(t *testing.T
 	transport := &manualTransportStub{stageDuration: 300 * time.Millisecond, failedDownload: -1}
 	runner := &ManualNodeRunner{Probe: NewProbeRouter(api), Transport: transport}
 	nodes := []NodeState{{ID: "node-00000001", Tag: "proxy-node-00000001", Enabled: false}}
-	coordinator := NewCoordinator(DefaultPolicy(), nil, &BenchmarkRunner{}, func(context.Context) []NodeState { return nodes })
+	coordinator := NewCoordinator(DefaultPolicy(), func(context.Context) []NodeState { return nodes })
 	coordinator.SetManualRunner(runner)
 	if err := coordinator.TriggerManualNode(nodes[0].ID); !errors.Is(err, ErrManualInvalidTarget) {
 		t.Fatalf("disabled target admission = %v", err)
@@ -375,7 +375,7 @@ func TestCoordinatorManualRechecksEnabledCanonicalTargetBeforeProbe(t *testing.T
 func TestCoordinatorManualCleanupFailureBlocksUnsafeReuse(t *testing.T) {
 	api := &benchmarkProbeAPI{failRemove: true}
 	transport := &manualTransportStub{stageDuration: 300 * time.Millisecond, failedDownload: -1}
-	coordinator := NewCoordinator(DefaultPolicy(), nil, &BenchmarkRunner{}, func(context.Context) []NodeState { return []NodeState{validManualTestNode()} })
+	coordinator := NewCoordinator(DefaultPolicy(), func(context.Context) []NodeState { return []NodeState{validManualTestNode()} })
 	coordinator.SetManualRunner(&ManualNodeRunner{Probe: NewProbeRouter(api), Transport: transport})
 	if err := coordinator.TriggerManualNode(validManualTestNode().ID); err != nil {
 		t.Fatal(err)

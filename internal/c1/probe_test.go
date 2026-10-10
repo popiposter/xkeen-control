@@ -3,11 +3,8 @@ package c1
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
@@ -77,38 +74,5 @@ func TestProbeCleanupFailureBlocksNextProbeUntilReconciled(t *testing.T) {
 	api.failRemove = false
 	if err := probe.Reconcile(context.Background()); err != nil || probe.Blocked() {
 		t.Fatalf("reconcile = %v blocked=%v", err, probe.Blocked())
-	}
-}
-
-func TestBenchmarkRunsAllEnabledNodesSequentiallyAndWritesOneSnapshot(t *testing.T) {
-	api := &benchmarkProbeAPI{}
-	probe := NewProbeRouter(api)
-	statePath := filepath.Join(t.TempDir(), "benchmark.json")
-	policy := DefaultPolicy()
-	policy.TargetPayloadBytes = 4 * MiB
-	policy.TotalBudgetBytes = 20 * MiB
-	runner := NewBenchmarkRunner(policy, probe, BenchmarkStore{Path: statePath})
-	var order []string
-	runner.HTTPDo = func(_ context.Context, _ string, proxy string, payload int64, timeout time.Duration) (int64, time.Duration, error) {
-		if proxy != ProbeAddress || payload != 4*MiB || timeout != DefaultPerNodeTimeout {
-			t.Fatalf("sample policy = proxy %q payload %d timeout %s", proxy, payload, timeout)
-		}
-		order = append(order, api.adds[len(order)].OutboundTag)
-		return 1024, time.Second, nil
-	}
-	nodes := []NodeState{{Tag: "proxy-node-c", Enabled: true}, {Tag: "proxy-node-a", Enabled: true}, {Tag: "proxy-node-b", Enabled: true}, {Tag: "proxy-disabled", Enabled: false}}
-	result := runner.Run(context.Background(), nodes, "proxy-node-a")
-	if result.ResultClass != "completed" || !result.SwitchAllowed || result.EligibleNodes != 3 || result.ValidSamples != 3 || result.AggregateBytes != 3072 || !result.CurrentValid {
-		t.Fatalf("benchmark result = %+v", result)
-	}
-	if len(order) != 3 || order[0] != "proxy-node-a" || order[1] != "proxy-node-b" || order[2] != "proxy-node-c" {
-		t.Fatalf("benchmark order = %v", order)
-	}
-	if _, err := os.Stat(statePath); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := (BenchmarkStore{Path: statePath}).Load()
-	if err != nil || snapshot.ValidSamples != 3 || snapshot.AggregateBytes != 3072 {
-		t.Fatalf("snapshot = %+v, %v", snapshot, err)
 	}
 }

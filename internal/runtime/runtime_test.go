@@ -101,35 +101,6 @@ func TestCollectorBuildsUnifiedReadOnlyView(t *testing.T) {
 	}
 }
 
-func TestCollectorProjectsPersistedControlPlaneThroughputIntoNodeList(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-	tag := "proxy-main-throughput"
-	benchmarkPath := t.TempDir() + "/benchmark.json"
-	store := c1.BenchmarkStore{Path: benchmarkPath}
-	if err := store.Save(c1.BenchmarkSnapshot{
-		CompletedAt:  now,
-		ResultClass:  "completed",
-		Samples:      map[string]c1.ThroughputStatus{tag: {Valid: true, BytesPerSecond: 10240}},
-		ValidSamples: 1,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	coordinator := c1.NewCoordinator(c1.DefaultPolicy(), nil, c1.NewBenchmarkRunner(c1.DefaultPolicy(), nil, store), nil)
-	collector := NewCollector("test", now, Dependencies{
-		Xray: fakeXray{snapshot: xrayapi.Snapshot{
-			APIReachable: true, RoutingReachable: true, ObservatoryReachable: true,
-			Balancer:       xrayapi.BalancerState{NativeSelected: tag},
-			OutboundHealth: []xrayapi.OutboundHealth{{Tag: tag, Alive: true}},
-		}, probe: true},
-		C1:           coordinator,
-		OutboundTags: func(string) ([]string, error) { return []string{tag}, nil },
-	})
-	view := collector.Snapshot(context.Background())
-	if len(view.Nodes) != 1 || view.Nodes[0].ThroughputKBps != 10 || view.Nodes[0].LastBenchmarkAt != now.Format(time.RFC3339) {
-		t.Fatalf("control-plane throughput projection = %+v", view.Nodes)
-	}
-}
-
 func TestCollectorProjectsLifecycleOnlyWhenCoordinatorAvailable(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	withoutCoordinator := NewCollector("test", now, Dependencies{OutboundTags: func(string) ([]string, error) { return nil, nil }})
@@ -145,7 +116,7 @@ func TestCollectorProjectsLifecycleOnlyWhenCoordinatorAvailable(t *testing.T) {
 		t.Fatalf("unavailable lifecycle projection was serialized: %s", encoded)
 	}
 
-	coordinator := c1.NewCoordinator(c1.DefaultPolicy(), nil, nil, nil)
+	coordinator := c1.NewCoordinator(c1.DefaultPolicy(), nil)
 	coordinator.EnterMaintenance()
 	withCoordinator := NewCollector("test", now, Dependencies{C1: coordinator, OutboundTags: func(string) ([]string, error) { return nil, nil }})
 	view = withCoordinator.Snapshot(context.Background())

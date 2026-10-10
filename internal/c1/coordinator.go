@@ -7,126 +7,65 @@ import (
 	"time"
 )
 
-var ErrBenchmarkBusy = errors.New("benchmark is already running or lifecycle is busy")
 var ErrLifecycleBusy = errors.New("runtime lifecycle is busy")
 
-const ExplicitBenchmarkSchedule = "explicit-only"
-
-type BenchmarkStatus struct {
-	Enabled             bool                        `json:"enabled"`
-	Running             bool                        `json:"running"`
-	State               string                      `json:"state"`
-	LastResult          string                      `json:"lastResult"`
-	LastCompletedAt     time.Time                   `json:"lastCompletedAt"`
-	LastEligibleNodes   int                         `json:"lastEligibleNodes"`
-	LastValidSamples    int                         `json:"lastValidSamples"`
-	LastAggregateBytes  int64                       `json:"lastAggregateBytes"`
-	LastDurationMS      int64                       `json:"lastDurationMs"`
-	PayloadBytes        int64                       `json:"payloadBytes"`
-	TotalBudgetBytes    int64                       `json:"totalBudgetBytes"`
-	MinimumPayloadBytes int64                       `json:"minimumPayloadBytes"`
-	PerNodeTimeoutMS    int64                       `json:"perNodeTimeoutMs"`
-	MaximumWallSeconds  int64                       `json:"maximumWallSeconds"`
-	Schedule            string                      `json:"schedule"`
-	NextRunAt           time.Time                   `json:"nextRunAt"`
-	Generation          uint64                      `json:"generation"`
-	CleanupPending      bool                        `json:"cleanupPending"`
-	SwitchAllowed       bool                        `json:"switchAllowed"`
-	Samples             map[string]ThroughputStatus `json:"samples,omitempty"`
-}
-
-type ThroughputStatus struct {
-	Valid          bool    `json:"valid"`
-	BytesPerSecond float64 `json:"bytesPerSecond"`
-}
+// NodeReader returns the current registry projection used to resolve targets.
+type NodeReader func(context.Context) []NodeState
 
 type Status struct {
-	Selection SelectionStatus  `json:"selection"`
-	Benchmark BenchmarkStatus  `json:"benchmark"`
 	Lifecycle *LifecycleStatus `json:"lifecycle,omitempty"`
 }
 
 // LifecycleStatus is the compact read-only projection used by the UI. It is
 // deliberately derived under Coordinator.mu rather than becoming another
 // operation owner. Applying includes admitted waiters and the active lifecycle
-// mutation; an ordinary benchmark is intentionally not applying.
+// mutation; a performance measurement is intentionally not applying.
 type LifecycleStatus struct {
 	Maintenance bool `json:"maintenance"`
 	Applying    bool `json:"applying"`
 }
 
+// Coordinator owns the single panel lifecycle token shared by node/config
+// Apply, startup recovery, the manual one-node diagnostic and native quality
+// measurement. It starts no background work of its own.
 type Coordinator struct {
-	policy                  Policy
-	performancePolicy       PerformancePolicy
-	supervisor              *Supervisor
-	runner                  *BenchmarkRunner
-	manualRunner            *ManualNodeRunner
-	adaptiveRunner          *AdaptiveRunner
-	nodes                   NodeReader
-	lifecycle               chan struct{}
-	supervisorWake          chan struct{}
-	supervisorPolicyChanged chan struct{}
-	adaptivePolicyChanged   chan struct{}
-	adaptiveEvidenceChanged chan struct{}
+	policy         Policy
+	manualRunner   *ManualNodeRunner
+	adaptiveRunner *AdaptiveRunner
+	nodes          NodeReader
+	lifecycle      chan struct{}
 
-	mu              sync.Mutex
+	// evidence keeps RAM-only Observatory RTT history for native quality
+	// review; evidenceMu guards it separately from the lifecycle state.
+	evidenceMu sync.Mutex
+	evidence   *PolicyEngine
+
+	mu sync.Mutex
+	// benchmarkCancel/Done are the shared performance owner for the manual
+	// diagnostic and native quality measurement.
 	benchmarkCancel context.CancelFunc
 	benchmarkDone   chan struct{}
-	// benchmarkCancel/Done are the shared Coordinator performance owner for
-	// legacy-full, manual-node and adaptive modes. The historical field names
-	// remain for source compatibility with the C.1 tests and state projection.
-	performanceMode     string
-	supervisorCancel    context.CancelFunc
-	supervisorDone      chan struct{}
-	benchmark           BenchmarkStatus
-	manual              ManualPerformanceStatus
-	adaptive            AdaptivePerformanceStatus
-	adaptiveGeneration  uint64
-	adaptiveInitialDone bool
-	applyWaiters        int
-	applyActive         bool
-	// maintenance is set when an interrupted appliance import cannot yet prove
+	performanceMode string
+	manual          ManualPerformanceStatus
+	adaptive        AdaptivePerformanceStatus
+	applyWaiters    int
+	applyActive     bool
+	// maintenance is set when an interrupted transaction cannot yet prove
 	// recovery. It is deliberately process-wide for every lifecycle mutation;
 	// only BeginRecovery may enter while it is set.
 	maintenance bool
 	// Test-only synchronization point used to force the Apply admission
 	// interleaving covered by coordinator concurrency regressions.
 	beforeApplyAcquire func()
-	// Test-only synchronization point used to pause the final adaptive
-	// ApplyAdaptive/no-op decision while the Coordinator still owns the
-	// performance lifecycle.
-	beforeAdaptiveDecision func()
-	started                bool
-	stop                   context.CancelFunc
-	clock                  func() time.Time
-	wait                   sync.WaitGroup
+	clock              func() time.Time
 }
 
-func NewCoordinator(policy Policy, supervisor *Supervisor, runner *BenchmarkRunner, nodes NodeReader) *Coordinator {
+func NewCoordinator(policy Policy, nodes NodeReader) *Coordinator {
 	policy = policy.normalized()
-	c := &Coordinator{policy: policy, performancePolicy: DefaultPerformancePolicy(), supervisor: supervisor, runner: runner, nodes: nodes, lifecycle: make(chan struct{}, 1), supervisorWake: make(chan struct{}, 1), supervisorPolicyChanged: make(chan struct{}, 1), adaptivePolicyChanged: make(chan struct{}, 1), adaptiveEvidenceChanged: make(chan struct{}, 1), clock: func() time.Time { return time.Now().UTC() }}
+	c := &Coordinator{policy: policy, nodes: nodes, lifecycle: make(chan struct{}, 1), evidence: NewPolicyEngine(policy), clock: func() time.Time { return time.Now().UTC() }}
 	c.lifecycle <- struct{}{}
-	c.benchmark = BenchmarkStatus{Enabled: policy.Enabled, State: "idle", Schedule: ExplicitBenchmarkSchedule, TotalBudgetBytes: policy.TotalBudgetBytes, MinimumPayloadBytes: policy.MinimumPayloadBytes, PerNodeTimeoutMS: policy.PerNodeTimeout.Milliseconds(), Samples: make(map[string]ThroughputStatus)}
 	c.manual = idleManualPerformanceStatus()
 	c.adaptive = idleAdaptivePerformanceStatus()
-	if runner != nil {
-		c.adaptiveRunner = NewAdaptiveRunner(runner.Probe)
-	}
-	if runner != nil && runner.Store.Path != "" {
-		if snapshot, err := runner.Store.Load(); err == nil && snapshot.ResultClass != "" {
-			c.benchmark.LastResult = snapshot.ResultClass
-			c.benchmark.State = snapshot.ResultClass
-			c.benchmark.LastCompletedAt = snapshot.CompletedAt
-			c.benchmark.LastEligibleNodes = snapshot.EligibleNodes
-			c.benchmark.LastValidSamples = snapshot.ValidSamples
-			c.benchmark.LastAggregateBytes = snapshot.AggregateBytes
-			c.benchmark.LastDurationMS = snapshot.DurationMS
-			c.benchmark.PayloadBytes = snapshot.PayloadBytes
-			c.benchmark.PerNodeTimeoutMS = snapshot.PerNodeTimeoutMS
-			c.benchmark.Generation = snapshot.Generation
-			c.benchmark.Samples = snapshot.Samples
-		}
-	}
 	return c
 }
 
@@ -184,60 +123,18 @@ func (c *Coordinator) now() time.Time {
 	return clock().UTC()
 }
 
-func (c *Coordinator) Start(parent context.Context) {
-	if c == nil {
-		return
-	}
-	if parent == nil {
-		parent = context.Background()
-	}
-	ctx, cancel := context.WithCancel(parent)
-	c.mu.Lock()
-	if c.started {
-		c.mu.Unlock()
-		cancel()
-		return
-	}
-	c.started = true
-	c.stop = cancel
-	start := c.clock()
-	if start.IsZero() {
-		start = time.Now().UTC()
-	}
-	c.adaptive.NextRunAt = start.UTC().Add(c.performancePolicy.adaptiveCadence())
-	c.mu.Unlock()
-	if c.supervisor != nil {
-		c.wait.Add(1)
-		go func() {
-			defer c.wait.Done()
-			c.supervisorLoop(ctx)
-		}()
-	}
-	c.wait.Add(1)
-	go func() {
-		defer c.wait.Done()
-		c.schedule(ctx)
-	}()
-}
-
+// Stop cancels an active manual diagnostic or quality measurement and waits a
+// bounded time for its cleanup.
 func (c *Coordinator) Stop() {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
-	stop := c.stop
 	cancel := c.benchmarkCancel
 	done := c.benchmarkDone
-	supervisorCancel := c.supervisorCancel
 	c.mu.Unlock()
-	if stop != nil {
-		stop()
-	}
 	if cancel != nil {
 		cancel()
-	}
-	if supervisorCancel != nil {
-		supervisorCancel()
 	}
 	if done != nil {
 		select {
@@ -245,41 +142,6 @@ func (c *Coordinator) Stop() {
 		case <-time.After(5 * time.Second):
 		}
 	}
-	c.wait.Wait()
-}
-
-// TriggerBenchmark accepts a typed full-run request and returns immediately.
-// The work is single-flight and always uses the fixed repository policy.
-func (c *Coordinator) TriggerBenchmark() error {
-	if c == nil || c.runner == nil || !c.policy.Enabled {
-		return errors.New("benchmark unavailable")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	c.mu.Lock()
-	// Apply admission and benchmark ownership are decided under the same
-	// mutex. Once an Apply caller has entered BeginApply, no benchmark may
-	// acquire the lifecycle token in the gap before Apply starts waiting for
-	// it.
-	if c.maintenance || c.applyWaiters > 0 || c.applyActive || c.benchmarkCancel != nil {
-		c.mu.Unlock()
-		cancel()
-		return ErrBenchmarkBusy
-	}
-	select {
-	case <-c.lifecycle:
-	default:
-		c.mu.Unlock()
-		cancel()
-		return ErrBenchmarkBusy
-	}
-	c.benchmarkCancel, c.benchmarkDone = cancel, done
-	c.performanceMode = "legacy-full"
-	c.benchmark.Running = true
-	c.benchmark.State = "running"
-	c.mu.Unlock()
-	go c.runBenchmark(ctx, done)
-	return nil
 }
 
 // TriggerManualNode admits one safe node ID into the same performance
@@ -408,293 +270,6 @@ func (c *Coordinator) finishManualAdmission(cancel context.CancelFunc, done chan
 	c.lifecycle <- token
 }
 
-func (c *Coordinator) runBenchmark(ctx context.Context, done chan struct{}) {
-	defer func() {
-		c.mu.Lock()
-		c.benchmarkCancel = nil
-		c.benchmarkDone = nil
-		c.performanceMode = ""
-		c.benchmark.Running = false
-		c.mu.Unlock()
-		close(done)
-		c.lifecycle <- struct{}{}
-	}()
-	nodes := []NodeState(nil)
-	if c.nodes != nil {
-		nodes = c.nodes(ctx)
-	}
-	current := ""
-	if c.supervisor != nil {
-		current = c.supervisor.currentTarget()
-	}
-	result := c.runner.Run(ctx, nodes, current)
-	// The explicit legacy run remains a compatibility diagnostic and snapshot
-	// writer. It is no longer allowed to select a healthy target; adaptive is
-	// the sole quality-switch path.
-	if c.supervisor != nil {
-		_ = c.supervisor.ApplyBenchmark(ctx, result)
-	}
-	c.mu.Lock()
-	c.benchmark.LastResult = result.ResultClass
-	c.benchmark.State = result.ResultClass
-	c.benchmark.LastCompletedAt = result.CompletedAt
-	c.benchmark.LastEligibleNodes = result.EligibleNodes
-	c.benchmark.LastValidSamples = result.ValidSamples
-	c.benchmark.LastAggregateBytes = result.AggregateBytes
-	c.benchmark.LastDurationMS = result.Duration.Milliseconds()
-	c.benchmark.PayloadBytes = result.PayloadBytes
-	c.benchmark.MaximumWallSeconds = int64(result.MaximumWallTime.Seconds())
-	c.benchmark.Generation = result.Generation
-	c.benchmark.CleanupPending = result.CleanupPending
-	c.benchmark.SwitchAllowed = false
-	c.benchmark.Samples = throughputStatuses(result.Samples)
-	c.mu.Unlock()
-}
-
-func throughputStatuses(samples map[string]ThroughputSample) map[string]ThroughputStatus {
-	result := make(map[string]ThroughputStatus, len(samples))
-	for tag, sample := range samples {
-		result[tag] = ThroughputStatus{Valid: sample.Valid, BytesPerSecond: sample.BytesPerSecond}
-	}
-	return result
-}
-
-// runScheduledAdaptive is the only automatic performance admission path. It
-// acquires the same Coordinator performance token used by legacy-full and
-// manual-node, and skips without transfer when operator/lifecycle/performance
-// ownership is already active.
-func (c *Coordinator) runScheduledAdaptive(parent context.Context) {
-	c.runAdaptiveAdmission(parent, false)
-}
-
-func (c *Coordinator) runAdaptiveAdmission(parent context.Context, initialOnly bool) {
-	if c == nil {
-		return
-	}
-	if parent == nil {
-		parent = context.Background()
-	}
-	c.mu.Lock()
-	if initialOnly && c.adaptiveInitialDone {
-		c.mu.Unlock()
-		return
-	}
-	if !c.policy.Enabled || c.supervisor == nil || c.adaptiveRunner == nil {
-		c.setAdaptiveSkippedLocked(AdaptiveReasonUnavailable)
-		c.mu.Unlock()
-		return
-	}
-	if c.maintenance || c.applyWaiters > 0 || c.applyActive || c.benchmarkCancel != nil {
-		c.setAdaptiveSkippedLocked(AdaptiveReasonBusy)
-		c.mu.Unlock()
-		return
-	}
-	select {
-	case token := <-c.lifecycle:
-		ctx, cancel := context.WithCancel(parent)
-		done := make(chan struct{})
-		c.adaptiveGeneration++
-		generation := c.adaptiveGeneration
-		started := c.clock()
-		if started.IsZero() {
-			started = time.Now().UTC()
-		}
-		c.benchmarkCancel, c.benchmarkDone = cancel, done
-		c.performanceMode = AdaptiveMode
-		c.adaptive = AdaptivePerformanceStatus{
-			State:      "running",
-			NextRunAt:  c.adaptive.NextRunAt,
-			StartedAt:  started.UTC(),
-			Generation: generation,
-		}
-		runner := c.adaptiveRunner
-		supervisor := c.supervisor
-		c.mu.Unlock()
-		go c.runAdaptive(ctx, done, token, generation, runner, supervisor)
-	default:
-		c.setAdaptiveSkippedLocked(AdaptiveReasonBusy)
-		c.mu.Unlock()
-	}
-}
-
-func (c *Coordinator) runAdaptive(ctx context.Context, done chan struct{}, token struct{}, generationID uint64, runner *AdaptiveRunner, supervisor *Supervisor) {
-	defer func() {
-		c.mu.Lock()
-		if c.benchmarkDone == done {
-			c.benchmarkCancel = nil
-			c.benchmarkDone = nil
-			c.performanceMode = ""
-		}
-		c.mu.Unlock()
-		close(done)
-		c.lifecycle <- token
-	}()
-
-	generation, skipReason := supervisor.PrepareAdaptiveGeneration(ctx, generationID)
-	if skipReason != "" {
-		c.setAdaptiveSkipped(done, skipReason)
-		return
-	}
-	// Consume the initial opportunity before any transfer, including a failed
-	// or cancelled generation. Insufficient evidence and busy admission never
-	// reach this point; retries only come from existing supervisor ticks.
-	c.mu.Lock()
-	initial := !c.adaptiveInitialDone
-	c.adaptiveInitialDone = true
-	if initial {
-		c.adaptive.NextRunAt = generation.StartedAt.Add(c.performancePolicy.adaptiveCadence())
-	}
-	c.mu.Unlock()
-	if initial {
-		notifyPolicyChange(c.adaptivePolicyChanged)
-	}
-	c.updateAdaptiveStatus(done, AdaptivePerformanceStatus{
-		State:          "running",
-		StartedAt:      generation.StartedAt,
-		Generation:     generation.Generation,
-		CurrentTarget:  generation.CurrentTarget,
-		ShortlistCount: len(generation.Candidates),
-	})
-	result := runner.Run(ctx, generation, func(progress AdaptivePerformanceStatus) {
-		// The runner has finished measuring, but the generation is not
-		// terminal until ApplyAdaptive has made the final guarded selection
-		// decision. Keep the public projection active across that boundary.
-		if progress.State == "completed" {
-			progress.State = "running"
-			progress.CompletedAt = time.Time{}
-			progress.SelectedTarget = ""
-			progress.SwitchApplied = false
-			progress.ReasonCode = ""
-		}
-		c.updateAdaptiveStatus(done, progress)
-	})
-	if result.State == "completed" {
-		c.updateAdaptiveStatus(done, AdaptivePerformanceStatus{
-			State:          "running",
-			NextRunAt:      c.adaptiveNextRunAt(done),
-			StartedAt:      result.StartedAt,
-			Generation:     result.Generation,
-			CurrentTarget:  result.CurrentTarget,
-			ShortlistCount: result.ShortlistCount,
-			ValidCount:     result.ValidCount,
-			Candidates:     adaptiveResultStatuses(result.Candidates),
-		})
-		c.mu.Lock()
-		beforeDecision := c.beforeAdaptiveDecision
-		c.mu.Unlock()
-		if beforeDecision != nil {
-			beforeDecision()
-		}
-		decision, err := supervisor.ApplyAdaptive(ctx, generation, result)
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				result.State = "cancelled"
-				result.ReasonCode = AdaptiveReasonCancelled
-			} else {
-				result.State = "failed"
-				result.ReasonCode = AdaptiveReasonUnavailable
-			}
-		} else {
-			if decision.ReasonCode == AdaptiveReasonCancelled {
-				result.State = "cancelled"
-			}
-			result.SwitchApplied = decision.Applied
-			result.ReasonCode = decision.ReasonCode
-			result.CurrentScore = decision.CurrentScore
-			result.SelectedScore = decision.WinnerScore
-			if decision.Applied {
-				result.SelectedTarget = decision.Target
-			} else {
-				result.SelectedTarget = ""
-			}
-		}
-	}
-	status := AdaptivePerformanceStatus{
-		State:          result.State,
-		NextRunAt:      c.adaptiveNextRunAt(done),
-		StartedAt:      result.StartedAt,
-		CompletedAt:    result.CompletedAt,
-		Generation:     result.Generation,
-		CurrentTarget:  result.CurrentTarget,
-		ShortlistCount: result.ShortlistCount,
-		ValidCount:     result.ValidCount,
-		SelectedTarget: result.SelectedTarget,
-		SwitchApplied:  result.SwitchApplied,
-		ReasonCode:     result.ReasonCode,
-		Candidates:     adaptiveResultStatuses(result.Candidates),
-	}
-	if status.State == "" {
-		status.State = "failed"
-	}
-	c.updateAdaptiveStatus(done, status)
-}
-
-func (c *Coordinator) adaptiveNextRunAt(done chan struct{}) time.Time {
-	if c == nil {
-		return time.Time{}
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.benchmarkDone != done {
-		return c.adaptive.NextRunAt
-	}
-	return c.adaptive.NextRunAt
-}
-
-func (c *Coordinator) updateAdaptiveStatus(done chan struct{}, status AdaptivePerformanceStatus) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.benchmarkDone != done {
-		return
-	}
-	if status.NextRunAt.IsZero() {
-		status.NextRunAt = c.adaptive.NextRunAt
-	}
-	if status.Generation == 0 {
-		status.Generation = c.adaptive.Generation
-	}
-	c.adaptive = sanitizeAdaptiveStatus(status)
-}
-
-func (c *Coordinator) setAdaptiveSkipped(done chan struct{}, reason string) {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if done != nil && c.benchmarkDone != done {
-		return
-	}
-	now := c.clock()
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	c.adaptive = sanitizeAdaptiveStatus(AdaptivePerformanceStatus{
-		State:       "skipped",
-		NextRunAt:   c.adaptive.NextRunAt,
-		CompletedAt: now.UTC(),
-		Generation:  c.adaptive.Generation,
-		ReasonCode:  reason,
-	})
-}
-
-func (c *Coordinator) setAdaptiveSkippedLocked(reason string) {
-	now := c.clock()
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	c.adaptive = sanitizeAdaptiveStatus(AdaptivePerformanceStatus{
-		State:       "skipped",
-		NextRunAt:   c.adaptive.NextRunAt,
-		CompletedAt: now.UTC(),
-		Generation:  c.adaptive.Generation,
-		ReasonCode:  reason,
-	})
-}
-
 // BeginApply gives an explicit operator mutation priority over managed runtime
 // work. It prevents new performance/supervisor work from starting, cancels and
 // drains any active benchmark or manual diagnostic and active supervisor
@@ -722,7 +297,7 @@ func (c *Coordinator) TryBeginManagedApply() (func(), error) {
 		return nil, ErrLifecycleBusy
 	}
 	c.mu.Lock()
-	if c.maintenance || c.applyWaiters > 0 || c.applyActive || c.benchmarkCancel != nil || c.supervisorCancel != nil {
+	if c.maintenance || c.applyWaiters > 0 || c.applyActive || c.benchmarkCancel != nil {
 		c.mu.Unlock()
 		return nil, ErrLifecycleBusy
 	}
@@ -740,7 +315,6 @@ func (c *Coordinator) TryBeginManagedApply() (func(), error) {
 				c.applyActive = false
 				c.mu.Unlock()
 				c.lifecycle <- token
-				c.requestSupervisorReconcile()
 			})
 		}, nil
 	default:
@@ -787,7 +361,6 @@ func (c *Coordinator) beginApply(ctx context.Context, recovery bool) (func(), er
 	// Apply-vs-supervisor races.
 	c.applyWaiters++
 	cancel, done := c.benchmarkCancel, c.benchmarkDone
-	supervisorCancel, supervisorDone := c.supervisorCancel, c.supervisorDone
 	hook := c.beforeApplyAcquire
 	c.mu.Unlock()
 	if hook != nil {
@@ -803,22 +376,13 @@ func (c *Coordinator) beginApply(ctx context.Context, recovery bool) (func(), er
 	if cancel != nil {
 		cancel()
 	}
-	if supervisorCancel != nil {
-		supervisorCancel()
-	}
 	if err := waitForManagedWork(ctx, done); err != nil {
 		clearPending()
 		return nil, err
 	}
-	if err := waitForManagedWork(ctx, supervisorDone); err != nil {
-		clearPending()
-		return nil, err
-	}
-	// A cancelled liveness tick may have observed context cancellation as a
-	// probe failure or partially advanced RAM-only RTT persistence before it
-	// drained. An explicit lifecycle mutation invalidates that transient
-	// evidence anyway, so clear it before the transaction starts.
-	c.resetSupervisorTransientState()
+	// An explicit lifecycle mutation invalidates transient RTT evidence, so
+	// clear it before the transaction starts.
+	c.resetEvidence()
 	select {
 	case token := <-c.lifecycle:
 		c.mu.Lock()
@@ -838,23 +402,12 @@ func (c *Coordinator) beginApply(ctx context.Context, recovery bool) (func(), er
 				c.applyActive = false
 				c.mu.Unlock()
 				c.lifecycle <- token
-				c.requestSupervisorReconcile()
 			})
 		}, nil
 	case <-ctx.Done():
 		clearPending()
 		return nil, ctx.Err()
 	}
-}
-
-func (c *Coordinator) resetSupervisorTransientState() {
-	if c == nil || c.supervisor == nil {
-		return
-	}
-	c.supervisor.policyMu.Lock()
-	c.supervisor.failures = 0
-	c.supervisor.engine.ResetEvidence()
-	c.supervisor.policyMu.Unlock()
 }
 
 func waitForManagedWork(ctx context.Context, done <-chan struct{}) error {
@@ -866,132 +419,6 @@ func waitForManagedWork(ctx context.Context, done <-chan struct{}) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
-	}
-}
-
-func (c *Coordinator) requestSupervisorReconcile() {
-	if c == nil || c.supervisor == nil || c.supervisorWake == nil {
-		return
-	}
-	select {
-	case c.supervisorWake <- struct{}{}:
-	default:
-	}
-}
-
-// SetManualOverride is an explicit operator mutation and therefore uses the
-// same lifecycle barrier as node Apply. It may cancel a sustained benchmark;
-// automatic latency/throughput work must never race the operator choice.
-func (c *Coordinator) SetManualOverride(ctx context.Context, target string) error {
-	if c == nil || c.supervisor == nil {
-		return errors.New("selection unavailable")
-	}
-	release, err := c.BeginApply(ctx)
-	if err != nil {
-		return err
-	}
-	defer release()
-	return c.supervisor.SetManualOverride(ctx, target)
-}
-
-// ReconcileSetupSelection is called by Setup while it already owns the
-// Coordinator lifecycle barrier. The Supervisor remains the sole typed
-// selection owner; this method deliberately does not hand-edit selection.json
-// or acquire a second lifecycle token.
-func (c *Coordinator) ReconcileSetupSelection(ctx context.Context, enabledTags []string) error {
-	if c == nil || c.supervisor == nil {
-		return nil
-	}
-	return c.supervisor.ReconcileSetupSelection(ctx, enabledTags)
-}
-
-// SetupSelectionSnapshot and RestoreSetupSelection keep Setup's rollback
-// journal on the typed C.1 owner boundary. The coordinator owns no selection
-// file and intentionally delegates both operations to the Supervisor.
-func (c *Coordinator) SetupSelectionSnapshot(ctx context.Context) ([]byte, error) {
-	if c == nil || c.supervisor == nil {
-		return nil, nil
-	}
-	return c.supervisor.SetupSelectionSnapshot(ctx)
-}
-
-func (c *Coordinator) RestoreSetupSelection(ctx context.Context, snapshot []byte) error {
-	if c == nil || c.supervisor == nil {
-		return nil
-	}
-	return c.supervisor.RestoreSetupSelection(ctx, snapshot)
-}
-
-// runSupervisorOperation registers one cancellable supervisor operation under
-// the coordinator. Performance work deliberately does not block admission
-// here: the supervisor may interleave liveness probes between legacy benchmark
-// samples, while a manual diagnostic holds the ProbeRouter lease for its fixed
-// bounded run. Apply admission blocks new operations and can cancel/drain the
-// current one before Xray restart/rollback begins.
-func (c *Coordinator) runSupervisorOperation(parent context.Context, operation func(context.Context) error) error {
-	if c == nil || operation == nil {
-		return nil
-	}
-	ctx, cancel := context.WithCancel(parent)
-	done := make(chan struct{})
-	c.mu.Lock()
-	if c.maintenance || c.applyWaiters > 0 || c.applyActive || c.supervisorCancel != nil {
-		c.mu.Unlock()
-		cancel()
-		return ErrLifecycleBusy
-	}
-	c.supervisorCancel, c.supervisorDone = cancel, done
-	c.mu.Unlock()
-	defer func() {
-		c.mu.Lock()
-		if c.supervisorDone == done {
-			c.supervisorCancel = nil
-			c.supervisorDone = nil
-		}
-		c.mu.Unlock()
-		cancel()
-		close(done)
-	}()
-	return operation(ctx)
-}
-
-func (c *Coordinator) supervisorLoop(ctx context.Context) {
-	if c == nil || c.supervisor == nil {
-		return
-	}
-	reconciled := c.supervisor.probe == nil
-	run := func() {
-		if !reconciled {
-			if err := c.runSupervisorOperation(ctx, c.supervisor.probe.Reconcile); err == nil {
-				reconciled = true
-			}
-		}
-		if reconciled {
-			if c.runSupervisorOperation(ctx, c.supervisor.Tick) == nil {
-				notifyPolicyChange(c.adaptiveEvidenceChanged)
-			}
-		}
-	}
-	run()
-	timer := time.NewTimer(c.currentPerformancePolicy().probeInterval())
-	defer stopTimer(timer)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-timer.C:
-			run()
-			timer.Reset(c.currentPerformancePolicy().probeInterval())
-		case <-c.supervisorWake:
-			stopTimer(timer)
-			run()
-			timer.Reset(c.currentPerformancePolicy().probeInterval())
-		case <-c.supervisorPolicyChanged:
-			// Policy Apply never triggers a probe. Restart the interval from the
-			// successful Apply time and let the next cycle use the new snapshot.
-			stopTimer(timer)
-			timer.Reset(c.currentPerformancePolicy().probeInterval())
-		}
 	}
 }
 
@@ -1016,16 +443,11 @@ func (c *Coordinator) IsLifecycleBusy() bool {
 
 func (c *Coordinator) Snapshot() Status {
 	if c == nil {
-		return Status{Selection: SelectionStatus{State: "unavailable"}, Benchmark: BenchmarkStatus{State: "unavailable"}}
+		return Status{}
 	}
 	c.mu.Lock()
-	benchmark := c.benchmark
-	lifecycle := &LifecycleStatus{Maintenance: c.maintenance, Applying: c.applyWaiters > 0 || c.applyActive}
-	c.mu.Unlock()
-	if c.supervisor != nil {
-		return Status{Selection: c.supervisor.Snapshot(), Benchmark: benchmark, Lifecycle: lifecycle}
-	}
-	return Status{Benchmark: benchmark, Lifecycle: lifecycle}
+	defer c.mu.Unlock()
+	return Status{Lifecycle: &LifecycleStatus{Maintenance: c.maintenance, Applying: c.applyWaiters > 0 || c.applyActive}}
 }
 
 // ManualSnapshot returns the current or last manual diagnostic without reading
@@ -1054,63 +476,4 @@ func (c *Coordinator) AdaptiveSnapshot() AdaptivePerformanceStatus {
 	result := sanitizeAdaptiveStatus(c.adaptive)
 	c.mu.Unlock()
 	return result
-}
-
-func (c *Coordinator) schedule(ctx context.Context) {
-	if c == nil {
-		return
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	c.mu.Lock()
-	next := c.adaptive.NextRunAt
-	if next.IsZero() {
-		start := c.clock()
-		if start.IsZero() {
-			start = time.Now().UTC()
-		}
-		next = start.UTC().Add(AdaptiveCadence)
-		c.adaptive.NextRunAt = next
-	}
-	c.mu.Unlock()
-	for {
-		timer := time.NewTimer(time.Until(next))
-		select {
-		case <-ctx.Done():
-			stopTimer(timer)
-			return
-		case <-c.adaptiveEvidenceChanged:
-			stopTimer(timer)
-			c.mu.Lock()
-			initial := !c.adaptiveInitialDone
-			c.mu.Unlock()
-			if initial {
-				c.runAdaptiveAdmission(ctx, true)
-			}
-			continue
-		case <-c.adaptivePolicyChanged:
-			stopTimer(timer)
-			c.mu.Lock()
-			next = c.adaptive.NextRunAt
-			c.mu.Unlock()
-			continue
-		case <-timer.C:
-			c.mu.Lock()
-			c.adaptiveInitialDone = true
-			c.mu.Unlock()
-			c.runScheduledAdaptive(ctx)
-			now := c.now()
-			cadence := c.currentPerformancePolicy().adaptiveCadence()
-			next = next.Add(cadence)
-			// A delayed process performs no catch-up burst. The next run is
-			// always one normal cadence after the due event or the wake time.
-			if !next.After(now) {
-				next = now.Add(cadence)
-			}
-			c.mu.Lock()
-			c.adaptive.NextRunAt = next
-			c.mu.Unlock()
-		}
-	}
 }

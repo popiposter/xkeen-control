@@ -217,7 +217,6 @@ func main() {
 	)
 	policy := c1.DefaultPolicy()
 	probeRouter := c1.NewProbeRouter(xrayReader)
-	probeAddress := xrayReader.ProbeAddr
 	var nodeManager *nodes.Manager
 	nodeReader := func(ctx context.Context) []c1.NodeState {
 		if nodeManager == nil {
@@ -234,13 +233,7 @@ func main() {
 		_ = ctx
 		return result
 	}
-	selectionStore := c1.SelectionStore{Path: getenv("XKEEN_CONTROL_SELECTION_PATH", c1.DefaultSelectionPath)}
-	supervisor := c1.NewSupervisor(policy, xrayReader, xrayReader, nodeReader, probeRouter, selectionStore)
-	supervisor.SetActiveProbe(func(ctx context.Context, _ string, payload int64) error {
-		return c1.HTTPProbe(ctx, policy.BenchmarkEndpoint, probeAddress, payload, 3*time.Second)
-	})
-	runner := c1.NewBenchmarkRunner(policy, probeRouter, c1.BenchmarkStore{Path: getenv("XKEEN_CONTROL_BENCHMARK_PATH", c1.DefaultBenchmarkPath)})
-	coordinator := c1.NewCoordinator(policy, supervisor, runner, nodeReader)
+	coordinator := c1.NewCoordinator(policy, nodeReader)
 	resources := resourcepolicy.NewGuard()
 	resources.Conflict = xkeenReader.NativeSpeedConflict
 	manualRunner := c1.NewManualNodeRunner(probeRouter)
@@ -381,6 +374,13 @@ func main() {
 		if runtimeContext.Err() != nil {
 			return
 		}
+		// Remove temporary probe rules a previous process may have left in Xray.
+		// On failure the probe gate stays closed and the next probe retries.
+		reconcileContext, cancelReconcile := context.WithTimeout(runtimeContext, 10*time.Second)
+		if err := probeRouter.Reconcile(reconcileContext); err != nil {
+			log.Print("probe rule reconciliation deferred")
+		}
+		cancelReconcile()
 		subscriptionRefresher.Start(runtimeContext)
 		go dnsIntegration.Run(runtimeContext)
 		go qualitySchedule.Run(runtimeContext)

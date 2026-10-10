@@ -31,14 +31,6 @@ const statusFixture = (overrides = {}) => ({
   xkeen: { running: true },
   balancer: { nativeSelected: 'proxy-alpha', effective: 'proxy-alpha', override: '' },
   observatory: { healthy: 2, total: 2, apiReachable: true },
-  benchmark: { controlPlane: { running: false, state: 'idle', schedule: 'explicit-only' } },
-  selection: {
-    state: 'stable',
-    effectiveTarget: 'proxy-alpha',
-    manualOverride: '',
-    lastSwitchReason: 'startup',
-    latencyEvidence: 3,
-  },
   native: { installation: 'available', panelIntegration: 'available', version: '2.0.1', channel: 'beta', core: 'xray', xrayRunning: true },
   lifecycle: { maintenance: false, applying: false },
   ...overrides,
@@ -106,15 +98,6 @@ const openApplication = async (page, options = {}) => {
 }
 
 const performanceRequests = (scenario) => scenario.requests.filter((request) => request.path === '/api/v1/performance')
-
-test('Overview reflects native selection without obsolete adaptive supervisor status', async ({ page }) => {
-  await openApplication(page)
-  await expect(page.getByRole('region', { name: 'Active node' })).toContainText('Alpha')
-  await expect(page.getByRole('region', { name: 'Active node' })).toContainText('Native automatic selection')
-  await expect(page.getByText('Selection starting')).toHaveCount(0)
-  await expect(page.getByText('Automatic quality', { exact: true })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Run benchmark' })).toHaveCount(0)
-})
 
 test('manual diagnostic polling remains Nodes-only', async ({ page }) => {
   const performance = performanceFixture(waitingAdaptive(), { manual: { state: 'running', phase: 'download' } })
