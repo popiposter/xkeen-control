@@ -177,7 +177,7 @@ flowchart LR
 
 | Task | Description | Completed | Date |
 | --- | --- | --- | --- |
-| TASK-000 | `Coordinator.Start` is never called. Delete the supervisor loop, adaptive/benchmark schedules, `BenchmarkRunner`, `internal/performancepolicy` and the routes `/api/v1/performance/policy*` and `/api/v1/benchmark/run`, together with their fixtures. Keep `ProbeRouter`, the lease/maintenance, the manual and adaptive runners and `SetManualOverride`. Add `ProbeRouter.Reconcile` to the live startup path. See [audit](audit-project-2026-10-10.md) §2. | | |
+| TASK-000 | `Coordinator.Start` is never called. Delete the supervisor loop, adaptive/benchmark schedules, `BenchmarkRunner` and the `c1` performance-policy remnants with their fixtures and status projections. Keep `ProbeRouter`, the lease/maintenance, the manual and adaptive runners and the setup-selection helpers that are still called. Add `ProbeRouter.Reconcile` to the live startup path. `internal/performancepolicy` and its routes were already removed in #202. See [audit](audit-project-2026-10-10.md) §2. | | |
 
 ### Implementation Phase 1
 
@@ -232,15 +232,15 @@ flowchart LR
 
 ## 4. Dependencies
 
-- **DEP-001**: #194 and #198 fold into #199 (REQ-003, REQ-007). Close them as
-  superseded after operator approval.
+- **DEP-001**: #194 and #198 are folded into #199 (REQ-003, REQ-007) and closed
+  as superseded.
 - **DEP-003**: The existing Xray API `probe` inbound, shared `ProbeRouter`,
   editor/Jobs transaction and stock XKeen lifecycle remain available.
 
 ## 5. Files
 
 - **FILE-001**: `internal/nativequality/{schedule,criteria,service,sweep,subset,pool_decision,auto_apply}.go` — shared observation, review and Apply.
-- **FILE-002**: `internal/c1/{probe,coordinator}.go` and `internal/resourcepolicy/policy.go` — targeted probes and bounded speed profiles; `internal/c1/{supervisor,benchmark,performance_policy}.go` and `internal/performancepolicy` are removed in Phase 0.
+- **FILE-002**: `internal/c1/{probe,coordinator}.go` and `internal/resourcepolicy/policy.go` — targeted probes and bounded speed profiles; `internal/c1/{supervisor,benchmark,performance_policy}.go` are removed in Phase 0 (`internal/performancepolicy` already went in #202).
 - **FILE-003**: `internal/nodes/refresher.go` — change-aware scheduling signal.
 - **FILE-004**: `config/xray/{05_routing,07_observatory}.json` and the corresponding fixed-editor preparation — pool/observation consistency.
 - **FILE-005**: `web/src/main.jsx`, `docs/{ARCHITECTURE,NODE-LIFECYCLE,ROUTER-RESOURCES}.md` — truthful status and current-versus-target documentation.

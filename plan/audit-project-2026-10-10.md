@@ -1,8 +1,9 @@
 ---
 goal: Audit of the node-quality target, project size, development process, tests and releases
-version: 1.0
+version: 1.1
 date_created: 2026-10-10
-status: 'Proposed'
+last_updated: 2026-10-10
+status: 'In progress'
 tags: [audit, simplification, process, release, nodes]
 ---
 
@@ -21,6 +22,18 @@ FULL run tests it and every agent has to read past it. Process overhead also
 grew faster than the product. Recent changes needed a ~10k-character issue
 contract, an independent review, a local FULL, a hosted FULL, a stable release
 and then a separate docs-only "evidence" PR.
+
+## Status (2026-10-10)
+
+| Item | State |
+| --- | --- |
+| §1 A1–A9 | Corrected in `architecture-node-quality-v1.md` (this PR). |
+| §1 A5: #194, #198 | Closed as superseded by #199 on operator decision. |
+| §2 rows 1–2, 4–6: `components`, `appliance`, legacy `backup`, `performancepolicy`, unused routes, legacy scripts | Done in #202 (`b3cb737`): −36k lines; independent review approved, FULL passed. |
+| §2 row 3: `c1` supervisor/benchmark generation | #199 Phase 0 (TASK-000), in progress. It changes the `/api/v1/status` projection, so it was not part of a behaviour-neutral PR. |
+| §2 row 7: `splitdns` | Open; needs an operator decision. |
+| §3: double Go pass, Playwright duplication | Done in #203 (`72ee184`). FULL takes ~170 s end to end, previously ~6–7 min. See §3.1. |
+| §4 process changes, §5 step 3 docs pruning | Open. |
 
 ## 1. Node-quality target (`plan/architecture-node-quality-v1.md`)
 
@@ -86,6 +99,29 @@ through ordinary feature work.
   `release-build.sh` rebuilds both binaries. That rebuild is cheap and keeps
   byte provenance, so leave it.
 
+### 3.1 Measured FULL breakdown and outcome (#203)
+
+Measured in the Docker gate on a cold Go test cache, before #203:
+
+- **`go test -race ./...`: 117 s.** `internal/auth` alone took 109 s, because its fixtures hashed passwords at the production bcrypt cost 12.
+- **Playwright: 106 s,** with 2 workers on 16 available CPUs.
+- **`test-updater.sh`: 54 s,** of which ~35 s was real `sleep 1` readiness waits.
+- **Plain `go test -count=1 ./...`: 21 s,** a repeat of the race run.
+- **Everything else: ~35 s.**
+
+The local race pass was usually served from the Go test cache, so it did not
+rerun at all.
+
+After #203:
+- FULL runs a single uncached `go test -race -count=1 ./...`.
+- The `auth` fixtures use `bcrypt.MinCost`, and a test pins the production cost at 12.
+- The updater fixture uses an instant `sleep`.
+- Playwright runs six local workers; the hosted release keeps two.
+- Fact matrices moved to Node unit tests.
+- Duplicated responsive sweeps were dropped, keeping the only populated overflow pass.
+
+Result: 106 browser tests plus 20 new unit cases, and FULL takes ~170 s.
+
 ## 4. Development process
 
 What works: secretless public evidence, exact-HEAD review, the fast
@@ -129,18 +165,16 @@ What costs more than it returns:
 Each step is an ordinary Draft PR. Steps 1–3 change no runtime behaviour, so
 they need focused tests plus one FULL, and no hardware run.
 
-1. **Delete dead Go code and routes.** Covers §2 rows 1–6 and its tests,
-   scripts and doc references. Acceptance: a FULL pass, the same API surface
-   minus the listed routes, and an unchanged UI.
-2. **Make the process changes.** Run only `-race` in FULL, generate release
+1. **Delete dead Go code and routes.** Done in #202, except the `c1`
+   generation, which moved to #199 Phase 0.
+2. **Make the process changes.** The FULL speed-up is done (#203). Still open: generate release
    notes in the workflow, use beta for hardware iteration, add a short issue
    template, and turn the instruction files into pointers. Docs-only, except
    for `dev-check.sh` and `release.yml`.
 3. **Prune the docs.** Covers `DEVELOPMENT.md`, `RELEASES.md`, the README
    narrative and `plan/` cleanup.
 4. **Implement #199 with the corrected plan.** Starts with Phase 0, the `c1`
-   cleanup, if step 1 has not already done it. #194/#198 are closed as
-   superseded on operator approval.
+   cleanup, which is in progress. #194/#198 are closed.
 5. **Retire splitdns.** Needs an operator decision about routers that still
    own mosdns.
 

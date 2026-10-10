@@ -10,10 +10,11 @@ for ARM64 and MIPS. Only active-pool Observatory concurrency and bounded speed
 test breadth vary with hardware. The [target plan](../plan/architecture-node-quality-v1.md)
 is a proposal, not delivered behavior or router acceptance. The installed
 five-member KN1810 pool has not yet been automatically replaced. The
-[2026-10-10 audit](../plan/audit-project-2026-10-10.md) folds #194
-(subscription churn) and #198 (imported-pool initialization) into this target.
-It also puts the removal of dead code and process changes first; the audit's
-§5 gives the proposed order. No router change or release is part of
+[2026-10-10 audit](../plan/audit-project-2026-10-10.md) folded #194
+(subscription churn) and #198 (imported-pool initialization) into this target;
+both are closed. Dead code was removed in #202 and FULL was shortened to
+about three minutes in #203. Phase 0, which removes the never-started `c1`
+supervisor/benchmark generation, comes next. No router change or release is part of
 documenting this target.
 
 ## Delivered
