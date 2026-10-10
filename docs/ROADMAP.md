@@ -2,6 +2,17 @@
 
 This is the current sequencing/status authority. Issues contain detailed task contracts; historical milestone logs are [archived](archive/README.md).
 
+## Planned node-selection architecture
+
+[#199](https://github.com/popiposter/xkeen-control/issues/199) defines one
+subscription, discovery, speed-review, pool-Apply and Xray failover algorithm
+for ARM64 and MIPS. Only active-pool Observatory concurrency and bounded speed
+test breadth vary with hardware. The [target plan](../plan/architecture-node-quality-v1.md)
+is a proposal, not delivered behavior or router acceptance. The installed
+five-member KN1810 pool has not yet been automatically replaced. #194 and #198
+remain explicit dependencies for subscription churn and imported-pool
+initialization. No router change or release is part of documenting this target.
+
 ## Delivered
 
 **Stable0.4.12 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, guided fresh setup #145/PR147, MIPS panel delivery #150/PR151 and compact fresh routing #181/PR182 are delivered. #183/PR184 fixes MIPS speed telemetry, #185/PR186 pins the protected release image, #188/PR189 adds bounded MIPS automatic pool review, #191/PR192 rotates an 18-node subset, and #195/PR196 defers futile reviews before traffic. [Release evidence](RELEASES.md) binds exact source and public bytes. Signed0.4.12 installation passed on KN1810 with source/hash and native preservation readback. A live 18-node comparison under0.4.11 completed but retained the five-node pool; automatic Apply and fresh setup remain untested.
