@@ -423,7 +423,14 @@ func sweepFixtureCount(t *testing.T, noop bool, count int) (*Service, c1.Adaptiv
 	if os.WriteFile(filepath.Join(dir, "05_routing.json"), routing, 0600) != nil || os.WriteFile(filepath.Join(dir, "04_outbounds.json"), encoded, 0600) != nil {
 		t.Fatal("config fixture")
 	}
-	if err := os.WriteFile(filepath.Join(dir, "07_observatory.json"), []byte(`{"observatory":{"subjectSelector":["proxy-"],"probeInterval":"10s","enableConcurrency":true}}`), 0600); err != nil {
+	// A settled pool already observes exactly its members (constrained
+	// profile: sequential); a broad pool still observes every node.
+	observatory := `{"observatory":{"subjectSelector":["proxy-"],"probeInterval":"10s","enableConcurrency":true}}`
+	if noop {
+		subjects, _ := json.Marshal(selected)
+		observatory = `{"observatory":{"subjectSelector":` + string(subjects) + `,"probeInterval":"10s","enableConcurrency":false}}`
+	}
+	if err := os.WriteFile(filepath.Join(dir, "07_observatory.json"), []byte(observatory), 0600); err != nil {
 		t.Fatal(err)
 	}
 	lease := authority.NewLease()
@@ -822,5 +829,60 @@ func TestStandardProfileAutomaticReviewReachesApply(t *testing.T) {
 	}
 	if q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes); err != nil || q.ReviewsUsed != 1 || q.UsedBytes != s.profile().Review().Bytes {
 		t.Fatal("standard automatic review did not reserve its quota", q, err)
+	}
+}
+
+func TestSweepSameMembersWithBroadObservatoryRepairsJointly(t *testing.T) {
+	s, _, _, dir := sweepFixture(t, true)
+	if err := os.WriteFile(filepath.Join(dir, "07_observatory.json"), []byte(`{"observatory":{"subjectSelector":["proxy-"],"probeInterval":"5m","enableConcurrency":true}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal(err, s.Read().ReviewReason)
+	}
+	v := waitSweep(t, s)
+	if v.PoolDecision != "observatory-repair" || v.AppliedState == "no-op" {
+		t.Fatal("stale 07 with unchanged members was treated as a no-op", v.PoolDecision, v.AppliedState)
+	}
+	w, err := s.Editor.Workspace(context.Background())
+	if err != nil || w.Pending == nil {
+		t.Fatal("joint repair was not saved", err)
+	}
+	if !observatoryMatchesPool(w.Documents["07_observatory.json"].Text, []string{"proxy-00", "proxy-01", "proxy-02", "proxy-03", "proxy-04", "proxy-05"}, false) {
+		t.Fatal("saved 07 does not observe exactly the pool", w.Documents["07_observatory.json"].Text)
+	}
+}
+
+func TestSweepAllOrphanedPoolWithNarrowedObservatoryIsReplaced(t *testing.T) {
+	s, _, _, dir := sweepFixture(t, true)
+	var gone []string
+	var costs []c1.NativeQualityCost
+	for i := 0; i < 6; i++ {
+		tag := fmt.Sprintf("proxy-gone-%d", i)
+		gone = append(gone, tag)
+		costs = append(costs, c1.NativeQualityCost{Regexp: true, Match: "^" + regexp.QuoteMeta(tag) + "$", Value: 1})
+	}
+	routing, _ := json.Marshal(map[string]any{"routing": map[string]any{"rules": []any{}, "balancers": []any{map[string]any{"tag": "bal-proxy", "selector": gone, "strategy": map[string]any{"type": "leastLoad", "settings": map[string]any{"maxRTT": "10s", "costs": costs}}}}}})
+	subjects, _ := json.Marshal(gone)
+	for name, data := range map[string][]byte{"05_routing.json": routing, "07_observatory.json": []byte(`{"observatory":{"subjectSelector":` + string(subjects) + `,"probeInterval":"10s","enableConcurrency":false}}`)} {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.startSweep(context.Background(), "subscription-refresh"); err != nil {
+		t.Fatal("an all-orphaned pool with a narrowed 07 could not be reviewed", err, s.Read().ReviewReason)
+	}
+	v := waitSweep(t, s)
+	if v.PoolDecision != "unhealthy-incumbent-replaced" {
+		t.Fatal("all-orphaned pool was not replaced", v.PoolDecision, v.ReviewReason)
+	}
+	w, err := s.Editor.Workspace(context.Background())
+	if err != nil || w.Pending == nil {
+		t.Fatal("replacement was not saved", err)
+	}
+	for _, name := range []string{"05_routing.json", "07_observatory.json"} {
+		if strings.Contains(w.Documents[name].Text, "proxy-gone") {
+			t.Fatal(name, "still references a vanished member")
+		}
 	}
 }

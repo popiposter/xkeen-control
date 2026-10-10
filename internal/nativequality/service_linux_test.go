@@ -43,7 +43,7 @@ func TestConstrainedNativeConflictIsVisibleWithoutActivation(t *testing.T) {
 	}
 }
 
-func TestStageBroadSampleRestrictsOnlySelectorAndCostsAndKeepsFutureSampleBroad(t *testing.T) {
+func TestStageRestrictsSelectorCostsAndObservatoryAndKeepsFutureSampleBroad(t *testing.T) {
 	dir := t.TempDir()
 	validator := filepath.Join(t.TempDir(), "xray")
 	if err := os.WriteFile(validator, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
@@ -67,7 +67,8 @@ func TestStageBroadSampleRestrictsOnlySelectorAndCostsAndKeepsFutureSampleBroad(
 		result.Candidates = append(result.Candidates, c1.AdaptiveCandidateResult{Tag: tag, RTTMS: int64(150 + i*5), DownloadBPS: rate, UploadBPS: rate, Valid: true})
 	}
 	encoded, _ := json.Marshal(map[string]any{"outbounds": outbounds})
-	for name, data := range map[string][]byte{"05_routing.json": []byte(routing), "04_outbounds.json": encoded} {
+	observatory := `{/*obs*/"observatory":{"subjectSelector":["proxy-"],"probeUrl":"https://probe.invalid/generate_204","probeInterval":"5m","enableConcurrency":false}}`
+	for name, data := range map[string][]byte{"05_routing.json": []byte(routing), "04_outbounds.json": encoded, "07_observatory.json": []byte(observatory)} {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -111,6 +112,12 @@ func TestStageBroadSampleRestrictsOnlySelectorAndCostsAndKeepsFutureSampleBroad(
 	actualOutbounds, readErr := os.ReadFile(filepath.Join(dir, "04_outbounds.json"))
 	if len(selected) != 6 || selected[0] != "proxy-01" || selected[5] != "proxy-06" || len(doc.Routing.Balancers[0].Strategy.Settings.Costs) != 6 || readErr != nil || string(actualOutbounds) != string(encoded) || !strings.Contains(after.Documents["05_routing.json"].Text, `"fallbackTag":"blocked"`) || !strings.Contains(after.Documents["05_routing.json"].Text, "/*keep*/") {
 		t.Fatal("wrong selected pool or unrelated write", selected)
+	}
+	// Standard profile (no Resources): 07 observes exactly the selected six,
+	// concurrently, and keeps its own probe URL and comment.
+	obs := after.Documents["07_observatory.json"].Text
+	if !observatoryMatchesPool(obs, selected, true) || !strings.Contains(obs, "https://probe.invalid/generate_204") || !strings.Contains(obs, "/*obs*/") {
+		t.Fatal("observatory was not narrowed to the staged pool", obs)
 	}
 	if next, _, err := measurementPool(after.Documents["05_routing.json"].Text, nodes, after.Targets); err != nil || len(next) != 9 {
 		t.Fatal("subsequent test cannot reconsider excluded nodes", next, err)
@@ -192,7 +199,7 @@ func TestStageUsesExistingPendingEditorPreservesOtherNativeBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	routing := `{/*retain*/"routing":{"future":9007199254740993,"rules":[],"balancers":[{"tag":"other","selector":["direct"]},{"tag":"bal-proxy","selector":["proxy-"],"fallbackTag":"blocked","strategy":{"type":"leastLoad","settings":{"maxRTT":"10s","expected":2}}}]}}`
-	for name, text := range map[string]string{"05_routing.json": routing, "04_outbounds.json": `{"outbounds":[{"tag":"proxy-a","protocol":"vless"},{"tag":"proxy-b","protocol":"vless"}]}`} {
+	for name, text := range map[string]string{"05_routing.json": routing, "04_outbounds.json": `{"outbounds":[{"tag":"proxy-a","protocol":"vless"},{"tag":"proxy-b","protocol":"vless"}]}`, "07_observatory.json": `{"observatory":{"subjectSelector":["proxy-"]}}`} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0600); err != nil {
 			t.Fatal(err)
 		}
