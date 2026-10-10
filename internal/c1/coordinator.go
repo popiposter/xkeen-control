@@ -32,6 +32,7 @@ type Coordinator struct {
 	policy         Policy
 	manualRunner   *ManualNodeRunner
 	adaptiveRunner *AdaptiveRunner
+	rttTransport   LatencyTransport
 	nodes          NodeReader
 	lifecycle      chan struct{}
 

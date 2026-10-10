@@ -25,6 +25,7 @@ var ErrUnavailable = errors.New("native quality comparison unavailable")
 type Measurement interface {
 	MeasureNativeQuality(context.Context, c1.AdaptiveGeneration, func(c1.AdaptivePerformanceStatus)) (c1.AdaptiveResult, error)
 	NativeQualityEvidence(xrayapi.Snapshot) map[string]c1.AdaptiveCandidateInput
+	MeasureRTT(context.Context, []string) ([]c1.RTTSample, error)
 }
 
 type Status struct {
@@ -47,6 +48,8 @@ type Status struct {
 	Ranking                 []RankedNode                 `json:"ranking,omitempty"`
 	AppliedRanking          []RankedNode                 `json:"appliedRanking,omitempty"`
 	ReviewTrigger           string                       `json:"reviewTrigger,omitempty"`
+	ReviewPhase             string                       `json:"reviewPhase,omitempty"`
+	RTTValidCount           int                          `json:"rttValidCount"`
 	AttemptedCount          int                          `json:"attemptedCount"`
 	ValidCount              int                          `json:"validCount"`
 	BatchCount              int                          `json:"batchCount"`
@@ -108,6 +111,9 @@ type Service struct {
 	AutomaticDisabled bool
 	autoApplying      bool
 	sweepPlan         sweepPlan
+	// rttAlive is the review's RTT pre-phase health: present and true when the
+	// tag answered through its own outbound, present and false when it did not.
+	rttAlive map[string]bool
 }
 
 func (s *Service) Read() Status {
@@ -687,11 +693,6 @@ func prepareWithCriteria(snapshot xrayapi.Snapshot, pool []string, id uint64, mo
 	maxCandidates, maxAttempts := c1.AdaptiveMaxCandidates, c1.NativeQualityMaxAttempts
 	if broad {
 		maxCandidates, maxAttempts = c1.NativeQualityBroadCandidates, c1.NativeQualityBroadAttempts
-	}
-	if mode == 2 {
-		// The sweep owner freezes the full fresh eligible set, then selects its
-		// bounded, rotating subset before reserving traffic or transferring data.
-		maxCandidates, maxAttempts = len(eligible), len(eligible)
 	}
 	initial := min(len(eligible), maxCandidates)
 	end := min(len(eligible), maxAttempts)

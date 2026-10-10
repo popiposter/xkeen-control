@@ -17,7 +17,12 @@ const stageReasons = {
 }
 const reviewReasons = {
   'eligible-unavailable-or-over-limit': 'The eligible node set is unavailable; the running pool was kept.',
-  'incumbent-evidence-unavailable': 'A current pool member has no fresh comparable native observation. The review was deferred before any traffic or quota reservation.',
+  'probe-route-shadowed': 'A routing rule without an inbound restriction could capture measurement traffic, so the review would measure the wrong node. Restrict every rule to its inbound tags; the running pool was kept.',
+  'rtt-candidates-insufficient': 'Fewer than two candidates answered the latency probe. No speed test ran and no quota was used; the running pool was kept.',
+  'rtt-probe-unavailable': 'The latency probe could not run. No speed test ran and no quota was used; the running pool was kept.',
+  'rtt-probe-incomplete': 'The latency probe returned an incomplete result. No speed test ran and no quota was used; the running pool was kept.',
+  'probe-cleanup-pending': 'A temporary probe rule could not be confirmed removed; inspect the current state.',
+  'panel-busy': 'Another panel operation was running; the review was deferred.',
   'eligible-unavailable': 'The bounded review subset could not be verified; the running pool was kept.',
   'quota-unavailable-or-exhausted': 'The automatic traffic quota is unavailable or exhausted; the running pool was kept.',
   'quota-busy-or-unavailable': 'Another automatic review owns the traffic quota, or its receipt is unavailable; the running pool was kept.',

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/popiposter/xkeen-control/internal/c1"
-	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
 
 func samePoolMembers(a, b []string) bool {
@@ -31,9 +30,10 @@ func samePoolMembers(a, b []string) bool {
 }
 
 // poolDecision compares only measured scores. One failed transfer from a still
-// healthy selected node is never evidence to retire it. Unknown/stale native
-// health is not silently treated as an outage.
-func poolDecision(result c1.AdaptiveResult, costs []c1.NativeQualityCost, active, selected []string, plan sweepPlan, live xrayapi.Snapshot, now time.Time) string {
+// healthy selected node is never evidence to retire it. Health comes from this
+// review's RTT pre-phase: a tag that answered is healthy, a tag that did not is
+// unhealthy, and an unprobed tag is unknown, never an outage.
+func poolDecision(result c1.AdaptiveResult, costs []c1.NativeQualityCost, active, selected []string, plan sweepPlan, alive map[string]bool, nativeSelected string, now time.Time) string {
 	if samePoolMembers(active, selected) {
 		return "pool-unchanged"
 	}
@@ -50,26 +50,15 @@ func poolDecision(result c1.AdaptiveResult, costs []c1.NativeQualityCost, active
 			}
 		}
 	}
-	health := make(map[string]xrayapi.OutboundHealth, len(live.OutboundHealth))
-	freshness := plan.Freshness
-	if freshness <= 0 {
-		freshness = 2 * time.Minute
-	}
-	for _, observation := range live.OutboundHealth {
-		if _, duplicate := health[observation.Tag]; duplicate {
-			return "native-health-ambiguous"
-		}
-		health[observation.Tag] = observation
-	}
 	healthy := func(tag string) bool {
-		v, ok := health[tag]
-		return ok && v.Alive && !v.LastTry.IsZero() && !v.LastTry.After(now) && now.Sub(v.LastTry) <= freshness
+		probed, ok := alive[tag]
+		return ok && probed
 	}
 	unhealthy := func(tag string) bool {
-		v, ok := health[tag]
-		return ok && !v.Alive && !v.LastTry.IsZero() && !v.LastTry.After(now) && now.Sub(v.LastTry) <= freshness
+		probed, ok := alive[tag]
+		return ok && !probed
 	}
-	for _, tag := range []string{plan.NativeSelected, live.Balancer.NativeSelected} {
+	for _, tag := range []string{plan.NativeSelected, nativeSelected} {
 		if tag != "" && healthy(tag) && valid[tag] == 0 {
 			return "healthy-target-sample-invalid"
 		}
@@ -87,6 +76,20 @@ func poolDecision(result c1.AdaptiveResult, costs []c1.NativeQualityCost, active
 	newPool := make(map[string]bool, len(selected))
 	for _, tag := range selected {
 		newPool[tag] = true
+	}
+	// A full, entirely healthy pool is replaced only on at least six valid
+	// speed results; a smaller sample cannot rank a complete alternative.
+	if len(active) >= 6 && len(valid) < 6 {
+		allHealthy := true
+		for _, tag := range active {
+			if !healthy(tag) {
+				allHealthy = false
+				break
+			}
+		}
+		if allHealthy {
+			return "insufficient-valid-results"
+		}
 	}
 	var incoming, replaced []float64
 	removedUnhealthy := false

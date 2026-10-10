@@ -6,13 +6,12 @@ import (
 	"encoding/hex"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/popiposter/xkeen-control/internal/c1"
 )
 
 type sweepPlan struct {
-	Candidates          []c1.AdaptiveCandidateInput
+	Candidates          []string
 	Active              []string
 	NativeSelected      string
 	TotalEligible       int
@@ -21,43 +20,42 @@ type sweepPlan struct {
 	NextCursor          int
 	EligibleSetHash     string
 	CursorState         string
-	Freshness           time.Duration
 }
 
-// planSweep chooses a bounded review, not a purported global best. Fresh
-// candidates arrive in RTT/tag order. The residual rotation uses tag order so
-// latency fluctuations cannot continually return it to the same first slice.
-func planSweep(eligible []c1.AdaptiveCandidateInput, active []string, nativeSelected string, priorCursor int, priorHash string) (sweepPlan, error) {
-	if len(eligible) < 2 || len(eligible) > c1.MaxRegistryNodes || len(active) < 2 || priorCursor < 0 {
+// planSweep freezes a bounded review candidate set, not a purported global
+// best. It needs no Observatory evidence: every candidate gets a targeted RTT
+// probe before any speed transfer. Incumbents always take part, so they can be
+// kept or replaced on fresh evidence; the rest of the slots rotate through the
+// remaining enabled nodes in tag order using the durable fair cursor. A broad
+// selector (first initialization) keeps only the native-selected member.
+func planSweep(eligible []string, active []string, nativeSelected string, priorCursor int, priorHash string) (sweepPlan, error) {
+	if len(eligible) < 2 || len(eligible) > c1.MaxRegistryNodes || len(active) < 1 || priorCursor < 0 {
 		return sweepPlan{}, ErrUnavailable
 	}
 	plan := sweepPlan{Active: append([]string(nil), active...), NativeSelected: nativeSelected, TotalEligible: len(eligible), FirstInitialization: len(active) > 6}
-	byTag := make(map[string]c1.AdaptiveCandidateInput, len(eligible))
-	var tags []string
-	for _, candidate := range eligible {
-		if candidate.Tag == "" || candidate.RTTMS <= 0 {
+	known := make(map[string]bool, len(eligible))
+	tags := make([]string, 0, len(eligible))
+	for _, tag := range eligible {
+		if tag == "" || known[tag] {
 			return sweepPlan{}, ErrUnavailable
 		}
-		if _, exists := byTag[candidate.Tag]; exists {
-			return sweepPlan{}, ErrUnavailable
-		}
-		byTag[candidate.Tag] = candidate
-		tags = append(tags, candidate.Tag)
+		known[tag] = true
+		tags = append(tags, tag)
 	}
 	sort.Strings(tags)
 	hash := sha256.Sum256([]byte(strings.Join(tags, "\x00")))
 	plan.EligibleSetHash = hex.EncodeToString(hash[:])
-	if len(eligible) <= sweepMaxEligible {
-		plan.Candidates = append([]c1.AdaptiveCandidateInput(nil), eligible...)
+	if len(tags) <= sweepMaxEligible {
+		plan.Candidates = tags
 		plan.CursorState = "all-eligible"
 		plan.NextCursor = priorCursor
 		return plan, nil
 	}
 	chosen := make(map[string]bool, sweepMaxEligible)
-	appendCandidate := func(candidate c1.AdaptiveCandidateInput) {
-		if !chosen[candidate.Tag] && len(plan.Candidates) < sweepMaxEligible {
-			chosen[candidate.Tag] = true
-			plan.Candidates = append(plan.Candidates, candidate)
+	add := func(tag string) {
+		if known[tag] && !chosen[tag] && len(plan.Candidates) < sweepMaxEligible {
+			chosen[tag] = true
+			plan.Candidates = append(plan.Candidates, tag)
 		}
 	}
 	incumbent := make(map[string]bool, len(active))
@@ -68,34 +66,20 @@ func planSweep(eligible []c1.AdaptiveCandidateInput, active []string, nativeSele
 		incumbent[tag] = true
 	}
 	if plan.FirstInitialization {
-		if candidate, ok := byTag[nativeSelected]; ok && incumbent[nativeSelected] {
-			appendCandidate(candidate)
-		}
-		backups := 0
-		for _, candidate := range eligible {
-			if incumbent[candidate.Tag] && !chosen[candidate.Tag] && backups < 2 {
-				appendCandidate(candidate)
-				backups++
-			}
+		if incumbent[nativeSelected] {
+			add(nativeSelected)
 		}
 	} else {
-		for _, candidate := range eligible {
-			if incumbent[candidate.Tag] {
-				appendCandidate(candidate)
+		for _, tag := range tags {
+			if incumbent[tag] {
+				add(tag)
 			}
 		}
 	}
-	challengers := 0
-	for _, candidate := range eligible {
-		if !chosen[candidate.Tag] && challengers < 6 {
-			appendCandidate(candidate)
-			challengers++
-		}
-	}
-	residual := make([]c1.AdaptiveCandidateInput, 0, len(eligible))
+	residual := make([]string, 0, len(tags))
 	for _, tag := range tags {
 		if !chosen[tag] {
-			residual = append(residual, byTag[tag])
+			residual = append(residual, tag)
 		}
 	}
 	if len(residual) == 0 {
@@ -116,10 +100,10 @@ func planSweep(eligible []c1.AdaptiveCandidateInput, active []string, nativeSele
 	}
 	rotating := sweepMaxEligible - len(plan.Candidates)
 	for i := 0; i < rotating; i++ {
-		appendCandidate(residual[(start+i)%len(residual)])
+		add(residual[(start+i)%len(residual)])
 	}
 	plan.NextCursor = (start + rotating) % len(residual)
-	plan.Deferred = len(eligible) - len(plan.Candidates)
+	plan.Deferred = len(tags) - len(plan.Candidates)
 	if len(plan.Candidates) != sweepMaxEligible {
 		return sweepPlan{}, ErrUnavailable
 	}

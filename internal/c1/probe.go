@@ -18,6 +18,7 @@ const (
 	ManualPerformanceRuleTag   = "xkeen-control-probe-manual-performance"
 	AdaptiveRuleTag            = "xkeen-control-probe-adaptive"
 	AdaptivePerformanceRuleTag = AdaptiveRuleTag
+	RTTRuleTag                 = "xkeen-control-probe-rtt"
 )
 
 var ErrProbeCleanup = errors.New("temporary probe routing cleanup failed")
@@ -180,11 +181,14 @@ func ruleTagFor(kind string) string {
 	if kind == AdaptiveMode {
 		return AdaptiveRuleTag
 	}
+	if kind == RTTMode {
+		return RTTRuleTag
+	}
 	return fmt.Sprintf("xkeen-control-probe-%s", kind)
 }
 
 func managedProbeRuleTags() []string {
-	return []string{LivenessRuleTag, BenchmarkRuleTag, ManualPerformanceRuleTag, AdaptiveRuleTag}
+	return []string{LivenessRuleTag, BenchmarkRuleTag, ManualPerformanceRuleTag, AdaptiveRuleTag, RTTRuleTag}
 }
 
 func isManagedProbeRule(tag string) bool {
