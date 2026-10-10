@@ -20,18 +20,26 @@ pipeline for manual and automatic reviews (#207) and one automatic policy for bo
 profiles (#208), with joint 05+07 narrowing of native Observatory to the pool completing
 Phase 1 in source. Phase 2 in source: no-healthy-member recovery with a labelled
 provisional pool (TASK-005) and "Not monitored", provisional and recovery states in
-the UI (TASK-006). Phase 3 fixtures (TASK-007) are in source; TASK-008 hardware
-acceptance remains.
+the UI (TASK-006). Phase 3 fixtures (TASK-007) are in source. TASK-008 step 1 passed on
+both router types on 2026-10-11 ([evidence](https://github.com/popiposter/xkeen-control/issues/199#issuecomment-6103079432)):
+read-only baseline, the unsigned `main` binary runs `version --json` on both, real Xray
+accepts a joint 05+07 candidate (assembled to the new rules) at the same cost as the live
+configuration, a zero-match Observatory stays reachable, and with every member of a
+six-member isolated pool dead the shipped `noHealthyMember` check turns true once all
+have explicit down records, and stays false while any is unknown
+([all-down run](https://github.com/popiposter/xkeen-control/issues/199#issuecomment-6103255109)).
+Step 2 (natural review, Apply, the recovery attempt itself, VPN/DNS/browser and rollback)
+needs a signed build.
 
 **Release gate:** since #208, `main` makes the ARM64 automatic review apply verified
-pools and restart XKeen without operator action. Do not cut a release from `main` until
-TASK-008 step 1 (a read-only baseline and a bounded unsigned synthetic candidate on both
-router types, with no change to live routing) has passed and been reviewed. The natural
-automatic review and Apply on hardware can only be observed after that signed build.
-Also before a release: a decision on repairing a still-broad 07 on existing installs
-when a review applies nothing (only an unchanged-member review repairs it today), and
-TASK-008 step 1 must include the recovery path (all members observed down) on the
-synthetic candidate.
+pools and restart XKeen without operator action. TASK-008 step 1, including the recovery
+trigger with every member down, has passed (above). The broad-07 decision is made: a
+review that keeps an exact pool by policy also narrows 07 to it (#218). On both routers
+the first review takes an adoption path anyway (KN1810 fills its five-member pool, KN1811
+replaces an orphaned member), so both narrow 07. For the signed install: KN1811 currently runs an unsigned
+`dev` panel, and KN1810 has about 29 MiB free in `/tmp`, where the update stages a
+~19 MiB binary; check it first. Avoid the stock `xkeen -ug` minute (02:00 MSK on KN1810),
+which restarts Xray.
 
 ## Delivered
 
