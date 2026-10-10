@@ -8,6 +8,17 @@ The compact policy sends selected Refilter domains and IPs through the native VP
 
 The panel retains subscriptions, native node selection, bounded measurements, and native config editing. It no longer offers split-DNS generation or a synchronization action. Existing resolver status remains visible without a periodic UI polling loop. The legacy resolver owner is temporarily retained for existing installations; deleting a button does not detach its clients.
 
+## Recommended: encrypted DNS in Keenetic
+
+LAN devices resolve names through the router, and Xray's own `02_dns.json` is empty, so Xray uses the router's DNS too. The stock inbounds sniff with `routeOnly: true`: the site name selects the rule, but the connection still goes to the IP the client resolved. If the provider substitutes answers for blocked names, a VPN rule then sends traffic to the substituted address and the site still fails. Encrypted DNS in Keenetic prevents that for every device without changing Xray:
+
+1. In the Keenetic web interface, add the DNS-over-HTTPS and/or DNS-over-TLS proxy components if they are not installed (system component settings).
+2. In the router's DNS settings, add two or more encrypted upstreams from different operators: DNS-over-HTTPS URLs such as `https://cloudflare-dns.com/dns-query` and `https://dns.google/dns-query`, and/or DNS-over-TLS servers given as an IP address with a TLS name, such as `1.1.1.1` with `cloudflare-dns.com` and `8.8.8.8` with `dns.google`. Keep at least one upstream given by IP so the router can start resolving without another DNS lookup. Choose operators that answer from your network; if one is blocked, replace it rather than falling back to the provider.
+3. On the Internet (WAN) connection, stop using the provider's DNS servers (the "ignore DNS from provider" option), so that only the encrypted upstreams answer.
+4. Verify from a LAN device: a blocked name resolves to its real address (compare with the same operator queried directly, for example `https://dns.google/resolve?name=<name>` in a browser), ordinary sites and local names (`*.lan`, the router name) still resolve, and the panel's Nodes page still sees its nodes. Repeat the check once after a router reboot, because encrypted DNS also depends on the router clock being correct.
+
+Leave `02_dns.json` empty unless Xray needs a specific resolver. The panel does not change Keenetic DNS. Menu names differ between KeeneticOS versions; apply this per router and keep its previous DNS settings for rollback. Resolving proxied names on the VPN side instead (`routeOnly: false`) is evaluated separately in [#213](https://github.com/popiposter/xkeen-control/issues/213) and is not a default.
+
 ## Existing installations
 
 Retire one router at a time using its own baseline and supported typed operation. Preserve the private node registry/outbound pair, native balancer, authentication, management access, and HOME XKeen policy. Do not use the whole fresh-setup rollback: it also removes that policy.
