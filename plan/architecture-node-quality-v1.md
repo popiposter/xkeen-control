@@ -22,7 +22,7 @@ Track the implementation in [#199](https://github.com/popiposter/xkeen-control/i
 ```mermaid
 flowchart LR
   S[Subscriptions and manual nodes] --> R[Private registry and enabled outbounds]
-  R --> D[Bounded, targeted discovery outside the pool]
+  R --> D[Targeted RTT probes: review pre-phase and recovery]
   R --> P[Active pool: up to 6 nodes]
   D --> Q[Shared review: health, speed, stability]
   P --> O[Native Observatory: active pool only]
@@ -53,27 +53,32 @@ flowchart LR
   reject ambiguous prefix overlap. Use the same initial `probeInterval: 10s`
   on both routers; ARM64 sets `enableConcurrency: true`, MIPS sets it to
   `false`. Derive freshness from the real matched count and cycle time; tune
-  the common interval only after controlled hardware measurements. A proven
-  subscription removal may temporarily leave an orphaned selector/observation
-  entry under #194's explicit degraded-state contract; that is labelled and
-  repaired by a later typed quality Apply, never silently rewritten by the
-  node-only refresh. Existing broad native selectors are labelled unoptimized
-  bootstrap state, not claimed to satisfy this target. Fresh setup should
-  prepare a bounded initial selector; an already installed broad selector
-  moves to one validated 05+07 Apply only after a usable member is proven,
-  retaining the inspected previous configuration. This is distinct from #198's
-  imported five-member initialization.
+  the common interval only after controlled hardware measurements. An exact
+  selector whose enabled outbound disappeared (subscription churn) is an
+  **unhealthy member**: the node transaction keeps `05`/`07` byte-for-byte, the
+  next review replaces it, and zero healthy members triggers REQ-009. No
+  separate degraded-state receipt exists. Any selector that is not the target
+  shape (broad prefix, imported legacy pool, orphaned members) is labelled
+  unoptimized and takes the same first-review path; there is no one-time
+  initialization intent. Fresh setup should prepare a bounded initial selector;
+  an installed broad selector moves to one validated 05+07 Apply only after a
+  usable member is proven, retaining the inspected previous configuration.
+  This replaces the separate contracts of #194 and #198.
 - **REQ-004**: Enabled nodes outside the pool remain loaded in Xray and are
-  discovered by sequential, targeted, low-payload probes through the existing
-  shared `ProbeRouter` owner. Discovery runs after an actual membership change,
-  when fewer than two pool members are freshly healthy, and in a rotating daily
-  inventory pass. Cap the daily pass at 64 nodes and each probe at 10 seconds /
-  1 KiB; continue the cursor on the next day. Record targeted evidence with its
-  own timestamp and 24-hour expiry. Never present it as Observatory data or
-  throughput. If fewer than six candidates are discovered, report coverage and
-  the partial pool honestly. An ambiguous rule installation or cleanup result
-  sets the existing durable inspection fence. After a panel restart, independent
-  Xray rule readback/reconciliation must settle it before any new targeted probe.
+  reached by sequential, targeted, low-payload RTT probes through the existing
+  shared `ProbeRouter` owner (10 seconds / 1 KiB each). There is no standalone
+  inventory pass, discovery store or discovery cursor. Probes run only (a) as
+  the pre-phase of a review, for exactly the frozen candidates of REQ-007, and
+  (b) during REQ-009 recovery. Their results live in that review's or
+  recovery's evidence and are never presented as Observatory data or
+  throughput. If fewer than six candidates qualify, report coverage and the
+  partial pool honestly. Probe rules are Xray in-memory state that match only
+  the loopback `probe` inbound, so no durable fence is needed. Reconcile every
+  managed probe tag at panel start and before each probe run. An uncertain
+  install/cleanup skips that probe and marks the review incomplete.
+  Today the only startup reconcile is in `c1.Supervisor.Start`, which never
+  runs (`Coordinator.Start` is never called), so the live startup path must
+  add it.
 - **REQ-005**: Refresh subscriptions sequentially on the common existing
   schedule: a jittered first start, then six hours after each completed
   attempt. A failed fetch retains the previous known registry/outbounds.
@@ -83,30 +88,41 @@ flowchart LR
   signal after commit; metadata-only edits do not. Coalesce signals into one
   bounded review. Node/subscription changes never silently edit routing or DNS.
 - **REQ-006**: Use one common regular review policy: at most one automatic
-  speed review per rolling 24 hours, at least six hours between comparison
-  starts, triggered by changed eligible nodes, sustained pool degradation or
-  a daily due review. Do not launch a new speed test merely because the panel
+  speed review per rolling 24 hours, triggered by changed eligible nodes,
+  sustained pool degradation or a daily due review. A trigger that arrives
+  inside the window waits for the next allowed slot and never exceeds the limit;
+  outage handling is REQ-009, not a speed review. A manual speed test and an
+  automatic review keep at least six hours between their starts. Do not launch a new speed test merely because the panel
   restarted. Persist the last-start/quota/fence state across panel restarts.
-  Discovery and Observatory do not consume speed-test quota.
+  Targeted RTT probes and Observatory do not consume speed-test quota.
 - **REQ-007**: A regular review freezes one candidate set: current healthy
-  incumbents, recently discovered challengers and a rotating share of the
-  **freshly discovered** remaining enabled nodes. A rotating node without
-  fresh discovery evidence must be probed before admission or deferred; missing
-  evidence is never inferred as healthy. Before comparing scores, obtain a fresh RTT for
+  incumbents (including unhealthy or orphaned ones, so they can be replaced)
+  and a rotating share of the remaining enabled nodes, using the existing fair
+  cursor. Missing evidence is never inferred as healthy: a candidate that
+  fails its pre-phase probe is dropped from this review. Before comparing scores, obtain a fresh RTT for
   **every** frozen candidate through the same fixed targeted endpoint and
   timeout; do not compare native Observatory RTT with a different outsider
   probe as though they were the same measurement. Attempt every selected
   candidate's bounded speed transfer; require at least 80% fresh valid results
   and six valid results before replacing a full healthy pool. Preserve a
-  healthy incumbent with invalid speed data. Replace a healthy incumbent only
-  when the comparable measured score improves by at least 15%; replace an
-  explicitly unhealthy member with a freshly verified candidate. Do not
+  healthy incumbent with invalid speed data. Rank all valid results and form
+  the top-six candidate pool. Apply it only when its aggregate comparable score
+  is at least 15% better than the incumbent pool's, or when it replaces an
+  unhealthy (including orphaned) member with a freshly verified candidate. Do not
   claim a global best when the review covers only a subset.
 - **REQ-008**: Speed-test breadth is the only measurement-budget difference.
-  Initial **proposed ceilings**, subject to hardware acceptance: ARM64 up to
-  24 candidates, 288 MiB and 10 minutes per regular review; MIPS up to 12
-  candidates, 48 MiB and 10 minutes, sequential batches of at most three.
-  Failed and partial transfers count. Both profiles use the same admission,
+  Both profiles review up to **12** candidates. Ceilings derive from the
+  existing per-candidate ladder and are not chosen independently.
+  Measurement is sequential (one `ProbeRouter` lease, ≤30 s per node), so
+  `bytes ≥ candidates × ladder worst case` and `wall ≥ candidates × 30 s +
+  pauses` must hold. A fast link otherwise exhausts the budget before 80%
+  coverage, and the reviews most worth applying would fail. Initial
+  **proposed ceilings**, subject to hardware acceptance:
+  ARM64 12 × 24 MiB (down 1/3/4/8, up 1/3/4) = 288 MiB and 8 minutes;
+  MIPS 12 × 6 MiB (down 1/3, up 0.5/1.5) = 72 MiB and 12 minutes, in
+  sequential batches of three with a one-minute pause. ARM64 with ≤256 MiB
+  RAM uses the MIPS limits and the same automatic policy, not a manual-only
+  third profile. Failed and partial transfers count. Both profiles use the same admission,
   pressure cancellation, freshness, coverage, score, quota and Apply rules.
   Initially require at least 64 MiB available memory on either router; refuse
   when two consecutive CPU samples are each at least 85% busy or swap-out
@@ -133,13 +149,13 @@ flowchart LR
   recommendation does not restart Xray only when both effective 05 and 07
   already resolve to that pool; matching 05 membership with stale 07 requires
   the same validated joint repair. Subscription churn and imported legacy
-  pools use their separate issue contracts (#194 and #198).
+  pools follow REQ-003; they have no separate contract.
 - **REQ-011**: UI distinguishes total/enabled/discovered/tested nodes,
   configured pool, measured recommendation, verified applied pool and current
   native-selected member. Show the review trigger, coverage, consumed budget,
   next due time, last Apply proof and why work was deferred. An out-of-pool
-  member is labelled "not continuously monitored" with its last discovery
-  time; `No data` is not the same as a failed probe.
+  member is labelled "not continuously monitored" with its last probe time;
+  `No data` is not the same as a failed probe.
 - **CON-001**: Preserve the compact routing policy: only the intended blocked
   destinations use `bal-proxy`; Russian domains/IPs, torrents and other traffic
   remain DIRECT. Use ordinary Keenetic DNS; no mosdns, DNS interception or DNS
@@ -147,21 +163,32 @@ flowchart LR
 - **SEC-001**: Keep subscription URLs, node credentials, full native configs
   and raw probe/benchmark responses private. Public evidence contains only
   bounded counts, state, versions and hashes. Probe traffic uses only the
-  loopback `probe` inbound and must prove the requested outbound was used.
+  loopback `probe` inbound. The probe rule is appended (`AddRule(...,
+  shouldAppend=true)`), so admission statically proves that every earlier
+  `05` rule has an `inboundTag` set excluding `probe`. Otherwise the review
+  refuses with `probe-route-shadowed` and does not measure the wrong outbound.
 
 ## 2. Implementation Steps
+
+### Implementation Phase 0
+
+- GOAL-000: Remove the dead `c1` generation before unifying, so the refactor
+  does not preserve seams that never run. Behavior does not change.
+
+| Task | Description | Completed | Date |
+| --- | --- | --- | --- |
+| TASK-000 | `Coordinator.Start` is never called. Delete the supervisor loop, adaptive/benchmark schedules, `BenchmarkRunner`, `internal/performancepolicy` and the routes `/api/v1/performance/policy*` and `/api/v1/benchmark/run`, together with their fixtures. Keep `ProbeRouter`, the lease/maintenance, the manual and adaptive runners and `SetManualOverride`. Add `ProbeRouter.Reconcile` to the live startup path. See [audit](audit-project-2026-10-10.md) §2. | | |
 
 ### Implementation Phase 1
 
 - GOAL-001: Unify the scheduler and make the active pool observable without
-  scanning the whole registry continuously. Depends on #194 and #198 for their
-  exact churn/imported-pool states.
+  scanning the whole registry continuously. Depends on GOAL-000.
 
 | Task | Description | Completed | Date |
 | --- | --- | --- | --- |
 | TASK-001 | Refactor `internal/nativequality/schedule.go` so both profiles use one due-time and review/auto-Apply path. Make the post-commit node owner signal only changes to effective enabled membership/credentials, covering automatic `internal/nodes/refresher.go` and manual `internal/nodes/operations.go` refresh plus add/enable/disable/delete; suppress manual and automatic no-ops. Reuse one durable last-start/quota/inspection owner for both profiles. | | |
 | TASK-002 | Stage `05_routing.json` and `07_observatory.json` together through fixed native config editing; validate exact prefix resolution against `04_outbounds.json` before and after one Apply. Update `internal/nativequality/criteria.go` to calculate freshness for the actual six-or-fewer targets. Update fresh setup's broad defaults in `internal/xkeen/attachment.go` and define one typed broad-to-bounded adoption for existing installations, preserving the inspected previous config. | | |
-| TASK-003 | Add bounded targeted discovery through the existing `internal/c1/probe.go` owner and Coordinator. Use a managed probe-rule tag, exact outbound readback, fixed 1 KiB/10-second request, distinct timestamped discovery evidence, cursor and durable cleanup fence. Reconcile uncertain probe-rule state on startup before new probes. Extend the probe result with RTT so `internal/nativequality/service.go` can remeasure all frozen review candidates comparably without calling discovery native Observatory health. | | |
+| TASK-003 | Add a targeted RTT probe (fixed 1 KiB/10-second request) to the existing `internal/c1/probe.go` owner, using one managed probe-rule tag. `internal/nativequality/service.go` calls it as the review pre-phase for all frozen candidates and from REQ-009 recovery. Add the static `probe-route-shadowed` admission check (SEC-001). Do not add a discovery store, a cursor or a durable fence. | | |
 
 ### Implementation Phase 2
 
@@ -180,7 +207,7 @@ flowchart LR
 
 | Task | Description | Completed | Date |
 | --- | --- | --- | --- |
-| TASK-007 | Test complete/partial/no-op subscription changes, mixed healthy/unhealthy/unknown observations, 52-node discovery rotation, pool loss, identical recommendation, uncertain cleanup/Apply and restart durability in focused fixtures. Run one exact-HEAD `scripts/dev-check.ps1 -Full` and independent review. | | |
+| TASK-007 | Test complete/partial/no-op subscription changes, mixed healthy/unhealthy/unknown observations, an orphaned selector, an imported five-member pool, 52-node fair rotation across reviews, budget/wall invariants for both profiles, a shadowed probe route, pool loss, identical recommendation, uncertain cleanup/Apply and restart durability in focused fixtures. Run one exact-HEAD `scripts/dev-check.ps1 -Full` and independent review. | | |
 | TASK-008 | On both router types, first measure read-only baseline and a bounded unsigned synthetic candidate without changing live routing. After a signed reviewed build, inspect live state, observe one natural review and verify actual resource peaks, pool membership, VPN/DNS/browser behavior and rollback availability. Report any unrun live path as NOTRUN. | | |
 
 ## 3. Alternatives
@@ -193,20 +220,27 @@ flowchart LR
   determine observation concurrency and speed-test breadth.
 - **ALT-003**: Run periodic full speed tests after every subscription refresh.
   Rejected: no-op refreshes provide no new candidates and spend traffic/CPU.
+- **ALT-004**: A standalone daily discovery pass (64 nodes, its own cursor,
+  24-hour evidence and a durable probe fence). Rejected in the
+  [2026-10-10 audit](audit-project-2026-10-10.md): the review pre-phase
+  already needs fresh RTT for every frozen candidate, and recovery already
+  probes on demand.
+- **ALT-005**: Keep #194's degraded-pool receipt and #198's one-time
+  initialization intent. Rejected: both compensate for stale broad-Observatory
+  evidence. With fresh pre-phase RTT, an orphan is just an unhealthy member and
+  any non-target selector takes the ordinary first review.
 
 ## 4. Dependencies
 
-- **DEP-001**: [#194](https://github.com/popiposter/xkeen-control/issues/194)
-  defines safe handling when a subscription removes a selected member.
-- **DEP-002**: [#198](https://github.com/popiposter/xkeen-control/issues/198)
-  defines explicit first initialization of an imported legacy pool.
+- **DEP-001**: #194 and #198 fold into #199 (REQ-003, REQ-007). Close them as
+  superseded after operator approval.
 - **DEP-003**: The existing Xray API `probe` inbound, shared `ProbeRouter`,
   editor/Jobs transaction and stock XKeen lifecycle remain available.
 
 ## 5. Files
 
 - **FILE-001**: `internal/nativequality/{schedule,criteria,service,sweep,subset,pool_decision,auto_apply}.go` — shared observation, review and Apply.
-- **FILE-002**: `internal/c1/{probe,coordinator,benchmark}.go` and `internal/resourcepolicy/policy.go` — targeted probes and bounded speed profiles.
+- **FILE-002**: `internal/c1/{probe,coordinator}.go` and `internal/resourcepolicy/policy.go` — targeted probes and bounded speed profiles; `internal/c1/{supervisor,benchmark,performance_policy}.go` and `internal/performancepolicy` are removed in Phase 0.
 - **FILE-003**: `internal/nodes/refresher.go` — change-aware scheduling signal.
 - **FILE-004**: `config/xray/{05_routing,07_observatory}.json` and the corresponding fixed-editor preparation — pool/observation consistency.
 - **FILE-005**: `web/src/main.jsx`, `docs/{ARCHITECTURE,NODE-LIFECYCLE,ROUTER-RESOURCES}.md` — truthful status and current-versus-target documentation.
@@ -235,12 +269,13 @@ flowchart LR
 
 - **RISK-001**: Xray `subjectSelector` matches prefixes, not exact tags. A
   prefix collision must refuse narrow Observatory configuration before Apply.
-- **RISK-002**: A targeted probe rule is appended. Earlier user routing could
-  intercept it; uncertain AddRule/RemoveRule outcomes require readback and
-  inspection, not an inferred healthy candidate or automatic retry.
-- **RISK-003**: Six sequential MIPS probes can still be slow under timeout;
-  the common 10-second interval and 64-node/day discovery cap are starting values,
-  not measured hardware conclusions.
+- **RISK-002**: A targeted probe rule is appended, so earlier user routing
+  could intercept it. The static admission check of SEC-001 refuses that
+  configuration. Uncertain AddRule/RemoveRule outcomes drop the probe and are
+  never inferred as a healthy candidate or retried automatically.
+- **RISK-003**: Six sequential MIPS probes can still be slow under timeout.
+  The common 10-second interval and the 12-candidate ceilings are starting
+  values, not measured hardware conclusions.
 - **ASSUMPTION-001**: Enabled managed outbounds outside the selector remain
   loaded in Xray and can be probed through the existing loopback API without
   restarting native service. Validate this on both router types.
