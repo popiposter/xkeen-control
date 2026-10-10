@@ -80,7 +80,7 @@ func (s *Service) startReview(parent context.Context, trigger string, manual boo
 		return err
 	}
 	activePool := append(append([]string(nil), resolved...), orphans...)
-	criteria, err := readCriteria(routing, w.Documents["07_observatory.json"].Text, index, w.Targets)
+	criteria, err := readCriteria(routing, w.Documents["07_observatory.json"].Text, index)
 	if err != nil {
 		return err
 	}

@@ -90,7 +90,8 @@ speed test only measures and leaves Apply to the operator. The Observatory RTT
 history and its health penalty are no longer used. Applying a pool (automatic or
 the manual recommendation) writes 05_routing.json and 07_observatory.json in one
 validated save: native Observatory then observes exactly the pool members every
-10s, concurrently on ARM64 and sequentially on MIPS. Unchanged members with a
+10s, concurrently on the standard profile and sequentially on constrained
+profiles (MIPS, and ARM64 with 256 MiB or less or unknown memory). Unchanged members with a
 stale 07 are repaired by the same joint Apply.
 Eligible nodes need fresh, alive native observations within the configured finite
 RTT criterion. Manual tests additionally require RTT no more than twice the

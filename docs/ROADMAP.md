@@ -25,6 +25,10 @@ pools and restart XKeen without operator action. Do not cut a release from `main
 TASK-008 step 1 (a read-only baseline and a bounded unsigned synthetic candidate on both
 router types, with no change to live routing) has passed and been reviewed. The natural
 automatic review and Apply on hardware can only be observed after that signed build.
+Also before a release: TASK-006 labelling, because Overview health and the Nodes table
+now show "No data" for nodes outside the observed pool instead of "not continuously
+monitored", and a decision on repairing a still-broad 07 on existing installs when a
+review applies nothing (only an unchanged-member review repairs it today).
 
 ## Delivered
 

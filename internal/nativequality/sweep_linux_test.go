@@ -852,3 +852,37 @@ func TestSweepSameMembersWithBroadObservatoryRepairsJointly(t *testing.T) {
 		t.Fatal("saved 07 does not observe exactly the pool", w.Documents["07_observatory.json"].Text)
 	}
 }
+
+func TestSweepAllOrphanedPoolWithNarrowedObservatoryIsReplaced(t *testing.T) {
+	s, _, _, dir := sweepFixture(t, true)
+	var gone []string
+	var costs []c1.NativeQualityCost
+	for i := 0; i < 6; i++ {
+		tag := fmt.Sprintf("proxy-gone-%d", i)
+		gone = append(gone, tag)
+		costs = append(costs, c1.NativeQualityCost{Regexp: true, Match: "^" + regexp.QuoteMeta(tag) + "$", Value: 1})
+	}
+	routing, _ := json.Marshal(map[string]any{"routing": map[string]any{"rules": []any{}, "balancers": []any{map[string]any{"tag": "bal-proxy", "selector": gone, "strategy": map[string]any{"type": "leastLoad", "settings": map[string]any{"maxRTT": "10s", "costs": costs}}}}}})
+	subjects, _ := json.Marshal(gone)
+	for name, data := range map[string][]byte{"05_routing.json": routing, "07_observatory.json": []byte(`{"observatory":{"subjectSelector":` + string(subjects) + `,"probeInterval":"10s","enableConcurrency":false}}`)} {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.startSweep(context.Background(), "subscription-refresh"); err != nil {
+		t.Fatal("an all-orphaned pool with a narrowed 07 could not be reviewed", err, s.Read().ReviewReason)
+	}
+	v := waitSweep(t, s)
+	if v.PoolDecision != "unhealthy-incumbent-replaced" {
+		t.Fatal("all-orphaned pool was not replaced", v.PoolDecision, v.ReviewReason)
+	}
+	w, err := s.Editor.Workspace(context.Background())
+	if err != nil || w.Pending == nil {
+		t.Fatal("replacement was not saved", err)
+	}
+	for _, name := range []string{"05_routing.json", "07_observatory.json"} {
+		if strings.Contains(w.Documents[name].Text, "proxy-gone") {
+			t.Fatal(name, "still references a vanished member")
+		}
+	}
+}
