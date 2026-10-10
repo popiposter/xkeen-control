@@ -26,6 +26,7 @@ type sweepReader struct {
 	healthy       bool
 	failAfterFile string
 	count         int
+	mutate        func(*xrayapi.Snapshot)
 	snapshotCalls atomic.Int64
 }
 
@@ -44,6 +45,9 @@ func (r *sweepReader) Snapshot(context.Context) xrayapi.Snapshot {
 	}
 	for i := 0; i < count; i++ {
 		snapshot.OutboundHealth = append(snapshot.OutboundHealth, xrayapi.OutboundHealth{Tag: fmt.Sprintf("proxy-%02d", i), Alive: true, DelayMS: int64(100 + i), LastTry: time.Now().UTC().Add(-time.Second)})
+	}
+	if r.mutate != nil {
+		r.mutate(&snapshot)
 	}
 	return snapshot
 }
@@ -169,6 +173,34 @@ func TestSweepOverlappingNativeSelectorRefusesBeforeQuotaOrTransfer(t *testing.T
 	}
 	if _, err := os.Stat(s.QuotaPath); !os.IsNotExist(err) {
 		t.Fatal("refused selector reserved quota", err)
+	}
+}
+
+func TestSweepMissingIncumbentEvidenceRefusesBeforeQuotaOrTransfer(t *testing.T) {
+	s, _, digest, _ := sweepFixtureCount(t, true, 46)
+	previousDue := time.Now().UTC().Add(time.Hour)
+	s.status = Status{State: "completed", Generation: 9, AppliedState: "applied", NextDueAt: previousDue, SelectedForSpeed: 18, AttemptedCount: 18, ValidCount: 16, BatchCount: 6, AggregateBytes: 37 * c1.MiB, Progress: c1.AdaptivePerformanceStatus{State: "completed", ValidCount: 16}}
+	s.Reader.(*sweepReader).mutate = func(snapshot *xrayapi.Snapshot) {
+		for i := 4; i < 6; i++ {
+			snapshot.OutboundHealth[i].LastTry = time.Now().UTC().Add(-time.Hour)
+		}
+	}
+	if err := s.startSweep(context.Background(), "periodic"); err == nil {
+		t.Fatal("unmeasurable incumbent admitted")
+	}
+	v := s.Read()
+	if v.State != "deferred" || v.ReviewReason != "incumbent-evidence-unavailable" || v.AppliedState != "not-attempted" || v.Generation != 9 || !v.NextDueAt.Equal(previousDue) || v.AttemptedCount != 0 || v.ValidCount != 0 || v.BatchCount != 0 || v.AggregateBytes != 0 || len(v.Ranking) != 0 || !s.lastStartedAt.IsZero() {
+		t.Fatal("missing evidence reused old review or was not a pre-admission refusal", v)
+	}
+	if len(s.Measurement.(*sweepMeasurement).calls) != 0 {
+		t.Fatal("refused review transferred data")
+	}
+	if _, err := os.Stat(s.QuotaPath); !os.IsNotExist(err) {
+		t.Fatal("refused review reserved quota", err)
+	}
+	w, err := s.Editor.Workspace(context.Background())
+	if err != nil || w.Pending != nil || w.Digest != digest {
+		t.Fatal("refused review altered the configuration", err)
 	}
 }
 
