@@ -10,7 +10,7 @@ XKeen Control is an authenticated web panel that runs **alongside unmodified sto
 
 ## Layout (big picture)
 
-- `cmd/xkeen-control/` contains the panel binary: `main.go`, the native wiring (`native.go`), the panel lifecycle and the guided fresh `--setup` entry (`setup.go`). `cmd/xkeen-release/` is the release tooling.
+- `cmd/xkeen-control/` contains the panel binary: `main.go`, the native wiring (`native.go`), the panel lifecycle and the `setup` subcommand used by the guided fresh install (`setup.go`; `scripts/install.sh --setup` calls it). `cmd/xkeen-release/` is the release tooling.
 - `internal/httpapi/` holds the HTTP API server and routes: native config, native jobs/console, quality, transfer, geodata, notifications and split DNS. Auth, CSRF, Origin and Host checks plus private-management listener rules live here, in `internal/auth`, and in `internal/panellistener`.
 - `internal/xkeen`, `internal/nodes`, `internal/nativequality`, `internal/configjson`/`configview`, `internal/nativebackup`, `internal/update`, `internal/setup` and `internal/keenetic` contain the domain logic. Their package names match their subsystems.
 - `web/` holds the React 19 + Vite + shadcn/base-ui source (`web/src/native-*.jsx` are the workspace pages). The built output is **tracked** in `internal/webassets/dist/` and embedded with Go `embed`, so a clean checkout compiles without a frontend build.
@@ -37,7 +37,7 @@ npm --prefix web run test:unit
 npm --prefix web run test:nodes-ui              # one Playwright spec; see web/package.json for the rest
 (cd web && npx playwright test tests/native-config.spec.js -g "title")
 bash scripts/update-webassets.sh                # regenerate tracked internal/webassets/dist after UI source changes
-./scripts/build-control-plane.sh                # build dist/xkeen-control-linux-{arm64,mipsle}
+ARCHITECTURE=mipsle ./scripts/build-control-plane.sh   # build dist/xkeen-control-linux-<arch>; default arm64
 ```
 
 Playwright specs mock the API and navigate through `openSection` in `web/tests/fixtures/disclosures.js`; the dashboard has six sections (Overview, Nodes, Performance, Configuration with Routing/DNS/All files tabs, XKeen, System with a Backup tab). After changing frontend source, regenerate the embedded assets explicitly and review that diff. The check scripts only compare the embedded output and never rewrite it. For docs-only changes, check links and content and run `git diff --check` instead of the code gates. Do not run `-Full` after every edit, and do not reuse its evidence after HEAD changes.
