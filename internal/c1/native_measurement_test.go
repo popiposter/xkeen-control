@@ -40,7 +40,7 @@ func TestBroadManualMeasuresTwelveAndKeepsTransferCleanupBounded(t *testing.T) {
 func TestMeasureNativeQualitySharesAdmissionAndApplyCleanup(t *testing.T) {
 	api := &benchmarkProbeAPI{}
 	transport := &adaptiveTransportStub{started: make(chan struct{}), block: make(chan struct{}), failedDownload: -1, failedUpload: -1}
-	c := NewCoordinator(DefaultPolicy(), nil, nil, nil)
+	c := NewCoordinator(DefaultPolicy(), nil)
 	c.SetAdaptiveRunner(&AdaptiveRunner{Probe: NewProbeRouter(api), Transport: transport})
 	done := make(chan error, 1)
 	g := AdaptiveGeneration{Generation: 1, StartedAt: time.Now(), CurrentTarget: "proxy-a", Candidates: []AdaptiveCandidateInput{{Tag: "proxy-a", RTTMS: 20}, {Tag: "proxy-b", RTTMS: 30}}}

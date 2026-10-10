@@ -396,7 +396,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const [nodeView, setNodeView] = useState(createNodeViewState)
   const registryNodes = nodes.nodes || []
   const nodesByTag = useMemo(() => new Map(registryNodes.map((node) => [node.outboundTag || node.tag, node])), [registryNodes])
-  const performanceOwnerBusy = Boolean(status.benchmark?.controlPlane?.running || performance?.manual?.state === 'running' || performance?.adaptive?.state === 'running')
+  const performanceOwnerBusy = Boolean(performance?.manual?.state === 'running' || performance?.adaptive?.state === 'running')
   const systemPanelController = useSystemPanelController({ csrfToken: session.csrfToken, lifecycle: status.lifecycle, onUnauthorized, active: section === 'system' })
   const openComponents = useCallback(() => setSection('components'), [])
   const openRouting = useCallback(() => setSection('routing'), [])
@@ -450,7 +450,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
     {section !== 'nodes' && <header className="page-heading"><h1>{pageTitle}</h1>{section === 'overview' && <Button variant="outline" type="button" onClick={onRefresh}><Icon name="refresh" />Refresh</Button>}</header>}
     {error && <Notice message={error} />}
     {section === 'overview' && <Overview quality={quality} measurements={measurements} status={status} performance={performance} nodeTotal={nodes.total || 0} nodesByTag={nodesByTag} csrfToken={session.csrfToken} onRefresh={onRefresh} onUnauthorized={onUnauthorized} onOpenNodes={() => setSection('nodes')} />}
-    {section === 'nodes' && <NodeWorkspace measurements={measurements} nodes={registryNodes} subscriptions={nodes.subscriptions || []} performance={performance} manualOverride={status.balancer?.override || ''} benchmarkRunning={Boolean(status.benchmark?.controlPlane?.running)} csrf={session.csrfToken} onRefresh={onRefresh} onPerformanceRefresh={onPerformanceRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} manualLifecycleBlocked={manualLifecycleBlocked} selectionAvailable={Boolean(status.xray?.apiReachable && status.balancer?.effective)} />}
+    {section === 'nodes' && <NodeWorkspace measurements={measurements} nodes={registryNodes} subscriptions={nodes.subscriptions || []} performance={performance} manualOverride={status.balancer?.override || ''} csrf={session.csrfToken} onRefresh={onRefresh} onPerformanceRefresh={onPerformanceRefresh} viewState={nodeView} onViewStateChange={setNodeView} lifecycleBlocked={lifecycleBlocked} manualLifecycleBlocked={manualLifecycleBlocked} selectionAvailable={Boolean(status.xray?.apiReachable && status.balancer?.effective)} />}
     {<div hidden={section !== 'performance'}><NativeQualitySection onStatusChange={setQuality} csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} busy={performanceOwnerBusy || lifecycleBlocked} nodesByTag={nodesByTag} workingEdits={configWorking} onReadback={qualityReadback} onNativeJob={receiveNativeJob} onOpenConsole={openComponents} onInspectConfigs={openRouting} /></div>}
     {section === 'components' && <NativeXkeenSection facts={status.native} onRefresh={onRefresh} onOpenSystem={() => setSection('system')} csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} jobNotification={nativeConfigJob?.csrfToken === session.csrfToken ? nativeConfigJob.job : null} />}
     {section === 'dns' && <SplitDNSSection csrfToken={session.csrfToken} onUnauthorized={onUnauthorized} readbackKey={configReadback} />}
@@ -498,7 +498,7 @@ function Overview({ quality, measurements, status, nodeTotal, nodesByTag, onOpen
   </div>
 }
 
-function NodeWorkspace({ measurements, nodes, subscriptions, performance, manualOverride, benchmarkRunning, csrf, onRefresh, onPerformanceRefresh, viewState, onViewStateChange, lifecycleBlocked, manualLifecycleBlocked, selectionAvailable }) {
+function NodeWorkspace({ measurements, nodes, subscriptions, performance, manualOverride, csrf, onRefresh, onPerformanceRefresh, viewState, onViewStateChange, lifecycleBlocked, manualLifecycleBlocked, selectionAvailable }) {
   const [columns, setColumns] = useState(() => { try { const stored = JSON.parse(localStorage.getItem('xkeen.node-columns.v1')); if (stored && typeof stored === 'object' && !Array.isArray(stored)) return stored } catch {} return { address: true, health: true, latency: true, rank: true, download: true, upload: true, role: true, source: false, subscription: true } })
   const showColumn = (key) => columns[key] !== false
   const toggleColumn = (key, value) => setColumns((previous) => { const next = { ...previous, [key]: value }; try { localStorage.setItem('xkeen.node-columns.v1', JSON.stringify(next)) } catch {} return next })
@@ -717,7 +717,7 @@ function NodeWorkspace({ measurements, nodes, subscriptions, performance, manual
   }
 
   const runManualNode = async () => {
-    if (!selectedNode || selectedNodes.length !== 1 || !selectedNode.enabled || manualLifecycleBlocked || benchmarkRunning || manualRunning || adaptiveRunning || manualRequestBusy) return
+    if (!selectedNode || selectedNodes.length !== 1 || !selectedNode.enabled || manualLifecycleBlocked || manualRunning || adaptiveRunning || manualRequestBusy) return
     setManualRequestBusy(true)
     setNotice(null)
     try {
@@ -785,7 +785,7 @@ function NodeWorkspace({ measurements, nodes, subscriptions, performance, manual
       <div className="flex items-center gap-1"><NodeActionButton icon="select" label={`Select all ${filtered.length} filtered`} onClick={toggleAllFiltered} disabled={busy || lifecycleBlocked || !filtered.length || allFilteredSelected} /><NodeActionButton icon="close" label="Clear selection" onClick={clearSelection} disabled={busy || lifecycleBlocked || !selectedIDs.size} /></div>
       <Separator orientation="vertical" className="h-6" /><div className="flex flex-wrap items-center gap-1">
         <NodeActionButton icon="target" description={!selectedNode ? 'Select one enabled node first. A manual pin bypasses automatic failover until cleared or Xray restarts.' : 'Native Xray pin. Clear it to resume automatic selection and failover.'} label={selectedManual ? 'Clear manual override' : 'Set manual override'} active={Boolean(selectedManual)} onClick={() => setManualOverride(selectedManual ? '' : (selectedNode.outboundTag || selectedNode.tag))} disabled={busy || lifecycleBlocked || !selectionAvailable || !selectedNode || (!selectedManual && !selectedNode.enabled)} />
-        <NodeActionButton icon="gauge" label={manualRequestBusy ? 'Starting speed test…' : 'Full speed test'} onClick={runManualNode} disabled={busy || manualRequestBusy || manualLifecycleBlocked || benchmarkRunning || manualRunning || adaptiveRunning || selectedNodes.length !== 1 || !selectedNode?.enabled} />
+        <NodeActionButton icon="gauge" label={manualRequestBusy ? 'Starting speed test…' : 'Full speed test'} onClick={runManualNode} disabled={busy || manualRequestBusy || manualLifecycleBlocked || manualRunning || adaptiveRunning || selectedNodes.length !== 1 || !selectedNode?.enabled} />
         <NodeActionButton icon="edit" label="Edit / replace profile" onClick={() => openEditor()} disabled={busy || lifecycleBlocked || selectedNodes.length !== 1} />
         <NodeActionButton icon="enable" label="Enable" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: true })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => node.enabled)} />
         <NodeActionButton icon="disable" label="Disable" onClick={() => requestPreview('/api/v1/nodes/batch/state/preview', { nodeIds: selectedNodeIDs, enabled: false })} disabled={busy || lifecycleBlocked || !selectedNodes.length || selectedNodes.every((node) => !node.enabled)} />

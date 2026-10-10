@@ -66,7 +66,6 @@ type Status struct {
 	Observatory  ObservatoryStatus   `json:"observatory"`
 	Benchmark    BenchmarkStatus     `json:"benchmark"`
 	Watchdog     WatchdogStatus      `json:"watchdog"`
-	Selection    c1.SelectionStatus  `json:"selection"`
 	Setup        SetupStatus         `json:"setup"`
 	Lifecycle    *c1.LifecycleStatus `json:"lifecycle,omitempty"`
 }
@@ -116,15 +115,14 @@ type ObservatoryStatus struct {
 }
 
 type BenchmarkStatus struct {
-	SemanticIntervalMinutes int                `json:"semanticIntervalMinutes"`
-	InstalledSchedule       string             `json:"installedSchedule"`
-	LastRunAt               string             `json:"lastRunAt"`
-	EligibleNodes           int                `json:"eligibleNodes"`
-	PayloadBytes            int64              `json:"payloadBytes"`
-	PerNodeSeconds          int                `json:"perNodeSeconds"`
-	MaxTransferBytes        int64              `json:"maxTransferBytes"`
-	MaxWallSeconds          int                `json:"maxWallSeconds"`
-	ControlPlane            c1.BenchmarkStatus `json:"controlPlane"`
+	SemanticIntervalMinutes int    `json:"semanticIntervalMinutes"`
+	InstalledSchedule       string `json:"installedSchedule"`
+	LastRunAt               string `json:"lastRunAt"`
+	EligibleNodes           int    `json:"eligibleNodes"`
+	PayloadBytes            int64  `json:"payloadBytes"`
+	PerNodeSeconds          int    `json:"perNodeSeconds"`
+	MaxTransferBytes        int64  `json:"maxTransferBytes"`
+	MaxWallSeconds          int    `json:"maxWallSeconds"`
 }
 
 type WatchdogStatus struct {
@@ -385,12 +383,7 @@ func (c *Collector) collect(ctx context.Context) View {
 			item.LastTry = formatTime(value.LastTry)
 			item.LastError = redact.SanitizeError(value.LastError)
 		}
-		if value, ok := c1State.Benchmark.Samples[tag]; ok {
-			if value.Valid {
-				item.ThroughputKBps = value.BytesPerSecond / 1024
-				item.LastBenchmarkAt = formatTime(c1State.Benchmark.LastCompletedAt)
-			}
-		} else if value, ok := xkeenState.Benchmark.ThroughputKBps[tag]; ok {
+		if value, ok := xkeenState.Benchmark.ThroughputKBps[tag]; ok {
 			item.ThroughputKBps = value
 			item.LastBenchmarkAt = formatTime(xkeenState.Benchmark.ThroughputAt[tag])
 			item.ThroughputError = xkeenState.Benchmark.ThroughputError[tag]
@@ -442,10 +435,8 @@ func (c *Collector) collect(ctx context.Context) View {
 			PerNodeSeconds:          firstPositive(configState.SpeedBalancer.NodeSeconds, xkeenState.Speed.NodeSeconds),
 			MaxTransferBytes:        firstPositiveInt64(configState.SpeedBalancer.MaxBytes, xkeenState.Speed.MaxBytes),
 			MaxWallSeconds:          firstPositive(configState.SpeedBalancer.MaxSeconds, xkeenState.Speed.MaxSeconds),
-			ControlPlane:            c1State.Benchmark,
 		},
 		Watchdog:  WatchdogStatus{Installed: xkeenState.Watchdog.Installed, Enabled: xkeenState.Watchdog.Enabled},
-		Selection: c1State.Selection,
 		Lifecycle: c1State.Lifecycle,
 	}
 	status.Setup = c.setupStatus(status, xkeenState, xrayState, configState)
@@ -456,8 +447,7 @@ func (c *Collector) collect(ctx context.Context) View {
 
 	performanceNodes := make([]Throughput, 0, len(nodes))
 	for _, node := range nodes {
-		_, c1Sample := c1State.Benchmark.Samples[node.Tag]
-		if _, legacySample := xkeenState.Benchmark.ThroughputKBps[node.Tag]; !c1Sample && !legacySample {
+		if _, sample := xkeenState.Benchmark.ThroughputKBps[node.Tag]; !sample {
 			continue
 		}
 		performanceNodes = append(performanceNodes, Throughput{

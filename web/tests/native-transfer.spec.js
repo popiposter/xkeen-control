@@ -4,7 +4,7 @@ const csrfToken = 'synthetic-transfer-csrf'
 const token = 'a'.repeat(32)
 const ready = { token, digest: 'b'.repeat(64), files: ['02_dns.json', '05_routing.json'], nodes: 2, subscriptions: 1, references: [], interfaces: ['eth0'], expiresAt: new Date(Date.now() + 300000).toISOString() }
 const json = (route, value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(value) })
-const status = { controlPlane: { version: 'test' }, xray: {}, xkeen: {}, balancer: {}, observatory: {}, benchmark: { controlPlane: {} }, selection: {}, native: { installation: 'available', xrayRunning: true }, lifecycle: { maintenance: false, applying: false } }
+const status = { controlPlane: { version: 'test' }, xray: {}, xkeen: {}, balancer: {}, observatory: {}, native: { installation: 'available', xrayRunning: true }, lifecycle: { maintenance: false, applying: false } }
 async function prepare(page, { mapping = false, stageStatus = 200, delay = null, exportStatus = 200 } = {}) {
   const state = { requests: [], previews: 0 }
 	let digest = 'c'.repeat(64), pending = null

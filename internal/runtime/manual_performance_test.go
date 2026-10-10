@@ -72,7 +72,7 @@ func TestPerformanceSnapshotOverlaysManualRAMWithoutRefreshingHeavyCollectors(t 
 	}}
 	config := &countingRuntimeConfig{}
 	transport := &runtimeBlockingTransport{started: make(chan struct{})}
-	coordinator := c1.NewCoordinator(c1.DefaultPolicy(), nil, &c1.BenchmarkRunner{}, func(context.Context) []c1.NodeState {
+	coordinator := c1.NewCoordinator(c1.DefaultPolicy(), func(context.Context) []c1.NodeState {
 		return []c1.NodeState{{ID: "node-00000001", Tag: tag, Enabled: true}}
 	})
 	coordinator.SetManualRunner(&c1.ManualNodeRunner{Probe: c1.NewProbeRouter(runtimeProbeController{}), Transport: transport})

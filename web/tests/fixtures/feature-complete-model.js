@@ -21,8 +21,6 @@ const componentState = (overrides = {}) => ({
   xkeen: { running: true },
   balancer: { effective: 'proxy-node-00000001' },
   observatory: { healthy: 1, total: 1, apiReachable: true },
-  benchmark: { controlPlane: { running: false, state: 'idle' } },
-  selection: { state: 'stable' },
   native: { installation: 'available', panelIntegration: 'available', version: '2.0.1', channel: 'beta', core: 'xray', xrayRunning: true, geodataFiles: 6, geodataCron: 'available' },
   lifecycle: { maintenance: false, applying: false },
   ...overrides,
@@ -134,8 +132,6 @@ export class FeatureCompleteModel {
       xkeen: allowlist(this.runtime.xkeen, ['running']),
       balancer: allowlist(this.runtime.balancer, ['effective']),
       observatory: allowlist(this.runtime.observatory, ['healthy', 'total', 'apiReachable']),
-      benchmark: { controlPlane: allowlist(this.runtime.benchmark.controlPlane, ['running', 'state']) },
-      selection: allowlist(this.runtime.selection, ['state']),
       native: allowlist(this.runtime.native, ['installation', 'panelIntegration', 'version', 'channel', 'core', 'xrayRunning', 'geodataFiles', 'geodataCron']),
     }
     if (this.lifecycle != null) value.lifecycle = allowlist(this.lifecycle, ['maintenance', 'applying'])

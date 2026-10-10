@@ -30,7 +30,7 @@ async function mountNativeCommands(page, { output = 'Native result\r\n', bootstr
     if (path === '/api/v1/xkeen/jobs/resolve') { model.resolves.push(body); model.job.state = 'inspected'; return json({ ...model.job, output: '', cursor: 0, truncated: false }) }
     const value = {
       '/api/v1/session': { csrfToken: 'synthetic-native-csrf' },
-      '/api/v1/status': { controlPlane: {}, xray: {}, xkeen: {}, balancer: {}, observatory: {}, benchmark: { controlPlane: {} }, selection: {}, lifecycle: { applying: false, maintenance: false }, native: { installation: 'available', version: '2.0.1', channel: 'beta', core: 'xray', panelIntegration: 'available', xrayRunning: true } },
+      '/api/v1/status': { controlPlane: {}, xray: {}, xkeen: {}, balancer: {}, observatory: {}, lifecycle: { applying: false, maintenance: false }, native: { installation: 'available', version: '2.0.1', channel: 'beta', core: 'xray', panelIntegration: 'available', xrayRunning: true } },
       '/api/v1/nodes': { total: 0, nodes: [], subscriptions: [] },
       '/api/v1/performance': { nodes: [] },
     }[path]
