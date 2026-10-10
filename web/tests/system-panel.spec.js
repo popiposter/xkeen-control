@@ -185,7 +185,7 @@ test('clears submitted credentials on rejection and navigation and discards raw 
   await expect(page.getByLabel('Telegram bot token')).toHaveValue('')
 })
 
-for (const [channel, mode, text] of [['stable', 'notify', 'Background discovery never'], ['stable', 'auto-stable', 'Unsupported mode']]) {
+for (const [channel, mode, text] of [['stable', 'notify', 'Background discovery never'], ['beta', 'notify', 'Unsupported channel'], ['stable', 'auto-stable', 'Unsupported mode']]) {
   test(`projects ${channel} ${mode} without arming Apply or explicit Check`, async ({ page }) => {
     const state = await prepare(page, { update: { channel, policy: { channel, mode, checkCadenceMinutes: 60 }, scheduler: { state: mode === 'auto-stable' ? 'unsupported-mode' : channel === 'beta' ? 'unsupported-channel' : 'completed', notificationState: 'notified' } } }); page.__systemIssues = state.issues
     await page.goto('/')

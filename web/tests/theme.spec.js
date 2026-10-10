@@ -48,8 +48,9 @@ test('mobile and desktop theme controls share the same preference', async ({ pag
   await expect(drawer.getByLabel('Appearance', { exact: true })).toHaveValue('system')
 })
 
-// Page overflow at phone widths is theme-independent and covered once by
-// task-workspace.spec.js. Screenshots are an opt-in audit aid.
+// Screenshots are an opt-in audit aid. Overflow is theme-independent, so one
+// phone-width pass runs in the light theme only; unlike task-workspace.spec.js
+// it uses populated DNS/routing documents.
 for (const theme of ['light', 'dark']) test(`all workspaces use one readable ${theme} theme`, async ({ page }) => {
   const model = await fixture(page)
   await page.getByLabel('Appearance', { exact: true }).selectOption(theme)
@@ -65,6 +66,13 @@ for (const theme of ['light', 'dark']) test(`all workspaces use one readable ${t
     const labels = await page.locator('[data-slot=field-label]').evaluateAll((elements) => elements.filter((el) => el.getBoundingClientRect().height > 0).map((el) => ({ color: getComputedStyle(el).color, inherited: getComputedStyle(el.closest('[data-slot=card]') || el.parentElement).color })))
     for (const label of labels) expect(label.color).toBe(label.inherited)
     if (output) await page.screenshot({ path: path.join(output, `${theme}-${index + 1}-${name.split(' ')[0].toLowerCase()}.png`), fullPage: true })
+  }
+  if (theme === 'light') {
+    await page.setViewportSize({ width: 320, height: 900 })
+    for (const name of ['Overview', 'Nodes 1', 'Routing', 'DNS', 'Backup & Restore', 'System / Panel']) {
+      await (await revealNavigation(page)).getByRole('button', { name, exact: true }).click()
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), name).toBe(true)
+    }
   }
   expect(model.requests.filter((request) => request.method !== 'GET' && !['/api/v1/xkeen/jobs/read', '/api/v1/xkeen/config/document'].includes(request.path))).toEqual([])
 })

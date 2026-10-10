@@ -37,8 +37,8 @@ for (const width of [375]) {
 }
 
 // The fact-to-guidance matrix is covered in web/unit/native-xkeen-state.test.js;
-// these two cases keep the browser wiring for an uncertain and a running state.
-for (const [installation, panelIntegration, running] of [['unknown', 'missing'], ['available', 'unknown', true]]) {
+// these two cases keep the browser wiring for absent native facts and a running state.
+for (const [installation, panelIntegration, running] of [[undefined, undefined], ['available', 'unknown', true]]) {
   test(`native installation and runtime facts stay distinct: ${installation}/${panelIntegration}/${!!running}`, async ({ page }) => {
     await page.route('**/api/v1/**', async (route) => {
       const path = new URL(route.request().url()).pathname
