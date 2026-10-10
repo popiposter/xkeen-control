@@ -9,7 +9,7 @@ const status = {
   xray: { running: true, apiReachable: true, probeReachable: true },
   xkeen: { running: true },
   observatory: { healthy: 2, total: 3, apiReachable: true },
-  balancer: {}, selection: {}, benchmark: { controlPlane: { running: false } },
+  balancer: {},
   native: { installation: 'available', panelIntegration: 'available', version: '2.0.1', channel: 'beta', core: 'xray', xrayRunning: true },
   lifecycle: { maintenance: false, applying: false },
 }

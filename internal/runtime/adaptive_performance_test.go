@@ -11,7 +11,7 @@ import (
 )
 
 func TestPerformanceSnapshotIncludesBoundedAdaptiveProjection(t *testing.T) {
-	coordinator := c1.NewCoordinator(c1.DefaultPolicy(), nil, nil, nil)
+	coordinator := c1.NewCoordinator(c1.DefaultPolicy(), nil)
 	collector := NewCollector("test", time.Now().UTC(), Dependencies{C1: coordinator})
 	performance := collector.PerformanceSnapshot(context.Background())
 	// An unstarted Coordinator has no due time; the state must still be

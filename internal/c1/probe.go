@@ -79,6 +79,17 @@ func (p *ProbeRouter) WithTarget(ctx context.Context, kind, target string, actio
 	return action(ctx)
 }
 
+// Recover retries cleanup once, within a bounded time, when an earlier
+// reconcile or cleanup left the probe gate closed. It is a no-op otherwise.
+func (p *ProbeRouter) Recover(ctx context.Context) {
+	if p == nil || !p.Blocked() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_ = p.Reconcile(ctx)
+}
+
 func (p *ProbeRouter) Reconcile(ctx context.Context) error {
 	if p == nil || p.api == nil {
 		return errors.New("probe routing unavailable")

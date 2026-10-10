@@ -38,8 +38,6 @@ const statusFixture = (nodes) => ({
   xkeen: { running: true },
   balancer: { nativeSelected: nodes[0].outboundTag, effective: nodes[0].outboundTag, override: nodes[1].outboundTag },
   observatory: { healthy: 50, total: 51, apiReachable: true },
-  benchmark: { controlPlane: { running: false, state: 'idle' } },
-  selection: { state: 'stable', manualOverride: nodes[1].outboundTag },
   native: { installation: 'available', panelIntegration: 'available', version: '2.0.1', channel: 'beta', core: 'xray', xrayRunning: true },
   lifecycle: { maintenance: false, applying: false },
 })
@@ -439,7 +437,7 @@ test('allows Full speed test beside another manual override and polls only while
   const speedTest = page.getByRole('button', { name: 'Full speed test', exact: true })
   await expect(page.getByRole('toolbar', { name: 'Selected node actions' })).toBeVisible()
   await page.getByRole('checkbox', { name: 'Select Node 001', exact: true }).check()
-  expect(prepared.state.status.selection.manualOverride).toBe(`proxy-${nodeID(2)}`)
+  expect(prepared.state.status.balancer.override).toBe(`proxy-${nodeID(2)}`)
   await expect(speedTest).toBeEnabled()
   await speedTest.click()
   expect(prepared.state.requests.filter((request) => request.path === '/api/v1/performance/manual-node')).toEqual([

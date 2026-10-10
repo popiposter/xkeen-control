@@ -12,7 +12,7 @@ for (const width of [375]) {
         '/api/v1/session': { csrfToken: 'synthetic-native-csrf' },
         '/api/v1/status': {
           controlPlane: { version: 'test' }, xray: {}, xkeen: {}, balancer: {}, observatory: {},
-          benchmark: { controlPlane: {} }, selection: {}, lifecycle: { applying: false, maintenance: false },
+          lifecycle: { applying: false, maintenance: false },
           setup: { state: 'blocked', reasonCode: 'interception-conflict' },
           native: { installation: 'available', version: '2.0.1', channel: 'beta', core: 'xray', panelIntegration: 'available', xrayRunning: false, geodataFiles: 6, geodataCron: 'available' },
         },
@@ -44,7 +44,7 @@ for (const [installation, panelIntegration, running] of [[undefined, undefined],
       const path = new URL(route.request().url()).pathname
       const data = {
         '/api/v1/session': { csrfToken: 'synthetic-csrf' },
-        '/api/v1/status': { controlPlane: {}, xray: {}, xkeen: {}, balancer: {}, observatory: {}, benchmark: { controlPlane: {} }, selection: {}, lifecycle: {}, native: installation === undefined ? undefined : { installation, panelIntegration, xrayRunning: running } },
+        '/api/v1/status': { controlPlane: {}, xray: {}, xkeen: {}, balancer: {}, observatory: {}, lifecycle: {}, native: installation === undefined ? undefined : { installation, panelIntegration, xrayRunning: running } },
         '/api/v1/nodes': { nodes: [], subscriptions: [] },
         '/api/v1/performance': { nodes: [] },
       }[path]

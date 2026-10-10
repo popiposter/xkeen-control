@@ -709,3 +709,18 @@ func (zeroByteReader) Read(buffer []byte) (int, error) {
 	}
 	return len(buffer), nil
 }
+
+func formatInt64(value int64) string {
+	if value <= 0 {
+		return "0"
+	}
+	result := make([]byte, 0, 20)
+	for value > 0 {
+		result = append(result, byte('0'+value%10))
+		value /= 10
+	}
+	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
+		result[i], result[j] = result[j], result[i]
+	}
+	return string(result)
+}
