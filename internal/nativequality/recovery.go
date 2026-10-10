@@ -221,7 +221,7 @@ func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
 	s.mu.Lock()
 	s.recovery.State = "applying"
 	s.mu.Unlock()
-	result := s.applyPool(parent, w.Digest, index, eligible, selected, costs, routing, observatory, nil)
+	result := s.applyPool(parent, w.Digest, index, eligible, selected, costs, false, routing, observatory, nil)
 	if !result.inspection {
 		q.InspectionRequired = false
 	}

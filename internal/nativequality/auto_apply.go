@@ -166,13 +166,19 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		// validated joint 05+07 Apply repairs it (REQ-010).
 		decision = "observatory-repair"
 	}
-	if keptByPolicy[decision] && len(orphans) == 0 && len(currentActive) <= 6 && exactSelectors(currentActive, w.Targets) && !observatoryMatchesPool(observatory, currentActive, concurrent) {
+	if keptByPolicy[decision] && len(orphans) == 0 && len(currentActive) <= 6 && samePoolMembers(balancerSelector(w.Documents["05_routing.json"].Text, index), currentActive) && exactSelectors(currentActive, w.Targets) && !observatoryMatchesPool(observatory, currentActive, concurrent) {
 		// The review keeps the running pool, but 07 still observes a wider
 		// set: narrow 07 to that pool and keep 05 byte for byte (REQ-003).
 		s.mu.Lock()
 		s.status.PoolDecision = "observatory-repair"
 		s.mu.Unlock()
-		s.recordPoolApply(s.applyPool(parent, digest, index, pool, currentActive, nil, w.Documents["05_routing.json"].Text, observatory, s.onApplyJob), currentActive)
+		s.recordPoolApply(s.applyPool(parent, digest, index, pool, currentActive, nil, true, w.Documents["05_routing.json"].Text, observatory, s.onApplyJob), currentActive)
+		s.mu.Lock()
+		if s.status.AppliedState == "applied" {
+			// Keep the policy that retained the pool visible to the operator.
+			s.status.ReviewReason = decision
+		}
+		s.mu.Unlock()
 		return
 	}
 	s.mu.Lock()
@@ -186,7 +192,23 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		s.applyOutcome("not-applied", decision, false)
 		return
 	}
-	s.recordPoolApply(s.applyPool(parent, digest, index, pool, selected, selectedCosts, w.Documents["05_routing.json"].Text, observatory, s.onApplyJob), selected)
+	s.recordPoolApply(s.applyPool(parent, digest, index, pool, selected, selectedCosts, false, w.Documents["05_routing.json"].Text, observatory, s.onApplyJob), selected)
+}
+
+// balancerSelector returns the literal selector entries of the balancer at
+// index; prefixes stay prefixes, unlike the resolved pool.
+func balancerSelector(text string, index int) []string {
+	var doc struct {
+		Routing struct {
+			Balancers []struct {
+				Selector []string `json:"selector"`
+			} `json:"balancers"`
+		} `json:"routing"`
+	}
+	if configjson.Decode([]byte(text), &doc) != nil || index < 0 || index >= len(doc.Routing.Balancers) {
+		return nil
+	}
+	return doc.Routing.Balancers[index].Selector
 }
 
 // keptByPolicy are decisions that deliberately keep the running pool.
@@ -230,14 +252,13 @@ type poolApply struct {
 // receipt, the readback of both documents and the runtime selection. It never
 // retries Save or the native restart; any error after the save is returned as
 // inspection-required (REQ-010). Reviews and REQ-009 recovery share it.
-// With nil selectedCosts, 05 is kept byte for byte and only 07 is saved: the
+// With keepRouting, 05 is kept byte for byte and only 07 is saved: the
 // observatory repair of a pool the review keeps.
-func (s *Service) applyPool(parent context.Context, digest string, index int, pool, selected []string, selectedCosts []c1.NativeQualityCost, routing, observatory string, onJob func(string)) poolApply {
+func (s *Service) applyPool(parent context.Context, digest string, index int, pool, selected []string, selectedCosts []c1.NativeQualityCost, keepRouting bool, routing, observatory string, onJob func(string)) poolApply {
 	concurrent := !s.profile().Constrained
 	fail := func(state, reason string) poolApply {
 		return poolApply{state: state, reason: reason, inspection: state == "inspection-required"}
 	}
-	keepRouting := selectedCosts == nil
 	proposed := []byte(routing)
 	if !keepRouting {
 		replaced, err := replaceRecommendation(routing, index, selectedCosts, selected)
