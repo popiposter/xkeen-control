@@ -5,9 +5,10 @@ import path from 'node:path'
 export default defineConfig({
   testDir: './tests',
   fullyParallel: false,
-  // Specs own isolated browser contexts and mock API state. Bound parallelism
-  // instead of scaling to every host core (including on release runners).
-  workers: 2,
+  // Specs own isolated browser contexts and mock API state. Hosted release
+  // runners (CI=true) stay at two workers; the local Docker gate measured best
+  // at six, with no gain beyond that.
+  workers: process.env.CI ? 2 : 6,
   timeout: 20_000,
   expect: { timeout: 5_000 },
   reporter: 'line',

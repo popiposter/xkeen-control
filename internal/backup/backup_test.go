@@ -60,6 +60,16 @@ func TestEnvelopeRoundTripUsesFixedParametersAndFreshRandomness(t *testing.T) {
 	if envelope.Format != EncryptedFormat || envelope.EnvelopeVersion != EnvelopeVersion || envelope.KDF.Name != KDFName || envelope.KDF.Version != Argon2Version || envelope.KDF.MemoryKiB != Argon2MemoryKiB || envelope.KDF.Iterations != Argon2Iterations || envelope.KDF.Parallelism != Argon2Parallelism || envelope.KDF.KeyBytes != Argon2KeyBytes || envelope.Cipher.Name != "XChaCha20-Poly1305" {
 		t.Fatalf("envelope parameters = %+v", envelope)
 	}
+	if salt, ok := decodeRawURL(envelope.KDF.Salt, Argon2SaltBytes); !ok {
+		t.Fatal("salt is not the fixed length")
+	} else {
+		clearBytes(salt)
+	}
+	if nonce, ok := decodeRawURL(envelope.Cipher.Nonce, XChaCha20NonceBytes); !ok {
+		t.Fatal("nonce is not the fixed length")
+	} else {
+		clearBytes(nonce)
+	}
 	opened, err := openWith(t, first, syntheticPassphrase)
 	if err != nil || !bytes.Equal(opened, plaintext) {
 		t.Fatalf("roundtrip = %q, %v", opened, err)
@@ -122,11 +132,11 @@ func TestSecretOperationIsSingleFlight(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
 	var calls atomic.Int32
-	derive := func(_ []byte, _ []byte, _, _ uint32, _ uint8, keyBytes uint32) []byte {
+	derive := func(password, salt []byte, memoryKiB, iterations uint32, parallelism uint8, keyBytes uint32) []byte {
 		calls.Add(1)
 		once.Do(func() { close(started) })
 		<-release
-		return bytes.Repeat([]byte{0x42}, int(keyBytes))
+		return fastDeriver(password, salt, memoryKiB, iterations, parallelism, keyBytes)
 	}
 	archive, err := sealPayload([]byte(`{}`), syntheticPassphrase, &incrementingReader{}, fastDeriver)
 	if err != nil {
@@ -149,7 +159,10 @@ func TestSecretOperationIsSingleFlight(t *testing.T) {
 	}
 	close(release)
 	select {
-	case <-first:
+	case err := <-first:
+		if err != nil {
+			t.Fatal(err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("first operation did not finish")
 	}

@@ -21,14 +21,18 @@ import (
 )
 
 const (
-	SessionCookieName   = "xkeen_session"
-	CSRFHeader          = "X-CSRF-Token"
-	PasswordHashPath    = "/opt/etc/xkeen-control/auth/password.bcrypt"
-	BootstrapMarkerPath = "/opt/etc/xkeen-control/auth/bootstrap-required"
-	passwordCost        = 12
-	maxSessions         = 32
-	maxAttempts         = 256
+	SessionCookieName      = "xkeen_session"
+	CSRFHeader             = "X-CSRF-Token"
+	PasswordHashPath       = "/opt/etc/xkeen-control/auth/password.bcrypt"
+	BootstrapMarkerPath    = "/opt/etc/xkeen-control/auth/bootstrap-required"
+	productionPasswordCost = 12
+	maxSessions            = 32
+	maxAttempts            = 256
 )
+
+// passwordCost is a variable only so package tests can use bcrypt.MinCost;
+// TestProductionPasswordCost pins the shipped value.
+var passwordCost = productionPasswordCost
 
 var (
 	ErrInvalidCredentials     = errors.New("invalid credentials")

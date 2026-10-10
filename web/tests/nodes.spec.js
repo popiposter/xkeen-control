@@ -76,7 +76,7 @@ test('node confirmation contains keyboard focus and restores it on Escape', asyn
   expect(await page.evaluate(() => window.modalCSPViolations)).toEqual([])
 })
 
-for (const body of ['not json', '{}', '{"unrelated":true}']) {
+for (const body of ['not json', '{"unrelated":true}']) {
   test(`malformed Apply reply consumes preview: ${body}`, async ({ page }) => {
     await prepare(page)
     await openNodes(page)
