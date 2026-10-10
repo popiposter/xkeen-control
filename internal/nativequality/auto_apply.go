@@ -102,11 +102,12 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		s.applyOutcome("not-applied", "node-profile-changed", false)
 		return
 	}
-	currentActive, _, err := routingPool(w.Documents["05_routing.json"].Text, s.Nodes(ctx), w.Targets)
+	resolved, orphans, _, err := resolveActivePool(w.Documents["05_routing.json"].Text, s.Nodes(ctx), w.Targets, true)
 	if err != nil {
 		s.applyOutcome("not-applied", "selector-unavailable", false)
 		return
 	}
+	currentActive := append(append([]string(nil), resolved...), orphans...)
 	plan := s.sweepPlan
 	if plan.TotalEligible == 0 {
 		plan = sweepPlan{Active: currentActive, NativeSelected: result.CurrentTarget, FirstInitialization: len(currentActive) > 6}

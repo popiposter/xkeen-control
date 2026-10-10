@@ -690,3 +690,43 @@ func TestManualAndAutomaticStartsPersistSixHourFloor(t *testing.T) {
 		t.Fatal("restart bypassed automatic six-hour floor")
 	}
 }
+
+func TestSweepOrphanedSelectorIsAnUnhealthyMemberAndReplaced(t *testing.T) {
+	s, _, _, dir := sweepFixture(t, true)
+	var selector []string
+	var costs []c1.NativeQualityCost
+	for _, tag := range []string{"proxy-00", "proxy-01", "proxy-02", "proxy-03", "proxy-04", "proxy-gone"} {
+		selector = append(selector, tag)
+		costs = append(costs, c1.NativeQualityCost{Regexp: true, Match: "^" + regexp.QuoteMeta(tag) + "$", Value: 1})
+	}
+	routing, _ := json.Marshal(map[string]any{"routing": map[string]any{"rules": []any{}, "balancers": []any{map[string]any{"tag": "bal-proxy", "selector": selector, "strategy": map[string]any{"type": "leastLoad", "settings": map[string]any{"maxRTT": "10s", "costs": costs}}}}}})
+	if err := os.WriteFile(filepath.Join(dir, "05_routing.json"), routing, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if v := s.Read(); v.ActivePoolState != "degraded-orphaned" || len(v.OrphanedPool) != 1 || v.OrphanedPool[0] != "proxy-gone" {
+		t.Fatal("orphaned selector not reported", v.ActivePoolState, v.OrphanedPool)
+	}
+	if err := s.startSweep(context.Background(), "subscription-refresh"); err != nil {
+		t.Fatal("orphaned selector blocked the review", err, s.Read().ReviewReason)
+	}
+	v := waitSweep(t, s)
+	if v.PoolDecision != "unhealthy-incumbent-replaced" {
+		t.Fatal("orphan was not replaced as an unhealthy member", v.PoolDecision, v.ReviewReason)
+	}
+	for _, calls := range s.Measurement.(*sweepMeasurement).rttCalls {
+		for _, tag := range calls {
+			if tag == "proxy-gone" {
+				t.Fatal("orphan without an outbound was probed")
+			}
+		}
+	}
+	// Once 05 no longer carries the orphan (here a manual repair; the fixture's
+	// native job cannot apply), status stops reporting it.
+	repaired, _ := json.Marshal(map[string]any{"routing": map[string]any{"rules": []any{}, "balancers": []any{map[string]any{"tag": "bal-proxy", "selector": selector[:5], "strategy": map[string]any{"type": "leastLoad", "settings": map[string]any{"maxRTT": "10s", "costs": costs[:5]}}}}}})
+	if err := os.WriteFile(filepath.Join(dir, "05_routing.json"), repaired, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if after := s.Read(); len(after.OrphanedPool) != 0 || after.ActivePoolState == "degraded-orphaned" {
+		t.Fatal("stale orphan list survived the repair", after.OrphanedPool, after.ActivePoolState)
+	}
+}

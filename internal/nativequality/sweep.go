@@ -62,10 +62,11 @@ func (s *Service) startSweep(parent context.Context, trigger string) error {
 	if err != nil {
 		return err
 	}
-	activePool, _, err := routingPool(routing, nodes, w.Targets)
+	resolved, orphans, _, err := resolveActivePool(routing, nodes, w.Targets, true)
 	if err != nil {
 		return err
 	}
+	activePool := append(append([]string(nil), resolved...), orphans...)
 	criteria, err := readCriteria(routing, w.Documents["07_observatory.json"].Text, index, w.Targets)
 	if err != nil {
 		return err
@@ -109,9 +110,10 @@ func (s *Service) startSweep(parent context.Context, trigger string) error {
 	s.lastStartedAt = now
 	s.pool = append([]string(nil), pool...)
 	s.sweepPlan = plan
+	s.orphans = append([]string(nil), orphans...)
 	s.rttAlive = nil
 	s.result = c1.AdaptiveResult{}
-	s.status = Status{State: "running", Digest: w.Digest, Generation: s.status.Generation + 1, PoolCount: len(pool), ActivePoolCount: len(activePool), ActivePool: append([]string(nil), activePool...), ActivePoolState: "frozen-at-review", EligibleCount: plan.TotalEligible, TotalEligible: plan.TotalEligible, SelectedForSpeed: len(plan.Candidates), DeferredForFutureReview: plan.Deferred, SubsetState: "all-eligible", FairCursor: plan.NextCursor, FairCursorState: plan.CursorState, LatencyLimitMS: criteria.maxRTT, LatencySource: criteria.latencySource, ReviewTrigger: trigger, ReviewPhase: "rtt", Progress: c1.AdaptivePerformanceStatus{State: "running"}, AppliedState: "not-attempted"}
+	s.status = Status{State: "running", Digest: w.Digest, Generation: s.status.Generation + 1, PoolCount: len(pool), ActivePoolCount: len(activePool), ActivePool: append([]string(nil), activePool...), OrphanedPool: append([]string(nil), orphans...), ActivePoolState: "frozen-at-review", EligibleCount: plan.TotalEligible, TotalEligible: plan.TotalEligible, SelectedForSpeed: len(plan.Candidates), DeferredForFutureReview: plan.Deferred, SubsetState: "all-eligible", FairCursor: plan.NextCursor, FairCursorState: plan.CursorState, LatencyLimitMS: criteria.maxRTT, LatencySource: criteria.latencySource, ReviewTrigger: trigger, ReviewPhase: "rtt", Progress: c1.AdaptivePerformanceStatus{State: "running"}, AppliedState: "not-attempted"}
 	observeNativeSelection(&s.status, snapshot, now)
 	if plan.Deferred > 0 {
 		s.status.SubsetState = "subset-selected"
@@ -186,6 +188,12 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 	}
 	ordered, alive, reason := s.rttPrePhase(ctx, plan.Candidates, maxRTT, digest)
 	s.mu.Lock()
+	// An orphaned selector has no outbound to probe: it is an unhealthy member.
+	for _, orphan := range s.orphans {
+		if alive != nil {
+			alive[orphan] = false
+		}
+	}
 	s.rttAlive = alive
 	s.status.RTTValidCount = len(ordered)
 	s.mu.Unlock()

@@ -4,6 +4,7 @@ package nativequality
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"regexp"
@@ -74,6 +75,7 @@ type Status struct {
 	FairCursorState         string                       `json:"fairCursorState,omitempty"`
 	PoolDecision            string                       `json:"poolDecision,omitempty"`
 	ActivePool              []string                     `json:"activePool,omitempty"`
+	OrphanedPool            []string                     `json:"orphanedPool,omitempty"`
 	ActivePoolState         string                       `json:"activePoolState,omitempty"`
 	RecommendedPool         []string                     `json:"recommendedPool,omitempty"`
 	AppliedPool             []string                     `json:"appliedPool,omitempty"`
@@ -114,6 +116,9 @@ type Service struct {
 	// rttAlive is the review's RTT pre-phase health: present and true when the
 	// tag answered through its own outbound, present and false when it did not.
 	rttAlive map[string]bool
+	// orphans are exact selected members that no longer resolve to an enabled
+	// outbound when the review froze its candidates.
+	orphans []string
 }
 
 func (s *Service) Read() Status {
@@ -136,6 +141,7 @@ func (s *Service) Read() Status {
 	value.Progress.Candidates = append([]c1.AdaptiveCandidateStatus(nil), value.Progress.Candidates...)
 	value.ActivePool = append([]string(nil), value.ActivePool...)
 	value.AppliedPool = append([]string(nil), value.AppliedPool...)
+	value.OrphanedPool = append([]string(nil), value.OrphanedPool...)
 	_, err := c1.NativeQualityCosts(s.result, time.Now().UTC(), s.pool)
 	value.CanStage = value.State == "completed" && value.AppliedState != "applied" && value.AppliedState != "no-op" && err == nil
 	if value.State == "completed" && err != nil {
@@ -174,10 +180,13 @@ func (s *Service) Read() Status {
 				value.StageReason = "measurement-expired-or-incomplete"
 			}
 		}
-		value.ActivePool, value.ActivePoolCount, value.ActivePoolState = nil, 0, "unavailable"
+		value.ActivePool, value.ActivePoolCount, value.ActivePoolState, value.OrphanedPool = nil, 0, "unavailable", nil
 		if err == nil && w.Pending == nil && w.TargetsComplete {
 			nodes := s.Nodes(ctx)
-			if pool, index, poolErr := routingPool(w.Documents["05_routing.json"].Text, nodes, w.Targets); poolErr == nil {
+			if pool, orphans, _, poolErr := resolveActivePool(w.Documents["05_routing.json"].Text, nodes, w.Targets, true); poolErr == nil && len(orphans) > 0 {
+				value.ActivePool, value.ActivePoolCount, value.ActivePoolState = pool, len(pool), "degraded-orphaned"
+				value.OrphanedPool = orphans
+			} else if pool, index, poolErr := routingPool(w.Documents["05_routing.json"].Text, nodes, w.Targets); poolErr == nil {
 				value.ActivePool, value.ActivePoolCount, value.ActivePoolState = pool, len(pool), "verified"
 				value.AppliedRanking = appliedRankingFromWorkspace(w, pool, index)
 				if value.AppliedState == "applied" {
@@ -189,7 +198,7 @@ func (s *Service) Read() Status {
 	} else if activeReview {
 		value.ActivePoolState = "frozen-at-review"
 	} else {
-		value.ActivePool, value.ActivePoolCount, value.ActivePoolState = nil, 0, "unavailable"
+		value.ActivePool, value.ActivePoolCount, value.ActivePoolState, value.OrphanedPool = nil, 0, "unavailable", nil
 		if value.CanStage {
 			value.CanStage, value.StageReason = false, "configuration-unavailable"
 		}
@@ -549,6 +558,20 @@ func (s *Service) Stage(ctx context.Context, digest string) (string, error) {
 // routingPool refuses unmanaged selector matches instead of giving them Xray's
 // default cost=1. This reads the applied pool, not the next diagnostic sample.
 func routingPool(text string, nodes []c1.NodeState, targets []xkeen.ConfigTarget) ([]string, int, error) {
+	pool, orphans, index, err := resolveActivePool(text, nodes, targets, false)
+	if err != nil || len(orphans) != 0 {
+		return nil, 0, ErrUnavailable
+	}
+	return pool, index, nil
+}
+
+// resolveActivePool resolves the bal-proxy selector against enabled managed
+// outbounds. With allowOrphans, an exact quality selector (one with its own
+// anchored native cost) that no longer resolves to an enabled outbound, for
+// example after subscription churn, is returned as an orphan: an unhealthy
+// member for the next review to replace (REQ-003). Every other mismatch,
+// including an unresolved broad prefix, is still refused.
+func resolveActivePool(text string, nodes []c1.NodeState, targets []xkeen.ConfigTarget, allowOrphans bool) ([]string, []string, int, error) {
 	var doc struct {
 		Routing struct {
 			Balancers []struct {
@@ -559,21 +582,62 @@ func routingPool(text string, nodes []c1.NodeState, targets []xkeen.ConfigTarget
 		}
 	}
 	if configjson.Decode([]byte(text), &doc) != nil {
-		return nil, 0, ErrUnavailable
+		return nil, nil, 0, ErrUnavailable
 	}
 	index := -1
 	var selectors []string
 	for i, b := range doc.Routing.Balancers {
 		if b.Tag == "bal-proxy" {
 			if index >= 0 || (b.Strategy.Type != "leastPing" && b.Strategy.Type != "leastLoad") {
-				return nil, 0, ErrUnavailable
+				return nil, nil, 0, ErrUnavailable
 			}
 			index = i
 			selectors = b.Selector
 		}
 	}
 	if index < 0 || len(selectors) == 0 {
-		return nil, 0, ErrUnavailable
+		return nil, nil, 0, ErrUnavailable
+	}
+	exactCost := map[string]bool{}
+	if allowOrphans {
+		// Only the review path reads costs, and tolerantly: a malformed entry
+		// simply does not mark its selector as quality-owned.
+		var costs struct {
+			Routing struct {
+				Balancers []struct {
+					Strategy struct {
+						Settings struct {
+							Costs []json.RawMessage `json:"costs"`
+						} `json:"settings"`
+					} `json:"strategy"`
+				} `json:"balancers"`
+			} `json:"routing"`
+		}
+		if configjson.Decode([]byte(text), &costs) == nil && index < len(costs.Routing.Balancers) {
+			for _, raw := range costs.Routing.Balancers[index].Strategy.Settings.Costs {
+				var cost c1.NativeQualityCost
+				if json.Unmarshal(raw, &cost) == nil && cost.Regexp {
+					exactCost[cost.Match] = true
+				}
+			}
+		}
+	}
+	// P3-3: a duplicated selector can never be repaired by one review.
+	distinct := make(map[string]bool, len(selectors))
+	for _, selector := range selectors {
+		if distinct[selector] {
+			return nil, nil, 0, ErrUnavailable
+		}
+		distinct[selector] = true
+	}
+	disabled := map[string]bool{}
+	for _, n := range nodes {
+		if !n.Enabled {
+			disabled[n.Tag] = true
+		}
+	}
+	orphanable := func(selector string) bool {
+		return allowOrphans && exactCost["^"+regexp.QuoteMeta(selector)+"$"]
 	}
 	selectorMatched := make([]bool, len(selectors))
 	match := func(tag string) (int, bool) {
@@ -599,19 +663,21 @@ func routingPool(text string, nodes []c1.NodeState, targets []xkeen.ConfigTarget
 		}
 		selector, valid := match(n.Tag)
 		if !valid {
-			return nil, 0, ErrUnavailable
+			return nil, nil, 0, ErrUnavailable
 		}
 		if selector >= 0 {
 			if seen[n.Tag] {
-				return nil, 0, ErrUnavailable
+				return nil, nil, 0, ErrUnavailable
 			}
 			seen[n.Tag] = true
 			pool = append(pool, n.Tag)
 		}
 	}
-	if len(pool) < 2 || len(pool) > c1.MaxRegistryNodes {
-		return nil, 0, ErrUnavailable
+	if len(pool) > c1.MaxRegistryNodes {
+		return nil, nil, 0, ErrUnavailable
 	}
+	var orphans []string
+	disabledExact := make([]bool, len(selectors))
 	matched := map[string]bool{}
 	for _, target := range targets {
 		if target.Kind != "outbound" {
@@ -619,26 +685,48 @@ func routingPool(text string, nodes []c1.NodeState, targets []xkeen.ConfigTarget
 		}
 		selector, valid := match(target.Tag)
 		if !valid {
-			return nil, 0, ErrUnavailable
+			return nil, nil, 0, ErrUnavailable
 		}
-		if selector >= 0 {
-			if !seen[target.Tag] || matched[target.Tag] {
-				return nil, 0, ErrUnavailable
+		if selector < 0 {
+			continue
+		}
+		if !seen[target.Tag] {
+			// A disabled registry member whose outbound is still present. It is
+			// classified after the loop so outbound order cannot change it.
+			if target.Tag == selectors[selector] && orphanable(target.Tag) && disabled[target.Tag] {
+				disabledExact[selector] = true
+				continue
 			}
-			matched[target.Tag] = true
-			selectorMatched[selector] = true
+			return nil, nil, 0, ErrUnavailable
 		}
+		if matched[target.Tag] {
+			return nil, nil, 0, ErrUnavailable
+		}
+		matched[target.Tag] = true
+		selectorMatched[selector] = true
 	}
 	if len(matched) != len(pool) {
-		return nil, 0, ErrUnavailable
+		return nil, nil, 0, ErrUnavailable
 	}
-	for _, matched := range selectorMatched {
-		if !matched {
-			return nil, 0, ErrUnavailable
+	for i, ok := range selectorMatched {
+		if ok {
+			if disabledExact[i] {
+				// The selector also prefixes an enabled outbound: it is not exact.
+				return nil, nil, 0, ErrUnavailable
+			}
+			continue
 		}
+		if !orphanable(selectors[i]) {
+			return nil, nil, 0, ErrUnavailable
+		}
+		orphans = append(orphans, selectors[i])
+	}
+	if len(pool)+len(orphans) < 2 || len(pool) == 0 && !allowOrphans {
+		return nil, nil, 0, ErrUnavailable
 	}
 	sort.Strings(pool)
-	return pool, index, nil
+	sort.Strings(orphans)
+	return pool, orphans, index, nil
 }
 
 func prepare(snapshot xrayapi.Snapshot, pool []string, id uint64, mode int, now time.Time) (c1.AdaptiveGeneration, error) {

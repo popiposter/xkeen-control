@@ -55,6 +55,16 @@ test('deferred review explains a zero-traffic latency pre-phase refusal and next
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
 })
 
+test('an orphaned pool member is reported as replaceable, not as an unavailable pool', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), state: 'idle', canStage: false, activePoolCount: 5, activePoolState: 'degraded-orphaned',
+    activePool: ['proxy-node-00000001'], orphanedPool: ['proxy-node-gone'] }
+  await open(page)
+  await expect(page.getByRole('status').filter({ hasText: 'One pool member no longer exists' })).toBeVisible()
+  await expect(page.getByText('Active pool readback unavailable')).toHaveCount(0)
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
+})
+
 test('bounded automatic review separates full pool, coverage and applied state without starting traffic from the browser', async ({ page }) => {
   const model = await mountFeatureCompleteDashboard(page)
   model.quality = { ...complete(), resourceProfile: { name: 'constrained', constrained: true, automatic: true },
