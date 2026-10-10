@@ -56,6 +56,7 @@ func (s *Schedule) Run(ctx context.Context) {
 	if !s.service.profile().Automatic || s.service.AutomaticDisabled {
 		return
 	}
+	go s.runRecovery(ctx)
 	startupFloor := time.Now().Add(10 * time.Minute)
 	next := startupFloor
 	trigger := "startup"
@@ -129,6 +130,22 @@ func (s *Schedule) Run(ctx context.Context) {
 				next = now.Add(cadence)
 			}
 			trigger = "periodic"
+		}
+	}
+}
+
+// runRecovery checks every recoveryInterval whether the pool still has a
+// healthy member and, if not, runs one bounded REQ-009 attempt. The first
+// check follows the same ten-minute startup floor as reviews.
+func (s *Schedule) runRecovery(ctx context.Context) {
+	tick := time.NewTicker(recoveryInterval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			s.service.recoverPool(ctx)
 		}
 	}
 }

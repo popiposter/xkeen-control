@@ -67,7 +67,7 @@ func (s *Service) InspectAndResolve(parent context.Context) error {
 		}
 	}
 	pool, _, err := routingPool(before.Documents["05_routing.json"].Text, s.Nodes(ctx), before.Targets)
-	if err != nil || len(pool) < 2 {
+	if err != nil || len(pool) < 1 {
 		return ErrUnavailable
 	}
 	snapshot := s.Reader.Snapshot(ctx)

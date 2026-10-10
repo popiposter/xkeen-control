@@ -34,6 +34,15 @@ func samePoolMembers(a, b []string) bool {
 // review's RTT pre-phase: a tag that answered is healthy, a tag that did not is
 // unhealthy, and an unprobed tag is unknown, never an outage.
 func poolDecision(result c1.AdaptiveResult, costs []c1.NativeQualityCost, active, selected []string, plan sweepPlan, alive map[string]bool, nativeSelected string, now time.Time) string {
+	// A REQ-009 recovery pool was never speed-ranked: the first complete
+	// review applies its measured top six, even with the same members, so
+	// the equal recovery costs are replaced by measured ones.
+	if plan.Provisional {
+		if len(selected) < 2 || len(selected) > 6 {
+			return "initial-pool-invalid"
+		}
+		return "provisional-pool-replaced"
+	}
 	if samePoolMembers(active, selected) {
 		return "pool-unchanged"
 	}

@@ -66,6 +66,31 @@ const poolDecisionText = {
   'unhealthy-incumbent-replaced': 'unhealthy pool member replaced',
   'observatory-repair': 'same members; native health observation narrowed to the pool',
   'insufficient-valid-results': 'too few valid results to replace a full healthy pool',
+  'provisional-pool-replaced': 'provisional recovery pool replaced by measured nodes',
+}
+const recoveryReasons = {
+  'manual-override-active': 'a manual node override is active; clear it to allow recovery',
+  'recovery-apply-gap': 'a provisional pool was applied less than an hour ago; recovery does not restart XKeen again before then',
+  'inspection-required': 'an earlier operation needs inspection',
+  'probe-route-shadowed': 'a routing rule could capture probe traffic',
+  'probe-cleanup-pending': 'a temporary probe rule could not be confirmed removed',
+  'panel-busy': 'another panel operation is running',
+  'configuration-changed-or-pending': 'configuration changed or is pending',
+  'configuration-pending-or-unavailable': 'configuration changes are pending or unavailable',
+  'resource-pressure-or-unavailable': 'router resources are busy',
+}
+const validTime = (value) => value && new Date(value).getFullYear() >= 2020
+function recoveryText(recovery) {
+  const reason = recoveryReasons[recovery?.reason] || recovery?.reason || 'unavailable'
+  switch (recovery?.state) {
+    case 'probing': case 'applying': return 'No pool member is healthy. Availability recovery is probing other enabled nodes…'
+    case 'vpn-unavailable': return `No pool member is healthy and none of the ${recovery.probed || 0} probed nodes answered. VPN destinations are unavailable; the configuration was left unchanged and they stay blocked rather than going direct. Recovery retries other nodes every 10 minutes.`
+    case 'applied': return `No pool member was healthy. Availability recovery applied a provisional pool of ${recovery.pool?.length || 0} nodes that answered a latency probe (${recovery.verified || 0} of ${recovery.probed || 0} answered).`
+    case 'deferred': return `No pool member is healthy, but availability recovery is deferred: ${reason}.`
+    case 'failed': return `Availability recovery could not apply a provisional pool: ${reason}. The configuration was kept.`
+    case 'inspection-required': return `Availability recovery needs inspection: ${reason}.`
+    default: return ''
+  }
 }
 
 export function NativeQualitySection({ csrfToken, onUnauthorized, busy, workingEdits, onReadback, onNativeJob, onOpenConsole, onInspectConfigs, nodesByTag, onStatusChange }) {
@@ -174,6 +199,8 @@ export function NativeQualitySection({ csrfToken, onUnauthorized, busy, workingE
       {status?.activePoolCount > 0 && status.activePoolState !== 'unavailable' && <p className="text-sm text-muted-foreground">{status.activePoolState === 'frozen-at-review' ? 'Active pool at review start' : 'Current active pool'}: {status.activePoolCount} nodes. Enabled nodes available for comparison: {status.poolCount || 0}. The table below shows measured candidates from the latest test, not the entire active pool.</p>}
       {status?.activePoolState === 'unavailable' && <p className="text-sm text-muted-foreground">Active pool readback unavailable; inspect the native routing configuration.</p>}
       {status?.orphanedPool?.length > 0 && <p role="status">{status.orphanedPool.length === 1 ? 'One pool member no longer exists' : `${status.orphanedPool.length} pool members no longer exist`} in the enabled nodes (for example after a subscription update). The next automatic review treats them as unhealthy and replaces them{status.activePoolCount > 0 ? '; the remaining members keep working.' : '. No pool member remains enabled, so proxied destinations may be unavailable until then.'}</p>}
+      {validTime(status?.provisionalAt) && <p role="status">Provisional pool since <time dateTime={status.provisionalAt}>{new Date(status.provisionalAt).toLocaleString()}</time>: availability recovery chose its members by latency probe only, not by speed. The next complete automatic review replaces it with measured nodes.</p>}
+      {recoveryText(status?.recovery) && <p role="status">{recoveryText(status.recovery)}{validTime(status.recovery.checkedAt) ? ` Last check: ${new Date(status.recovery.checkedAt).toLocaleString()}.` : ''}</p>}
       {status?.selectedForSpeed > 0 && <p className="text-sm text-muted-foreground">Review scope: {status.selectedForSpeed} of {status.totalEligible} fresh eligible nodes selected for this comparison; {status.deferredForFutureReview || 0} deferred for future reviews. This bounded subset is not a global ranking.{status.fairCursorState === 'reanchored' ? ' The rotation was reanchored after the eligible set changed.' : ''}</p>}
       {status?.batchCount > 0 && <p className="text-sm text-muted-foreground">{status.manualSample ? 'Speed test' : 'Automatic review'}: {status.attemptedCount || 0} of {status.selectedForSpeed || status.eligibleCount || 0} selected nodes attempted, {status.validCount || 0} valid; {status.batchCount} batches and {((status.aggregateBytes || 0) / 1048576).toFixed(1)} MiB transferred.{status.reviewTrigger ? ` Trigger: ${status.reviewTrigger}.` : ''}</p>}
       {status?.resourceProfile?.automatic && <p className="text-sm text-muted-foreground">Automatic traffic quota: {status.quotaState === 'available' ? `${((status.quotaUsedBytes || 0) / 1048576).toFixed(0)} of ${(((status.quotaUsedBytes || 0) + (status.quotaRemainingBytes || 0)) / 1048576).toFixed(0)} MiB reserved in the rolling 24 hours (${status.quotaReviewsUsed || 0} of 1 review); ${((status.quotaRemainingBytes || 0) / 1048576).toFixed(0)} MiB remaining${status.quotaNextResetAt && new Date(status.quotaNextResetAt).getFullYear() >= 2020 ? `, next reservation expires ${new Date(status.quotaNextResetAt).toLocaleString()}` : ''}.` : 'unavailable; inspect the private receipt before another comparison.'} Manual speed tests have a separate limit of {((status.manualAllowanceBytes || 0) / 1048576).toFixed(0)} MiB per run.</p>}

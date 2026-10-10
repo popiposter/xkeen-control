@@ -81,6 +81,10 @@ type Status struct {
 	NativeSelected          string                       `json:"nativeSelected,omitempty"`
 	NativeSelectedState     string                       `json:"nativeSelectedState,omitempty"`
 	NativeSelectedAt        time.Time                    `json:"nativeSelectedAt,omitempty"`
+	// ProvisionalAt is set while the configured pool is a REQ-009 recovery
+	// pool that no speed review has ranked yet.
+	ProvisionalAt time.Time      `json:"provisionalAt,omitzero"`
+	Recovery      RecoveryStatus `json:"recovery"`
 }
 
 type RankedNode struct {
@@ -118,12 +122,20 @@ type Service struct {
 	// orphans are exact selected members that no longer resolve to an enabled
 	// outbound when the review froze its candidates.
 	orphans []string
+	// recovering marks a REQ-009 attempt in progress; recovery is its last
+	// outcome, and the cursor rotates recovery candidates in memory only.
+	recovering     bool
+	recovery       RecoveryStatus
+	recoveryCursor int
+	recoveryHash   string
 }
 
 func (s *Service) Read() Status {
 	s.mu.Lock()
 	value := s.status
 	activeReview := s.cancel != nil || s.autoApplying
+	recovering := s.recovering
+	value.Recovery = s.recovery
 	value.ResourceProfile = s.profile()
 	value.Limits = s.profile().Comparison(false)
 	value.ManualAllowanceBytes = s.profile().Review().Bytes
@@ -211,12 +223,13 @@ func (s *Service) Read() Status {
 			value.QuotaUsedBytes, value.QuotaRemainingBytes = q.UsedBytes, q.RemainingBytes
 			value.QuotaReviewsUsed, value.QuotaNextResetAt = q.ReviewsUsed, q.NextResetAt
 			value.FairCursor = q.FairCursor
+			value.ProvisionalAt = q.ProvisionalAt
 			if q.InspectionRequired && !activeReview {
 				value.InspectionRequired = true
 				value.CanStage = false
 				value.StageReason = "inspection-required"
 			}
-		} else if !activeReview {
+		} else if !activeReview && !recovering {
 			value.QuotaState = "unavailable"
 			value.CanStage = false
 			value.StageReason = "quota-unavailable"
@@ -402,7 +415,7 @@ func (s *Service) Stop() {
 func (s *Service) Stage(ctx context.Context, digest string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.cancel != nil || s.status.State != "completed" || s.status.AppliedState == "applied" || s.status.AppliedState == "no-op" || digest == "" || digest != s.status.Digest {
+	if s.closed || s.cancel != nil || s.recovering || s.status.State != "completed" || s.status.AppliedState == "applied" || s.status.AppliedState == "no-op" || digest == "" || digest != s.status.Digest {
 		return "", ErrUnavailable
 	}
 	costs, err := c1.NativeQualityCosts(s.result, time.Now().UTC(), s.pool)
@@ -609,7 +622,8 @@ func resolveActivePool(text string, nodes []c1.NodeState, targets []xkeen.Config
 		}
 		orphans = append(orphans, selectors[i])
 	}
-	if len(pool)+len(orphans) < 2 || len(pool) == 0 && !allowOrphans {
+	// A REQ-009 recovery pool may hold a single verified member.
+	if len(pool)+len(orphans) < 1 || len(pool) == 0 && !allowOrphans {
 		return nil, nil, 0, ErrUnavailable
 	}
 	sort.Strings(pool)

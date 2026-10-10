@@ -333,6 +333,23 @@ test('renders and filters RU/BY country projections without changing enabled sta
   expect(prepared.state.requests.filter((request) => request.method === 'POST')).toEqual([])
 })
 
+test('labels nodes outside the observed pool as not monitored, not as failed', async ({ page }) => {
+  const prepared = await prepare(page)
+  page.__nodesIssues = prepared.issues
+  prepared.state.nodes[3] = { ...prepared.state.nodes[3], enabled: true, alive: false, lastTry: '', lastSeen: '', lastError: '', displayName: 'Outside pool' }
+  prepared.state.nodes[4] = { ...prepared.state.nodes[4], enabled: true, alive: false, lastTry: '2026-10-10T10:00:00Z', lastError: '', displayName: 'Observed down' }
+  await openNodes(page)
+  await page.getByLabel('Search nodes').fill('Outside pool')
+  await expect(page.locator('.nodes-table tbody tr').filter({ hasText: 'Outside pool' })).toContainText('Not monitored')
+  await page.getByLabel('Search nodes').fill('Observed down')
+  await expect(page.locator('.nodes-table tbody tr').filter({ hasText: 'Observed down' })).toContainText('Not alive')
+  await page.getByLabel('Search nodes').fill('')
+  await page.getByRole('radio', { name: /^Not monitored/ }).or(page.getByRole('button', { name: /^Not monitored/ })).click()
+  await expect(page.locator('.nodes-table tbody tr').filter({ hasText: 'Observed down' })).toHaveCount(0)
+  await expect(page.locator('.nodes-table tbody tr').filter({ hasText: 'Outside pool' })).toHaveCount(1)
+  expect(prepared.state.requests.filter((request) => request.method === 'POST')).toEqual([])
+})
+
 test('shows bounded automatic subscription status without scheduler controls', async ({ page }) => {
   const prepared = await prepare(page)
   page.__nodesIssues = prepared.issues

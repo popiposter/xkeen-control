@@ -65,6 +65,22 @@ test('an orphaned pool member is reported as replaceable, not as an unavailable 
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
 })
 
+test('availability recovery and a provisional pool are labelled apart from a measured pool', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), state: 'idle', canStage: false, ranking: [], progress: { state: 'idle', candidates: [] },
+    provisionalAt: '2026-10-10T09:00:00Z',
+    recovery: { state: 'applied', reason: 'no-healthy-member', checkedAt: '2026-10-10T09:00:00Z', probed: 12, verified: 4, pool: ['proxy-a', 'proxy-b', 'proxy-c', 'proxy-d'] } }
+  await open(page)
+  await expect(page.getByRole('status').filter({ hasText: /Provisional pool since/ })).toContainText('not by speed')
+  await expect(page.getByRole('status').filter({ hasText: /applied a provisional pool of 4 nodes/ })).toContainText('4 of 12 answered')
+  model.quality = { ...model.quality, provisionalAt: undefined, recovery: { state: 'vpn-unavailable', reason: 'no-candidate-verified', probed: 12, verified: 0 } }
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: /none of the 12 probed nodes answered/ })).toContainText('rather than going direct')
+  await expect(page.getByText(/Provisional pool since/)).toHaveCount(0)
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
+})
+
 test('bounded automatic review separates full pool, coverage and applied state without starting traffic from the browser', async ({ page }) => {
   const model = await mountFeatureCompleteDashboard(page)
   model.quality = { ...complete(), resourceProfile: { name: 'constrained', constrained: true, automatic: true },

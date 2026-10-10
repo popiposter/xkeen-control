@@ -149,8 +149,8 @@ flowchart LR
   candidate verified by actual outbound routing may form a labelled
   **provisional** pool of one to six members after full configuration and native
   runtime validation; this is availability recovery, not a speed ranking.
-  An active manual native override defers this automatic recovery and requires
-  operator inspection; it is never cleared or overwritten by the panel.
+  An active manual native override defers this automatic recovery until the
+  operator clears it; it is never cleared or overwritten by the panel.
   If no candidate or no proof exists, leave the current configuration intact,
   report VPN unavailable and keep the existing `block` fallback for proxied
   destinations. No silent DIRECT leak or repeated restart loop.
@@ -215,8 +215,8 @@ flowchart LR
 | Task | Description | Completed | Date |
 | --- | --- | --- | --- |
 | TASK-004 | Unify `internal/nativequality/sweep.go`, `subset.go`, `pool_decision.go` and `auto_apply.go` for ARM64/MIPS. Preserve the fair rotating cursor, manual-override exclusion and one verified two-document Apply. Cap candidates/bytes/wall/batch size via `internal/resourcepolicy/policy.go` only. | Pipeline and REQ-008 limits shared by manual and automatic reviews on both profiles: unified-review PR. Standard-profile automatic Apply and the 1/24 h quota follow with TASK-001. | |
-| TASK-005 | Add a distinct no-healthy-member recovery branch that can validate and apply one to six freshly probed members without a speed score. Keep its receipt, reason and later regular speed review distinct from an optimized pool. | | |
-| TASK-006 | Update Performance, Nodes and Overview status to expose configured, recommended, verified applied and provisional states, coverage and due/deferral reasons. Do not represent saved legacy weights as measured throughput. | | |
+| TASK-005 | Add a distinct no-healthy-member recovery branch that can validate and apply one to six freshly probed members without a speed score. Keep its receipt, reason and later regular speed review distinct from an optimized pool. | Recovery PR: a 10-minute check (every member observed down or orphaned), up to 12 RTT-probed candidates with an in-memory rotation, a provisional pool of up to six by RTT through the shared joint Apply, `ProvisionalAt` in the quota receipt, at most one recovery Apply per hour, and `provisional-pool-replaced` on the next complete review. | 2026-10-10 |
+| TASK-006 | Update Performance, Nodes and Overview status to expose configured, recommended, verified applied and provisional states, coverage and due/deferral reasons. Do not represent saved legacy weights as measured throughput. | Recovery PR: "Not monitored" health and filter for nodes without an Observatory record, Observatory card counts observed pool nodes, provisional pool and recovery outcomes in Performance and Overview. No per-node last-probe time is kept outside a review. | 2026-10-10 |
 
 ### Implementation Phase 3
 
