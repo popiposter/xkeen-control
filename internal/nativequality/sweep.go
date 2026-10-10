@@ -51,6 +51,7 @@ func (s *Service) startReview(parent context.Context, trigger string, manual boo
 	if s.closed || s.cancel != nil || s.autoApplying || s.status.InspectionRequired {
 		return c1.ErrManualBusy
 	}
+	s.status.StartReason = ""
 	if err := s.Resources.CheckConflict(); err != nil {
 		s.status.ReviewReason = "native-speed-conflict-or-unavailable"
 		if manual {
@@ -217,7 +218,7 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 	reserved := false
 	if reason == "" && quotaUnlock != nil && manual {
 		// A manual review records its start for the shared six-hour gap only.
-		if err := recordComparisonStartLocked(quotaPath, time.Now().UTC()); err != nil {
+		if err := recordComparisonStartLocked(quotaPath, time.Now().UTC(), &plan); err != nil {
 			reason = "quota-unavailable-or-exhausted"
 		}
 	} else if reason == "" && quotaUnlock != nil {
@@ -345,7 +346,11 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 		}
 		if measureErr != nil || measured.State != "completed" || !matched || measured.AggregateBytes < 0 {
 			reason = "batch-incomplete-or-unknown"
-			if measured.State == "cleanup-pending" || measureErr != nil {
+			// Only an automatic review with an uncertain probe cleanup is fenced:
+			// its quota receipt keeps the flag, so explicit inspection can clear
+			// it. A manual review has no receipt to clear and the probe gate is
+			// retried before the next probe, so it just fails.
+			if !manual && (measured.State == "cleanup-pending" || errors.Is(measureErr, c1.ErrProbeCleanup) || errors.Is(measureErr, c1.ErrManualCleanupPending)) {
 				s.mu.Lock()
 				s.status.InspectionRequired = true
 				s.mu.Unlock()

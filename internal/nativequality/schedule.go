@@ -5,8 +5,14 @@ import (
 	"time"
 )
 
+// qualityCadence is the minimum gap between any two review starts (REQ-006).
 const qualityCadence = 6 * time.Hour
+
+// constrainedCadence paces the automatic constrained review; standardCadence
+// paces the measure-only standard review, which reserves no quota, to one
+// full review per 24 hours.
 const constrainedCadence = 12 * time.Hour
+const standardCadence = 24 * time.Hour
 
 // Schedule coalesces refreshes and admits at most one bounded review owner.
 type Schedule struct {
@@ -53,7 +59,7 @@ func (s *Schedule) Run(ctx context.Context) {
 	startupFloor := time.Now().Add(10 * time.Minute)
 	next := startupFloor
 	trigger := "startup"
-	cadence := qualityCadence
+	cadence := standardCadence
 	if s.service.profile().Constrained {
 		cadence = constrainedCadence
 	}

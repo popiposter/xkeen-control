@@ -76,7 +76,7 @@ func viewQuota(q quotaReceipt, now time.Time, reviewBytes int64) quotaView {
 			}
 		}
 	}
-	v.RemainingBytes -= v.UsedBytes
+	v.RemainingBytes = max(0, v.RemainingBytes-v.UsedBytes)
 	return v
 }
 
@@ -90,16 +90,21 @@ func recordComparisonStart(path string, now time.Time) error {
 		return errQuota
 	}
 	defer release()
-	return recordComparisonStartLocked(path, now)
+	return recordComparisonStartLocked(path, now, nil)
 }
 
-// recordComparisonStartLocked requires the quota lock held by the caller.
-func recordComparisonStartLocked(path string, now time.Time) error {
+// recordComparisonStartLocked requires the quota lock held by the caller. A
+// manual review also advances the shared fair cursor, so every review rotates.
+func recordComparisonStartLocked(path string, now time.Time, plan *sweepPlan) error {
 	q, err := readQuotaLocked(path, now)
 	if err != nil || q.InspectionRequired {
 		return errQuota
 	}
 	q.LastComparisonStartedAt = now
+	if plan != nil {
+		q.FairCursor = plan.NextCursor
+		q.EligibleSetHash = plan.EligibleSetHash
+	}
 	return writeQuotaLocked(path, q)
 }
 

@@ -749,8 +749,8 @@ func TestManualReviewMeasuresWithoutApplyOrAutomaticQuota(t *testing.T) {
 				t.Fatal("manual review state", v.ManualSample, v.State, v.AppliedState, v.CanStage, len(m.calls), v.SelectedForSpeed)
 			}
 			q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes)
-			if err != nil || q.ReviewsUsed != 0 || q.LastStartedAt.IsZero() || q.FairCursor != 0 {
-				t.Fatal("manual review spent automatic quota or advanced the cursor", q, err)
+			if err != nil || q.ReviewsUsed != 0 || q.LastStartedAt.IsZero() || q.FairCursor != v.FairCursor {
+				t.Fatal("manual review spent automatic quota or did not persist the rotation", q, err)
 			}
 			w, err := s.Editor.Workspace(context.Background())
 			if err != nil || w.Pending != nil || w.Digest != digest {
@@ -760,5 +760,52 @@ func TestManualReviewMeasuresWithoutApplyOrAutomaticQuota(t *testing.T) {
 				t.Fatal("manual recommendation is not stageable", err)
 			}
 		})
+	}
+}
+
+
+func TestManualReviewFailureDoesNotFenceLaterReviews(t *testing.T) {
+	s, _, _, _ := sweepFixture(t, false)
+	s.Resources.Profile = resourcepolicy.ForPlatform("arm64", 1<<20)
+	s.Measurement.(*sweepMeasurement).cleanupBatch = 1
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	v := waitSweep(t, s)
+	if v.State != "failed" || v.InspectionRequired {
+		t.Fatal("manual measurement failure fenced the service", v.State, v.InspectionRequired)
+	}
+	s.Measurement.(*sweepMeasurement).cleanupBatch = 0
+	if err := s.Start(context.Background()); err != nil {
+		t.Fatal("next manual review refused", err)
+	}
+	waitSweep(t, s)
+}
+
+func TestSuccessiveManualReviewsRotateCandidates(t *testing.T) {
+	s, _, _, _ := sweepFixtureCount(t, false, 46)
+	s.Resources.Profile = resourcepolicy.ForPlatform("arm64", 1<<20)
+	var rounds [][]string
+	for i := 0; i < 2; i++ {
+		if err := s.Start(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		waitSweep(t, s)
+		m := s.Measurement.(*sweepMeasurement)
+		var probed []string
+		for _, chunk := range m.rttCalls {
+			probed = append(probed, chunk...)
+		}
+		rounds = append(rounds, probed)
+		m.rttCalls, m.calls = nil, nil
+	}
+	first := map[string]bool{}
+	for _, tag := range rounds[0][1:] {
+		first[tag] = true
+	}
+	for _, tag := range rounds[1][1:] {
+		if first[tag] {
+			t.Fatal("the second manual review repeated a rotating candidate", tag, rounds)
+		}
 	}
 }

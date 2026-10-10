@@ -84,7 +84,7 @@ profiles, with REQ-008 limits from `resourcepolicy.Profile.Review()`: up to 12
 probed candidates; ARM64 batches of six without pause within 288 MiB/8 min,
 MIPS batches of three with a one-minute pause within 72 MiB/12 min. Manual and
 standard periodic reviews only measure and leave Apply to the operator; they
-record their start for the six-hour gap but reserve no automatic quota. The
+record their start for the six-hour gap and advance the shared fair cursor, but reserve no automatic quota; the standard periodic review runs once per 24 hours. The
 Observatory RTT history and its health penalty are no longer used.
 Eligible nodes need fresh, alive native observations within the configured finite
 RTT criterion. Manual tests additionally require RTT no more than twice the
