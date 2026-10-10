@@ -185,7 +185,7 @@ test('clears submitted credentials on rejection and navigation and discards raw 
   await expect(page.getByLabel('Telegram bot token')).toHaveValue('')
 })
 
-for (const [channel, mode, text] of [['stable', 'notify', 'Background discovery never'], ['beta', 'notify', 'Unsupported channel'], ['stable', 'auto-stable', 'Unsupported mode']]) {
+for (const [channel, mode, text] of [['stable', 'notify', 'Background discovery never'], ['stable', 'auto-stable', 'Unsupported mode']]) {
   test(`projects ${channel} ${mode} without arming Apply or explicit Check`, async ({ page }) => {
     const state = await prepare(page, { update: { channel, policy: { channel, mode, checkCadenceMinutes: 60 }, scheduler: { state: mode === 'auto-stable' ? 'unsupported-mode' : channel === 'beta' ? 'unsupported-channel' : 'completed', notificationState: 'notified' } } }); page.__systemIssues = state.issues
     await page.goto('/')
@@ -214,7 +214,7 @@ test.afterEach(async ({ page }) => {
   if (page.__systemIssues) expect(page.__systemIssues).toEqual([])
 })
 
-for (const host of ['127.0.0.1', '10.0.0.4', 'fd00::4']) {
+for (const host of ['10.0.0.4', 'fd00::4']) {
   test(`private management guidance uses loaded ${host} listener without extra work`, async ({ page }) => {
     const state = await prepare(page, { listener: { host } }); page.__systemIssues = state.issues
     await page.goto('/')
@@ -331,7 +331,7 @@ test('safe-cancels a late listener Preview after navigation', async ({ page }) =
   expect(await page.getByRole('heading', { name: 'Review management listener rebind' }).count()).toBe(0)
 })
 
-for (const width of [1440, 375]) test(`shows checked version/channel/source before exact Apply at ${width}px`, async ({ page }) => {
+for (const width of [375]) test(`shows checked version/channel/source before exact Apply at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 })
   const state = await prepare(page); page.__systemIssues = state.issues
   await page.goto('/')

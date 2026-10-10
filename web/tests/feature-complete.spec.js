@@ -143,11 +143,9 @@ test('gates new mutation initiation across all workspaces when lifecycle is bloc
   expect(model.writes).toHaveLength(0)
 })
 
-for (const [label, lifecycle] of [
-  ['missing', null],
-  ['missing applying flag', { maintenance: false }],
-  ['missing maintenance flag', { applying: false }],
-]) {
+// Every malformed lifecycle shape is covered in web/unit/lifecycle.test.js;
+// this keeps the browser transition from enabled to blocked after a refresh.
+for (const [label, lifecycle] of [['missing', null]]) {
   test(`blocks an enabled node's Full speed test with ${label} lifecycle`, async ({ page }) => {
     const model = await mountFeatureCompleteDashboard(page, { nodeEnabled: true })
     page.__featureCompleteModel = model

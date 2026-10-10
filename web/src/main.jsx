@@ -7,6 +7,7 @@ import './theme-init'
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createDashboardReader } from './dashboard-reader.js'
+import { lifecycleBlocked as isLifecycleBlocked } from './lifecycle.js'
 import './theme.css'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -401,7 +402,7 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const openRouting = useCallback(() => setSection('routing'), [])
   const openDNS = useCallback(() => setSection('dns'), [])
   const openBackup = useCallback(() => setSection('backup'), [])
-  const lifecycleBlocked = typeof status.lifecycle?.maintenance !== 'boolean' || typeof status.lifecycle?.applying !== 'boolean' || status.lifecycle.maintenance || status.lifecycle.applying
+  const lifecycleBlocked = isLifecycleBlocked(status.lifecycle)
   const manualLifecycleBlocked = lifecycleBlocked
   const manualRunning = performance?.manual?.state === 'running'
   const adaptiveRunning = performance?.adaptive?.state === 'running'
