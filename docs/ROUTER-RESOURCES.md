@@ -52,6 +52,9 @@ planner fixture passed on KN1810 before0.4.11 release, without reading live
 nodes or applying configuration. Signed0.4.11 installation passed exact
 source/hash, panel health and native-preservation checks; live bounded
 review/Apply remains unverified pending separate hardware readback.
+Source after #205 (unreleased) drops the "six low-RTT challengers" step and the
+Observatory-based incumbent check: candidates are every incumbent plus the fair
+rotation, each probed by a targeted RTT request before any quota is reserved.
 
 The existing measurement owners share a read-only hardware profile and an
 on-demand `/proc` sampler. No new daemon, persistent settings authority or timer

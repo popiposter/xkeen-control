@@ -136,11 +136,8 @@ func reserveSweepPlannedLocked(path string, now time.Time, plan *sweepPlan) (int
 	if err != nil {
 		return 0, errQuota
 	}
-	if q.InspectionRequired || (!q.LastComparisonStartedAt.IsZero() && now.Sub(q.LastComparisonStartedAt) < 6*time.Hour) {
-		return 0, errQuota
-	}
 	v := viewQuota(q, now)
-	if v.UsedBytes > maxDailySweepBytes-maxSweepBytes || v.ReviewsUsed >= 2 {
+	if !quotaAdmits(q, now) {
 		return v.UsedBytes, errQuota
 	}
 	kept := make([]quotaReservation, 0, 2)
@@ -160,6 +157,15 @@ func reserveSweepPlannedLocked(path string, now time.Time, plan *sweepPlan) (int
 		return v.UsedBytes, errQuota
 	}
 	return v.UsedBytes + maxSweepBytes, nil
+}
+
+// quotaAdmits reports, without writing, whether a review could reserve now.
+func quotaAdmits(q quotaReceipt, now time.Time) bool {
+	if q.InspectionRequired || (!q.LastComparisonStartedAt.IsZero() && now.Sub(q.LastComparisonStartedAt) < 6*time.Hour) {
+		return false
+	}
+	v := viewQuota(q, now)
+	return v.UsedBytes <= maxDailySweepBytes-maxSweepBytes && v.ReviewsUsed < 2
 }
 
 func readQuotaLocked(path string, now time.Time) (quotaReceipt, error) {

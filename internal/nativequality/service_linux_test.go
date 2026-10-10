@@ -28,6 +28,9 @@ func (unusedMeasurement) MeasureNativeQuality(context.Context, c1.AdaptiveGenera
 func (unusedMeasurement) NativeQualityEvidence(xrayapi.Snapshot) map[string]c1.AdaptiveCandidateInput {
 	panic("measurement must not start")
 }
+func (unusedMeasurement) MeasureRTT(context.Context, []string) ([]c1.RTTSample, error) {
+	panic("measurement must not start")
+}
 
 func TestConstrainedNativeConflictIsVisibleWithoutActivation(t *testing.T) {
 	s := &Service{Editor: &xkeen.ConfigEditor{}, Lease: authority.NewLease(), Reader: &pinRuntime{}, Nodes: func(context.Context) []c1.NodeState { return nil }, Measurement: unusedMeasurement{}, Resources: &resourcepolicy.Guard{Profile: resourcepolicy.ForPlatform("mipsle", 254472), Conflict: func() (bool, error) { return true, nil }}}

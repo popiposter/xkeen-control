@@ -109,7 +109,7 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 	}
 	plan := s.sweepPlan
 	if plan.TotalEligible == 0 {
-		plan = sweepPlan{Active: currentActive, NativeSelected: result.CurrentTarget, FirstInitialization: len(currentActive) > 6, Freshness: 2 * time.Minute}
+		plan = sweepPlan{Active: currentActive, NativeSelected: result.CurrentTarget, FirstInitialization: len(currentActive) > 6}
 	} else if !samePoolMembers(currentActive, plan.Active) || result.CurrentTarget != plan.NativeSelected {
 		s.applyOutcome("not-applied", "selector-changed", false)
 		return
@@ -146,7 +146,10 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		s.applyOutcome("not-applied", "selector-unavailable", false)
 		return
 	}
-	decision := poolDecision(result, costs, currentActive, selected, plan, snapshot, time.Now().UTC())
+	s.mu.Lock()
+	alive := s.rttAlive
+	s.mu.Unlock()
+	decision := poolDecision(result, costs, currentActive, selected, plan, alive, snapshot.Balancer.NativeSelected, time.Now().UTC())
 	s.mu.Lock()
 	s.status.PoolDecision = decision
 	s.mu.Unlock()

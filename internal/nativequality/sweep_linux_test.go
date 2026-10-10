@@ -61,6 +61,11 @@ func (r *sweepReader) ProbeReachable(context.Context) bool {
 }
 
 type sweepMeasurement struct {
+	rttCalls     [][]string
+	rttDown      map[string]bool
+	rttSlow      map[string]bool
+	rttErr       error
+	onRTT        func(int)
 	calls        [][]string
 	validLimit   int
 	failBatch    int
@@ -71,6 +76,31 @@ type sweepMeasurement struct {
 
 func (*sweepMeasurement) NativeQualityEvidence(xrayapi.Snapshot) map[string]c1.AdaptiveCandidateInput {
 	return nil
+}
+
+// MeasureRTT answers every tag in 100+index ms unless it is listed as down.
+func (m *sweepMeasurement) MeasureRTT(_ context.Context, tags []string) ([]c1.RTTSample, error) {
+	m.rttCalls = append(m.rttCalls, append([]string(nil), tags...))
+	if m.rttErr != nil {
+		return nil, m.rttErr
+	}
+	out := make([]c1.RTTSample, 0, len(tags))
+	for _, tag := range tags {
+		var index int
+		_, _ = fmt.Sscanf(tag, "proxy-%d", &index)
+		sample := c1.RTTSample{Tag: tag, SampledAt: time.Now().UTC()}
+		if !m.rttDown[tag] {
+			sample.Valid, sample.RTTMS = true, int64(100+index)
+			if m.rttSlow[tag] {
+				sample.RTTMS = 20000
+			}
+		}
+		out = append(out, sample)
+	}
+	if m.onRTT != nil {
+		m.onRTT(len(m.rttCalls))
+	}
+	return out, nil
 }
 func (m *sweepMeasurement) MeasureNativeQuality(_ context.Context, g c1.AdaptiveGeneration, publish func(c1.AdaptivePerformanceStatus)) (c1.AdaptiveResult, error) {
 	if m.hold != nil {
@@ -176,31 +206,163 @@ func TestSweepOverlappingNativeSelectorRefusesBeforeQuotaOrTransfer(t *testing.T
 	}
 }
 
-func TestSweepMissingIncumbentEvidenceRefusesBeforeQuotaOrTransfer(t *testing.T) {
-	s, _, digest, _ := sweepFixtureCount(t, true, 46)
-	previousDue := time.Now().UTC().Add(time.Hour)
-	s.status = Status{State: "completed", Generation: 9, AppliedState: "applied", NextDueAt: previousDue, SelectedForSpeed: 18, AttemptedCount: 18, ValidCount: 16, BatchCount: 6, AggregateBytes: 37 * c1.MiB, Progress: c1.AdaptivePerformanceStatus{State: "completed", ValidCount: 16}}
-	s.Reader.(*sweepReader).mutate = func(snapshot *xrayapi.Snapshot) {
-		for i := 4; i < 6; i++ {
-			snapshot.OutboundHealth[i].LastTry = time.Now().UTC().Add(-time.Hour)
-		}
+func waitSweep(t *testing.T, s *Service) Status {
+	t.Helper()
+	select {
+	case <-s.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sweep did not settle")
 	}
-	if err := s.startSweep(context.Background(), "periodic"); err == nil {
-		t.Fatal("unmeasurable incumbent admitted")
-	}
-	v := s.Read()
-	if v.State != "deferred" || v.ReviewReason != "incumbent-evidence-unavailable" || v.AppliedState != "not-attempted" || v.Generation != 9 || !v.NextDueAt.Equal(previousDue) || v.AttemptedCount != 0 || v.ValidCount != 0 || v.BatchCount != 0 || v.AggregateBytes != 0 || len(v.Ranking) != 0 || !s.lastStartedAt.IsZero() {
-		t.Fatal("missing evidence reused old review or was not a pre-admission refusal", v)
-	}
+	return s.Read()
+}
+
+func assertNoQuotaOrTransfer(t *testing.T, s *Service, digest string) {
+	t.Helper()
 	if len(s.Measurement.(*sweepMeasurement).calls) != 0 {
 		t.Fatal("refused review transferred data")
 	}
-	if _, err := os.Stat(s.QuotaPath); !os.IsNotExist(err) {
-		t.Fatal("refused review reserved quota", err)
+	if q, err := quotaState(s.QuotaPath, time.Now().UTC()); err == nil && (q.ReviewsUsed != 0 || q.FairCursor != 0) {
+		t.Fatal("refused review reserved quota or advanced the cursor", q)
 	}
 	w, err := s.Editor.Workspace(context.Background())
 	if err != nil || w.Pending != nil || w.Digest != digest {
 		t.Fatal("refused review altered the configuration", err)
+	}
+}
+
+func TestSweepStaleObservatoryNoLongerDefersBecauseEveryCandidateIsProbed(t *testing.T) {
+	s, _, _, _ := sweepFixtureCount(t, true, 46)
+	s.Reader.(*sweepReader).mutate = func(snapshot *xrayapi.Snapshot) {
+		for i := range snapshot.OutboundHealth {
+			snapshot.OutboundHealth[i].LastTry = time.Now().UTC().Add(-time.Hour)
+		}
+	}
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal("stale Observatory evidence deferred the review", err, s.Read().ReviewReason)
+	}
+	v := waitSweep(t, s)
+	m := s.Measurement.(*sweepMeasurement)
+	if len(m.rttCalls) != 3 || len(m.rttCalls[0]) != 6 || len(m.rttCalls[2]) != 6 || v.RTTValidCount != 18 || v.State != "completed" || v.PoolDecision != "pool-unchanged" || v.ReviewPhase != "speed" {
+		t.Fatal("RTT pre-phase did not freeze and probe the bounded set in chunks", len(m.rttCalls), v.RTTValidCount, v.State, v.PoolDecision)
+	}
+	for _, tag := range m.rttCalls[0][:6] {
+		if tag < "proxy-00" || tag > "proxy-05" {
+			t.Fatal("incumbents were not probed first", m.rttCalls[0])
+		}
+	}
+}
+
+func TestSweepRTTFailureOrTooFewAnswersSpendsNoQuota(t *testing.T) {
+	for name, configure := range map[string]func(*sweepMeasurement){
+		"probe error": func(m *sweepMeasurement) { m.rttErr = errors.New("synthetic probe failure") },
+		"one answer": func(m *sweepMeasurement) {
+			m.rttDown = map[string]bool{}
+			for i := 1; i < 14; i++ {
+				m.rttDown[fmt.Sprintf("proxy-%02d", i)] = true
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _, digest, _ := sweepFixture(t, true)
+			configure(s.Measurement.(*sweepMeasurement))
+			if err := s.startSweep(context.Background(), "periodic"); err != nil {
+				t.Fatal(err)
+			}
+			v := waitSweep(t, s)
+			if v.State != "deferred" || (v.ReviewReason != "rtt-probe-unavailable" && v.ReviewReason != "rtt-candidates-insufficient") {
+				t.Fatal("RTT refusal state", v.State, v.ReviewReason)
+			}
+			assertNoQuotaOrTransfer(t, s, digest)
+		})
+	}
+}
+
+func TestSweepShadowedProbeRouteRefusesBeforeProbesOrQuota(t *testing.T) {
+	s, _, _, dir := sweepFixture(t, true)
+	text := `{"routing":{"rules":[{"domain":["geosite:example"],"balancerTag":"bal-proxy"}],"balancers":[{"tag":"bal-proxy","selector":["proxy-00","proxy-01","proxy-02","proxy-03","proxy-04","proxy-05"],"strategy":{"type":"leastLoad","settings":{"maxRTT":"10s"}}}]}}`
+	if err := os.WriteFile(filepath.Join(dir, "05_routing.json"), []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.startSweep(context.Background(), "periodic"); err == nil {
+		t.Fatal("shadowed probe route admitted")
+	}
+	m := s.Measurement.(*sweepMeasurement)
+	if s.Read().ReviewReason != "probe-route-shadowed" || len(m.rttCalls) != 0 || len(m.calls) != 0 {
+		t.Fatal("shadowed route probed or measured", s.Read().ReviewReason)
+	}
+	if _, err := os.Stat(s.QuotaPath); !os.IsNotExist(err) {
+		t.Fatal("refused review touched quota", err)
+	}
+}
+
+func TestSweepIncumbentFailingRTTIsUnhealthyAndReplaced(t *testing.T) {
+	s, _, _, _ := sweepFixture(t, true)
+	s.Measurement.(*sweepMeasurement).rttDown = map[string]bool{"proxy-05": true}
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal(err)
+	}
+	v := waitSweep(t, s)
+	if v.RTTValidCount != 13 || v.PoolDecision != "unhealthy-incumbent-replaced" {
+		t.Fatal("failed incumbent probe was not treated as unhealthy", v.RTTValidCount, v.PoolDecision, v.ReviewReason)
+	}
+	for _, calls := range s.Measurement.(*sweepMeasurement).calls {
+		for _, tag := range calls {
+			if tag == "proxy-05" {
+				t.Fatal("RTT-failed candidate entered the speed phase")
+			}
+		}
+	}
+}
+
+func TestSweepProbeGateFailureDefersWithoutAnInspectionFence(t *testing.T) {
+	s, _, digest, _ := sweepFixture(t, true)
+	s.Measurement.(*sweepMeasurement).rttErr = c1.ErrProbeCleanup
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal(err)
+	}
+	v := waitSweep(t, s)
+	if v.State != "deferred" || v.ReviewReason != "probe-cleanup-pending" || v.InspectionRequired || v.ReviewPhase != "rtt" {
+		t.Fatal("probe gate failure fenced the service", v.State, v.ReviewReason, v.InspectionRequired, v.ReviewPhase)
+	}
+	assertNoQuotaOrTransfer(t, s, digest)
+	// The next review is admitted: nothing outside a restart could clear a fence.
+	s.Measurement.(*sweepMeasurement).rttErr = nil
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal("review after a transient probe failure was refused", err, s.Read().ReviewReason)
+	}
+	waitSweep(t, s)
+}
+
+func TestSweepIncumbentAboveNativeMaxRTTIsUnhealthy(t *testing.T) {
+	s, _, _, _ := sweepFixture(t, true)
+	s.Measurement.(*sweepMeasurement).rttSlow = map[string]bool{"proxy-05": true}
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal(err)
+	}
+	v := waitSweep(t, s)
+	if v.RTTValidCount != 13 || v.PoolDecision != "unhealthy-incumbent-replaced" {
+		t.Fatal("over-maxRTT incumbent was kept as healthy", v.RTTValidCount, v.PoolDecision, v.ReviewReason)
+	}
+}
+
+func TestSweepPrePhaseRechecksConfigurationBetweenChunks(t *testing.T) {
+	s, _, digest, dir := sweepFixture(t, true)
+	m := s.Measurement.(*sweepMeasurement)
+	m.onRTT = func(calls int) {
+		if calls == 1 {
+			_ = os.WriteFile(filepath.Join(dir, "06_policy.json"), []byte(`{"policy":{}}`), 0600)
+		}
+	}
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal(err)
+	}
+	v := waitSweep(t, s)
+	if v.State != "deferred" || v.ReviewReason != "configuration-changed-or-pending" || len(m.rttCalls) != 1 {
+		t.Fatal("configuration drift between chunks was not detected", v.State, v.ReviewReason, len(m.rttCalls))
+	}
+	_ = digest
+	if len(m.calls) != 0 {
+		t.Fatal("drifted review transferred data")
 	}
 }
 
@@ -290,7 +452,11 @@ func runSweepFixture(t *testing.T, s *Service, g c1.AdaptiveGeneration, digest s
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	done := make(chan struct{})
-	s.runSweep(ctx, cancel, done, g, g.Candidates, digest, nil)
+	var tags []string
+	for _, candidate := range g.Candidates {
+		tags = append(tags, candidate.Tag)
+	}
+	s.runSweep(ctx, cancel, done, g, sweepPlan{Candidates: tags, Active: s.status.ActivePool}, 10000, digest, s.QuotaPath, nil)
 	select {
 	case <-done:
 	default:
