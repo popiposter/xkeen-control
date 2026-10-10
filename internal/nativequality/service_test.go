@@ -65,6 +65,14 @@ func TestMeasurementPoolIncludesNodesOutsideRestrictedActivePoolAndRejectsPrefix
 	if exactSelectors([]string{"proxy-a"}, append(targets, xkeen.ConfigTarget{Tag: "proxy-a-backup", Kind: "outbound"})) {
 		t.Fatal("prefix collision admitted")
 	}
+	overlapping := `{"routing":{"balancers":[{"tag":"bal-proxy","selector":["proxy-","proxy-a"],"strategy":{"type":"leastLoad"}}]}}`
+	if _, _, err := routingPool(overlapping, nodes, targets); err == nil {
+		t.Fatal("overlapping selector prefixes admitted")
+	}
+	unused := `{"routing":{"balancers":[{"tag":"bal-proxy","selector":["proxy-","unused-"],"strategy":{"type":"leastLoad"}}]}}`
+	if _, _, err := routingPool(unused, nodes, targets); err == nil {
+		t.Fatal("unresolved selector prefix admitted")
+	}
 	// All selected nodes can be gone while new healthy alternatives remain.
 	nodes = []c1.NodeState{{Tag: "proxy-c", Enabled: true}, {Tag: "proxy-d", Enabled: true}}
 	targets = append(targets, xkeen.ConfigTarget{Tag: "proxy-d", Kind: "outbound"})

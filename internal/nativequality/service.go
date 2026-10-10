@@ -28,41 +28,55 @@ type Measurement interface {
 }
 
 type Status struct {
-	StartReason          string                       `json:"startReason,omitempty"`
-	LatencySource        string                       `json:"latencySource,omitempty"`
-	ResourceProfile      resourcepolicy.Profile       `json:"resourceProfile"`
-	Limits               resourcepolicy.Limits        `json:"limits"`
-	AutomaticReason      string                       `json:"automaticReason,omitempty"`
-	State                string                       `json:"state"`
-	Digest               string                       `json:"digest,omitempty"`
-	Generation           uint64                       `json:"generation"`
-	Progress             c1.AdaptivePerformanceStatus `json:"progress"`
-	CanStage             bool                         `json:"canStage"`
-	StageReason          string                       `json:"stageReason,omitempty"`
-	PoolCount            int                          `json:"poolCount"`
-	ActivePoolCount      int                          `json:"activePoolCount"`
-	LatencyLimitMS       int64                        `json:"latencyLimitMs"`
-	EligibleCount        int                          `json:"eligibleCount"`
-	ManualSample         bool                         `json:"manualSample"`
-	Ranking              []RankedNode                 `json:"ranking,omitempty"`
-	AppliedRanking       []RankedNode                 `json:"appliedRanking,omitempty"`
-	ReviewTrigger        string                       `json:"reviewTrigger,omitempty"`
-	AttemptedCount       int                          `json:"attemptedCount"`
-	ValidCount           int                          `json:"validCount"`
-	BatchCount           int                          `json:"batchCount"`
-	AggregateBytes       int64                        `json:"aggregateBytes"`
-	NextDueAt            time.Time                    `json:"nextDueAt,omitempty"`
-	ReviewReason         string                       `json:"reviewReason,omitempty"`
-	InspectionRequired   bool                         `json:"inspectionRequired"`
-	AppliedState         string                       `json:"appliedState,omitempty"`
-	AppliedJobState      string                       `json:"appliedJobState,omitempty"`
-	AppliedConfigState   string                       `json:"appliedConfigState,omitempty"`
-	ManualAllowanceBytes int64                        `json:"manualAllowanceBytes"`
-	QuotaState           string                       `json:"quotaState"`
-	QuotaUsedBytes       int64                        `json:"quotaUsedBytes"`
-	QuotaRemainingBytes  int64                        `json:"quotaRemainingBytes"`
-	QuotaReviewsUsed     int                          `json:"quotaReviewsUsed"`
-	QuotaNextResetAt     time.Time                    `json:"quotaNextResetAt,omitempty"`
+	StartReason             string                       `json:"startReason,omitempty"`
+	LatencySource           string                       `json:"latencySource,omitempty"`
+	ResourceProfile         resourcepolicy.Profile       `json:"resourceProfile"`
+	Limits                  resourcepolicy.Limits        `json:"limits"`
+	AutomaticReason         string                       `json:"automaticReason,omitempty"`
+	State                   string                       `json:"state"`
+	Digest                  string                       `json:"digest,omitempty"`
+	Generation              uint64                       `json:"generation"`
+	Progress                c1.AdaptivePerformanceStatus `json:"progress"`
+	CanStage                bool                         `json:"canStage"`
+	StageReason             string                       `json:"stageReason,omitempty"`
+	PoolCount               int                          `json:"poolCount"`
+	ActivePoolCount         int                          `json:"activePoolCount"`
+	LatencyLimitMS          int64                        `json:"latencyLimitMs"`
+	EligibleCount           int                          `json:"eligibleCount"`
+	ManualSample            bool                         `json:"manualSample"`
+	Ranking                 []RankedNode                 `json:"ranking,omitempty"`
+	AppliedRanking          []RankedNode                 `json:"appliedRanking,omitempty"`
+	ReviewTrigger           string                       `json:"reviewTrigger,omitempty"`
+	AttemptedCount          int                          `json:"attemptedCount"`
+	ValidCount              int                          `json:"validCount"`
+	BatchCount              int                          `json:"batchCount"`
+	AggregateBytes          int64                        `json:"aggregateBytes"`
+	NextDueAt               time.Time                    `json:"nextDueAt,omitempty"`
+	ReviewReason            string                       `json:"reviewReason,omitempty"`
+	InspectionRequired      bool                         `json:"inspectionRequired"`
+	AppliedState            string                       `json:"appliedState,omitempty"`
+	AppliedJobState         string                       `json:"appliedJobState,omitempty"`
+	AppliedConfigState      string                       `json:"appliedConfigState,omitempty"`
+	ManualAllowanceBytes    int64                        `json:"manualAllowanceBytes"`
+	QuotaState              string                       `json:"quotaState"`
+	QuotaUsedBytes          int64                        `json:"quotaUsedBytes"`
+	QuotaRemainingBytes     int64                        `json:"quotaRemainingBytes"`
+	QuotaReviewsUsed        int                          `json:"quotaReviewsUsed"`
+	QuotaNextResetAt        time.Time                    `json:"quotaNextResetAt,omitempty"`
+	TotalEligible           int                          `json:"totalEligible"`
+	SelectedForSpeed        int                          `json:"selectedForSpeed"`
+	DeferredForFutureReview int                          `json:"deferredForFutureReview"`
+	SubsetState             string                       `json:"subsetState,omitempty"`
+	FairCursor              int                          `json:"fairCursor"`
+	FairCursorState         string                       `json:"fairCursorState,omitempty"`
+	PoolDecision            string                       `json:"poolDecision,omitempty"`
+	ActivePool              []string                     `json:"activePool,omitempty"`
+	ActivePoolState         string                       `json:"activePoolState,omitempty"`
+	RecommendedPool         []string                     `json:"recommendedPool,omitempty"`
+	AppliedPool             []string                     `json:"appliedPool,omitempty"`
+	NativeSelected          string                       `json:"nativeSelected,omitempty"`
+	NativeSelectedState     string                       `json:"nativeSelectedState,omitempty"`
+	NativeSelectedAt        time.Time                    `json:"nativeSelectedAt,omitempty"`
 }
 
 type RankedNode struct {
@@ -93,7 +107,7 @@ type Service struct {
 	Jobs              *xkeen.Jobs
 	AutomaticDisabled bool
 	autoApplying      bool
-	cursor            int
+	sweepPlan         sweepPlan
 }
 
 func (s *Service) Read() Status {
@@ -114,6 +128,8 @@ func (s *Service) Read() Status {
 		value.State = "idle"
 	}
 	value.Progress.Candidates = append([]c1.AdaptiveCandidateStatus(nil), value.Progress.Candidates...)
+	value.ActivePool = append([]string(nil), value.ActivePool...)
+	value.AppliedPool = append([]string(nil), value.AppliedPool...)
 	_, err := c1.NativeQualityCosts(s.result, time.Now().UTC(), s.pool)
 	value.CanStage = value.State == "completed" && value.AppliedState != "applied" && value.AppliedState != "no-op" && err == nil
 	if value.State == "completed" && err != nil {
@@ -132,28 +148,55 @@ func (s *Service) Read() Status {
 		}
 	}
 	s.mu.Unlock()
-	if value.CanStage && s.Editor != nil {
+	value.RecommendedPool = make([]string, 0, len(value.Ranking))
+	for _, node := range value.Ranking {
+		value.RecommendedPool = append(value.RecommendedPool, node.Tag)
+	}
+	if !activeReview && s.Editor != nil && s.Nodes != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		w, err := s.Editor.Workspace(ctx)
+		if value.CanStage {
+			value.CanStage = err == nil && w.Pending == nil && w.TargetsComplete && w.Digest == value.Digest && len(value.Ranking) >= 2
+			switch {
+			case err != nil || !w.TargetsComplete:
+				value.StageReason = "configuration-unavailable"
+			case w.Pending != nil:
+				value.StageReason = "configuration-pending"
+			case w.Digest != value.Digest:
+				value.StageReason = "configuration-changed"
+			case len(value.Ranking) < 2:
+				value.StageReason = "measurement-expired-or-incomplete"
+			}
+		}
+		value.ActivePool, value.ActivePoolCount, value.ActivePoolState = nil, 0, "unavailable"
+		if err == nil && w.Pending == nil && w.TargetsComplete {
+			nodes := s.Nodes(ctx)
+			if pool, index, poolErr := routingPool(w.Documents["05_routing.json"].Text, nodes, w.Targets); poolErr == nil {
+				value.ActivePool, value.ActivePoolCount, value.ActivePoolState = pool, len(pool), "verified"
+				value.AppliedRanking = appliedRankingFromWorkspace(w, pool, index)
+				if value.AppliedState == "applied" {
+					value.AppliedPool = append([]string(nil), pool...)
+				}
+			}
+		}
 		cancel()
-		value.CanStage = err == nil && w.Pending == nil && w.TargetsComplete && w.Digest == value.Digest && len(value.Ranking) >= 2
-		switch {
-		case err != nil || !w.TargetsComplete:
-			value.StageReason = "configuration-unavailable"
-		case w.Pending != nil:
-			value.StageReason = "configuration-pending"
-		case w.Digest != value.Digest:
-			value.StageReason = "configuration-changed"
-		case len(value.Ranking) < 2:
-			value.StageReason = "measurement-expired-or-incomplete"
+	} else if activeReview {
+		value.ActivePoolState = "frozen-at-review"
+	} else {
+		value.ActivePool, value.ActivePoolCount, value.ActivePoolState = nil, 0, "unavailable"
+		if value.CanStage {
+			value.CanStage, value.StageReason = false, "configuration-unavailable"
 		}
 	}
-	value.AppliedRanking = s.appliedRanking()
+	if value.NativeSelectedAt.IsZero() || value.NativeSelectedAt.After(time.Now()) || time.Since(value.NativeSelectedAt) > 2*time.Minute {
+		value.NativeSelected, value.NativeSelectedState = "", "unavailable"
+	}
 	if value.ResourceProfile.Constrained && value.ResourceProfile.Automatic {
 		if q, err := quotaState(s.QuotaPath, time.Now().UTC()); err == nil {
 			value.QuotaState = "available"
 			value.QuotaUsedBytes, value.QuotaRemainingBytes = q.UsedBytes, q.RemainingBytes
 			value.QuotaReviewsUsed, value.QuotaNextResetAt = q.ReviewsUsed, q.NextResetAt
+			value.FairCursor = q.FairCursor
 			if q.InspectionRequired && !activeReview {
 				value.InspectionRequired = true
 				value.CanStage = false
@@ -175,20 +218,19 @@ func (s *Service) profile() resourcepolicy.Profile {
 	return resourcepolicy.Profile{Name: "standard", Automatic: true}
 }
 
-func (s *Service) appliedRanking() []RankedNode {
-	if s.Editor == nil || s.Nodes == nil {
-		return nil
+// Native selection is recorded only from an already-required control read.
+// Status GET never opens a new Xray connection or infers a current target from
+// an old observation.
+func observeNativeSelection(status *Status, snapshot xrayapi.Snapshot, at time.Time) {
+	status.NativeSelected, status.NativeSelectedState, status.NativeSelectedAt = "", "unavailable", time.Time{}
+	if snapshot.RoutingReachable && snapshot.Balancer.Override == "" && snapshot.Balancer.NativeSelected != "" {
+		status.NativeSelected = snapshot.Balancer.NativeSelected
+		status.NativeSelectedState = "observed"
+		status.NativeSelectedAt = at
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	w, err := s.Editor.Workspace(ctx)
-	if err != nil || !w.TargetsComplete || w.Pending != nil {
-		return nil
-	}
-	pool, index, err := routingPool(w.Documents["05_routing.json"].Text, s.Nodes(ctx), w.Targets)
-	if err != nil {
-		return nil
-	}
+}
+
+func appliedRankingFromWorkspace(w xkeen.EditorWorkspace, pool []string, index int) []RankedNode {
 	var document struct {
 		Routing struct {
 			Balancers []struct {
@@ -402,7 +444,8 @@ func (s *Service) start(ctx context.Context, broad bool) error {
 	if broad {
 		latencyCeiling = min(latencyCeiling, max(int64(300), 2*generation.Candidates[0].RTTMS))
 	}
-	s.status = Status{State: "running", Digest: w.Digest, Generation: generation.Generation, PoolCount: len(pool), ActivePoolCount: len(activePool), ManualSample: broad, LatencyLimitMS: latencyCeiling, LatencySource: criteria.latencySource, EligibleCount: len(all), Progress: c1.AdaptivePerformanceStatus{State: "running", ShortlistCount: len(generation.Candidates)}}
+	s.status = Status{State: "running", Digest: w.Digest, Generation: generation.Generation, PoolCount: len(pool), ActivePoolCount: len(activePool), ActivePool: append([]string(nil), activePool...), ActivePoolState: "frozen-at-review", ManualSample: broad, LatencyLimitMS: latencyCeiling, LatencySource: criteria.latencySource, EligibleCount: len(all), Progress: c1.AdaptivePerformanceStatus{State: "running", ShortlistCount: len(generation.Candidates)}}
+	observeNativeSelection(&s.status, snapshot, startedAt)
 	go func() {
 		defer close(done)
 		result, runErr := s.Measurement.MeasureNativeQuality(job, generation, func(progress c1.AdaptivePerformanceStatus) {
@@ -526,24 +569,38 @@ func routingPool(text string, nodes []c1.NodeState, targets []xkeen.ConfigTarget
 	if index < 0 || len(selectors) == 0 {
 		return nil, 0, ErrUnavailable
 	}
+	selectorMatched := make([]bool, len(selectors))
+	match := func(tag string) (int, bool) {
+		index := -1
+		for i, prefix := range selectors {
+			if prefix == "" {
+				return -1, false
+			}
+			if strings.HasPrefix(tag, prefix) {
+				if index >= 0 {
+					return -1, false
+				}
+				index = i
+			}
+		}
+		return index, true
+	}
 	var pool []string
 	seen := map[string]bool{}
 	for _, n := range nodes {
 		if !n.Enabled {
 			continue
 		}
-		for _, prefix := range selectors {
-			if prefix == "" {
+		selector, valid := match(n.Tag)
+		if !valid {
+			return nil, 0, ErrUnavailable
+		}
+		if selector >= 0 {
+			if seen[n.Tag] {
 				return nil, 0, ErrUnavailable
 			}
-			if strings.HasPrefix(n.Tag, prefix) {
-				if seen[n.Tag] {
-					return nil, 0, ErrUnavailable
-				}
-				seen[n.Tag] = true
-				pool = append(pool, n.Tag)
-				break
-			}
+			seen[n.Tag] = true
+			pool = append(pool, n.Tag)
 		}
 	}
 	if len(pool) < 2 || len(pool) > c1.MaxRegistryNodes {
@@ -554,18 +611,25 @@ func routingPool(text string, nodes []c1.NodeState, targets []xkeen.ConfigTarget
 		if target.Kind != "outbound" {
 			continue
 		}
-		for _, prefix := range selectors {
-			if strings.HasPrefix(target.Tag, prefix) {
-				if !seen[target.Tag] || matched[target.Tag] {
-					return nil, 0, ErrUnavailable
-				}
-				matched[target.Tag] = true
-				break
+		selector, valid := match(target.Tag)
+		if !valid {
+			return nil, 0, ErrUnavailable
+		}
+		if selector >= 0 {
+			if !seen[target.Tag] || matched[target.Tag] {
+				return nil, 0, ErrUnavailable
 			}
+			matched[target.Tag] = true
+			selectorMatched[selector] = true
 		}
 	}
 	if len(matched) != len(pool) {
 		return nil, 0, ErrUnavailable
+	}
+	for _, matched := range selectorMatched {
+		if !matched {
+			return nil, 0, ErrUnavailable
+		}
 	}
 	sort.Strings(pool)
 	return pool, index, nil
@@ -625,10 +689,9 @@ func prepareWithCriteria(snapshot xrayapi.Snapshot, pool []string, id uint64, mo
 		maxCandidates, maxAttempts = c1.NativeQualityBroadCandidates, c1.NativeQualityBroadAttempts
 	}
 	if mode == 2 {
-		if len(eligible) > 18 {
-			return c1.AdaptiveGeneration{}, ErrUnavailable
-		}
-		maxCandidates, maxAttempts = 18, 18
+		// The sweep owner freezes the full fresh eligible set, then selects its
+		// bounded, rotating subset before reserving traffic or transferring data.
+		maxCandidates, maxAttempts = len(eligible), len(eligible)
 	}
 	initial := min(len(eligible), maxCandidates)
 	end := min(len(eligible), maxAttempts)

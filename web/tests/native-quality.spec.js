@@ -47,13 +47,44 @@ test('bounded automatic review separates full pool, coverage and applied state w
     quotaReviewsUsed: 1, quotaNextResetAt: '2026-10-11T01:00:00Z', manualAllowanceBytes: 24 * 1048576 }
   await open(page)
   await expect(page.getByText(/Current active pool: 6 nodes. Enabled nodes available for comparison: 52/)).toBeVisible()
-  await expect(page.getByText(/14 of 14 eligible nodes attempted, 12 valid; 5 batches and 44.0 MiB transferred/)).toBeVisible()
+  await expect(page.getByText(/14 of 14 selected nodes attempted, 12 valid; 5 batches and 44.0 MiB transferred/)).toBeVisible()
   await expect(page.getByText(/Automatic pool application: applied/)).toBeVisible()
   await expect(page.getByText(/Automatic reviews test eligible nodes in small sequential batches/)).toBeVisible()
   await expect(page.getByText(/144 of 288 MiB reserved in the rolling 24 hours \(1 of 2 reviews\); 144 MiB remaining/)).toBeVisible()
   await expect(page.getByText(/Manual speed tests have a separate limit of 24 MiB per run/)).toBeVisible()
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
+})
+
+test('large eligible set shows bounded subset, deferred nodes and no-op without claiming a global winner', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), resourceProfile: { name: 'constrained', constrained: true, automatic: true },
+    limits: { candidates: 3, attempts: 4, bytes: 24 * 1048576, seconds: 90 },
+    poolCount: 52, activePoolCount: 6, eligibleCount: 46, totalEligible: 46,
+    selectedForSpeed: 18, deferredForFutureReview: 28, subsetState: 'subset-complete',
+    fairCursorState: 'continued', attemptedCount: 18, validCount: 15, batchCount: 6,
+    aggregateBytes: 48 * 1048576, appliedState: 'no-op', poolDecision: 'pool-unchanged',
+    reviewReason: 'pool-unchanged', activePool: ['proxy-a', 'proxy-b'],
+    recommendedPool: ['proxy-b', 'proxy-a'], nativeSelected: 'proxy-a',
+    quotaState: 'available', quotaUsedBytes: 144 * 1048576,
+    quotaRemainingBytes: 144 * 1048576, quotaReviewsUsed: 1,
+    manualAllowanceBytes: 24 * 1048576 }
+  await open(page)
+  await expect(page.getByText(/Review scope: 18 of 46 fresh eligible nodes selected.*28 deferred/)).toBeVisible()
+  await expect(page.getByText(/bounded subset is not a global ranking/)).toBeVisible()
+  await expect(page.getByText(/18 of 18 selected nodes attempted, 15 valid/)).toBeVisible()
+  await expect(page.getByText(/same pool members; no restart/)).toBeVisible()
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
+})
+
+test('unavailable native readback does not present cached pool or selected node as current', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), activePoolCount: 6, activePool: [], activePoolState: 'unavailable',
+    nativeSelectedState: 'unavailable' }
+  await open(page)
+  await expect(page.getByText(/Active pool readback unavailable/)).toBeVisible()
+  await expect(page.getByText(/Current active pool: 6 nodes/)).toHaveCount(0)
+  await expect(page.getByText(/Last observed native selected node/)).toHaveCount(0)
 })
 
 test('inspection-required automatic outcome fences browser testing and applying', async ({ page }) => {
@@ -110,6 +141,16 @@ test('unavailable quota is shown as unknown rather than unused', async ({ page }
   await expect(page.getByText(/Automatic traffic quota: unavailable; inspect the private receipt before another comparison/)).toBeVisible()
   await expect(page.getByText(/0 of 288 MiB reserved/)).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Run speed test', exact: true })).toBeDisabled()
+})
+
+test('empty automatic quota does not display Go zero timestamp as a reset date', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), resourceProfile: { name: 'constrained', constrained: true, automatic: true },
+    quotaState: 'available', quotaUsedBytes: 0, quotaRemainingBytes: 288 * 1048576,
+    quotaReviewsUsed: 0, quotaNextResetAt: '0001-01-01T00:00:00Z', manualAllowanceBytes: 24 * 1048576 }
+  await open(page)
+  await expect(page.getByText(/0 of 288 MiB reserved/)).toBeVisible()
+  await expect(page.getByText(/next reservation expires/)).toHaveCount(0)
 })
 
 test('changed subscription generation explains stale recommendation without applying or retesting', async ({ page }) => {

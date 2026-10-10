@@ -102,7 +102,22 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		s.applyOutcome("not-applied", "node-profile-changed", false)
 		return
 	}
+	currentActive, _, err := routingPool(w.Documents["05_routing.json"].Text, s.Nodes(ctx), w.Targets)
+	if err != nil {
+		s.applyOutcome("not-applied", "selector-unavailable", false)
+		return
+	}
+	plan := s.sweepPlan
+	if plan.TotalEligible == 0 {
+		plan = sweepPlan{Active: currentActive, NativeSelected: result.CurrentTarget, FirstInitialization: len(currentActive) > 6, Freshness: 2 * time.Minute}
+	} else if !samePoolMembers(currentActive, plan.Active) || result.CurrentTarget != plan.NativeSelected {
+		s.applyOutcome("not-applied", "selector-changed", false)
+		return
+	}
 	snapshot := s.Reader.Snapshot(ctx)
+	s.mu.Lock()
+	observeNativeSelection(&s.status, snapshot, time.Now().UTC())
+	s.mu.Unlock()
 	if !snapshot.APIReachable || !snapshot.RoutingReachable || !snapshot.ObservatoryReachable || snapshot.Balancer.Override != "" || !s.Reader.ProbeReachable(ctx) {
 		s.applyOutcome("not-applied", "native-override-or-unavailable", false)
 		return
@@ -131,8 +146,16 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		s.applyOutcome("not-applied", "selector-unavailable", false)
 		return
 	}
-	if sameRecommendation(w.Documents["05_routing.json"].Text, index, selected, selectedCosts) {
-		s.applyOutcome("no-op", "", false)
+	decision := poolDecision(result, costs, currentActive, selected, plan, snapshot, time.Now().UTC())
+	s.mu.Lock()
+	s.status.PoolDecision = decision
+	s.mu.Unlock()
+	if decision == "pool-unchanged" {
+		s.applyOutcome("no-op", "pool-unchanged", false)
+		return
+	}
+	if decision != "first-pool-initialization" && decision != "material-improvement" && decision != "unhealthy-incumbent-replaced" {
+		s.applyOutcome("not-applied", decision, false)
 		return
 	}
 	proposed, err := replaceRecommendation(w.Documents["05_routing.json"].Text, index, selectedCosts, selected)
@@ -157,6 +180,12 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 	postCancel()
 	if err != nil || post.Pending == nil || post.Digest != saved || post.Pending.Drift || post.Pending.ApplyID != "" {
 		s.applyOutcome("inspection-required", "saved-digest-unconfirmed", true)
+		return
+	}
+	postPool, _, poolErr := measurementPool(post.Documents["05_routing.json"].Text, s.Nodes(parent), post.Targets)
+	postActive, _, activeErr := routingPool(post.Documents["05_routing.json"].Text, s.Nodes(parent), post.Targets)
+	if poolErr != nil || activeErr != nil || strings.Join(postPool, "\x00") != strings.Join(pool, "\x00") || !samePoolMembers(postActive, selected) {
+		s.applyOutcome("inspection-required", "saved-membership-unconfirmed", true)
 		return
 	}
 	job, err := s.Jobs.ApplyConfigs(sweepJobOwner, s.Editor, saved)
@@ -209,6 +238,10 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 	}
 	s.mu.Lock()
 	s.status.ActivePoolCount = len(selected)
+	s.status.ActivePool = append([]string(nil), selected...)
+	s.status.ActivePoolState = "verified-after-apply"
+	s.status.AppliedPool = append([]string(nil), selected...)
+	observeNativeSelection(&s.status, actual, time.Now().UTC())
 	s.mu.Unlock()
 	s.applyOutcome("applied", "", false)
 }

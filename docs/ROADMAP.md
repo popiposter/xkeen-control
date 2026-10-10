@@ -53,6 +53,13 @@ MIPS synthetic hardware execution, public signature verification and signed
 KN1810 installation passed. The synthetic test did not access live nodes; live
 automatic sweep/Apply and resource acceptance still require separate readback.
 
+The first signed0.4.10 scheduled attempt on KN1810 at 02:24 MSK on
+2026-10-10 refused before transfer or Apply because 46 fresh eligible nodes
+exceeded its 18-node admission limit. It transferred 0 MiB and did not change
+the active configuration. [#191](https://github.com/popiposter/xkeen-control/issues/191)
+implements a bounded, rotating 18-of-46 review and material-change gate in
+source; this is not yet a released or live-accepted fix.
+
 ## Remaining acceptance
 
 [#162 durable update outcomes](https://github.com/popiposter/xkeen-control/issues/162)

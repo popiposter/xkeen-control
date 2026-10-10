@@ -89,9 +89,6 @@ func (s *Service) startSweep(parent context.Context, trigger string) error {
 		return err
 	}
 	retainHealthEvidence(&generation, s.Measurement.NativeQualityEvidence(snapshot))
-	if _, err := batchSizes(len(generation.Candidates)); err != nil {
-		return err
-	}
 	quotaPath := s.QuotaPath
 	if quotaPath == "" {
 		quotaPath = defaultQuotaPath
@@ -101,7 +98,24 @@ func (s *Service) startSweep(parent context.Context, trigger string) error {
 		s.status.ReviewReason = "quota-busy-or-unavailable"
 		return errQuota
 	}
-	if _, err := reserveSweepLocked(quotaPath, now); err != nil {
+	previous, err := readQuotaLocked(quotaPath, now)
+	if err != nil {
+		quotaUnlock()
+		s.status.ReviewReason = "quota-unavailable-or-exhausted"
+		return errQuota
+	}
+	plan, err := planSweep(generation.Candidates, activePool, snapshot.Balancer.NativeSelected, previous.FairCursor, previous.EligibleSetHash)
+	if err != nil {
+		quotaUnlock()
+		s.status.ReviewReason = "eligible-unavailable"
+		return err
+	}
+	plan.Freshness = criteria.freshness
+	if _, err := batchSizes(len(plan.Candidates)); err != nil {
+		quotaUnlock()
+		return err
+	}
+	if _, err := reserveSweepPlannedLocked(quotaPath, now, &plan); err != nil {
 		quotaUnlock()
 		s.status.ReviewReason = "quota-unavailable-or-exhausted"
 		return err
@@ -120,10 +134,17 @@ func (s *Service) startSweep(parent context.Context, trigger string) error {
 	s.cancel, s.done = cancelJob, done
 	s.lastStartedAt = now
 	s.pool = append([]string(nil), pool...)
+	s.sweepPlan = plan
 	s.result = c1.AdaptiveResult{}
-	s.status = Status{State: "running", Digest: w.Digest, Generation: generation.Generation, PoolCount: len(pool), ActivePoolCount: len(activePool), EligibleCount: len(generation.Candidates), LatencyLimitMS: criteria.maxRTT, LatencySource: criteria.latencySource, ReviewTrigger: trigger, Progress: c1.AdaptivePerformanceStatus{State: "running"}, AppliedState: "not-attempted", QuotaState: "available", QuotaUsedBytes: quota.UsedBytes, QuotaRemainingBytes: quota.RemainingBytes, QuotaReviewsUsed: quota.ReviewsUsed, QuotaNextResetAt: quota.NextResetAt}
-	ordered := rotateCandidates(generation.Candidates, s.cursor)
-	s.cursor = (s.cursor + 1) % len(ordered)
+	s.status = Status{State: "running", Digest: w.Digest, Generation: generation.Generation, PoolCount: len(pool), ActivePoolCount: len(activePool), ActivePool: append([]string(nil), activePool...), ActivePoolState: "frozen-at-review", EligibleCount: plan.TotalEligible, TotalEligible: plan.TotalEligible, SelectedForSpeed: len(plan.Candidates), DeferredForFutureReview: plan.Deferred, SubsetState: "all-eligible", FairCursor: plan.NextCursor, FairCursorState: plan.CursorState, LatencyLimitMS: criteria.maxRTT, LatencySource: criteria.latencySource, ReviewTrigger: trigger, Progress: c1.AdaptivePerformanceStatus{State: "running"}, AppliedState: "not-attempted", QuotaState: "available", QuotaUsedBytes: quota.UsedBytes, QuotaRemainingBytes: quota.RemainingBytes, QuotaReviewsUsed: quota.ReviewsUsed, QuotaNextResetAt: quota.NextResetAt}
+	observeNativeSelection(&s.status, snapshot, now)
+	if plan.Deferred > 0 {
+		s.status.SubsetState = "subset-selected"
+	}
+	if plan.FirstInitialization {
+		s.status.PoolDecision = "first-pool-initialization"
+	}
+	ordered := plan.Candidates
 	go s.runSweep(job, cancelJob, done, generation, ordered, w.Digest, quotaUnlock)
 	return nil
 }
@@ -135,7 +156,7 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 		defer quotaUnlock()
 	}
 	sizes, _ := batchSizes(len(ordered))
-	result := c1.AdaptiveResult{NativeQuality: true, Sweep: true, SweepEligibleCount: len(ordered), Generation: frozen.Generation, StartedAt: time.Now().UTC(), State: "running"}
+	result := c1.AdaptiveResult{NativeQuality: true, Sweep: true, SweepEligibleCount: len(ordered), Generation: frozen.Generation, StartedAt: time.Now().UTC(), CurrentTarget: frozen.CurrentTarget, State: "running"}
 	reason := ""
 	position := 0
 	pause := sweepBatchPause
@@ -173,6 +194,9 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 			break
 		}
 		snapshot := s.Reader.Snapshot(wctx)
+		s.mu.Lock()
+		observeNativeSelection(&s.status, snapshot, time.Now().UTC())
+		s.mu.Unlock()
 		if !snapshot.APIReachable || !snapshot.RoutingReachable || !snapshot.ObservatoryReachable || snapshot.Balancer.Override != "" {
 			reason = "native-override-or-unavailable"
 			stop()
@@ -206,7 +230,16 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 		s.status.BatchCount++
 		s.status.AggregateBytes = result.AggregateBytes
 		s.mu.Unlock()
-		if measureErr != nil || measured.State != "completed" || len(measured.Candidates) != size || measured.AggregateBytes < 0 {
+		matched := len(measured.Candidates) == size
+		if matched {
+			for i, candidate := range measured.Candidates {
+				if candidate.Tag != batch.Candidates[i].Tag {
+					matched = false
+					break
+				}
+			}
+		}
+		if measureErr != nil || measured.State != "completed" || !matched || measured.AggregateBytes < 0 {
 			reason = "batch-incomplete-or-unknown"
 			if measured.State == "cleanup-pending" || measureErr != nil {
 				s.mu.Lock()
@@ -243,6 +276,9 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 	s.status.AttemptedCount = len(result.Candidates)
 	s.status.ValidCount = result.ValidCount
 	s.status.AggregateBytes = result.AggregateBytes
+	if result.State == "completed" && s.status.DeferredForFutureReview > 0 {
+		s.status.SubsetState = "subset-complete"
+	}
 	if result.State == "completed" && ctx.Err() == nil {
 		s.autoApplying = true
 		s.status.State = "applying"
