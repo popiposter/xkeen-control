@@ -472,18 +472,27 @@ function NavigationContent({ mobile = false, sections, section, total, version, 
   </>
 }
 
+// Native Observatory watches only the quality pool. A node without any
+// Observatory record is outside it: not continuously monitored, which is not
+// the same as a failed probe (REQ-011).
+const nodeObserved = (node) => Boolean(node?.alive || node?.lastTry || node?.lastSeen || node?.lastError)
+const nodeHealthLabel = (node) => !node.enabled ? 'Disabled' : node.alive ? 'Alive' : nodeObserved(node) ? (node.lastError || 'Not alive') : 'Not monitored'
+const nodeHealthTone = (node) => !node.enabled || (!node.alive && !nodeObserved(node)) ? 'muted' : node.alive ? 'success' : 'warning'
+const notMonitoredTitle = 'Outside the active quality pool: not continuously monitored. Reviews probe it in rotation.'
+
 function Overview({ quality, measurements, status, nodeTotal, nodesByTag, onOpenNodes }) {
   const effective = nodesByTag.get(status.balancer?.effective)
   const ready = status.xray?.running && status.xray?.apiReachable && status.xkeen?.running
   const enabled = Array.from(nodesByTag.values()).filter((node) => node.enabled).length
   const applied = Boolean(quality?.appliedRanking?.length)
+  const provisional = Boolean(quality?.provisionalAt) && new Date(quality.provisionalAt).getFullYear() >= 2020
   const leaders = applied ? quality.appliedRanking : quality?.ranking || []
   return <div className="section-stack">
     <Card role="region" aria-label="Active node"><CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle>{effective ? <NodeName node={effective} /> : 'No current target'}</CardTitle><StatusBadge tone={ready ? 'success' : 'danger'}>{ready ? 'Runtime ready' : 'Runtime unavailable'}</StatusBadge></div><CardDescription>{status.balancer?.override ? 'Manual override' : 'Native automatic selection'} - {formatAdaptiveLatency(effective?.latencyMs)} - {enabled} enabled</CardDescription></CardHeader><CardContent><Button variant="outline" onClick={onOpenNodes}>Manage nodes</Button></CardContent></Card>
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       <HealthCard label="Xray" ok={status.xray?.running && status.xray?.apiReachable} detail={status.xray?.apiReachable ? 'API reachable' : 'Unavailable'} />
       <HealthCard label="Probe" ok={status.xray?.probeReachable} detail={status.xray?.probeReachable ? 'Probe reachable' : 'Unavailable'} />
-      <HealthCard label="Observatory" ok={status.observatory?.apiReachable} detail={`${status.observatory?.healthy || 0}/${status.observatory?.total || nodeTotal} healthy`} />
+      <HealthCard label="Observatory" ok={status.observatory?.apiReachable} detail={Number.isFinite(status.observatory?.observed) ? `${status.observatory?.healthy || 0}/${status.observatory.observed} pool nodes healthy` : `${status.observatory?.healthy || 0}/${status.observatory?.total || nodeTotal} healthy`} />
       <HealthCard label="XKeen" ok={status.xkeen?.running} detail={status.xkeen?.running ? 'Running' : 'Not detected'} />
     </div>
     <Disclosure title="Selection details"><div className="grid gap-4 sm:grid-cols-3">
@@ -492,8 +501,8 @@ function Overview({ quality, measurements, status, nodeTotal, nodesByTag, onOpen
       <SelectionCard label="Effective" node={effective} />
     </div><p className="mt-4 text-sm text-muted-foreground">Xray selects a healthy node using the configured strategy. Compare throughput in Performance; saved recommendations apply through Routing.</p></Disclosure>
     {(!nodeTotal || status.native?.installation !== 'available') && <NativeXkeenStatus facts={status.native} onOpenNodes={onOpenNodes} />}
-    <Card><CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle>{applied ? 'Active pool leaders' : 'Measured candidates'}</CardTitle><Button variant="ghost" onClick={onOpenNodes}>Open all nodes</Button></div><CardDescription>{applied ? 'Highest preference in saved native throughput/health weights. Xray also considers latency and keeps other enabled nodes as backups.' : 'Latest measured candidates; these recommendations have not been confirmed as applied weights.'} Speeds describe the latest comparison in this panel session.</CardDescription></CardHeader><CardContent>
-      {!leaders.length ? <p className="py-4 text-muted-foreground">{quality?.state === 'running' ? 'Comparing the current pool…' : 'No completed comparison in this panel session. Run a comparison in Performance.'}</p> : <Table><TableHeader><TableRow><TableHead>{applied ? 'Pool preference' : 'Measured rank'}</TableHead><TableHead>Node</TableHead><TableHead>Health</TableHead><TableHead>Download</TableHead><TableHead>Upload</TableHead><TableHead>Role</TableHead></TableRow></TableHeader><TableBody>{leaders.filter((item) => nodesByTag.get(item.tag)?.enabled).map((item) => { const node = nodesByTag.get(item.tag); const sample = measurements.get(item.tag); return <TableRow key={item.tag}><TableCell><StatusBadge>#{item.rank}</StatusBadge></TableCell><TableCell><NodeName node={node} /></TableCell><TableCell><StatusBadge tone={node.alive ? 'success' : 'warning'}>{node.alive ? 'Alive' : 'Unavailable'}</StatusBadge></TableCell><TableCell>{formatRate(sample?.downloadBps)}</TableCell><TableCell>{formatRate(sample?.uploadBps)}</TableCell><TableCell><NodeBadges node={node} /></TableCell></TableRow> })}</TableBody></Table>}
+    <Card><CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><CardTitle>{provisional ? 'Provisional pool' : applied ? 'Active pool leaders' : 'Measured candidates'}</CardTitle><Button variant="ghost" onClick={onOpenNodes}>Open all nodes</Button></div><CardDescription>{provisional ? 'No pool member was healthy, so availability recovery applied nodes that answered a latency probe. They are not ranked by speed; the next complete automatic review replaces this pool.' : applied ? 'Highest preference in saved native throughput/health weights. Xray chooses among these pool members using their live health and latency.' : 'Latest measured candidates; these recommendations have not been confirmed as applied weights.'} Speeds describe the latest comparison in this panel session.</CardDescription></CardHeader><CardContent>
+      {!leaders.length ? <p className="py-4 text-muted-foreground">{quality?.state === 'running' ? 'Comparing the current pool…' : 'No completed comparison in this panel session. Run a comparison in Performance.'}</p> : <Table><TableHeader><TableRow><TableHead>{provisional ? 'Pool member' : applied ? 'Pool preference' : 'Measured rank'}</TableHead><TableHead>Node</TableHead><TableHead>Health</TableHead><TableHead>Download</TableHead><TableHead>Upload</TableHead><TableHead>Role</TableHead></TableRow></TableHeader><TableBody>{leaders.filter((item) => nodesByTag.get(item.tag)?.enabled).map((item) => { const node = nodesByTag.get(item.tag); const sample = measurements.get(item.tag); return <TableRow key={item.tag}><TableCell><StatusBadge>#{item.rank}</StatusBadge></TableCell><TableCell><NodeName node={node} /></TableCell><TableCell><StatusBadge tone={nodeHealthTone(node)}>{nodeHealthLabel(node)}</StatusBadge></TableCell><TableCell>{formatRate(sample?.downloadBps)}</TableCell><TableCell>{formatRate(sample?.uploadBps)}</TableCell><TableCell><NodeBadges node={node} /></TableCell></TableRow> })}</TableBody></Table>}
     </CardContent></Card>
   </div>
 }
@@ -526,7 +535,8 @@ function NodeWorkspace({ measurements, nodes, subscriptions, performance, manual
     return nodes.filter((node) => {
       if (needle && ![visibleNodeName(node), node.name, node.address, node.subscriptionName, node.sourceType, node.countryCode].some((value) => String(value || '').toLocaleLowerCase().includes(needle))) return false
       if (statusFilter === 'alive' && !node.alive) return false
-      if (statusFilter === 'unhealthy' && (!node.enabled || node.alive)) return false
+      if (statusFilter === 'unhealthy' && (!node.enabled || node.alive || !nodeObserved(node))) return false
+      if (statusFilter === 'unmonitored' && (!node.enabled || nodeObserved(node))) return false
       if (statusFilter === 'disabled' && node.enabled) return false
       if (statusFilter === 'stale' && !node.stale && !node.missing) return false
       if (!matchesNodeRole(node, roleFilter)) return false
@@ -551,7 +561,8 @@ function NodeWorkspace({ measurements, nodes, subscriptions, performance, manual
   const statusCounts = useMemo(() => ({
     all: nodes.length,
     alive: nodes.filter((node) => node.alive).length,
-    unhealthy: nodes.filter((node) => node.enabled && !node.alive).length,
+    unhealthy: nodes.filter((node) => node.enabled && !node.alive && nodeObserved(node)).length,
+    unmonitored: nodes.filter((node) => node.enabled && !nodeObserved(node)).length,
     disabled: nodes.filter((node) => !node.enabled).length,
     stale: nodes.filter((node) => node.stale || node.missing).length,
   }), [nodes])
@@ -768,7 +779,7 @@ function NodeWorkspace({ measurements, nodes, subscriptions, performance, manual
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <ToggleGroup variant="outline" className="flex-wrap" aria-label="Health filters" value={[statusFilter]} onValueChange={(values) => { if (values.length) chooseFilter('statusFilter', values[0]) }}>
-          {[['all', 'All'], ['alive', 'Alive'], ['unhealthy', 'Not alive'], ['disabled', 'Disabled'], ['stale', 'Stale']].map(([value, label]) => <ToggleGroupItem key={value} value={value}>{label} <span>{statusCounts[value]}</span></ToggleGroupItem>)}
+          {[['all', 'All'], ['alive', 'Alive'], ['unhealthy', 'Not alive'], ['unmonitored', 'Not monitored'], ['disabled', 'Disabled'], ['stale', 'Stale']].map(([value, label]) => <ToggleGroupItem key={value} value={value}>{label} <span>{statusCounts[value]}</span></ToggleGroupItem>)}
         </ToggleGroup>
         <ToggleGroup variant="outline" className="flex-wrap" aria-label="Role filters" value={[roleFilter]} onValueChange={(values) => { if (values.length) chooseFilter('roleFilter', values[0]) }}>
           {[['all', 'Any role'], ['native', 'Native'], ['override', 'Override'], ['effective', 'Effective'], ['none', 'No role']].map(([value, label]) => <ToggleGroupItem key={value} value={value}>{label}</ToggleGroupItem>)}
@@ -843,13 +854,12 @@ function ManualPerformanceCard({ status, node }) {
 }
 
 function NodeRows({ showColumn, measurement, node, selected, onToggle }) {
-  const health = !node.enabled ? 'Disabled' : node.alive ? 'Alive' : (node.lastError || 'No data')
   return <>
     <TableRow className={!node.enabled ? "node-disabled" : undefined} data-state={selected ? 'selected' : undefined} tabIndex={0} aria-selected={selected} onClick={(event) => { if (!event.target.closest('input, label, button, a, [role=checkbox]')) onToggle() }} onKeyDown={(event) => { if (event.target === event.currentTarget && [' ', 'Enter'].includes(event.key)) { event.preventDefault(); onToggle() } }}>
       <TableCell className="selection-column"><SelectionCheckbox label={`Select ${visibleNodeName(node)}`} checked={selected} onChange={onToggle} /></TableCell>
       <TableCell><NodeName node={node} />{node.stale && <Badge variant="secondary">stale</Badge>}</TableCell>
       {showColumn('address') && <TableCell data-label="Address"><code className="address">{node.address || '—'}</code></TableCell>}
-      {showColumn('health') && <TableCell data-label="Health"><StatusBadge tone={!node.enabled ? 'muted' : node.alive ? 'success' : 'warning'}>{health}</StatusBadge></TableCell>}
+      {showColumn('health') && <TableCell data-label="Health"><span title={node.enabled && !nodeObserved(node) ? notMonitoredTitle : undefined}><StatusBadge tone={nodeHealthTone(node)}>{nodeHealthLabel(node)}</StatusBadge></span></TableCell>}
       {showColumn('latency') && <TableCell data-label="Latency">{node.alive ? formatAdaptiveLatency(node.latencyMs) : '-'}</TableCell>}
       {showColumn('rank') && <TableCell data-label="Quality rank">{measurement?.rank ? <StatusBadge>#{measurement.rank}</StatusBadge> : '—'}</TableCell>}
       {showColumn('download') && <TableCell data-label="Download">{measurement?.valid ? formatRate(measurement.downloadBps) : '—'}</TableCell>}

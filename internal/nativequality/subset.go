@@ -17,9 +17,11 @@ type sweepPlan struct {
 	TotalEligible       int
 	Deferred            int
 	FirstInitialization bool
-	NextCursor          int
-	EligibleSetHash     string
-	CursorState         string
+	// Provisional marks an incumbent pool applied by REQ-009 recovery.
+	Provisional     bool
+	NextCursor      int
+	EligibleSetHash string
+	CursorState     string
 }
 
 // planSweep freezes a bounded review candidate set, not a purported global

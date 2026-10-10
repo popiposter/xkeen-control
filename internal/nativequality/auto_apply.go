@@ -9,6 +9,7 @@ import (
 
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/configjson"
+	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
 
 const sweepJobOwner = "native-quality-sweep"
@@ -68,6 +69,24 @@ func (s *Service) applyOutcome(state, reason string, inspection bool) {
 	s.mu.Unlock()
 }
 
+// applyAdmission is the resource admission before any native Apply: no
+// conflicting speed test and no current memory or CPU pressure.
+func (s *Service) applyAdmission(ctx context.Context) string {
+	if err := s.Resources.CheckConflict(); err != nil {
+		return "native-speed-conflict-or-unavailable"
+	}
+	guarded, stop, err := s.Resources.Start(ctx)
+	if err != nil {
+		return "resource-pressure-or-unavailable"
+	}
+	guardErr := guarded.Err()
+	stop()
+	if guardErr != nil {
+		return "resource-pressure-or-unavailable"
+	}
+	return ""
+}
+
 // applySweep never retries Save or native Restart. The existing editor's
 // pending digest and Jobs.beginApply recheck are the interposition fence.
 func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, digest string, pool []string) {
@@ -77,19 +96,8 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 	}
 	ctx, cancel := context.WithTimeout(parent, 15*time.Second)
 	defer cancel()
-	if err := s.Resources.CheckConflict(); err != nil {
-		s.applyOutcome("not-applied", "native-speed-conflict-or-unavailable", false)
-		return
-	}
-	guarded, stop, err := s.Resources.Start(ctx)
-	if err != nil {
-		s.applyOutcome("not-applied", "resource-pressure-or-unavailable", false)
-		return
-	}
-	guardErr := guarded.Err()
-	stop()
-	if guardErr != nil {
-		s.applyOutcome("not-applied", "resource-pressure-or-unavailable", false)
+	if reason := s.applyAdmission(ctx); reason != "" {
+		s.applyOutcome("not-applied", reason, false)
 		return
 	}
 	w, err := s.Editor.Workspace(ctx)
@@ -165,54 +173,86 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		s.applyOutcome("no-op", "pool-unchanged", false)
 		return
 	}
-	if decision != "first-pool-initialization" && decision != "material-improvement" && decision != "unhealthy-incumbent-replaced" && decision != "observatory-repair" {
+	if decision != "first-pool-initialization" && decision != "material-improvement" && decision != "unhealthy-incumbent-replaced" && decision != "observatory-repair" && decision != "provisional-pool-replaced" {
 		s.applyOutcome("not-applied", decision, false)
 		return
 	}
-	proposed, err := replaceRecommendation(w.Documents["05_routing.json"].Text, index, selectedCosts, selected)
+	out := s.applyPool(parent, digest, index, pool, selected, selectedCosts, w.Documents["05_routing.json"].Text, observatory, func(jobState string) {
+		s.mu.Lock()
+		s.status.AppliedState = "running"
+		s.status.AppliedJobState = jobState
+		s.mu.Unlock()
+	})
+	s.mu.Lock()
+	if out.jobState != "" {
+		s.status.AppliedJobState = out.jobState
+		s.status.AppliedConfigState = out.configState
+	}
+	if out.state == "applied" {
+		s.status.ActivePoolCount = len(selected)
+		s.status.ActivePool = append([]string(nil), selected...)
+		s.status.ActivePoolState = "verified-after-apply"
+		s.status.AppliedPool = append([]string(nil), selected...)
+		observeNativeSelection(&s.status, out.actual, time.Now().UTC())
+	}
+	s.mu.Unlock()
+	s.applyOutcome(out.state, out.reason, out.inspection)
+}
+
+// poolApply is the outcome of one joint 05+07 Apply.
+type poolApply struct {
+	state, reason         string
+	inspection            bool
+	jobState, configState string
+	actual                xrayapi.Snapshot
+}
+
+// applyPool saves the selector, costs and observed set for selected as one
+// fixed-editor candidate, runs one native Apply and proves the terminal
+// receipt, the readback of both documents and the runtime selection. It never
+// retries Save or the native restart; any error after the save is returned as
+// inspection-required (REQ-010). Reviews and REQ-009 recovery share it.
+func (s *Service) applyPool(parent context.Context, digest string, index int, pool, selected []string, selectedCosts []c1.NativeQualityCost, routing, observatory string, onJob func(string)) poolApply {
+	concurrent := !s.profile().Constrained
+	fail := func(state, reason string) poolApply {
+		return poolApply{state: state, reason: reason, inspection: state == "inspection-required"}
+	}
+	proposed, err := replaceRecommendation(routing, index, selectedCosts, selected)
 	if err != nil {
-		s.applyOutcome("not-applied", "recommendation-invalid", false)
-		return
+		return fail("not-applied", "recommendation-invalid")
 	}
 	proposedObservatory, err := observatoryForPool(observatory, selected, concurrent)
 	if err != nil {
-		s.applyOutcome("not-applied", "observatory-invalid", false)
-		return
+		return fail("not-applied", "observatory-invalid")
 	}
 	// From this point, an error can follow a durable save and must be inspected.
 	if parent.Err() != nil {
-		s.applyOutcome("not-applied", "review-cancelled", false)
-		return
+		return fail("not-applied", "review-cancelled")
 	}
 	saveCtx, saveCancel := context.WithTimeout(parent, 180*time.Second)
 	saved, err := s.Editor.SaveTexts(saveCtx, digest, map[string]string{"05_routing.json": string(proposed), "07_observatory.json": string(proposedObservatory)})
 	saveCancel()
 	if err != nil {
-		s.applyOutcome("inspection-required", "save-outcome-unknown", true)
-		return
+		return fail("inspection-required", "save-outcome-unknown")
 	}
 	postCtx, postCancel := context.WithTimeout(parent, 10*time.Second)
 	post, err := s.Editor.Workspace(postCtx)
 	postCancel()
 	if err != nil || post.Pending == nil || post.Digest != saved || post.Pending.Drift || post.Pending.ApplyID != "" {
-		s.applyOutcome("inspection-required", "saved-digest-unconfirmed", true)
-		return
+		return fail("inspection-required", "saved-digest-unconfirmed")
 	}
 	postPool, _, poolErr := measurementPool(post.Documents["05_routing.json"].Text, s.Nodes(parent), post.Targets)
 	postActive, _, activeErr := routingPool(post.Documents["05_routing.json"].Text, s.Nodes(parent), post.Targets)
 	if poolErr != nil || activeErr != nil || strings.Join(postPool, "\x00") != strings.Join(pool, "\x00") || !samePoolMembers(postActive, selected) || !observatoryMatchesPool(post.Documents["07_observatory.json"].Text, selected, concurrent) {
-		s.applyOutcome("inspection-required", "saved-membership-unconfirmed", true)
-		return
+		return fail("inspection-required", "saved-membership-unconfirmed")
 	}
 	job, err := s.Jobs.ApplyConfigs(sweepJobOwner, s.Editor, saved)
 	if err != nil {
-		s.applyOutcome("inspection-required", "apply-admission-unknown", true)
-		return
+		return fail("inspection-required", "apply-admission-unknown")
 	}
-	s.mu.Lock()
-	s.status.AppliedState = "running"
-	s.status.AppliedJobState = job.State
-	s.mu.Unlock()
+	if onJob != nil {
+		onJob(job.State)
+	}
 	readCtx, readCancel := context.WithTimeout(parent, 4*time.Minute)
 	defer readCancel()
 	tick := time.NewTicker(time.Second)
@@ -220,28 +260,23 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 	for job.State == "running" {
 		select {
 		case <-readCtx.Done():
-			s.applyOutcome("inspection-required", "apply-outcome-unknown", true)
-			return
+			return fail("inspection-required", "apply-outcome-unknown")
 		case <-tick.C:
 			job, err = s.Jobs.Read(sweepJobOwner, job.ID, 0)
 			if err != nil {
-				s.applyOutcome("inspection-required", "apply-readback-unavailable", true)
-				return
+				return fail("inspection-required", "apply-readback-unavailable")
 			}
 		}
 	}
-	s.mu.Lock()
-	s.status.AppliedJobState = job.State
-	s.status.AppliedConfigState = job.ConfigurationState
-	s.mu.Unlock()
+	out := fail("inspection-required", "apply-not-verified")
+	out.jobState, out.configState = job.State, job.ConfigurationState
 	if job.State != "completed" || job.ConfigurationState != "applied" || job.ExitCode == nil || *job.ExitCode != 0 {
-		s.applyOutcome("inspection-required", "apply-not-verified", true)
-		return
+		return out
 	}
 	verified, err := s.Editor.Workspace(readCtx)
 	if err != nil || verified.Pending != nil || verified.Digest != saved || !sameRecommendation(verified.Documents["05_routing.json"].Text, index, selected, selectedCosts) || !observatoryMatchesPool(verified.Documents["07_observatory.json"].Text, selected, concurrent) {
-		s.applyOutcome("inspection-required", "applied-config-readback-mismatch", true)
-		return
+		out.reason = "applied-config-readback-mismatch"
+		return out
 	}
 	actual := s.Reader.Snapshot(readCtx)
 	selectedSet := make(map[string]bool, len(selected))
@@ -249,15 +284,9 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		selectedSet[tag] = true
 	}
 	if !actual.APIReachable || !actual.RoutingReachable || !actual.ObservatoryReachable || actual.Balancer.Override != "" || !selectedSet[actual.Balancer.NativeSelected] || !s.Reader.ProbeReachable(readCtx) {
-		s.applyOutcome("inspection-required", "native-selection-readback-unavailable", true)
-		return
+		out.reason = "native-selection-readback-unavailable"
+		return out
 	}
-	s.mu.Lock()
-	s.status.ActivePoolCount = len(selected)
-	s.status.ActivePool = append([]string(nil), selected...)
-	s.status.ActivePoolState = "verified-after-apply"
-	s.status.AppliedPool = append([]string(nil), selected...)
-	observeNativeSelection(&s.status, actual, time.Now().UTC())
-	s.mu.Unlock()
-	s.applyOutcome("applied", "", false)
+	out.state, out.reason, out.inspection, out.actual = "applied", "", false, actual
+	return out
 }

@@ -110,8 +110,11 @@ type BalancerStatus struct {
 type ObservatoryStatus struct {
 	ConfiguredInterval string `json:"configuredInterval"`
 	Healthy            int    `json:"healthy"`
-	Total              int    `json:"total"`
-	APIReachable       bool   `json:"apiReachable"`
+	// Observed counts nodes with a native Observatory record: the quality
+	// pool, not every enabled node.
+	Observed     int  `json:"observed"`
+	Total        int  `json:"total"`
+	APIReachable bool `json:"apiReachable"`
 }
 
 type BenchmarkStatus struct {
@@ -362,7 +365,7 @@ func (c *Collector) collect(ctx context.Context) View {
 	}
 
 	nodes := make([]Node, 0, len(tags))
-	healthy := 0
+	healthy, observed := 0, 0
 	for _, tag := range tags {
 		if !redact.IsUnifiedOutboundTag(tag) {
 			continue
@@ -374,6 +377,7 @@ func (c *Collector) collect(ctx context.Context) View {
 			IsEffective:      tag == effective,
 		}
 		if value, ok := health[tag]; ok {
+			observed++
 			item.Alive = value.Alive
 			item.LatencyMS = nonNegativeInt64(value.DelayMS)
 			item.LastSeen = formatTime(value.LastSeen)
@@ -420,6 +424,7 @@ func (c *Collector) collect(ctx context.Context) View {
 		Observatory: ObservatoryStatus{
 			ConfiguredInterval: configState.Observatory.ProbeInterval,
 			Healthy:            healthy,
+			Observed:           observed,
 			Total:              len(nodes),
 			APIReachable:       xrayState.ObservatoryReachable,
 		},

@@ -49,7 +49,7 @@ func TestIssue191ReadOnlyPlanQualification(t *testing.T) {
 	if _, err := reserveSweepPlannedLocked(path, now, &plan, testReviewBytes); err != nil {
 		t.Fatal(err)
 	}
-	if err := settleSweepLocked(path, now, true); err != nil {
+	if err := settleSweepLocked(path, now, true, false); err != nil {
 		t.Fatal(err)
 	}
 	lock()

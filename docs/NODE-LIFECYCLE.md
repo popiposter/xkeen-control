@@ -93,6 +93,21 @@ validated save: native Observatory then observes exactly the pool members every
 10s, concurrently on the standard profile and sequentially on constrained
 profiles (MIPS, and ARM64 with 256 MiB or less or unknown memory). Unchanged members with a
 stale 07 are repaired by the same joint Apply.
+No-healthy-member recovery (unreleased, REQ-009): every 10 minutes the panel
+checks whether native Observatory reports every pool member down, or every
+member has vanished from the registry. A member without an Observatory record is
+unknown, never an outage. Recovery then probes up to 12 candidates (the members
+and a rotating share of the other enabled nodes) with the same targeted RTT
+probe, spends no speed-test quota and runs no transfer. If a member answers, it
+stops. Otherwise it applies up to six answering nodes, fastest RTT first, as a
+labelled provisional pool with equal anchored costs through the same validated
+05+07 Apply and readback; an unknown outcome sets the inspection fence. At most
+one recovery Apply runs per hour, so a failing provisional pool cannot become a
+restart loop. An active manual override defers recovery. If nothing answers,
+the configuration is left intact and proxied destinations keep the block
+fallback. The next complete automatic review replaces a provisional pool with its
+measured top six and clears the label. The Nodes table labels nodes without an
+Observatory record "Not monitored" rather than failed.
 Eligible nodes need fresh, alive native observations within the configured finite
 RTT criterion. Manual tests additionally require RTT no more than twice the
 lowest fresh RTT, with a300ms floor. Comparison candidates come from all enabled

@@ -63,9 +63,14 @@ func poolDecision(result c1.AdaptiveResult, costs []c1.NativeQualityCost, active
 			return "healthy-target-sample-invalid"
 		}
 	}
-	if plan.FirstInitialization {
+	if plan.FirstInitialization || plan.Provisional {
 		if len(selected) < 2 || len(selected) > 6 {
 			return "initial-pool-invalid"
+		}
+		if plan.Provisional {
+			// A REQ-009 recovery pool was never speed-ranked: the first
+			// complete review replaces it with its measured top six.
+			return "provisional-pool-replaced"
 		}
 		return "first-pool-initialization"
 	}

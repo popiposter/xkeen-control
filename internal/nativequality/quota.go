@@ -37,6 +37,10 @@ type quotaReceipt struct {
 	InspectionRequired      bool               `json:"inspectionRequired,omitempty"`
 	FairCursor              int                `json:"fairCursor,omitempty"`
 	EligibleSetHash         string             `json:"eligibleSetHash,omitempty"`
+	// ProvisionalAt is when REQ-009 recovery applied an unranked pool. The
+	// next complete automatic review that applies or keeps a measured pool
+	// clears it.
+	ProvisionalAt time.Time `json:"provisionalAt,omitempty"`
 }
 
 type quotaView struct {
@@ -47,6 +51,7 @@ type quotaView struct {
 	LastStartedAt      time.Time
 	InspectionRequired bool
 	FairCursor         int
+	ProvisionalAt      time.Time
 }
 
 func quotaState(path string, now time.Time, reviewBytes int64) (quotaView, error) {
@@ -66,7 +71,7 @@ func quotaState(path string, now time.Time, reviewBytes int64) (quotaView, error
 }
 
 func viewQuota(q quotaReceipt, now time.Time, reviewBytes int64) quotaView {
-	v := quotaView{RemainingBytes: dailyReviews * reviewBytes, LastStartedAt: q.LastComparisonStartedAt, InspectionRequired: q.InspectionRequired, FairCursor: q.FairCursor}
+	v := quotaView{RemainingBytes: dailyReviews * reviewBytes, LastStartedAt: q.LastComparisonStartedAt, InspectionRequired: q.InspectionRequired, FairCursor: q.FairCursor, ProvisionalAt: q.ProvisionalAt}
 	for _, r := range q.Reservations {
 		if now.Sub(r.At) < 24*time.Hour {
 			v.UsedBytes += r.Bytes
@@ -110,13 +115,17 @@ func recordComparisonStartLocked(path string, now time.Time, plan *sweepPlan) er
 
 // settleSweepLocked requires the fixed quota lock retained by the review owner.
 // An unknown or interrupted review leaves the durable inspection intent set.
-func settleSweepLocked(path string, now time.Time, inspected bool) error {
+// ranked clears a provisional recovery label.
+func settleSweepLocked(path string, now time.Time, inspected, ranked bool) error {
 	q, err := readQuotaLocked(path, now)
 	if err != nil {
 		return errQuota
 	}
 	if inspected {
 		q.InspectionRequired = false
+		if ranked {
+			q.ProvisionalAt = time.Time{}
+		}
 	}
 	return writeQuotaLocked(path, q)
 }
@@ -245,7 +254,7 @@ func readQuotaLocked(path string, now time.Time) (quotaReceipt, error) {
 			return quotaReceipt{}, errQuota
 		}
 	}
-	if !q.LastComparisonStartedAt.IsZero() && q.LastComparisonStartedAt.After(now) {
+	if !q.LastComparisonStartedAt.IsZero() && q.LastComparisonStartedAt.After(now) || q.ProvisionalAt.After(now) {
 		return quotaReceipt{}, errQuota
 	}
 	for _, r := range q.Reservations {

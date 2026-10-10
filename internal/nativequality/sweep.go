@@ -48,7 +48,7 @@ func (s *Service) startReview(parent context.Context, trigger string, manual boo
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.cancel != nil || s.autoApplying || s.status.InspectionRequired {
+	if s.closed || s.cancel != nil || s.autoApplying || s.recovering || s.status.InspectionRequired {
 		return c1.ErrManualBusy
 	}
 	s.status.StartReason = ""
@@ -116,6 +116,7 @@ func (s *Service) startReview(parent context.Context, trigger string, manual boo
 		s.status.ReviewReason = "eligible-unavailable"
 		return err
 	}
+	plan.Provisional = !previous.ProvisionalAt.IsZero()
 	// The speed phase is capped at the profile wall; the RTT pre-phase and the
 	// separate native Apply have their own bounded margins.
 	job, cancelJob := context.WithTimeout(context.WithoutCancel(parent), limits.Wall+time.Duration(len(plan.Candidates))*c1.RTTProbeTimeout+6*time.Minute)
@@ -408,9 +409,12 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 		}
 	}
 	inspection := s.status.InspectionRequired
+	// A completed automatic review that applied or kept its measured pool ends
+	// a provisional recovery pool's label.
+	ranked := apply && (s.status.AppliedState == "applied" || s.status.AppliedState == "no-op")
 	s.mu.Unlock()
 	if reserved {
-		if err := settleSweepLocked(quotaPath, time.Now().UTC(), !inspection); err != nil {
+		if err := settleSweepLocked(quotaPath, time.Now().UTC(), !inspection, ranked); err != nil {
 			s.mu.Lock()
 			s.status.InspectionRequired = true
 			s.status.ReviewReason = "inspection-receipt-unavailable"
