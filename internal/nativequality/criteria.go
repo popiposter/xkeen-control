@@ -133,3 +133,46 @@ func replaceRecommendation(text string, index int, costs []c1.NativeQualityCost,
 	}
 	return configjson.ReplacePath(output, []string{"routing", "balancers", strconv.Itoa(index), "selector"}, selected)
 }
+
+// qualityProbeInterval is the common native Observatory interval for an
+// applied quality pool (REQ-003). Profiles differ only in concurrency.
+const qualityProbeInterval = "10s"
+
+// observatoryForPool returns 07_observatory.json observing exactly the pool,
+// preserving every other native field such as probeUrl.
+func observatoryForPool(text string, pool []string, concurrent bool) ([]byte, error) {
+	var doc struct {
+		Observatory *json.RawMessage `json:"observatory"`
+	}
+	if configjson.Decode([]byte(text), &doc) != nil || doc.Observatory == nil || len(pool) == 0 {
+		return nil, ErrUnavailable
+	}
+	out, err := configjson.ReplacePath([]byte(text), []string{"observatory", "subjectSelector"}, pool)
+	if err == nil {
+		out, err = configjson.ReplacePath(out, []string{"observatory", "probeInterval"}, qualityProbeInterval)
+	}
+	if err == nil {
+		out, err = configjson.ReplacePath(out, []string{"observatory", "enableConcurrency"}, concurrent)
+	}
+	if err != nil {
+		return nil, ErrUnavailable
+	}
+	return out, nil
+}
+
+// observatoryMatchesPool reports whether 07 already observes exactly the pool
+// with the common interval and the profile's concurrency.
+func observatoryMatchesPool(text string, pool []string, concurrent bool) bool {
+	var doc struct {
+		Observatory *struct {
+			SubjectSelector   []string
+			ProbeInterval     string
+			EnableConcurrency bool
+		}
+	}
+	if configjson.Decode([]byte(text), &doc) != nil || doc.Observatory == nil {
+		return false
+	}
+	o := doc.Observatory
+	return o.ProbeInterval == qualityProbeInterval && o.EnableConcurrency == concurrent && samePoolMembers(o.SubjectSelector, pool)
+}

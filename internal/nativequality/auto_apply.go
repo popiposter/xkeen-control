@@ -150,7 +150,14 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 	s.mu.Lock()
 	alive := s.rttAlive
 	s.mu.Unlock()
+	concurrent := !s.profile().Constrained
+	observatory := w.Documents["07_observatory.json"].Text
 	decision := poolDecision(result, costs, currentActive, selected, plan, alive, snapshot.Balancer.NativeSelected, time.Now().UTC())
+	if decision == "pool-unchanged" && !observatoryMatchesPool(observatory, selected, concurrent) {
+		// Same members but 07 still observes a different set: the same
+		// validated joint 05+07 Apply repairs it (REQ-010).
+		decision = "observatory-repair"
+	}
 	s.mu.Lock()
 	s.status.PoolDecision = decision
 	s.mu.Unlock()
@@ -158,7 +165,7 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		s.applyOutcome("no-op", "pool-unchanged", false)
 		return
 	}
-	if decision != "first-pool-initialization" && decision != "material-improvement" && decision != "unhealthy-incumbent-replaced" {
+	if decision != "first-pool-initialization" && decision != "material-improvement" && decision != "unhealthy-incumbent-replaced" && decision != "observatory-repair" {
 		s.applyOutcome("not-applied", decision, false)
 		return
 	}
@@ -167,13 +174,18 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		s.applyOutcome("not-applied", "recommendation-invalid", false)
 		return
 	}
+	proposedObservatory, err := observatoryForPool(observatory, selected, concurrent)
+	if err != nil {
+		s.applyOutcome("not-applied", "observatory-invalid", false)
+		return
+	}
 	// From this point, an error can follow a durable save and must be inspected.
 	if parent.Err() != nil {
 		s.applyOutcome("not-applied", "review-cancelled", false)
 		return
 	}
 	saveCtx, saveCancel := context.WithTimeout(parent, 180*time.Second)
-	saved, err := s.Editor.SaveTexts(saveCtx, digest, map[string]string{"05_routing.json": string(proposed)})
+	saved, err := s.Editor.SaveTexts(saveCtx, digest, map[string]string{"05_routing.json": string(proposed), "07_observatory.json": string(proposedObservatory)})
 	saveCancel()
 	if err != nil {
 		s.applyOutcome("inspection-required", "save-outcome-unknown", true)
@@ -188,7 +200,7 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 	}
 	postPool, _, poolErr := measurementPool(post.Documents["05_routing.json"].Text, s.Nodes(parent), post.Targets)
 	postActive, _, activeErr := routingPool(post.Documents["05_routing.json"].Text, s.Nodes(parent), post.Targets)
-	if poolErr != nil || activeErr != nil || strings.Join(postPool, "\x00") != strings.Join(pool, "\x00") || !samePoolMembers(postActive, selected) {
+	if poolErr != nil || activeErr != nil || strings.Join(postPool, "\x00") != strings.Join(pool, "\x00") || !samePoolMembers(postActive, selected) || !observatoryMatchesPool(post.Documents["07_observatory.json"].Text, selected, concurrent) {
 		s.applyOutcome("inspection-required", "saved-membership-unconfirmed", true)
 		return
 	}
@@ -227,7 +239,7 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		return
 	}
 	verified, err := s.Editor.Workspace(readCtx)
-	if err != nil || verified.Pending != nil || verified.Digest != saved || !sameRecommendation(verified.Documents["05_routing.json"].Text, index, selected, selectedCosts) {
+	if err != nil || verified.Pending != nil || verified.Digest != saved || !sameRecommendation(verified.Documents["05_routing.json"].Text, index, selected, selectedCosts) || !observatoryMatchesPool(verified.Documents["07_observatory.json"].Text, selected, concurrent) {
 		s.applyOutcome("inspection-required", "applied-config-readback-mismatch", true)
 		return
 	}

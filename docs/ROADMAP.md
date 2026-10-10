@@ -17,7 +17,8 @@ about three minutes in #203. Phase 0 removed the never-started `c1`
 supervisor/benchmark generation in #204. Phase 1 is in source on `main`: targeted RTT
 probing before every review (#205), orphaned selectors as unhealthy members (#206), one
 pipeline for manual and automatic reviews (#207) and one automatic policy for both
-profiles (#208). Joint 05+07 narrowing (TASK-002 part 2) remains.
+profiles (#208), with joint 05+07 narrowing of native Observatory to the pool completing
+Phase 1 in source.
 
 **Release gate:** since #208, `main` makes the ARM64 automatic review apply verified
 pools and restart XKeen without operator action. Do not cut a release from `main` until

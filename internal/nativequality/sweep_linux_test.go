@@ -423,7 +423,14 @@ func sweepFixtureCount(t *testing.T, noop bool, count int) (*Service, c1.Adaptiv
 	if os.WriteFile(filepath.Join(dir, "05_routing.json"), routing, 0600) != nil || os.WriteFile(filepath.Join(dir, "04_outbounds.json"), encoded, 0600) != nil {
 		t.Fatal("config fixture")
 	}
-	if err := os.WriteFile(filepath.Join(dir, "07_observatory.json"), []byte(`{"observatory":{"subjectSelector":["proxy-"],"probeInterval":"10s","enableConcurrency":true}}`), 0600); err != nil {
+	// A settled pool already observes exactly its members (constrained
+	// profile: sequential); a broad pool still observes every node.
+	observatory := `{"observatory":{"subjectSelector":["proxy-"],"probeInterval":"10s","enableConcurrency":true}}`
+	if noop {
+		subjects, _ := json.Marshal(selected)
+		observatory = `{"observatory":{"subjectSelector":` + string(subjects) + `,"probeInterval":"10s","enableConcurrency":false}}`
+	}
+	if err := os.WriteFile(filepath.Join(dir, "07_observatory.json"), []byte(observatory), 0600); err != nil {
 		t.Fatal(err)
 	}
 	lease := authority.NewLease()
@@ -822,5 +829,26 @@ func TestStandardProfileAutomaticReviewReachesApply(t *testing.T) {
 	}
 	if q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes); err != nil || q.ReviewsUsed != 1 || q.UsedBytes != s.profile().Review().Bytes {
 		t.Fatal("standard automatic review did not reserve its quota", q, err)
+	}
+}
+
+func TestSweepSameMembersWithBroadObservatoryRepairsJointly(t *testing.T) {
+	s, _, _, dir := sweepFixture(t, true)
+	if err := os.WriteFile(filepath.Join(dir, "07_observatory.json"), []byte(`{"observatory":{"subjectSelector":["proxy-"],"probeInterval":"5m","enableConcurrency":true}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal(err, s.Read().ReviewReason)
+	}
+	v := waitSweep(t, s)
+	if v.PoolDecision != "observatory-repair" || v.AppliedState == "no-op" {
+		t.Fatal("stale 07 with unchanged members was treated as a no-op", v.PoolDecision, v.AppliedState)
+	}
+	w, err := s.Editor.Workspace(context.Background())
+	if err != nil || w.Pending == nil {
+		t.Fatal("joint repair was not saved", err)
+	}
+	if !observatoryMatchesPool(w.Documents["07_observatory.json"].Text, []string{"proxy-00", "proxy-01", "proxy-02", "proxy-03", "proxy-04", "proxy-05"}, false) {
+		t.Fatal("saved 07 does not observe exactly the pool", w.Documents["07_observatory.json"].Text)
 	}
 }

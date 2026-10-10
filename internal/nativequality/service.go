@@ -435,8 +435,12 @@ func (s *Service) Stage(ctx context.Context, digest string) (string, error) {
 	if err != nil {
 		return "", ErrUnavailable
 	}
+	observatory, err := observatoryForPool(w.Documents["07_observatory.json"].Text, selected, !s.profile().Constrained)
+	if err != nil {
+		return "", ErrUnavailable
+	}
 	s.status.State = "consumed"
-	return s.Editor.SaveTexts(ctx, digest, map[string]string{"05_routing.json": string(text)})
+	return s.Editor.SaveTexts(ctx, digest, map[string]string{"05_routing.json": string(text), "07_observatory.json": string(observatory)})
 }
 
 // routingPool refuses unmanaged selector matches instead of giving them Xray's

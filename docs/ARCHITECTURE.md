@@ -33,7 +33,8 @@ Form/Text share drafts and undo/redo. Validated Save creates a pending set; expl
 Native Xray owns selection inside the configured pool. In released 0.4.12 only the
 MIPS automatic review can apply a verified pool change; the standard-profile review
 measures without applying. Source on `main` (unreleased, see the ROADMAP release gate)
-applies the same automatic policy on both profiles. Neither pins the top node. The proposed [shared target architecture](../plan/architecture-node-quality-v1.md)
+applies the same automatic policy on both profiles and narrows native Observatory
+to the applied pool. Neither pins the top node. The proposed [shared target architecture](../plan/architecture-node-quality-v1.md)
 ([#199](https://github.com/popiposter/xkeen-control/issues/199)) unifies those
 decisions and limits continuous Observatory to the active pool. [Node lifecycle](NODE-LIFECYCLE.md)
 records the older implementation snapshot; [roadmap](ROADMAP.md) distinguishes
