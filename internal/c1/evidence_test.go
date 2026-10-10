@@ -35,12 +35,6 @@ func TestNativeQualityEvidenceCountsUniqueObservationsAndResetsOnApply(t *testin
 			t.Fatalf("evidence after three unique samples = %+v", got)
 		}
 	}
-	// Samples older than the 15-minute window are pruned: one fresh sample
-	// after a long gap is not enough evidence on its own.
-	clock = now.Add(2*time.Minute + DefaultLatencyWindow + time.Minute)
-	if got := c.NativeQualityEvidence(evidenceSnapshot(clock, 105)); len(got) != 0 {
-		t.Fatalf("stale samples survived the window = %+v", got)
-	}
 	if got := c.NativeQualityEvidence(xrayapi.Snapshot{}); len(got) != 0 {
 		t.Fatalf("unreachable Observatory produced evidence = %+v", got)
 	}
@@ -51,5 +45,26 @@ func TestNativeQualityEvidenceCountsUniqueObservationsAndResetsOnApply(t *testin
 	release()
 	if got := c.NativeQualityEvidence(evidenceSnapshot(clock, 110)); len(got) != 0 {
 		t.Fatalf("Apply did not reset transient evidence = %+v", got)
+	}
+}
+
+func TestNativeQualityEvidencePrunesSamplesOutsideTheWindow(t *testing.T) {
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	clock := now
+	c := NewCoordinator(DefaultPolicy(), nil)
+	c.clock = func() time.Time { return clock }
+	var got map[string]AdaptiveCandidateInput
+	for i := 0; i < 3; i++ {
+		clock = now.Add(time.Duration(i) * time.Minute)
+		got = c.NativeQualityEvidence(evidenceSnapshot(clock, 100))
+	}
+	if len(got) != 1 {
+		t.Fatalf("three fresh samples produced no evidence = %+v", got)
+	}
+	// After a gap longer than the 15-minute window the old samples are pruned,
+	// so one fresh sample is not enough evidence on its own.
+	clock = now.Add(2*time.Minute + DefaultLatencyWindow + time.Minute)
+	if got := c.NativeQualityEvidence(evidenceSnapshot(clock, 105)); len(got) != 0 {
+		t.Fatalf("stale samples survived the window = %+v", got)
 	}
 }
