@@ -317,9 +317,6 @@ func (c *Collector) collect(ctx context.Context) View {
 	var probeReachable bool
 	if c.deps.Xray != nil {
 		xrayState = c.deps.Xray.Snapshot(ctx)
-		if c.deps.C1 != nil {
-			c.deps.C1.NativeQualityEvidence(xrayState)
-		}
 		probeReachable = c.deps.Xray.ProbeReachable(ctx)
 	}
 	var xkeenState xkeen.Snapshot

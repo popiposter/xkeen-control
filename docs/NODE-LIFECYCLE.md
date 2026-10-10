@@ -78,6 +78,14 @@ maxRTT. A candidate that does not answer, or is slower than maxRTT, is
 unhealthy evidence for the pool decision. Reviews refuse with
 probe-route-shadowed when any routing rule lacks an inbound restriction. The
 next paragraph describes the released Observatory-based behaviour.
+Source after the unified-review PR (also unreleased): the manual Run speed test
+and the standard-router periodic review use the same pipeline on both
+profiles, with REQ-008 limits from `resourcepolicy.Profile.Review()`: up to 12
+probed candidates; ARM64 batches of six without pause within 288 MiB/8 min,
+MIPS batches of three with a one-minute pause within 72 MiB/12 min. Manual and
+standard periodic reviews only measure and leave Apply to the operator; they
+record their start for the six-hour gap and advance the shared fair cursor, but reserve no automatic quota; the standard periodic review runs once per 24 hours. The
+Observatory RTT history and its health penalty are no longer used.
 Eligible nodes need fresh, alive native observations within the configured finite
 RTT criterion. Manual tests additionally require RTT no more than twice the
 lowest fresh RTT, with a300ms floor. Comparison candidates come from all enabled

@@ -3,7 +3,6 @@ package nativequality
 import (
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/xkeen"
-	"github.com/popiposter/xkeen-control/internal/xrayapi"
 	"strings"
 	"testing"
 	"time"
@@ -24,26 +23,6 @@ func TestRecommendationPreservesNativeStrategyAndSettings(t *testing.T) {
 		if strings.Contains(string(out), `"costs"`) != (kind == "leastLoad") {
 			t.Fatal("changed native strategy", string(out))
 		}
-	}
-}
-
-func TestConfiguredFreshnessDoesNotInventHealthOutsideObservationSet(t *testing.T) {
-	now := time.Now()
-	snapshot := xrayapi.Snapshot{APIReachable: true, RoutingReachable: true, ObservatoryReachable: true}
-	pool := []string{"proxy-a", "proxy-b", "proxy-c", "proxy-stale", "proxy-future"}
-	for _, tag := range pool {
-		snapshot.OutboundHealth = append(snapshot.OutboundHealth, xrayapi.OutboundHealth{Tag: tag, Alive: true, DelayMS: 2000, LastTry: now.Add(-3 * time.Minute)})
-	}
-	snapshot.OutboundHealth[3].LastTry = now.Add(-10 * time.Minute)
-	snapshot.OutboundHealth[4].LastTry = now.Add(time.Minute)
-	c := observationCriteria{maxRTT: 10000, freshness: 6 * time.Minute, observed: map[string]bool{"proxy-a": true, "proxy-b": true, "proxy-stale": true, "proxy-future": true}}
-	g, err := prepareWithCriteria(snapshot, pool, 1, 1, now, c)
-	if err != nil || len(g.Candidates) != 2 || g.Candidates[0].RTTMS != 2000 {
-		t.Fatal(g, err)
-	}
-	c.maxRTT = 750
-	if _, err := prepareWithCriteria(snapshot, pool, 1, 1, now, c); err == nil {
-		t.Fatal("ignored configured RTT")
 	}
 }
 

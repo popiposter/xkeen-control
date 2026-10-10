@@ -21,7 +21,7 @@ func TestIssue191ReadOnlyPlanQualification(t *testing.T) {
 		all[i] = fmt.Sprintf("proxy-fixture-%02d", i)
 	}
 	active := append([]string(nil), all[:6]...)
-	plan, err := planSweep(all, active, active[0], 0, "")
+	plan, err := planSweep(all, active, active[0], 0, "", 18)
 	if err != nil || plan.TotalEligible != 46 || len(plan.Candidates) != 18 || plan.Deferred != 28 || plan.FirstInitialization {
 		t.Fatal("bounded 18/46 plan", err, plan.TotalEligible, len(plan.Candidates), plan.Deferred)
 	}
@@ -37,7 +37,7 @@ func TestIssue191ReadOnlyPlanQualification(t *testing.T) {
 			t.Fatal("incumbent omitted")
 		}
 	}
-	broad, err := planSweep(all, all, active[0], 0, "")
+	broad, err := planSweep(all, all, active[0], 0, "", 18)
 	if err != nil || !broad.FirstInitialization || len(broad.Candidates) != 18 || broad.Candidates[0] != active[0] {
 		t.Fatal("broad selector did not anchor native selection", err)
 	}
@@ -46,14 +46,14 @@ func TestIssue191ReadOnlyPlanQualification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := reserveSweepPlannedLocked(path, now, &plan); err != nil {
+	if _, err := reserveSweepPlannedLocked(path, now, &plan, testReviewBytes); err != nil {
 		t.Fatal(err)
 	}
 	if err := settleSweepLocked(path, now, true); err != nil {
 		t.Fatal(err)
 	}
 	lock()
-	q, err := quotaState(path, now.Add(time.Second))
+	q, err := quotaState(path, now.Add(time.Second), testReviewBytes)
 	if err != nil || q.FairCursor != plan.NextCursor || q.ReviewsUsed != 1 || q.InspectionRequired {
 		t.Fatal("durable cursor/quota", q, err)
 	}
@@ -61,7 +61,7 @@ func TestIssue191ReadOnlyPlanQualification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	next, err := planSweep(all, active, active[0], prior.FairCursor, prior.EligibleSetHash)
+	next, err := planSweep(all, active, active[0], prior.FairCursor, prior.EligibleSetHash, 18)
 	if err != nil || next.CursorState != "continued" || next.NextCursor == plan.NextCursor {
 		t.Fatal("cursor did not advance", err)
 	}
@@ -78,7 +78,7 @@ func TestIssue191ReadOnlyPlanQualification(t *testing.T) {
 	covered := map[string]bool{}
 	cursor, hash := 0, ""
 	for review := 0; review < 4; review++ {
-		p, e := planSweep(all, active, active[0], cursor, hash)
+		p, e := planSweep(all, active, active[0], cursor, hash, 18)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -94,7 +94,7 @@ func TestIssue191ReadOnlyPlanQualification(t *testing.T) {
 	}
 	drifted := append([]string(nil), all...)
 	drifted[len(drifted)-1] = "proxy-fixture-new"
-	reanchored, err := planSweep(drifted, active, active[0], cursor, hash)
+	reanchored, err := planSweep(drifted, active, active[0], cursor, hash, 18)
 	if err != nil || reanchored.CursorState != "reanchored" || len(reanchored.Candidates) != 18 {
 		t.Fatal("membership drift did not reanchor", err)
 	}

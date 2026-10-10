@@ -785,27 +785,6 @@ func sortAdaptiveCandidates(candidates []AdaptiveCandidateInput) {
 	})
 }
 
-// adaptiveRTTEvidence reads the existing deduplicated RAM window. Failed or
-// future observations cannot count toward the initial three usable RTTs.
-func adaptiveRTTEvidence(values []sample, cutoff, now time.Time) (int64, int, time.Time) {
-	delays := make([]int64, 0, len(values))
-	var latest time.Time
-	for _, value := range values {
-		if !value.alive || value.delay <= 0 || value.at.Before(cutoff) || value.at.After(now) {
-			continue
-		}
-		delays = append(delays, value.delay)
-		if value.at.After(latest) {
-			latest = value.at
-		}
-	}
-	if len(delays) == 0 {
-		return 0, 0, time.Time{}
-	}
-	sort.Slice(delays, func(i, j int) bool { return delays[i] < delays[j] })
-	return delays[len(delays)/2], len(delays), latest
-}
-
 // Zero means no retained health window (compatibility fixtures), not failure.
 // A populated window contributes failure frequency and median RTT deviation.
 func adaptiveHealthPenalty(value float64) float64 {
@@ -816,31 +795,4 @@ func adaptiveHealthPenalty(value float64) float64 {
 		return math.Inf(1)
 	}
 	return value
-}
-
-func adaptiveWindowPenalty(values []sample, cutoff, now time.Time, median int64) float64 {
-	total, failures := 0, 0
-	deviations := make([]int64, 0, len(values))
-	for _, value := range values {
-		if value.at.Before(cutoff) || value.at.After(now) {
-			continue
-		}
-		total++
-		if !value.alive {
-			failures++
-			continue
-		}
-		delta := value.delay - median
-		if delta < 0 {
-			delta = -delta
-		}
-		deviations = append(deviations, delta)
-	}
-	if total == 0 || len(deviations) == 0 || median <= 0 {
-		return 0
-	}
-	sort.Slice(deviations, func(i, j int) bool { return deviations[i] < deviations[j] })
-	success := float64(total-failures) / float64(total)
-	jitter := float64(deviations[len(deviations)/2]) / math.Max(float64(median), 20)
-	return (1 + math.Min(jitter, 2)) / (success * success)
 }

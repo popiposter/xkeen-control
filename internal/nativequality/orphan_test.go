@@ -41,8 +41,11 @@ func TestResolveActivePoolReportsExactWeightedOrphans(t *testing.T) {
 
 func TestResolveActivePoolStillRefusesUnweightedOrBroadMismatches(t *testing.T) {
 	for name, routing := range map[string]string{
-		"unweighted exact selector": func() string { r, _, _ := orphanFixture(`["proxy-node-a","proxy-node-gone"]`, `[{"regexp":true,"match":"^proxy-node-a$","value":1}]`); return r }(),
-		"unresolved broad prefix":   func() string { r, _, _ := orphanFixture(`["proxy-node-a","proxy-other-"]`, threeCosts); return r }(),
+		"unweighted exact selector": func() string {
+			r, _, _ := orphanFixture(`["proxy-node-a","proxy-node-gone"]`, `[{"regexp":true,"match":"^proxy-node-a$","value":1}]`)
+			return r
+		}(),
+		"unresolved broad prefix": func() string { r, _, _ := orphanFixture(`["proxy-node-a","proxy-other-"]`, threeCosts); return r }(),
 	} {
 		_, nodes, targets := orphanFixture(`[]`, `[]`)
 		if _, _, _, err := resolveActivePool(routing, nodes, targets, true); err == nil {

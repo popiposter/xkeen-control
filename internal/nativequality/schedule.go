@@ -5,8 +5,14 @@ import (
 	"time"
 )
 
+// qualityCadence is the minimum gap between any two review starts (REQ-006).
 const qualityCadence = 6 * time.Hour
+
+// constrainedCadence paces the automatic constrained review; standardCadence
+// paces the measure-only standard review, which reserves no quota, to one
+// full review per 24 hours.
 const constrainedCadence = 12 * time.Hour
+const standardCadence = 24 * time.Hour
 
 // Schedule coalesces refreshes and admits at most one bounded review owner.
 type Schedule struct {
@@ -25,8 +31,10 @@ func (s *Schedule) NotifyRefresh() {
 	}
 }
 
-func comparisonDue(now, requested, lastStarted time.Time) time.Time {
-	if earliest := lastStarted.Add(qualityCadence); !lastStarted.IsZero() && requested.Before(earliest) {
+// comparisonDue applies the profile's minimum gap after the last start of any
+// review, manual or automatic, including reviews pulled forward by a refresh.
+func comparisonDue(now, requested, lastStarted time.Time, minGap time.Duration) time.Time {
+	if earliest := lastStarted.Add(minGap); !lastStarted.IsZero() && requested.Before(earliest) {
 		requested = earliest
 	}
 	if requested.Before(now) {
@@ -53,23 +61,26 @@ func (s *Schedule) Run(ctx context.Context) {
 	startupFloor := time.Now().Add(10 * time.Minute)
 	next := startupFloor
 	trigger := "startup"
-	cadence := qualityCadence
+	// The measure-only standard review reserves no quota, so its minimum gap is
+	// the full 24 hours; the constrained automatic review keeps the shared
+	// six-hour gap and its daily quota.
+	cadence, minGap := standardCadence, standardCadence
 	if s.service.profile().Constrained {
-		cadence = constrainedCadence
+		cadence, minGap = constrainedCadence, qualityCadence
 	}
 	for {
 		s.service.mu.Lock()
 		last := s.service.lastStartedAt
 		s.service.mu.Unlock()
-		if s.service.profile().Constrained {
-			if q, err := quotaState(s.service.QuotaPath, time.Now().UTC()); err == nil && q.LastStartedAt.After(last) {
-				last = q.LastStartedAt
-				s.service.mu.Lock()
-				s.service.lastStartedAt = last
-				s.service.mu.Unlock()
-			}
+		// Both profiles record every start in the receipt, so a panel restart
+		// does not reset the gap.
+		if q, err := quotaState(s.service.QuotaPath, time.Now().UTC(), s.service.profile().Review().Bytes); err == nil && q.LastStartedAt.After(last) {
+			last = q.LastStartedAt
+			s.service.mu.Lock()
+			s.service.lastStartedAt = last
+			s.service.mu.Unlock()
 		}
-		next = comparisonDue(time.Now(), next, last)
+		next = comparisonDue(time.Now(), next, last, minGap)
 		if next.Before(startupFloor) {
 			next = startupFloor
 		}
@@ -93,16 +104,14 @@ func (s *Schedule) Run(ctx context.Context) {
 			s.service.mu.Lock()
 			last = s.service.lastStartedAt
 			s.service.mu.Unlock()
-			if s.service.profile().Constrained {
-				if q, err := quotaState(s.service.QuotaPath, time.Now().UTC()); err == nil && q.LastStartedAt.After(last) {
-					last = q.LastStartedAt
-				} else if err != nil {
-					next = time.Now().Add(10 * time.Minute)
-					continue
-				}
+			if q, err := quotaState(s.service.QuotaPath, time.Now().UTC(), s.service.profile().Review().Bytes); err == nil && q.LastStartedAt.After(last) {
+				last = q.LastStartedAt
+			} else if err != nil {
+				next = time.Now().Add(10 * time.Minute)
+				continue
 			}
 			now := time.Now()
-			if due := comparisonDue(now, next, last); due.After(now) {
+			if due := comparisonDue(now, next, last, minGap); due.After(now) {
 				next = due
 				continue
 			}
@@ -113,7 +122,9 @@ func (s *Schedule) Run(ctx context.Context) {
 			if s.service.profile().Constrained {
 				startErr = s.service.startSweep(ctx, trigger)
 			} else {
-				startErr = s.service.start(ctx, false)
+				// The standard profile measures only; applying is the operator's
+				// explicit Stage until both profiles share automatic Apply.
+				startErr = s.service.startReview(ctx, trigger, true)
 			}
 			if startErr != nil {
 				next = now.Add(10 * time.Minute)

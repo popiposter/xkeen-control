@@ -54,6 +54,28 @@ func (p Profile) Comparison(broad bool) Limits {
 	return l
 }
 
+// ReviewLimits bound one quality review (REQ-008). Candidates is the frozen
+// set probed by RTT; the speed phase runs them in sequential batches, each
+// bounded by Comparison(false). Bytes and Wall cover the speed phase only and
+// derive from the ladder: Candidates × per-candidate worst case, and
+// batches × batch wall + pauses.
+type ReviewLimits struct {
+	Candidates int           `json:"candidates"`
+	BatchSize  int           `json:"batchSize"`
+	Pause      time.Duration `json:"-"`
+	Bytes      int64         `json:"bytes"`
+	Wall       time.Duration `json:"-"`
+}
+
+func (p Profile) Review() ReviewLimits {
+	if p.Constrained {
+		// 12 × 6 MiB (down 1/3, up 0.5/1.5); 4 batches × 90 s + 3 × 1 min.
+		return ReviewLimits{Candidates: 12, BatchSize: 3, Pause: time.Minute, Bytes: 72 * MiB, Wall: 12 * time.Minute}
+	}
+	// 12 × 24 MiB (down 1/3/4/8, up 1/3/4); 2 batches × 180 s.
+	return ReviewLimits{Candidates: 12, BatchSize: 6, Bytes: 288 * MiB, Wall: 8 * time.Minute}
+}
+
 func (p Profile) MemoryFloorKiB() uint64 {
 	if p.Constrained {
 		return 32 * 1024
