@@ -1,6 +1,11 @@
 # Node loading, measurement, selection and failover
 
-Current native-shell implementation, checked against source and router on2026-10-04.
+Historical native-shell snapshot, checked against source and router on2026-10-04.
+For the proposed shared ARM64/MIPS lifecycle, see the
+[target architecture](../plan/architecture-node-quality-v1.md) and
+[#199](https://github.com/popiposter/xkeen-control/issues/199). This older
+description does not establish current installed probe intervals or automatic
+Apply behavior.
 Panel-managed profiles live in the private registry; stock XKeen remains unmodified.
 
 ## Loading and updating

@@ -1,7 +1,7 @@
 # Architecture
 
 The current product is a graphical shell alongside **unmodified stock XKeen**.
-Stable v0.4.8 is published; [release verification](RELEASES.md) and [remaining acceptance](ROADMAP.md) are separate.
+Stable v0.4.12 is published; [release verification](RELEASES.md) and [remaining acceptance](ROADMAP.md) are separate.
 
 ## Ownership
 
@@ -30,7 +30,14 @@ Published installer availability and fresh hardware qualification remain separat
 
 Form/Text share drafts and undo/redo. Validated Save creates a pending set; explicit Apply runs one native restart. Discard restores pre-Apply state; optional previous restore is proposed to the operator after Apply. Errors and native console are private. See [editor workflows](CONFIG-EDITOR-WORKFLOWS.md).
 
-Native Xray owns selection. Measurements recommend a pool; they do not automatically pin the top result or restart services. [Node lifecycle](NODE-LIFECYCLE.md) documents refresh, latency sampling, throughput and stale-result rejection.
+Native Xray owns selection inside the configured pool. The current MIPS automatic
+review can apply a complete verified pool change and restart XKeen once; the
+standard-profile automatic review currently measures without applying. Neither
+pins the top node. The proposed [shared target architecture](../plan/architecture-node-quality-v1.md)
+([#199](https://github.com/popiposter/xkeen-control/issues/199)) unifies those
+decisions and limits continuous Observatory to the active pool. [Node lifecycle](NODE-LIFECYCLE.md)
+records the older implementation snapshot; [roadmap](ROADMAP.md) distinguishes
+delivered source from hardware acceptance.
 
 Issue #181 replaces the fresh reference with compact Refilter domain/IP selection and DIRECT otherwise, including torrents. Native DNS uses the stock empty template and system resolution. Fresh setup no longer installs mosdns or assigns a custom firmware DNS profile. Existing deployments retain legacy DNS ownership until explicit retirement; an upgrade does not stop their resolver. The UI offers legacy inspection only and no split-DNS generator or synchronization action. See [simple DNS transition](SIMPLE-DNS.md).
 
