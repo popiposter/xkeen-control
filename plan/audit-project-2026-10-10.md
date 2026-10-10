@@ -30,7 +30,7 @@ and then a separate docs-only "evidence" PR.
 | §1 A1–A9 | Corrected in `architecture-node-quality-v1.md` (this PR). |
 | §1 A5: #194, #198 | Closed as superseded by #199 on operator decision. |
 | §2 rows 1–2, 4–6: `components`, `appliance`, legacy `backup`, `performancepolicy`, unused routes, legacy scripts | Done in #202 (`b3cb737`): −36k lines; independent review approved, FULL passed. |
-| §2 row 3: `c1` supervisor/benchmark generation | #199 Phase 0 (TASK-000), in progress. It changes the `/api/v1/status` projection, so it was not part of a behaviour-neutral PR. |
+| §2 row 3: `c1` supervisor/benchmark generation | Done in #204 (`d8ba656`), #199 Phase 0: −4.9k lines. The live Observatory RTT history moved into the Coordinator. The startup probe-rule reconcile (A3) is added, and a closed probe gate is retried before refusing; review caught this, and a regression test covers it. |
 | §2 row 7: `splitdns` | Open; needs an operator decision. |
 | §3: double Go pass, Playwright duplication | Done in #203 (`72ee184`). FULL takes ~170 s end to end, previously ~6–7 min. See §3.1. |
 | §4 process changes, §5 step 3 docs pruning | Open. |
@@ -173,8 +173,8 @@ they need focused tests plus one FULL, and no hardware run.
    for `dev-check.sh` and `release.yml`.
 3. **Prune the docs.** Covers `DEVELOPMENT.md`, `RELEASES.md`, the README
    narrative and `plan/` cleanup.
-4. **Implement #199 with the corrected plan.** Starts with Phase 0, the `c1`
-   cleanup, which is in progress. #194/#198 are closed.
+4. **Implement #199 with the corrected plan.** Phase 0 is done (#204), and
+   Phase 1 (TASK-001…003) is next. #194/#198 are closed.
 5. **Retire splitdns.** Needs an operator decision about routers that still
    own mosdns.
 

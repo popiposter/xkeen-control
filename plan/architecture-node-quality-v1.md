@@ -177,7 +177,7 @@ flowchart LR
 
 | Task | Description | Completed | Date |
 | --- | --- | --- | --- |
-| TASK-000 | `Coordinator.Start` is never called. Delete the supervisor loop, adaptive/benchmark schedules, `BenchmarkRunner` and the `c1` performance-policy remnants with their fixtures and status projections. Keep `ProbeRouter`, the lease/maintenance, the manual and adaptive runners and the setup-selection helpers that are still called. Add `ProbeRouter.Reconcile` to the live startup path. `internal/performancepolicy` and its routes were already removed in #202. See [audit](audit-project-2026-10-10.md) §2. | | |
+| TASK-000 | `Coordinator.Start` is never called. Delete the supervisor loop, adaptive/benchmark schedules, `BenchmarkRunner` and the `c1` performance-policy remnants with their fixtures and status projections. Keep `ProbeRouter`, the lease/maintenance, the manual and adaptive runners and the setup-selection helpers that are still called. Add `ProbeRouter.Reconcile` to the live startup path. `internal/performancepolicy` and its routes were already removed in #202. See [audit](audit-project-2026-10-10.md) §2. | ✅ #204 | 2026-10-10 |
 
 ### Implementation Phase 1
 
