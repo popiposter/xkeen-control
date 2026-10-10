@@ -83,9 +83,8 @@ Full mode must run from the normal branch checkout. It fails before Docker work 
 Full mode covers each qualification class once:
 
 ```text
-uncached Go tests where configured
+go test -race -count=1 ./...   (the one uncached Go pass; also runs every test)
 go vet ./...
-go test -race ./...
 unique shell/runtime fixtures without repeating package tests
 npm ci
 one frontend production build + Node unit tests + complete Playwright suite
@@ -253,8 +252,8 @@ does not scale a wall-clock deadline or change production limits.
 
 | Entry point | Unique purpose | Aggregate full behavior |
 | --- | --- | --- |
-| `go test -count=1 ./...` | Complete normal Go package suite | Once |
-| `go test -race ./...` | Cross-package race detection | Full only, once |
+| `go test -count=1 <selected>` | Changed packages and reverse dependencies | Fast mode only |
+| `go test -race -count=1 ./...` | Complete Go suite with race detection | Full only, once |
 | `test-release.sh` | Focused release packages plus bootstrap/updater/legacy integration | Aggregate uses `--fixtures-only` |
 | `test-keenetic-env.ps1`, `test-keenetic-env.sh` | Synthetic operator-local environment parser and secret-output boundaries | Helper lane runs both host and container fixtures |
 | `test-xkeen-foreground.sh` | Foreground runtime shell contract | Retained when helpers/build paths change |

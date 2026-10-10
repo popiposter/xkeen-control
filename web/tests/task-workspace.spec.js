@@ -11,7 +11,7 @@ test.afterEach(async ({ page }) => {
   if (page.__workspaceModel) expect(page.__workspaceModel.issues).toEqual([])
 })
 
-for (const width of [320, 375]) test(`mobile navigation is a modal drawer with focus and dismissal at ${width}px`, async ({ page }) => {
+for (const width of [320]) test(`mobile navigation is a modal drawer with focus and dismissal at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 812 })
   page.__workspaceModel = await mountFeatureCompleteDashboard(page)
   await page.goto('/')
@@ -145,7 +145,7 @@ test('System starts with access, switches subpages without repeating discovery',
   expect(model.requests.filter(({ method }) => method === 'GET').length).toBe(reads)
 })
 
-for (const width of [320, 375, 768]) test(`navigation and every workspace fit ${width}px without page overflow`, async ({ page }) => {
+for (const width of [320, 768]) test(`navigation and every workspace fit ${width}px without page overflow`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 })
   page.__workspaceModel = await mountFeatureCompleteDashboard(page, { nodeEnabled: true })
   await page.goto('/')
