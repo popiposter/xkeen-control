@@ -20,6 +20,10 @@ export function reviewSteps(status) {
   const batches = status?.batchTotal || 0
   const batch = status?.batchCount || 0
   const speedStarted = phase === 'speed' || batch > 0
+  // Every planned batch ran: the speed test itself finished, whatever the
+  // later Apply did.
+  const speedComplete = batches > 0 && batch >= batches && measured >= planned
+  const applyStage = speedComplete && !status?.manualSample && Boolean(status?.appliedState) && status.appliedState !== 'not-attempted'
   const probe = {
     key: 'probe', title: 'Latency probe',
     state: phase === 'rtt' && state === 'running' ? 'active' : phase === 'rtt' && stopped(state) ? 'failed' : probed > 0 || speedStarted ? 'done' : 'pending',
@@ -28,7 +32,7 @@ export function reviewSteps(status) {
   }
   const speed = {
     key: 'speed', title: 'Speed test',
-    state: !speedStarted ? (stopped(state) && phase !== 'rtt' ? 'failed' : 'pending') : state === 'running' ? 'active' : stopped(state) ? 'failed' : 'done',
+    state: !speedStarted ? (stopped(state) && phase !== 'rtt' ? 'failed' : 'pending') : speedComplete ? 'done' : state === 'running' ? 'active' : stopped(state) ? 'failed' : 'done',
     detail: !speedStarted ? (planned ? `${planned} fastest will be tested` : 'the fastest answering nodes') : `batch ${Math.min(batch + (state === 'running' ? 1 : 0), batches || 1)} of ${batches || 1} · ${measured} of ${planned} tested, ${status?.validCount || 0} valid`,
     fraction: planned ? measured / planned : 0,
   }
@@ -37,11 +41,11 @@ export function reviewSteps(status) {
     key: 'rank', title: recommend ? 'Ranking' : 'Ranking and Apply',
     // A completed review that kept its pool by policy is done; only an Apply
     // that needs inspection or did not land counts as stopped.
-    state: state === 'applying' ? 'active' : state === 'completed' || state === 'consumed' ? (!recommend && (status?.appliedState === 'inspection-required' || status?.appliedState === 'not-applied' && status?.poolDecision !== 'insufficient-valid-results') ? 'failed' : 'done') : stopped(state) && speedStarted ? 'failed' : 'pending',
-    detail: state === 'applying' ? 'applying the best pool and verifying it…' : finished(state) ? (recommend ? (status?.canStage ? 'recommendation ready: Apply it below' : 'measured; no recommendation to apply') : status?.appliedState === 'applied' ? 'best pool applied and verified' : status?.appliedState === 'no-op' ? 'running pool is already the best' : 'pool kept') : `best ${status?.settings?.poolSize || 6} are chosen`,
+    state: state === 'applying' ? 'active' : stopped(state) && applyStage ? 'failed' : state === 'completed' || state === 'consumed' ? (!recommend && (status?.appliedState === 'inspection-required' || status?.appliedState === 'not-applied' && status?.poolDecision !== 'insufficient-valid-results') ? 'failed' : 'done') : stopped(state) && speedStarted ? 'failed' : 'pending',
+    detail: state === 'applying' ? 'applying the best pool and verifying it…' : status?.appliedState === 'inspection-required' && applyStage ? 'pool saved and XKeen restarted, but the result was not confirmed: verify and clear the inspection block below' : stopped(state) && applyStage && status?.appliedState === 'not-applied' ? 'not applied: see the reason above' : finished(state) ? (recommend ? (status?.canStage ? 'recommendation ready: Apply it below' : 'measured; no recommendation to apply') : status?.appliedState === 'applied' ? 'best pool applied and verified' : status?.appliedState === 'no-op' ? 'running pool is already the best' : 'pool kept') : `best ${status?.settings?.poolSize || 6} are chosen`,
     fraction: finished(state) && state !== 'applying' ? 1 : 0,
   }
-  const overall = state === 'completed' || state === 'consumed' ? 1 : 0.3 * probe.fraction + 0.6 * (speed.state === 'done' ? 1 : speed.fraction) + (state === 'applying' ? 0.05 : 0)
+  const overall = state === 'completed' || state === 'consumed' || applyStage ? 1 : 0.3 * probe.fraction + 0.6 * (speed.state === 'done' ? 1 : speed.fraction) + (state === 'applying' ? 0.05 : 0)
   return { steps: [probe, speed, rank], overall: Math.max(0, Math.min(1, overall)) }
 }
 

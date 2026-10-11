@@ -120,6 +120,7 @@ type Service struct {
 	lastStartedAt     time.Time
 	QuotaPath         string
 	batchPause        time.Duration // tests shorten this; zero keeps the production floor.
+	readbackWait      time.Duration // tests shorten the post-Apply selection wait.
 	Jobs              *xkeen.Jobs
 	AutomaticDisabled bool
 	// Settings holds the operator's nightly maintenance choices; nil means

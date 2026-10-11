@@ -157,6 +157,10 @@ Performance shows three stages with a progress bar (latency probe, speed test,
 ranking and Apply or recommendation), and Nodes shows the last review's probe
 latency for nodes Xray does not monitor and speed for every measured node. The
 results stay in RAM until the next review.
+After an Apply (review or recovery) the panel waits up to three minutes, re-reading
+every five seconds, for Xray to select a member of the new pool before it fences
+the outcome for inspection: on MIPS the first read right after the restart often
+has no selection yet (KN1810, 0.4.18, test all and apply).
 No-healthy-member recovery (unreleased, REQ-009): every 10 minutes the panel
 checks whether native Observatory reports every pool member down, or every
 member has vanished from the registry. A member without an Observatory record is

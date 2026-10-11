@@ -304,3 +304,18 @@ test('test all and apply asks first, then starts one operator review with an emp
   await expect(trigger).toBeDisabled()
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
 })
+
+test('a finished speed test whose Apply needs inspection shows the failure on the last stage only', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), state: 'failed', manualSample: false, reviewTrigger: 'operator', reviewPhase: 'speed', canStage: false,
+    eligibleCount: 52, rttProbed: 52, probes: Array.from({ length: 52 }, (_, i) => ({ tag: `proxy-${i}`, answered: i < 35, rttMs: i < 35 ? 50 + i : 0 })),
+    selectedForSpeed: 18, attemptedCount: 18, validCount: 12, batchCount: 6, batchTotal: 6, aggregateBytes: 27.8 * 1048576,
+    poolDecision: 'best-pool', appliedState: 'inspection-required', inspectionRequired: true, reviewReason: 'native-selection-readback-unavailable' }
+  await open(page)
+  const progress = page.getByRole('region', { name: 'Test all and apply progress' })
+  await expect(progress.locator('[data-step-state="done"]')).toHaveCount(2)
+  await expect(progress.locator('[data-step-state="done"]').nth(1)).toContainText('batch 6 of 6 · 18 of 18 tested, 12 valid')
+  await expect(progress.locator('[data-step-state="failed"]')).toContainText('verify and clear the inspection block below')
+  await expect(page.getByRole('progressbar', { name: 'Review progress' })).toHaveAttribute('aria-valuenow', '100')
+  await expect(page.getByRole('button', { name: 'Verify and clear inspection block', exact: true })).toBeVisible()
+})

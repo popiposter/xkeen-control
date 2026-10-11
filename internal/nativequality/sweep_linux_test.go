@@ -476,7 +476,7 @@ func sweepFixtureCount(t *testing.T, noop bool, count int) (*Service, c1.Adaptiv
 			result = append(result, c1.NodeState{Tag: tag, Enabled: true})
 		}
 		return result
-	}, Measurement: m, Resources: guard, Jobs: xkeen.NewJobs(filepath.Join(dir, "missing-xkeen"), lease), QuotaPath: filepath.Join(t.TempDir(), "quota", "receipt.json"), pool: pool, batchPause: time.Millisecond, status: Status{State: "running", Digest: w.Digest, EligibleCount: count, ActivePoolCount: len(selector), AppliedState: "not-attempted"}}
+	}, Measurement: m, Resources: guard, Jobs: xkeen.NewJobs(filepath.Join(dir, "missing-xkeen"), lease), QuotaPath: filepath.Join(t.TempDir(), "quota", "receipt.json"), pool: pool, batchPause: time.Millisecond, readbackWait: 200 * time.Millisecond, status: Status{State: "running", Digest: w.Digest, EligibleCount: count, ActivePoolCount: len(selector), AppliedState: "not-attempted"}}
 	return s, c1.AdaptiveGeneration{Generation: 1, NativeQuality: true, Candidates: candidates}, w.Digest, dir
 }
 
@@ -1015,5 +1015,30 @@ func TestOperatorReviewAppliesEvenWithAutomaticOff(t *testing.T) {
 	calls, err := os.ReadFile(callMarker)
 	if err != nil || string(calls) != "x" || v.ReviewTrigger != "operator" || v.ManualSample || v.AppliedState != "applied" || v.InspectionRequired {
 		t.Fatalf("operator review did not apply once: calls=%q err=%v status=%+v", calls, err, v)
+	}
+}
+
+// After the restart Xray may need a while to select a member (constrained
+// profiles observe one at a time): the Apply readback waits for it instead
+// of fencing on the first read.
+func TestApplyReadbackWaitsForNativeSelection(t *testing.T) {
+	s, g, digest, dir := sweepFixture(t, false)
+	marker := setupNativeApply(t, s, dir)
+	s.readbackWait = 2 * time.Second
+	reader := s.Reader.(*sweepReader)
+	var reads atomic.Int64
+	reader.mutate = func(snapshot *xrayapi.Snapshot) {
+		if _, err := os.Stat(marker); err != nil {
+			return
+		}
+		// The first reads after the restart have no selection yet.
+		if reads.Add(1) <= 3 {
+			snapshot.Balancer.NativeSelected = ""
+		}
+	}
+	runSweepFixture(t, s, g, digest)
+	v := s.Read()
+	if v.AppliedState != "applied" || v.InspectionRequired || reads.Load() < 4 {
+		t.Fatalf("readback did not wait for the native selection: reads=%d status=%+v", reads.Load(), v)
 	}
 }
