@@ -2,11 +2,7 @@ package nativequality
 
 import (
 	"fmt"
-	"regexp"
 	"testing"
-	"time"
-
-	"github.com/popiposter/xkeen-control/internal/c1"
 )
 
 // TASK-007: 52 enabled nodes, a six-member pool and 12 review slots. Every
@@ -65,83 +61,37 @@ func TestFiftyTwoNodeFairRotationAcrossReviews(t *testing.T) {
 	}
 }
 
-func decisionFixture(scores map[string]int64) (c1.AdaptiveResult, []c1.NativeQualityCost) {
-	now := time.Now().UTC()
-	var result c1.AdaptiveResult
-	var costs []c1.NativeQualityCost
-	for tag, rtt := range scores {
-		valid := rtt > 0
-		result.Candidates = append(result.Candidates, c1.AdaptiveCandidateResult{Tag: tag, RTTMS: max(rtt, 1), SampledAt: now, Valid: valid})
-		if valid {
-			costs = append(costs, c1.NativeQualityCost{Regexp: true, Match: "^" + regexp.QuoteMeta(tag) + "$", Value: 1})
-		}
-	}
-	return result, costs
-}
-
-// TASK-007: mixed healthy, unhealthy and unknown evidence. Unknown is never
-// treated as an outage, an unhealthy member may be replaced without a
-// margin, and a healthy member is replaced only by a 15% better challenger.
-func TestPoolDecisionMixedHealthyUnhealthyAndUnknownEvidence(t *testing.T) {
-	now := time.Now().UTC()
-	active := []string{"a", "b", "c", "d", "e", "f"}
-	scores := map[string]int64{"a": 100, "b": 100, "c": 100, "d": 100, "e": 100, "f": 100, "g": 80, "h": 95, "i": 50}
-	alive := map[string]bool{"a": true, "b": true, "c": true, "d": true, "e": true, "f": true, "g": true, "h": true, "i": true}
-	plan := sweepPlan{Active: active}
-	for _, tc := range []struct {
-		name     string
-		selected []string
-		mutate   func(map[string]bool, map[string]int64)
-		want     string
-	}{
-		{"identical pool", active, nil, "pool-unchanged"},
-		{"15% better challenger", []string{"a", "b", "c", "d", "e", "g"}, nil, "material-improvement"},
-		{"challenger below the margin", []string{"a", "b", "c", "d", "e", "h"}, nil, "insufficient-challenger-margin"},
-		{"unhealthy member replaced without margin", []string{"a", "b", "c", "d", "e", "h"}, func(a map[string]bool, _ map[string]int64) { a["f"] = false }, "unhealthy-incumbent-replaced"},
-		{"unknown member is not an outage", []string{"a", "b", "c", "d", "e", "h"}, func(a map[string]bool, _ map[string]int64) { delete(a, "f") }, "incumbent-unmeasured-or-unknown"},
-		{"healthy member with an invalid sample is kept", []string{"a", "b", "c", "d", "e", "h"}, func(_ map[string]bool, s map[string]int64) { s["f"] = 0 }, "incumbent-unmeasured-or-unknown"},
-		{"healthy native target with an invalid sample", []string{"b", "c", "d", "e", "f", "i"}, func(_ map[string]bool, s map[string]int64) { s["a"] = 0 }, "healthy-target-sample-invalid"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			a := map[string]bool{}
-			for k, v := range alive {
-				a[k] = v
-			}
-			s := map[string]int64{}
-			for k, v := range scores {
-				s[k] = v
-			}
-			if tc.mutate != nil {
-				tc.mutate(a, s)
-			}
-			result, costs := decisionFixture(s)
-			p := plan
-			p.NativeSelected = "a"
-			if got := poolDecision(result, costs, active, tc.selected, p, a, "a", now); got != tc.want {
-				t.Fatalf("decision = %s, want %s", got, tc.want)
-			}
-		})
-	}
-}
-
-// TASK-007: a five-member imported pool grows to six measured members while
-// keeping its incumbents; a full healthy pool needs at least six valid results.
-func TestUndersizedPoolGrowsAndFullPoolNeedsSixResults(t *testing.T) {
-	now := time.Now().UTC()
+// TASK-007 under the nightly rule: the best six replace the pool whatever
+// the margin, a broad selector adopts any two or more valid results, and an
+// imported five-member pool grows to six.
+func TestNightlyBestSixDecision(t *testing.T) {
 	five := []string{"a", "b", "c", "d", "e"}
-	alive := map[string]bool{"a": true, "b": true, "c": true, "d": true, "e": true, "g": true}
-	result, costs := decisionFixture(map[string]int64{"a": 100, "b": 100, "c": 100, "d": 100, "e": 100, "g": 100})
-	if got := poolDecision(result, costs, five, []string{"a", "b", "c", "d", "e", "g"}, sweepPlan{Active: five}, alive, "", now); got != "pool-filled" {
+	if got := poolDecision(five, nil, nil, []string{"a", "b", "c", "d", "e", "g"}, false); got != "best-six" {
 		t.Fatal("five-member pool was not filled", got)
 	}
-	// Growing while dropping a healthy incumbent still needs the margin.
-	if got := poolDecision(result, costs, five, []string{"a", "b", "c", "d", "g"}, sweepPlan{Active: five}, alive, "", now); got != "insufficient-challenger-margin" {
-		t.Fatal("same-size swap without margin", got)
+	if got := poolDecision(five, nil, nil, []string{"a", "b", "c", "d", "g"}, false); got != "best-six" {
+		t.Fatal("a better same-size pool was not applied", got)
 	}
+	broad := make([]string, 52)
+	for i := range broad {
+		broad[i] = fmt.Sprintf("proxy-%02d", i)
+	}
+	if got := poolDecision(broad, nil, nil, broad[:3], true); got != "insufficient-valid-results" {
+		t.Fatal("three results replaced a broad selector", got)
+	}
+	if got := poolDecision(broad, nil, nil, broad[:6], true); got != "best-six" {
+		t.Fatal("six results did not adopt a broad selector", got)
+	}
+	// Members that failed this review's probe are not live: three valid
+	// results replace a six-member pool with four dead members.
 	six := []string{"a", "b", "c", "d", "e", "f"}
-	alive["f"] = true
-	few, fewCosts := decisionFixture(map[string]int64{"a": 100, "b": 100, "g": 10, "h": 10, "i": 10})
-	if got := poolDecision(few, fewCosts, six, []string{"a", "b", "g", "h", "i"}, sweepPlan{Active: six}, alive, "", now); got != "insufficient-valid-results" {
-		t.Fatal("full healthy pool replaced on five results", got)
+	alive := map[string]bool{"a": true, "b": true, "c": false, "d": false, "e": false, "f": false, "x": true}
+	if got := poolDecision(six, nil, alive, []string{"a", "b", "x"}, false); got != "best-six" {
+		t.Fatal("dead members kept a pool over valid results", got)
+	}
+	alive["c"] = true
+	alive["d"] = true
+	if got := poolDecision(six, nil, alive, []string{"a", "b", "x"}, false); got != "insufficient-valid-results" {
+		t.Fatal("three results shrank a four-live pool", got)
 	}
 }

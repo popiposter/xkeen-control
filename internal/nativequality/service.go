@@ -29,62 +29,55 @@ type Measurement interface {
 }
 
 type Status struct {
-	StartReason             string                       `json:"startReason,omitempty"`
-	LatencySource           string                       `json:"latencySource,omitempty"`
-	ResourceProfile         resourcepolicy.Profile       `json:"resourceProfile"`
-	Limits                  resourcepolicy.Limits        `json:"limits"`
-	AutomaticReason         string                       `json:"automaticReason,omitempty"`
-	State                   string                       `json:"state"`
-	Digest                  string                       `json:"digest,omitempty"`
-	Generation              uint64                       `json:"generation"`
-	Progress                c1.AdaptivePerformanceStatus `json:"progress"`
-	CanStage                bool                         `json:"canStage"`
-	StageReason             string                       `json:"stageReason,omitempty"`
-	PoolCount               int                          `json:"poolCount"`
-	ActivePoolCount         int                          `json:"activePoolCount"`
-	LatencyLimitMS          int64                        `json:"latencyLimitMs"`
-	EligibleCount           int                          `json:"eligibleCount"`
-	ManualSample            bool                         `json:"manualSample"`
-	Ranking                 []RankedNode                 `json:"ranking,omitempty"`
-	AppliedRanking          []RankedNode                 `json:"appliedRanking,omitempty"`
-	ReviewTrigger           string                       `json:"reviewTrigger,omitempty"`
-	ReviewPhase             string                       `json:"reviewPhase,omitempty"`
-	RTTValidCount           int                          `json:"rttValidCount"`
-	AttemptedCount          int                          `json:"attemptedCount"`
-	ValidCount              int                          `json:"validCount"`
-	BatchCount              int                          `json:"batchCount"`
-	AggregateBytes          int64                        `json:"aggregateBytes"`
-	NextDueAt               time.Time                    `json:"nextDueAt,omitempty"`
-	ReviewReason            string                       `json:"reviewReason,omitempty"`
-	InspectionRequired      bool                         `json:"inspectionRequired"`
-	AppliedState            string                       `json:"appliedState,omitempty"`
-	AppliedJobState         string                       `json:"appliedJobState,omitempty"`
-	AppliedConfigState      string                       `json:"appliedConfigState,omitempty"`
-	ManualAllowanceBytes    int64                        `json:"manualAllowanceBytes"`
-	QuotaState              string                       `json:"quotaState"`
-	QuotaUsedBytes          int64                        `json:"quotaUsedBytes"`
-	QuotaRemainingBytes     int64                        `json:"quotaRemainingBytes"`
-	QuotaReviewsUsed        int                          `json:"quotaReviewsUsed"`
-	QuotaNextResetAt        time.Time                    `json:"quotaNextResetAt,omitempty"`
-	TotalEligible           int                          `json:"totalEligible"`
-	SelectedForSpeed        int                          `json:"selectedForSpeed"`
-	DeferredForFutureReview int                          `json:"deferredForFutureReview"`
-	SubsetState             string                       `json:"subsetState,omitempty"`
-	FairCursor              int                          `json:"fairCursor"`
-	FairCursorState         string                       `json:"fairCursorState,omitempty"`
-	PoolDecision            string                       `json:"poolDecision,omitempty"`
-	ActivePool              []string                     `json:"activePool,omitempty"`
-	OrphanedPool            []string                     `json:"orphanedPool,omitempty"`
-	ActivePoolState         string                       `json:"activePoolState,omitempty"`
-	RecommendedPool         []string                     `json:"recommendedPool,omitempty"`
-	AppliedPool             []string                     `json:"appliedPool,omitempty"`
-	NativeSelected          string                       `json:"nativeSelected,omitempty"`
-	NativeSelectedState     string                       `json:"nativeSelectedState,omitempty"`
-	NativeSelectedAt        time.Time                    `json:"nativeSelectedAt,omitempty"`
+	StartReason          string                       `json:"startReason,omitempty"`
+	LatencySource        string                       `json:"latencySource,omitempty"`
+	ResourceProfile      resourcepolicy.Profile       `json:"resourceProfile"`
+	Limits               resourcepolicy.Limits        `json:"limits"`
+	AutomaticReason      string                       `json:"automaticReason,omitempty"`
+	State                string                       `json:"state"`
+	Digest               string                       `json:"digest,omitempty"`
+	Generation           uint64                       `json:"generation"`
+	Progress             c1.AdaptivePerformanceStatus `json:"progress"`
+	CanStage             bool                         `json:"canStage"`
+	StageReason          string                       `json:"stageReason,omitempty"`
+	PoolCount            int                          `json:"poolCount"`
+	ActivePoolCount      int                          `json:"activePoolCount"`
+	LatencyLimitMS       int64                        `json:"latencyLimitMs"`
+	EligibleCount        int                          `json:"eligibleCount"`
+	ManualSample         bool                         `json:"manualSample"`
+	Ranking              []RankedNode                 `json:"ranking,omitempty"`
+	AppliedRanking       []RankedNode                 `json:"appliedRanking,omitempty"`
+	ReviewTrigger        string                       `json:"reviewTrigger,omitempty"`
+	ReviewPhase          string                       `json:"reviewPhase,omitempty"`
+	RTTValidCount        int                          `json:"rttValidCount"`
+	AttemptedCount       int                          `json:"attemptedCount"`
+	ValidCount           int                          `json:"validCount"`
+	BatchCount           int                          `json:"batchCount"`
+	AggregateBytes       int64                        `json:"aggregateBytes"`
+	NextDueAt            time.Time                    `json:"nextDueAt,omitempty"`
+	ReviewReason         string                       `json:"reviewReason,omitempty"`
+	InspectionRequired   bool                         `json:"inspectionRequired"`
+	AppliedState         string                       `json:"appliedState,omitempty"`
+	AppliedJobState      string                       `json:"appliedJobState,omitempty"`
+	AppliedConfigState   string                       `json:"appliedConfigState,omitempty"`
+	ManualAllowanceBytes int64                        `json:"manualAllowanceBytes"`
+	QuotaState           string                       `json:"quotaState"`
+	TotalEligible        int                          `json:"totalEligible"`
+	SelectedForSpeed     int                          `json:"selectedForSpeed"`
+	PoolDecision         string                       `json:"poolDecision,omitempty"`
+	ActivePool           []string                     `json:"activePool,omitempty"`
+	OrphanedPool         []string                     `json:"orphanedPool,omitempty"`
+	ActivePoolState      string                       `json:"activePoolState,omitempty"`
+	RecommendedPool      []string                     `json:"recommendedPool,omitempty"`
+	AppliedPool          []string                     `json:"appliedPool,omitempty"`
+	NativeSelected       string                       `json:"nativeSelected,omitempty"`
+	NativeSelectedState  string                       `json:"nativeSelectedState,omitempty"`
+	NativeSelectedAt     time.Time                    `json:"nativeSelectedAt,omitempty"`
 	// ProvisionalAt is set while the configured pool is a REQ-009 recovery
 	// pool that no speed review has ranked yet.
-	ProvisionalAt time.Time      `json:"provisionalAt,omitzero"`
-	Recovery      RecoveryStatus `json:"recovery"`
+	ProvisionalAt time.Time         `json:"provisionalAt,omitzero"`
+	Recovery      RecoveryStatus    `json:"recovery"`
+	Maintenance   MaintenanceStatus `json:"maintenance"`
 }
 
 type RankedNode struct {
@@ -128,6 +121,10 @@ type Service struct {
 	recovery       RecoveryStatus
 	recoveryCursor int
 	recoveryHash   string
+	// maintenance is the current or last nightly window and nextMaintenance
+	// the next planned start.
+	maintenance     MaintenanceStatus
+	nextMaintenance time.Time
 }
 
 func (s *Service) Read() Status {
@@ -136,6 +133,8 @@ func (s *Service) Read() Status {
 	activeReview := s.cancel != nil || s.autoApplying
 	recovering := s.recovering
 	value.Recovery = s.recovery
+	value.Maintenance = s.maintenance
+	value.NextDueAt = s.nextMaintenance
 	value.ResourceProfile = s.profile()
 	value.Limits = s.profile().Comparison(false)
 	value.ManualAllowanceBytes = s.profile().Review().Bytes
@@ -220,9 +219,6 @@ func (s *Service) Read() Status {
 	if value.ResourceProfile.Automatic {
 		if q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes); err == nil {
 			value.QuotaState = "available"
-			value.QuotaUsedBytes, value.QuotaRemainingBytes = q.UsedBytes, q.RemainingBytes
-			value.QuotaReviewsUsed, value.QuotaNextResetAt = q.ReviewsUsed, q.NextResetAt
-			value.FairCursor = q.FairCursor
 			value.ProvisionalAt = q.ProvisionalAt
 			if q.InspectionRequired && !activeReview {
 				value.InspectionRequired = true

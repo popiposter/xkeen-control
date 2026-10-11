@@ -101,7 +101,7 @@ func TestRecoveryAppliesProvisionalPoolOfVerifiedCandidates(t *testing.T) {
 		t.Fatal("recovery ran a speed transfer", m.calls)
 	}
 	q, err := quotaState(s.QuotaPath, time.Now().UTC(), testReviewBytes)
-	if err != nil || q.ReviewsUsed != 0 || !q.LastStartedAt.IsZero() || q.InspectionRequired || q.ProvisionalAt.IsZero() {
+	if err != nil || !q.LastStartedAt.IsZero() || q.InspectionRequired || q.ProvisionalAt.IsZero() {
 		t.Fatal("recovery spent review quota or left a fence", q, err)
 	}
 	w, _ := s.Editor.Workspace(context.Background())

@@ -72,7 +72,9 @@ func NativeQualityCosts(result AdaptiveResult, now time.Time, pool []string) ([]
 				validCount++
 			}
 		}
-		if validCount < 2 || validCount*5 < result.SweepEligibleCount*4 {
+		// The nightly review ranks the nodes that measured; a node whose
+		// transfer failed is simply not ranked (no coverage threshold).
+		if validCount < 2 {
 			return nil, invalid
 		}
 	}

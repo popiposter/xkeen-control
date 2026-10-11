@@ -71,11 +71,11 @@ type ReviewLimits struct {
 
 func (p Profile) Review() ReviewLimits {
 	if p.Constrained {
-		// 12 × 6 MiB (down 1/3, up 0.5/1.5); 4 batches × 90 s + 3 × 1 min.
-		return ReviewLimits{Candidates: 12, BatchSize: 3, Pause: time.Minute, Bytes: 72 * MiB, Wall: 12 * time.Minute}
+		// 18 × 6 MiB (down 1/3, up 0.5/1.5); 6 batches × 90 s + 5 × 1 min.
+		return ReviewLimits{Candidates: 18, BatchSize: 3, Pause: time.Minute, Bytes: 108 * MiB, Wall: 16 * time.Minute}
 	}
-	// 12 × 24 MiB (down 1/3/4/8, up 1/3/4); 2 batches × 180 s.
-	return ReviewLimits{Candidates: 12, BatchSize: 6, Bytes: 288 * MiB, Wall: 8 * time.Minute}
+	// 18 × 24 MiB (down 1/3/4/8, up 1/3/4); 3 batches × 180 s.
+	return ReviewLimits{Candidates: 18, BatchSize: 6, Bytes: 432 * MiB, Wall: 11 * time.Minute}
 }
 
 func (p Profile) MemoryFloorKiB() uint64 {

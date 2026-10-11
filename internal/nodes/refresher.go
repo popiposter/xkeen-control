@@ -120,6 +120,11 @@ type SubscriptionRefresher struct {
 	stop        context.CancelFunc
 	wait        sync.WaitGroup
 	requested   chan struct{}
+	// window, when set, hands automatic refreshes to the nightly maintenance
+	// window: the loop never fetches by itself, nextRunAt shows the next
+	// window, and RefreshAllNow runs every enabled subscription once.
+	window func(time.Time) time.Time
+	runAll chan chan struct{}
 }
 
 func NewSubscriptionRefresher(manager *Manager) *SubscriptionRefresher {
@@ -132,7 +137,98 @@ func newSubscriptionRefresher(manager *Manager, now func() time.Time) *Subscript
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &SubscriptionRefresher{manager: manager, now: now, entries: make(map[string]*subscriptionRefreshEntry), requested: make(chan struct{}, 1)}
+	return &SubscriptionRefresher{manager: manager, now: now, entries: make(map[string]*subscriptionRefreshEntry), requested: make(chan struct{}, 1), runAll: make(chan chan struct{})}
+}
+
+// SetMaintenanceWindow hands automatic refreshes to the nightly maintenance
+// window. next returns the next window start; it must be set before Start.
+func (r *SubscriptionRefresher) SetMaintenanceWindow(next func(time.Time) time.Time) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.started {
+		r.window = next
+	}
+}
+
+// RefreshAllNow refreshes every enabled subscription once, in ID order, on
+// the refresher's own goroutine, and returns when all attempts settled.
+func (r *SubscriptionRefresher) RefreshAllNow(ctx context.Context) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	started := r.started
+	r.mu.Unlock()
+	if !started {
+		return
+	}
+	done := make(chan struct{})
+	select {
+	case r.runAll <- done:
+	case <-ctx.Done():
+		return
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+}
+
+// refreshAll runs on the loop goroutine. A busy refusal is retried once after
+// the first backoff so the window is not held for the full backoff ladder.
+func (r *SubscriptionRefresher) refreshAll(ctx context.Context) {
+	_ = r.reconcile(r.clock())
+	r.mu.Lock()
+	ids := make([]string, 0, len(r.entries))
+	for id, entry := range r.entries {
+		if entry.status.state != autoRefreshDisabled {
+			ids = append(ids, id)
+		}
+	}
+	r.mu.Unlock()
+	sort.Strings(ids)
+	for _, id := range ids {
+		for attempt := 0; ; attempt++ {
+			r.runAttempt(ctx, id)
+			if ctx.Err() != nil {
+				return
+			}
+			r.mu.Lock()
+			entry := r.entries[id]
+			deferred := entry != nil && entry.status.state == autoRefreshDeferred
+			wait := time.Duration(0)
+			if deferred {
+				wait = entry.nextRunAt.Sub(r.clock())
+				if attempt > 0 {
+					entry.retry = 0
+					entry.nextRunAt = r.nextCadenceLocked(r.clock())
+					entry.status.state = autoRefreshFailed
+				}
+			}
+			r.mu.Unlock()
+			if !deferred || attempt > 0 {
+				break
+			}
+			timer := time.NewTimer(max(wait, 0))
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+	}
+}
+
+// nextCadenceLocked is the next automatic run after now.
+func (r *SubscriptionRefresher) nextCadenceLocked(now time.Time) time.Time {
+	if r.window != nil {
+		return r.window(now)
+	}
+	return now.Add(DefaultSubscriptionRefreshCadence)
 }
 
 // RequestRefresh queues one bounded refresh through the existing scheduler.
@@ -234,7 +330,10 @@ func (r *SubscriptionRefresher) loop(ctx context.Context) {
 		}
 		select {
 		case <-r.requested:
-			r.requestDue()
+			r.request(ctx)
+		case done := <-r.runAll:
+			r.refreshAll(ctx)
+			close(done)
 		default:
 		}
 		now := r.clock()
@@ -277,9 +376,26 @@ func (r *SubscriptionRefresher) loop(ctx context.Context) {
 		case <-timer.C:
 		case <-r.requested:
 			timer.Stop()
-			r.requestDue()
+			r.request(ctx)
+		case done := <-r.runAll:
+			timer.Stop()
+			r.refreshAll(ctx)
+			close(done)
 		}
 	}
+}
+
+// request serves RequestRefresh: in window mode it refreshes everything now,
+// otherwise it makes every enabled subscription due.
+func (r *SubscriptionRefresher) request(ctx context.Context) {
+	r.mu.Lock()
+	window := r.window != nil
+	r.mu.Unlock()
+	if window {
+		r.refreshAll(ctx)
+		return
+	}
+	r.requestDue()
 }
 
 func (r *SubscriptionRefresher) clock() time.Time {
@@ -355,6 +471,9 @@ func (r *SubscriptionRefresher) reconcile(now time.Time) error {
 }
 
 func (r *SubscriptionRefresher) firstDue(now time.Time, id string, startup bool) time.Time {
+	if r.window != nil {
+		return r.window(now)
+	}
 	if startup {
 		return now.Add(DefaultSubscriptionRefreshStartupWait + subscriptionRefreshJitter(id))
 	}
@@ -371,6 +490,10 @@ func subscriptionRefreshJitter(id string) time.Duration {
 }
 
 func (r *SubscriptionRefresher) nextDueLocked(now time.Time) string {
+	if r.window != nil {
+		// The maintenance window owns automatic runs.
+		return ""
+	}
 	ids := make([]string, 0, len(r.entries))
 	for id, entry := range r.entries {
 		if entry.status.state == autoRefreshDisabled || entry.nextRunAt.IsZero() || now.Before(entry.nextRunAt) {
@@ -389,6 +512,9 @@ func (r *SubscriptionRefresher) nextWakeLocked(now time.Time) time.Time {
 	next := r.rescanAt
 	if next.IsZero() {
 		next = now
+	}
+	if r.window != nil {
+		return next
 	}
 	for _, entry := range r.entries {
 		if entry.nextRunAt.IsZero() || (entry.status.state == autoRefreshDisabled) {
@@ -437,7 +563,7 @@ func (r *SubscriptionRefresher) finishCanceled(id string, now time.Time) {
 		return
 	}
 	entry.retry = 0
-	entry.nextRunAt = now.Add(DefaultSubscriptionRefreshCadence)
+	entry.nextRunAt = r.nextCadenceLocked(now)
 	entry.status.state = autoRefreshWaiting
 	entry.status.errorCode = ""
 }
@@ -451,7 +577,7 @@ func (r *SubscriptionRefresher) finish(id string, now time.Time, result automati
 	}
 	if err == nil {
 		entry.retry = 0
-		entry.nextRunAt = now.Add(DefaultSubscriptionRefreshCadence)
+		entry.nextRunAt = r.nextCadenceLocked(now)
 		entry.status.state = autoRefreshWaiting
 		entry.status.lastSuccessAt = now
 		entry.status.lastResult = result.LastResult
@@ -477,7 +603,7 @@ func (r *SubscriptionRefresher) finish(id string, now time.Time, result automati
 		return
 	}
 	entry.retry = 0
-	entry.nextRunAt = now.Add(DefaultSubscriptionRefreshCadence)
+	entry.nextRunAt = r.nextCadenceLocked(now)
 	entry.status.state = autoRefreshFailed
 }
 

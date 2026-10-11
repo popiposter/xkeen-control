@@ -70,7 +70,9 @@ func (s *Service) recoverPool(parent context.Context) {
 		return
 	}
 	s.mu.Lock()
-	if s.closed || s.cancel != nil || s.autoApplying || s.recovering || s.status.InspectionRequired {
+	// The nightly window restarts Xray on purpose; a pool that is briefly
+	// unreachable then is not an outage.
+	if s.closed || s.cancel != nil || s.autoApplying || s.recovering || s.status.InspectionRequired || s.maintenance.Phase != "" {
 		s.mu.Unlock()
 		return
 	}

@@ -16,7 +16,7 @@ func TestStatusReportsBatchAndReviewBudgets(t *testing.T) {
 		batch   int64
 		seconds int
 		review  int64
-	}{{resourcepolicy.ForPlatform("arm64", 1<<20), 144 * c1.MiB, 180, 288 * c1.MiB}, {resourcepolicy.ForPlatform("mipsle", 254472), 24 * c1.MiB, 90, 72 * c1.MiB}} {
+	}{{resourcepolicy.ForPlatform("arm64", 1<<20), 144 * c1.MiB, 180, 432 * c1.MiB}, {resourcepolicy.ForPlatform("mipsle", 254472), 24 * c1.MiB, 90, 108 * c1.MiB}} {
 		s := &Service{Resources: &resourcepolicy.Guard{Profile: tt.profile}, status: Status{State: "running", Generation: 1}}
 		v := s.Read()
 		if v.Limits.Bytes != tt.batch || v.Limits.Seconds != tt.seconds || v.ManualAllowanceBytes != tt.review {

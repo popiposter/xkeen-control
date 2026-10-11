@@ -318,6 +318,12 @@ func parseSpeedLog(path string, location *time.Location) (time.Time, map[string]
 	return lastRunAt, result, timestamps, errors
 }
 
+// RouterLocation reads the Keenetic POSIX zone (for example MSK-3) from
+// path, normally /etc/TZ, as a fixed offset.
+func RouterLocation(path string) (*time.Location, bool) {
+	return loadRouterTimezone(path)
+}
+
 func loadRouterTimezone(path string) (*time.Location, bool) {
 	if path == "" {
 		return nil, false

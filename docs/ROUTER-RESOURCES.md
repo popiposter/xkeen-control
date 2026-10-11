@@ -55,6 +55,11 @@ review/Apply remains unverified pending separate hardware readback.
 Source after #205 (unreleased) drops the "six low-RTT challengers" step and the
 Observatory-based incumbent check: candidates are every incumbent plus the fair
 rotation, each probed by a targeted RTT request before any quota is reserved.
+The nightly-window source (unreleased, plan revision 2026-10-11) replaces the
+quota and rotation: once a night every enabled node is probed and the 18 fastest
+that answered are speed-tested, at most 108 MiB on MIPS and 432 MiB on ARM64 per
+review, with the same pressure, batch and cleanup limits. See
+[NODE-LIFECYCLE](NODE-LIFECYCLE.md) for the window order.
 
 The existing measurement owners share a read-only hardware profile and an
 on-demand `/proc` sampler. No new daemon, persistent settings authority or timer

@@ -64,3 +64,37 @@ func TestRemoteNativeCommandUsesLeaseAndRefusesPendingBeforeExec(t *testing.T) {
 		t.Fatal("empty owner leaked console")
 	}
 }
+
+func TestMaintenanceJobRunsOnlyGeodataAndRefusesPending(t *testing.T) {
+	editor := editorFixture(t, "exit 0\n")
+	editor.Lease = authority.NewLease()
+	jobs := testNativeJobs(t, "exit 0\n")
+	jobs.Lease = editor.Lease
+	if _, err := jobs.StartMaintenance("restart", editor); !errors.Is(err, ErrCommand) {
+		t.Fatal("maintenance ran a command other than geodata", err)
+	}
+	before, err := editor.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = editor.SaveField(context.Background(), before.Digest, "dns", "queryStrategy", "UseIPv4"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = jobs.StartMaintenance("update-geodata", editor); err == nil || jobs.job != nil {
+		t.Fatal("maintenance restarted Xray over a pending config")
+	}
+	snapshot, _ := editor.Snapshot(context.Background())
+	if _, err = editor.RestoreSaved(context.Background(), snapshot.Digest); err != nil {
+		t.Fatal(err)
+	}
+	view, err := jobs.StartMaintenance("update-geodata", editor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final := waitNativeJob(t, jobs, view.ID); final.State != "completed" {
+		t.Fatal(final.State)
+	}
+	if _, err = jobs.Read("local-session", view.ID, 0); err != nil {
+		t.Fatal("operator cannot inspect the maintenance job", err)
+	}
+}

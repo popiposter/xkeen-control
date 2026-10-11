@@ -132,8 +132,24 @@ func (m *Jobs) StartRemote(action string, editor *ConfigEditor) (JobView, error)
 	return m.start(remoteJobOwner, CommandRequest{Action: action}, nil, "", editor)
 }
 
+// MaintenanceJobOwner owns the nightly maintenance geodata update. Like a
+// remote job, its console is readable by authenticated local operators.
+const MaintenanceJobOwner = "nightly-maintenance"
+
+// StartMaintenance runs the one native command the nightly window owns: the
+// geodata update, which restarts Xray. A pending config refuses it.
+func (m *Jobs) StartMaintenance(action string, editor *ConfigEditor) (JobView, error) {
+	if editor == nil || editor.Lease != m.Lease {
+		return JobView{}, ErrConfig
+	}
+	if action != "update-geodata" {
+		return JobView{}, ErrCommand
+	}
+	return m.start(MaintenanceJobOwner, CommandRequest{Action: action}, nil, "", editor)
+}
+
 func jobOwnerAllowed(job *nativeJob, owner string) bool {
-	return owner != "" && (job.owner == "" || job.owner == owner || job.owner == remoteJobOwner)
+	return owner != "" && (job.owner == "" || job.owner == owner || job.owner == remoteJobOwner || job.owner == MaintenanceJobOwner)
 }
 
 func (m *Jobs) start(owner string, r CommandRequest, editor *ConfigEditor, baseline string, unchanged *ConfigEditor) (JobView, error) {

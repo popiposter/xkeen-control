@@ -160,7 +160,7 @@ func TestSweepAdmissionFreezesFourteenAndCrossProcessOwner(t *testing.T) {
 		t.Fatal("sweep did not settle")
 	}
 	v := first.Read()
-	if v.ReviewTrigger != "subscription-refresh" || v.EligibleCount != len(g.Candidates) || v.SelectedForSpeed != 12 || v.AttemptedCount != 12 || v.BatchCount != 4 || v.AppliedState != "no-op" {
+	if v.ReviewTrigger != "subscription-refresh" || v.EligibleCount != len(g.Candidates) || v.SelectedForSpeed != 14 || v.AttemptedCount != 14 || v.BatchCount != 5 || v.AppliedState != "no-op" {
 		t.Fatal("admission/coverage mismatch", v)
 	}
 	if release, err := acquireQuotaLock(first.QuotaPath); err != nil {
@@ -181,10 +181,10 @@ func TestSweepFortySixEligibleRunsBoundedSubsetWithoutApply(t *testing.T) {
 		t.Fatal("bounded review did not settle")
 	}
 	v := s.Read()
-	if v.State != "completed" || v.AppliedState != "no-op" || v.TotalEligible != 46 || v.SelectedForSpeed != 12 || v.DeferredForFutureReview != 34 || v.AttemptedCount != 12 || v.ValidCount != 12 || v.BatchCount != 4 || len(v.Progress.Candidates) != 12 || v.SubsetState != "subset-complete" || v.PoolDecision != "pool-unchanged" {
-		t.Fatal("bounded review/status mismatch", v)
+	if v.State != "completed" || v.AppliedState != "no-op" || v.TotalEligible != 46 || v.RTTValidCount != 46 || v.SelectedForSpeed != 18 || v.AttemptedCount != 18 || v.ValidCount != 18 || v.BatchCount != 6 || len(v.Progress.Candidates) != 18 || v.PoolDecision != "pool-unchanged" {
+		t.Fatal("probe-all/speed-18 review mismatch", v)
 	}
-	if len(s.Measurement.(*sweepMeasurement).calls) != 4 {
+	if m := s.Measurement.(*sweepMeasurement); len(m.calls) != 6 || m.calls[0][0] != "proxy-00" || m.calls[5][2] != "proxy-17" {
 		t.Fatal("wrong batch count")
 	}
 	w, err := s.Editor.Workspace(context.Background())
@@ -225,8 +225,8 @@ func assertNoQuotaOrTransfer(t *testing.T, s *Service, digest string) {
 	if len(s.Measurement.(*sweepMeasurement).calls) != 0 {
 		t.Fatal("refused review transferred data")
 	}
-	if q, err := quotaState(s.QuotaPath, time.Now().UTC(), testReviewBytes); err == nil && (q.ReviewsUsed != 0 || q.FairCursor != 0) {
-		t.Fatal("refused review reserved quota or advanced the cursor", q)
+	if q, err := quotaState(s.QuotaPath, time.Now().UTC(), testReviewBytes); err == nil && (!q.LastStartedAt.IsZero() || q.InspectionRequired || q.FairCursor != 0) {
+		t.Fatal("refused review recorded a start or advanced the cursor", q)
 	}
 	w, err := s.Editor.Workspace(context.Background())
 	if err != nil || w.Pending != nil || w.Digest != digest {
@@ -246,13 +246,8 @@ func TestSweepStaleObservatoryNoLongerDefersBecauseEveryCandidateIsProbed(t *tes
 	}
 	v := waitSweep(t, s)
 	m := s.Measurement.(*sweepMeasurement)
-	if len(m.rttCalls) != 2 || len(m.rttCalls[0]) != 6 || len(m.rttCalls[1]) != 6 || v.RTTValidCount != 12 || v.State != "completed" || v.PoolDecision != "pool-unchanged" || v.ReviewPhase != "speed" {
-		t.Fatal("RTT pre-phase did not freeze and probe the bounded set in chunks", len(m.rttCalls), v.RTTValidCount, v.State, v.PoolDecision)
-	}
-	for _, tag := range m.rttCalls[0][:6] {
-		if tag < "proxy-00" || tag > "proxy-05" {
-			t.Fatal("incumbents were not probed first", m.rttCalls[0])
-		}
+	if len(m.rttCalls) != 8 || len(m.rttCalls[0]) != 6 || len(m.rttCalls[7]) != 4 || v.RTTValidCount != 46 || v.State != "completed" || v.PoolDecision != "pool-unchanged" || v.ReviewPhase != "speed" {
+		t.Fatal("RTT pre-phase did not probe every node in chunks of six", len(m.rttCalls), v.RTTValidCount, v.State, v.PoolDecision)
 	}
 }
 
@@ -306,8 +301,8 @@ func TestSweepIncumbentFailingRTTIsUnhealthyAndReplaced(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := waitSweep(t, s)
-	if v.RTTValidCount != 11 || v.PoolDecision != "unhealthy-incumbent-replaced" {
-		t.Fatal("failed incumbent probe was not treated as unhealthy", v.RTTValidCount, v.PoolDecision, v.ReviewReason)
+	if v.RTTValidCount != 13 || v.PoolDecision != "best-six" {
+		t.Fatal("failed incumbent probe was not replaced by the best six", v.RTTValidCount, v.PoolDecision, v.ReviewReason)
 	}
 	for _, calls := range s.Measurement.(*sweepMeasurement).calls {
 		for _, tag := range calls {
@@ -356,7 +351,7 @@ func TestSweepSlowAnsweringIncumbentsAreRankedNotUnhealthy(t *testing.T) {
 		t.Fatal(err, s.Read().ReviewReason)
 	}
 	v := waitSweep(t, s)
-	if v.RTTValidCount != 12 || v.PoolDecision != "material-improvement" {
+	if v.RTTValidCount != 14 || v.PoolDecision != "best-six" {
 		t.Fatal("slow answering incumbents were not ranked on speed", v.RTTValidCount, v.PoolDecision, v.ReviewReason)
 	}
 }
@@ -508,13 +503,11 @@ func TestSweepFourteenNodesFourBatchesNoopAndConsumed(t *testing.T) {
 }
 
 func TestSweepIncompleteOrDriftNeverSaves(t *testing.T) {
-	for _, mode := range []string{"coverage", "pressure", "drift"} {
+	for _, mode := range []string{"pressure", "drift"} {
 		t.Run(mode, func(t *testing.T) {
 			s, g, digest, dir := sweepFixture(t, false)
 			m := s.Measurement.(*sweepMeasurement)
 			switch mode {
-			case "coverage":
-				m.validLimit = 9 // 9 of 12 is below the 80% coverage rule
 			case "pressure":
 				m.failBatch = 2
 			case "drift":
@@ -676,44 +669,6 @@ func TestSweepCleanupAmbiguitySurvivesPanelRestart(t *testing.T) {
 	}
 }
 
-func TestManualAndAutomaticStartsPersistSixHourFloor(t *testing.T) {
-	manual, _, _, _ := sweepFixture(t, true)
-	if err := manual.Start(context.Background()); err != nil {
-		t.Fatal("manual start", err)
-	}
-	select {
-	case <-manual.done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("manual did not settle")
-	}
-	q, err := quotaState(manual.QuotaPath, time.Now().UTC(), testReviewBytes)
-	if err != nil || q.LastStartedAt.IsZero() {
-		t.Fatal("manual start not durable", q, err)
-	}
-	restarted, _, _, _ := sweepFixture(t, true)
-	restarted.QuotaPath = manual.QuotaPath
-	if err := restarted.startSweep(context.Background(), "subscription-refresh"); err == nil {
-		t.Fatal("restart bypassed manual six-hour floor")
-	}
-	auto, _, _, _ := sweepFixture(t, true)
-	if err := auto.startSweep(context.Background(), "periodic"); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-auto.done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("automatic did not settle")
-	}
-	q, err = quotaState(auto.QuotaPath, time.Now().UTC(), testReviewBytes)
-	if err != nil || q.LastStartedAt.IsZero() || q.InspectionRequired {
-		t.Fatal("automatic start not settled durably", q, err)
-	}
-	restarted.QuotaPath = auto.QuotaPath
-	if err := restarted.startSweep(context.Background(), "periodic"); err == nil {
-		t.Fatal("restart bypassed automatic six-hour floor")
-	}
-}
-
 func TestSweepOrphanedSelectorIsAnUnhealthyMemberAndReplaced(t *testing.T) {
 	s, _, _, dir := sweepFixture(t, true)
 	var selector []string
@@ -733,7 +688,7 @@ func TestSweepOrphanedSelectorIsAnUnhealthyMemberAndReplaced(t *testing.T) {
 		t.Fatal("orphaned selector blocked the review", err, s.Read().ReviewReason)
 	}
 	v := waitSweep(t, s)
-	if v.PoolDecision != "unhealthy-incumbent-replaced" {
+	if v.PoolDecision != "best-six" {
 		t.Fatal("orphan was not replaced as an unhealthy member", v.PoolDecision, v.ReviewReason)
 	}
 	for _, calls := range s.Measurement.(*sweepMeasurement).rttCalls {
@@ -768,12 +723,12 @@ func TestManualReviewMeasuresWithoutApplyOrAutomaticQuota(t *testing.T) {
 			v := waitSweep(t, s)
 			m := s.Measurement.(*sweepMeasurement)
 			batch := s.profile().Review().BatchSize
-			if !v.ManualSample || v.State != "completed" || v.AppliedState != "not-attempted" || !v.CanStage || len(m.calls) == 0 || len(m.calls[0]) != batch || v.SelectedForSpeed != 12 {
+			if !v.ManualSample || v.State != "completed" || v.AppliedState != "not-attempted" || !v.CanStage || len(m.calls) == 0 || len(m.calls[0]) > batch || v.SelectedForSpeed != 14 {
 				t.Fatal("manual review state", v.ReviewReason, v.ManualSample, v.State, v.AppliedState, v.CanStage, len(m.calls), v.SelectedForSpeed)
 			}
 			q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes)
-			if err != nil || q.ReviewsUsed != 0 || q.LastStartedAt.IsZero() || q.FairCursor != v.FairCursor {
-				t.Fatal("manual review spent automatic quota or did not persist the rotation", q, err)
+			if err != nil || q.LastStartedAt.IsZero() {
+				t.Fatal("manual review reserved traffic or did not record its start", q, err)
 			}
 			w, err := s.Editor.Workspace(context.Background())
 			if err != nil || w.Pending != nil || w.Digest != digest {
@@ -804,34 +759,6 @@ func TestManualReviewFailureDoesNotFenceLaterReviews(t *testing.T) {
 	waitSweep(t, s)
 }
 
-func TestSuccessiveManualReviewsRotateCandidates(t *testing.T) {
-	s, _, _, _ := sweepFixtureCount(t, false, 46)
-	s.Resources.Profile = resourcepolicy.ForPlatform("arm64", 1<<20)
-	var rounds [][]string
-	for i := 0; i < 2; i++ {
-		if err := s.Start(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-		waitSweep(t, s)
-		m := s.Measurement.(*sweepMeasurement)
-		var probed []string
-		for _, chunk := range m.rttCalls {
-			probed = append(probed, chunk...)
-		}
-		rounds = append(rounds, probed)
-		m.rttCalls, m.calls = nil, nil
-	}
-	first := map[string]bool{}
-	for _, tag := range rounds[0][1:] {
-		first[tag] = true
-	}
-	for _, tag := range rounds[1][1:] {
-		if first[tag] {
-			t.Fatal("the second manual review repeated a rotating candidate", tag, rounds)
-		}
-	}
-}
-
 func TestStandardProfileAutomaticReviewReachesApply(t *testing.T) {
 	s, _, _, _ := sweepFixture(t, false)
 	s.Resources.Profile = resourcepolicy.ForPlatform("arm64", 1<<20)
@@ -840,11 +767,11 @@ func TestStandardProfileAutomaticReviewReachesApply(t *testing.T) {
 	}
 	v := waitSweep(t, s)
 	m := s.Measurement.(*sweepMeasurement)
-	if v.ManualSample || v.PoolDecision != "first-pool-initialization" || v.AppliedState == "not-attempted" || len(m.calls) != 2 || len(m.calls[0]) != 6 {
+	if v.ManualSample || v.PoolDecision != "best-six" || v.AppliedState == "not-attempted" || len(m.calls) != 3 || len(m.calls[0]) != 5 {
 		t.Fatal("standard automatic review did not use six-node batches and the Apply path", v.ManualSample, v.PoolDecision, v.AppliedState, len(m.calls))
 	}
-	if q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes); err != nil || q.ReviewsUsed != 1 || q.UsedBytes != s.profile().Review().Bytes {
-		t.Fatal("standard automatic review did not reserve its quota", q, err)
+	if q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes); err != nil || q.LastStartedAt.IsZero() {
+		t.Fatal("standard automatic review reserved traffic or did not record its start", q, err)
 	}
 }
 
@@ -889,7 +816,7 @@ func TestSweepAllOrphanedPoolWithNarrowedObservatoryIsReplaced(t *testing.T) {
 		t.Fatal("an all-orphaned pool with a narrowed 07 could not be reviewed", err, s.Read().ReviewReason)
 	}
 	v := waitSweep(t, s)
-	if v.PoolDecision != "unhealthy-incumbent-replaced" {
+	if v.PoolDecision != "best-six" {
 		t.Fatal("all-orphaned pool was not replaced", v.PoolDecision, v.ReviewReason)
 	}
 	w, err := s.Editor.Workspace(context.Background())
@@ -916,7 +843,7 @@ func TestSweepImportedFiveMemberPoolIsFilledToSix(t *testing.T) {
 		t.Fatal("imported five-member pool could not be reviewed", err, s.Read().ReviewReason)
 	}
 	v := waitSweep(t, s)
-	if v.PoolDecision != "pool-filled" {
+	if v.PoolDecision != "best-six" {
 		t.Fatal("five-member pool decision", v.PoolDecision, v.ReviewReason)
 	}
 	w, err := s.Editor.Workspace(context.Background())
@@ -945,18 +872,20 @@ func TestSweepKeptPoolWithBroadObservatoryRepairsOnly07(t *testing.T) {
 	for i, tag := range kept {
 		costs = append(costs, c1.NativeQualityCost{Regexp: true, Match: "^" + regexp.QuoteMeta(tag) + "$", Value: float64(i + 1)})
 	}
-	// proxy-00 measures faster than proxy-06, but by less than the 15% margin.
+	// Only five candidates measure validly: fewer than six never shrink the
+	// six-member pool, so the review keeps it and repairs only 07.
 	routing, _ := json.Marshal(map[string]any{"routing": map[string]any{"rules": []any{}, "balancers": []any{map[string]any{"tag": "bal-proxy", "selector": kept, "strategy": map[string]any{"type": "leastLoad", "settings": map[string]any{"maxRTT": "10s", "costs": costs}}}}}})
 	for name, data := range map[string][]byte{"05_routing.json": routing, "07_observatory.json": []byte(`{"observatory":{"subjectSelector":["proxy-"],"probeInterval":"10s","enableConcurrency":false}}`)} {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
+	s.Measurement.(*sweepMeasurement).validLimit = 5
 	if err := s.startSweep(context.Background(), "periodic"); err != nil {
 		t.Fatal(err, s.Read().ReviewReason)
 	}
 	v := waitSweep(t, s)
-	if v.PoolDecision != "observatory-repair" || v.AppliedState != "applied" || v.ReviewReason != "insufficient-challenger-margin" || v.InspectionRequired {
+	if v.PoolDecision != "observatory-repair" || v.AppliedState != "applied" || v.ReviewReason != "insufficient-valid-results" || v.InspectionRequired {
 		t.Fatal("broad 07 not repaired after a policy no-change", v.PoolDecision, v.AppliedState, v.ReviewReason)
 	}
 	if calls, _ := os.ReadFile(marker); string(calls) != "x" {
@@ -1004,11 +933,48 @@ func TestSweepHeldQuotaLockIsBusy(t *testing.T) {
 	if !errors.Is(err, errQuotaBusy) {
 		t.Fatal("held receipt lock", err)
 	}
-	if next, keep := nextAfterStart(time.Now(), err, reviewCadence); time.Until(next) > 2*time.Minute || !keep {
-		t.Fatal("held receipt lock is not retried soon", time.Until(next), keep)
+	if !busyStart(err) {
+		t.Fatal("held receipt lock is not retried")
 	}
 	s.status.InspectionRequired = true
-	if next, _ := nextAfterStart(time.Now(), s.startSweep(context.Background(), "periodic"), reviewCadence); time.Until(next) < 9*time.Minute {
-		t.Fatal("an inspection fence is retried every minute")
+	if busyStart(s.startSweep(context.Background(), "periodic")) {
+		t.Fatal("an inspection fence is retried as busy")
+	}
+}
+
+// The nightly window restarts Xray around a manual test, so the server
+// refuses one while a maintenance phase runs, not only the browser.
+func TestManualTestIsBusyDuringMaintenance(t *testing.T) {
+	s, _, _, _ := sweepFixture(t, true)
+	s.maintenance.Phase = "subscriptions"
+	if err := s.Start(context.Background()); !errors.Is(err, c1.ErrManualBusy) {
+		t.Fatal("manual test admitted during maintenance", err)
+	}
+	if len(s.Measurement.(*sweepMeasurement).calls) != 0 {
+		t.Fatal("refused manual test transferred data")
+	}
+}
+
+// The geodata step waits for a busy job runner, then for the job to finish.
+func TestNightlyGeodataRetriesBusyRunnerAndWaitsForTheJob(t *testing.T) {
+	s, _, _, dir := sweepFixture(t, true)
+	marker := filepath.Join(dir, "geodata-ran")
+	script := filepath.Join(dir, "xkeen-geodata")
+	body := "#!/bin/sh\n[ \"$1\" = -ug ] || exit 9\nsleep 0.3\nprintf x > " + shellQuoted(marker) + "\n"
+	if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+		t.Fatal(err)
+	}
+	s.Jobs = xkeen.NewJobs(script, s.Lease)
+	release, err := s.Lease.TryAcquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { time.Sleep(50 * time.Millisecond); release() }()
+	state, err := s.updateGeodata(context.Background(), 20*time.Millisecond, 20*time.Millisecond)
+	if err != nil || state != "completed" {
+		t.Fatal("geodata step", state, err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("geodata returned before the job finished", err)
 	}
 }

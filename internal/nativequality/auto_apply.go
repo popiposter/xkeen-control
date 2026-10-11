@@ -155,12 +155,12 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		s.applyOutcome("not-applied", "selector-unavailable", false)
 		return
 	}
+	concurrent := !s.profile().Constrained
+	observatory := w.Documents["07_observatory.json"].Text
 	s.mu.Lock()
 	alive := s.rttAlive
 	s.mu.Unlock()
-	concurrent := !s.profile().Constrained
-	observatory := w.Documents["07_observatory.json"].Text
-	decision := poolDecision(result, costs, currentActive, selected, plan, alive, snapshot.Balancer.NativeSelected, time.Now().UTC())
+	decision := poolDecision(currentActive, orphans, alive, selected, plan.FirstInitialization)
 	if decision == "pool-unchanged" && !observatoryMatchesPool(observatory, selected, concurrent) {
 		// Same members but 07 still observes a different set: the same
 		// validated joint 05+07 Apply repairs it (REQ-010).
@@ -188,7 +188,7 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		s.applyOutcome("no-op", "pool-unchanged", false)
 		return
 	}
-	if decision != "first-pool-initialization" && decision != "material-improvement" && decision != "unhealthy-incumbent-replaced" && decision != "observatory-repair" && decision != "provisional-pool-replaced" && decision != "pool-filled" {
+	if decision != "best-six" && decision != "observatory-repair" {
 		s.applyOutcome("not-applied", decision, false)
 		return
 	}
@@ -212,7 +212,7 @@ func balancerSelector(text string, index int) []string {
 }
 
 // keptByPolicy are decisions that deliberately keep the running pool.
-var keptByPolicy = map[string]bool{"insufficient-challenger-margin": true, "incumbent-unmeasured-or-unknown": true, "insufficient-valid-results": true, "healthy-target-sample-invalid": true}
+var keptByPolicy = map[string]bool{"insufficient-valid-results": true}
 
 func (s *Service) onApplyJob(jobState string) {
 	s.mu.Lock()

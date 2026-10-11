@@ -8,7 +8,9 @@ import (
 	"time"
 )
 
-func TestNativeSweepRequiresCompleteFreshEightyPercentCoverage(t *testing.T) {
+// The nightly review ranks whatever measured validly (at least two); the
+// sweep still needs a complete, fresh result for every speed candidate.
+func TestNativeSweepRanksValidResultsAndNeedsCompleteFreshSweep(t *testing.T) {
 	now := time.Now().UTC()
 	r := AdaptiveResult{NativeQuality: true, Sweep: true, SweepEligibleCount: 14, Generation: 1, StartedAt: now.Add(-15 * time.Minute), CompletedAt: now, State: "completed", ShortlistCount: 14}
 	var pool []string
@@ -20,11 +22,19 @@ func TestNativeSweepRequiresCompleteFreshEightyPercentCoverage(t *testing.T) {
 	if costs, err := NativeQualityCosts(r, now, pool); err != nil || len(costs) != 14 || len(NativeQualityRanking(r, costs)) != 6 {
 		t.Fatalf("complete sweep rejected: %v %v", costs, err)
 	}
-	r.Candidates[11].Valid = false
-	if _, err := NativeQualityCosts(r, now, pool); err == nil {
-		t.Fatal("eleven of fourteen valid samples admitted")
+	for i := 2; i < 14; i++ {
+		r.Candidates[i].Valid = false
 	}
-	r.Candidates[11].Valid = true
+	if costs, err := NativeQualityCosts(r, now, pool); err != nil || len(NativeQualityRanking(r, costs)) != 2 {
+		t.Fatal("two of fourteen valid samples not ranked", err)
+	}
+	r.Candidates[1].Valid = false
+	if _, err := NativeQualityCosts(r, now, pool); err == nil {
+		t.Fatal("one valid sample ranked")
+	}
+	for i := range r.Candidates {
+		r.Candidates[i].Valid = i < 12
+	}
 	r.Candidates[0].SampledAt = now.Add(-31 * time.Minute)
 	if _, err := NativeQualityCosts(r, now, pool); err == nil {
 		t.Fatal("stale sample admitted")

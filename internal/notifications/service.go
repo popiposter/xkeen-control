@@ -37,11 +37,13 @@ type Status struct {
 	ControlState      string     `json:"controlState"`
 }
 
-// Alert is opaque outside this package. Only the three closed constructors can
+// Alert is opaque outside this package. Only the closed constructors can
 // produce text; API callers cannot supply arbitrary remote message content.
+// An html alert is Telegram HTML built with every outside value escaped.
 type Alert struct {
 	text string
 	test bool
+	html bool
 }
 
 var digestGrammar = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -161,6 +163,23 @@ func (s *Service) Send(ctx context.Context, alert Alert) error {
 		return Error("transport-failed")
 	}
 	defer s.mu.Unlock()
+	return s.sendLocked(ctx, alert)
+}
+
+// SendReport is Send for a once-a-night report: a send or configuration
+// change holding the lock is waited for (each is bounded by the request
+// timeout) instead of dropping the report.
+func (s *Service) SendReport(ctx context.Context, alert Alert) error {
+	for attempt := 0; !s.mu.TryLock(); attempt++ {
+		if attempt == 10 || !controlPause(ctx, time.Second) {
+			return Error("transport-failed")
+		}
+	}
+	defer s.mu.Unlock()
+	return s.sendLocked(ctx, alert)
+}
+
+func (s *Service) sendLocked(ctx context.Context, alert Alert) error {
 	value, state := readAuthority(s.path)
 	if state != "configured" {
 		return Error(state)
@@ -173,7 +192,7 @@ func (s *Service) Send(ctx context.Context, alert Alert) error {
 	}
 	now := time.Now().UTC()
 	s.status.LastAttemptAt = &now
-	err := s.transport.send(ctx, value, alert.text)
+	err := s.transport.sendFormatted(ctx, value, alert.text, alert.html)
 	if err == nil {
 		s.status.DeliveryState = "delivered"
 		s.status.LastDeliveredAt = &now

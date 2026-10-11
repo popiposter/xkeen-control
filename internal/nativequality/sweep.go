@@ -3,6 +3,7 @@ package nativequality
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/popiposter/xkeen-control/internal/c1"
@@ -30,31 +31,45 @@ func batchSizes(count, maxBatch int) ([]int, error) {
 	return sizes, nil
 }
 
-// startSweep starts an automatic review. Kept as the scheduler entry point.
+// startSweep starts an automatic review.
 func (s *Service) startSweep(parent context.Context, trigger string) error {
-	return s.startReview(parent, trigger, false)
+	_, err := s.startReviewDone(parent, trigger, false)
+	return err
 }
 
-// startReview freezes candidates and starts one review on either profile. An
-// automatic review reserves the daily quota and may apply its decision; a
-// manual review (the operator's speed test) records its start for the shared
-// six-hour gap and leaves the recommendation for an explicit Stage.
+// startNightly starts the nightly review and returns the channel closed when
+// it, including its native Apply, has finished.
+func (s *Service) startNightly(parent context.Context) (<-chan struct{}, error) {
+	return s.startReviewDone(parent, "nightly", false)
+}
+
 func (s *Service) startReview(parent context.Context, trigger string, manual bool) error {
+	_, err := s.startReviewDone(parent, trigger, manual)
+	return err
+}
+
+// startReviewDone freezes candidates and starts one review on either profile. An
+// automatic (nightly) review may apply its decision; a manual review (the
+// operator's speed test) runs the same pipeline and leaves the recommendation
+// for an explicit Stage. A manual test is refused while the nightly window
+// runs, because the window restarts Xray around it.
+func (s *Service) startReviewDone(parent context.Context, trigger string, manual bool) (chan struct{}, error) {
 	if s.Editor == nil || s.Lease == nil || s.Reader == nil || s.Nodes == nil || s.Measurement == nil || s.Resources == nil {
-		return ErrUnavailable
+		return nil, ErrUnavailable
 	}
 	if !manual && (!s.profile().Automatic || s.AutomaticDisabled) {
-		return ErrUnavailable
+		return nil, ErrUnavailable
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.cancel != nil || s.autoApplying || s.recovering {
-		return c1.ErrManualBusy
+	if s.closed || s.cancel != nil || s.autoApplying || s.recovering || manual && s.maintenance.Phase != "" {
+		return nil, c1.ErrManualBusy
 	}
 	if s.status.InspectionRequired {
 		// Not transient: the operator must inspect first.
-		return ErrUnavailable
+		return nil, ErrUnavailable
 	}
+
 	s.status.StartReason = ""
 	if err := s.Resources.CheckConflict(); err != nil {
 		s.status.ReviewReason = "native-speed-conflict-or-unavailable"
@@ -64,39 +79,39 @@ func (s *Service) startReview(parent context.Context, trigger string, manual boo
 				s.status.StartReason = "native-speed-conflict"
 			}
 		}
-		return err
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
 	w, err := s.Editor.Workspace(ctx)
 	if err != nil || w.Pending != nil || !w.TargetsComplete {
 		s.status.ReviewReason = "configuration-pending-or-unavailable"
-		return ErrUnavailable
+		return nil, ErrUnavailable
 	}
 	routing := w.Documents["05_routing.json"].Text
 	nodes := s.Nodes(ctx)
 	pool, index, err := measurementPool(routing, nodes, w.Targets)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	resolved, orphans, _, err := resolveActivePool(routing, nodes, w.Targets, true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	activePool := append(append([]string(nil), resolved...), orphans...)
 	criteria, err := readCriteria(routing, w.Documents["07_observatory.json"].Text, index)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if probeRouteShadowed(routing) {
 		s.status.ReviewReason = "probe-route-shadowed"
-		return ErrUnavailable
+		return nil, ErrUnavailable
 	}
 	now := time.Now().UTC()
 	snapshot := s.Reader.Snapshot(ctx)
 	if !snapshot.APIReachable || !snapshot.RoutingReachable || snapshot.Balancer.Override != "" {
 		s.status.ReviewReason = "native-override-or-unavailable"
-		return ErrUnavailable
+		return nil, ErrUnavailable
 	}
 	quotaPath := s.QuotaPath
 	if quotaPath == "" {
@@ -105,24 +120,21 @@ func (s *Service) startReview(parent context.Context, trigger string, manual boo
 	quotaUnlock, err := acquireQuotaLock(quotaPath)
 	if err != nil {
 		s.status.ReviewReason = "quota-busy-or-unavailable"
-		return err
+		return nil, err
 	}
 	limits := s.profile().Review()
 	previous, err := readQuotaLocked(quotaPath, now)
-	if err != nil || previous.InspectionRequired || !manual && !quotaAdmits(previous, now, limits.Bytes) {
+	if err != nil || previous.InspectionRequired {
 		quotaUnlock()
 		s.status.ReviewReason = "quota-unavailable-or-exhausted"
-		return errQuota
+		return nil, errQuota
 	}
-	plan, err := planSweep(pool, activePool, snapshot.Balancer.NativeSelected, previous.FairCursor, previous.EligibleSetHash, limits.Candidates)
-	if err != nil {
-		quotaUnlock()
-		s.status.ReviewReason = "eligible-unavailable"
-		return err
-	}
+	// Every enabled node is probed; the speed phase then takes the fastest
+	// answering ones (revision 2026-10-11). There is no rotating subset.
+	plan := planAll(pool, activePool, snapshot.Balancer.NativeSelected)
 	plan.Provisional = !previous.ProvisionalAt.IsZero()
-	// The speed phase is capped at the profile wall; the RTT pre-phase and the
-	// separate native Apply have their own bounded margins.
+	// The speed phase is capped at the profile wall; the probe-all pre-phase
+	// and the separate native Apply have their own bounded margins.
 	job, cancelJob := context.WithTimeout(context.WithoutCancel(parent), limits.Wall+time.Duration(len(plan.Candidates))*c1.RTTProbeTimeout+6*time.Minute)
 	done := make(chan struct{})
 	s.cancel, s.done = cancelJob, done
@@ -132,17 +144,11 @@ func (s *Service) startReview(parent context.Context, trigger string, manual boo
 	s.orphans = append([]string(nil), orphans...)
 	s.rttAlive = nil
 	s.result = c1.AdaptiveResult{}
-	s.status = Status{State: "running", Digest: w.Digest, Generation: s.status.Generation + 1, PoolCount: len(pool), ActivePoolCount: len(activePool), ActivePool: append([]string(nil), activePool...), OrphanedPool: append([]string(nil), orphans...), ActivePoolState: "frozen-at-review", EligibleCount: plan.TotalEligible, TotalEligible: plan.TotalEligible, SelectedForSpeed: len(plan.Candidates), DeferredForFutureReview: plan.Deferred, SubsetState: "all-eligible", FairCursor: plan.NextCursor, FairCursorState: plan.CursorState, LatencyLimitMS: criteria.maxRTT, LatencySource: criteria.latencySource, ReviewTrigger: trigger, ReviewPhase: "rtt", ManualSample: manual, Progress: c1.AdaptivePerformanceStatus{State: "running"}, AppliedState: "not-attempted"}
+	s.status = Status{State: "running", Digest: w.Digest, Generation: s.status.Generation + 1, PoolCount: len(pool), ActivePoolCount: len(activePool), ActivePool: append([]string(nil), activePool...), OrphanedPool: append([]string(nil), orphans...), ActivePoolState: "frozen-at-review", EligibleCount: plan.TotalEligible, TotalEligible: plan.TotalEligible, LatencyLimitMS: criteria.maxRTT, LatencySource: criteria.latencySource, ReviewTrigger: trigger, ReviewPhase: "rtt", ManualSample: manual, Progress: c1.AdaptivePerformanceStatus{State: "running"}, AppliedState: "not-attempted"}
 	observeNativeSelection(&s.status, snapshot, now)
-	if plan.Deferred > 0 {
-		s.status.SubsetState = "subset-selected"
-	}
-	if plan.FirstInitialization {
-		s.status.PoolDecision = "first-pool-initialization"
-	}
 	frozen := c1.AdaptiveGeneration{NativeQuality: true, Generation: s.status.Generation, StartedAt: now, CurrentTarget: snapshot.Balancer.NativeSelected}
 	go s.runSweep(job, cancelJob, done, frozen, plan, w.Digest, quotaPath, quotaUnlock, manual)
-	return nil
+	return done, nil
 }
 
 // rttPrePhaseChunk bounds how long one pre-phase step holds the panel lease:
@@ -221,31 +227,26 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 	s.rttAlive = alive
 	s.status.RTTValidCount = len(ordered)
 	s.mu.Unlock()
+	ordered = fastestAnswering(ordered, limits.Candidates)
+	s.mu.Lock()
+	s.status.SelectedForSpeed = len(ordered)
+	s.mu.Unlock()
 	if reason == "" && len(ordered) < 2 {
 		reason = "rtt-candidates-insufficient"
 	}
 	reserved := false
 	if reason == "" && quotaUnlock != nil && manual {
-		// A manual review records its start for the shared six-hour gap only.
-		if err := recordComparisonStartLocked(quotaPath, time.Now().UTC(), &plan); err != nil {
+		// A manual review records its start; it applies nothing by itself.
+		if err := recordComparisonStartLocked(quotaPath, time.Now().UTC()); err != nil {
 			reason = "quota-unavailable-or-exhausted"
 		}
 	} else if reason == "" && quotaUnlock != nil {
-		// Reserve only now: a review that cannot reach the speed phase must not
-		// spend the day's quota or advance the fair cursor.
-		now := time.Now().UTC()
-		if _, err := reserveSweepPlannedLocked(quotaPath, now, &plan, limits.Bytes); err != nil {
+		// The automatic review records its start and the durable intent that
+		// fences an unknown Apply outcome; there is no traffic quota.
+		if err := recordAutomaticStartLocked(quotaPath, time.Now().UTC()); err != nil {
 			reason = "quota-unavailable-or-exhausted"
 		} else {
 			reserved = true
-			if receipt, err := readQuotaLocked(quotaPath, now); err == nil {
-				quota := viewQuota(receipt, now, limits.Bytes)
-				s.mu.Lock()
-				s.status.QuotaState = "available"
-				s.status.QuotaUsedBytes, s.status.QuotaRemainingBytes = quota.UsedBytes, quota.RemainingBytes
-				s.status.QuotaReviewsUsed, s.status.QuotaNextResetAt = quota.ReviewsUsed, quota.NextResetAt
-				s.mu.Unlock()
-			}
 		}
 	}
 	if reason != "" {
@@ -394,9 +395,6 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 	s.status.AttemptedCount = len(result.Candidates)
 	s.status.ValidCount = result.ValidCount
 	s.status.AggregateBytes = result.AggregateBytes
-	if result.State == "completed" && s.status.DeferredForFutureReview > 0 {
-		s.status.SubsetState = "subset-complete"
-	}
 	apply := result.State == "completed" && ctx.Err() == nil && !manual
 	if apply {
 		s.autoApplying = true
@@ -429,4 +427,27 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 			s.mu.Unlock()
 		}
 	}
+}
+
+// planAll freezes every eligible node as a probe candidate, in tag order.
+func planAll(eligible, active []string, nativeSelected string) sweepPlan {
+	candidates := append([]string(nil), eligible...)
+	sort.Strings(candidates)
+	return sweepPlan{Candidates: candidates, Active: append([]string(nil), active...), NativeSelected: nativeSelected, TotalEligible: len(eligible), FirstInitialization: len(active) > 6, CursorState: "all-eligible"}
+}
+
+// fastestAnswering keeps the limit answering candidates with the lowest probe
+// RTT (ties by tag), in that order, for the speed phase.
+func fastestAnswering(admitted []c1.AdaptiveCandidateInput, limit int) []c1.AdaptiveCandidateInput {
+	out := append([]c1.AdaptiveCandidateInput(nil), admitted...)
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].RTTMS == out[j].RTTMS {
+			return out[i].Tag < out[j].Tag
+		}
+		return out[i].RTTMS < out[j].RTTMS
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }

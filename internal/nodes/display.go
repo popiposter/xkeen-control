@@ -1,6 +1,7 @@
 package nodes
 
 import (
+	"fmt"
 	"net"
 	"regexp"
 	"strconv"
@@ -153,4 +154,31 @@ func shortHostLabel(host string) string {
 		return first
 	}
 	return host
+}
+
+// ReportLabel names a node for an external report such as the Telegram
+// nightly summary. It uses only the stored name and the inferred country,
+// never the endpoint: a generic name (whose display name would carry the
+// host) becomes "<flag> <country> · Node <position>".
+func ReportLabel(node PublicNode, position int) string {
+	var hint countryHint
+	found := false
+	for _, candidate := range countryHints {
+		if candidate.code == node.CountryCode {
+			hint, found = candidate, true
+			break
+		}
+	}
+	name := safeName(node.Name, "Imported node")
+	if genericNodeName.MatchString(name) {
+		label := fmt.Sprintf("Node %d", position)
+		if found {
+			return hint.flag + " " + hint.name + " · " + label
+		}
+		return label
+	}
+	if found && !containsFlag(name) {
+		return hint.flag + " " + name
+	}
+	return name
 }

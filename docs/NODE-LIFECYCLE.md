@@ -99,6 +99,31 @@ stale 07 are repaired by the same joint Apply. A review that keeps the running e
 pool by policy (no challenger 15% better, an unmeasured incumbent, too few valid
 results) also narrows a wider 07 to that pool through the same validated Apply,
 keeping 05 byte for byte.
+Source after the nightly-window PR (unreleased; [plan revision 2026-10-11](../plan/architecture-node-quality-v1.md)):
+the daily quota, the six-hour gap, the rotating subset, the 15% margin and the
+80% coverage rule are gone. One nightly maintenance window at 04:00 router time
+(`XKEEN_MAINTENANCE_WINDOW=HH:MM` overrides it until the settings slice) runs in
+order: refresh every enabled subscription once; wait for the native API, then one
+minute; probe every enabled node with the targeted RTT request; speed-test the
+18 fastest that answered (MIPS in batches of three with a one-minute pause,
+108 MiB/16 min; ARM64 in batches of six, 432 MiB/11 min); apply the ranked best
+six when the membership differs or 07 is wider than the pool; finally run the
+native geodata update (`xkeen -ug`) as a panel job. Fewer than six valid results
+never shrink a larger running pool. A step that fails does not skip the later
+ones. Subscriptions no longer refresh on their own six-hour cadence while the
+window owns them (the Telegram refresh command still works), node changes no
+longer pull a review forward, and the manual speed test runs the same pipeline
+without applying. Recovery checks (REQ-009) keep their ten-minute cadence but
+pause during the window. The stock XKeen geodata cron must be removed on each
+router (`geodata-schedule-remove`) once this build is installed, so Xray restarts
+only inside the window. The window time follows the Keenetic zone in `/etc/TZ`
+(then the system date offset), and the schedule re-reads the clock at least every
+ten minutes: it starts only within an hour after the planned time, so an NTP
+correction or a zone change re-plans the night instead of restarting Xray in the
+day. A manual speed test is refused while the window runs. When Telegram
+notifications are enabled, the window ends with one formatted report: step
+outcomes, probe and speed-test counts, and the running pool by stored name (never
+the host) with RTT and throughput.
 No-healthy-member recovery (unreleased, REQ-009): every 10 minutes the panel
 checks whether native Observatory reports every pool member down, or every
 member has vanished from the registry. A member without an Observatory record is

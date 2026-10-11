@@ -716,13 +716,6 @@ func buildSubscriptionCandidate(before Registry, target Subscription, parsed []P
 	return candidate, nil
 }
 
-// SetRuntimeChangeHook registers the callback run after every committed node
-// transaction that changed the effective outbounds. It is set once during
-// process wiring, before any operation starts.
-func (m *Manager) SetRuntimeChangeHook(hook func()) {
-	m.tx.OnRuntimeChange = hook
-}
-
 func (m *Manager) Apply(ctx context.Context, binding, token string, acceptMissing bool) (result ApplyResult, resultErr error) {
 	if ctx == nil {
 		ctx = context.Background()
