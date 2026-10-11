@@ -273,6 +273,11 @@ PATH="$fakebin:$PATH" XKEEN_CONTROL_TEST_MODE=1 XKEEN_CONTROL_TEST_ROOT="$sh_c_r
 [ -x "$testroot/opt/etc/init.d/S99xkeen-control" ]
 [ -x "$testroot/opt/libexec/xkeen-control-updater" ]
 [ -f "$testroot/opt/etc/xkeen-control/auth/password.bcrypt" ]
+# A fresh install records the installed release marker the updater binds.
+marker="$testroot/opt/etc/xkeen-control/state/installed-release.json"
+[ -f "$marker" ] && [ ! -L "$marker" ] && [ "$(stat -c %a "$marker")" = 600 ]
+[ "$(jq -c . "$marker")" = "$(jq -c '{product,version,sourceCommit,channel}' "$fixture/release-manifest.json")" ]
+[ ! -e "$setup_root/opt/etc/xkeen-control/state/installed-release.json" ]
 [ "$(wc -l < "$testroot/bootstrap-calls" | tr -d '[:space:]')" -eq 1 ]
 before_hash="$(sha256sum "$testroot/opt/etc/xkeen-control/auth/password.bcrypt" | awk '{print $1}')"
 
