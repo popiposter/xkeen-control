@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/popiposter/xkeen-control/internal/resourcepolicy"
 )
 
 func TestBroadManualMeasuresTwelveAndKeepsTransferCleanupBounded(t *testing.T) {
@@ -23,7 +25,7 @@ func TestBroadManualMeasuresTwelveAndKeepsTransferCleanupBounded(t *testing.T) {
 	}
 	var final AdaptivePerformanceStatus
 	r := runner.Run(context.Background(), g, func(p AdaptivePerformanceStatus) { final = p })
-	if r.State != "completed" || r.ValidCount != 12 || len(r.Candidates) != 13 || len(final.Candidates) != 13 || r.Candidates[12].Tag != "proxy-12" || r.AggregateBytes > NativeQualityBroadBytes || len(api.adds) != 13 || len(api.removes) != 13 || runner.Probe.Blocked() {
+	if r.State != "completed" || r.ValidCount != 12 || len(r.Candidates) != 13 || len(final.Candidates) != 13 || r.Candidates[12].Tag != "proxy-12" || r.AggregateBytes > (resourcepolicy.Profile{}).Comparison(true).Bytes || len(api.adds) != 13 || len(api.removes) != 13 || runner.Probe.Blocked() {
 		t.Fatalf("broad sample or cleanup failed: %+v %+v", r, final)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -103,7 +105,10 @@ func TestNativeSpeedTestReplacementDoesNotIncreaseTransferBudget(t *testing.T) {
 	g.NativeQuality = true
 	g.Fallbacks = []AdaptiveCandidateInput{{Tag: "proxy-g", RTTMS: 200}}
 	r := runner.Run(context.Background(), g, nil)
-	if r.State != "completed" || r.ReasonCode != AdaptiveReasonGenerationBudget || r.ValidCount != 5 || len(api.adds) != 6 || r.AggregateBytes > AdaptiveMaxGenerationBytes {
+	// The fallback replaces the failed node only while a whole worst-case node
+	// still fits the batch budget.
+	limits := (resourcepolicy.Profile{}).Comparison(false)
+	if r.State != "completed" || r.ValidCount != 6 || len(api.adds) != 7 || r.AggregateBytes > limits.Bytes {
 		t.Fatalf("budget exceeded or partial result hidden: %+v", r)
 	}
 }

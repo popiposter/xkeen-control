@@ -106,7 +106,7 @@ the daily quota, the six-hour gap, the rotating subset, the 15% margin and the
 order: refresh every enabled subscription once; wait for the native API, then one
 minute; probe every enabled node with the targeted RTT request; speed-test the
 18 fastest that answered (MIPS in batches of three with a one-minute pause,
-108 MiB/16 min; ARM64 in batches of six, 432 MiB/11 min); apply the ranked best
+108 MiB/16 min; ARM64 in batches of six, see the accuracy note below); apply the ranked best
 pool (six by default) when the membership differs or 07 is wider than the pool;
 finally run the native geodata update (`xkeen -ug`) as a panel job. Fewer valid
 results than the pool size never shrink a larger running pool. A step that fails does not skip the later
@@ -161,6 +161,19 @@ After an Apply (review or recovery) the panel waits up to three minutes, re-read
 every five seconds, for Xray to select a member of the new pool before it fences
 the outcome for inspection: on MIPS the first read right after the restart often
 has no selection yet (KN1810, 0.4.18, test all and apply).
+Measurement accuracy (source after the accuracy PR, unreleased): a PC benchmark of
+the same 52 nodes on 2026-10-12 (local Xray, the panel's method, then every
+answering node with stages up to 32 MiB over two rounds) matched the router's own
+pick 5 of 6, but only 3 of 6 against the unbounded reference: the 8 MiB ladder read
+fast nodes by connection setup, a single probe request varied two to four times,
+and nodes varied by 23% (median) between rounds. Therefore every latency probe now
+takes the median of up to three requests (a node failing its first request is not
+retried). On the standard profile the ladder is 1/3/8/16/32 MiB down and
+1/3/8/16 MiB up with a 3 s early stop (at most 88 MiB and 45 s per node, 300 s per
+batch of six); a larger stage that does not finish keeps the complete smaller stages
+before it; and the best eight are measured a second time, two valid results combined
+by geometric mean. A default ARM64 review is bounded by 26 x 88 MiB and 27 minutes
+(typically about 1-1.5 GB); MIPS keeps its ladder and has no second pass.
 No-healthy-member recovery (unreleased, REQ-009): every 10 minutes the panel
 checks whether native Observatory reports every pool member down, or every
 member has vanished from the registry. A member without an Observatory record is

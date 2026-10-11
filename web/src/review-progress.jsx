@@ -33,7 +33,7 @@ export function reviewSteps(status) {
   const speed = {
     key: 'speed', title: 'Speed test',
     state: !speedStarted ? (stopped(state) && phase !== 'rtt' ? 'failed' : 'pending') : speedComplete ? 'done' : state === 'running' ? 'active' : stopped(state) ? 'failed' : 'done',
-    detail: !speedStarted ? (planned ? `${planned} fastest will be tested` : 'the fastest answering nodes') : `batch ${Math.min(batch + (state === 'running' ? 1 : 0), batches || 1)} of ${batches || 1} · ${measured} of ${planned} tested, ${status?.validCount || 0} valid`,
+    detail: !speedStarted ? (planned ? `${planned} fastest will be tested` : 'the fastest answering nodes') : `batch ${Math.min(batch + (state === 'running' ? 1 : 0), batches || 1)} of ${batches || 1} · ${measured} of ${planned} tested, ${status?.validCount || 0} valid${status?.remeasured ? `, best ${status.remeasured} re-tested` : ''}`,
     fraction: planned ? measured / planned : 0,
   }
   const recommend = status?.manualSample

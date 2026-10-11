@@ -57,7 +57,7 @@ Observatory-based incumbent check: candidates are every incumbent plus the fair
 rotation, each probed by a targeted RTT request before any quota is reserved.
 The nightly-window source (unreleased, plan revision 2026-10-11) replaces the
 quota and rotation: once a night every enabled node is probed and the 18 fastest
-that answered are speed-tested, at most 108 MiB on MIPS and 432 MiB on ARM64 per
+that answered are speed-tested, at most 108 MiB on MIPS and 26 x 88 MiB on ARM64 (with a second pass over the best eight) per
 review, with the same pressure, batch and cleanup limits. See
 [NODE-LIFECYCLE](NODE-LIFECYCLE.md) for the window order.
 
@@ -65,7 +65,7 @@ The existing measurement owners share a read-only hardware profile and an
 on-demand `/proc` sampler. No new daemon or timer is installed. The only
 persistent setting is the operator's nightly maintenance file (see
 [NODE-LIFECYCLE](NODE-LIFECYCLE.md)); its speed-test breadth (2–18) scales the
-review budget at 6 MiB per node on MIPS and 24 MiB per node on ARM64, and batch
+review budget at 6 MiB per node on MIPS and 88 MiB per node on ARM64 (plus its second pass), and batch
 sizes, pauses, pressure limits and probe timeouts stay derived from the hardware
 profile. Admission uses two CPU deltas: both at least 85% busy refuses work.
 Available memory below 32 MiB (constrained) / 64 MiB (standard), or swap-out above

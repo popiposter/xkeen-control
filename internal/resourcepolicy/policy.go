@@ -25,12 +25,17 @@ func ForPlatform(arch string, memoryKiB uint64) Profile {
 }
 
 type Limits struct {
-	Download   []int64 `json:"-"`
-	Upload     []int64 `json:"-"`
-	Bytes      int64   `json:"bytes"`
-	Seconds    int     `json:"seconds"`
-	Candidates int     `json:"candidates"`
-	Attempts   int     `json:"attempts"`
+	Download []int64 `json:"-"`
+	Upload   []int64 `json:"-"`
+	// EarlyStop ends a direction's ladder after a stage at least this long;
+	// CandidateSeconds bounds one node's down+up work. Zero keeps the
+	// adaptive defaults (1 s and 27 s).
+	EarlyStop        time.Duration `json:"-"`
+	CandidateSeconds int           `json:"-"`
+	Bytes            int64         `json:"bytes"`
+	Seconds          int           `json:"seconds"`
+	Candidates       int           `json:"candidates"`
+	Attempts         int           `json:"attempts"`
 }
 
 func (l Limits) Wall() time.Duration { return time.Duration(l.Seconds) * time.Second }
@@ -46,10 +51,14 @@ func (p Profile) Comparison(broad bool) Limits {
 	if p.Constrained {
 		return Limits{Download: []int64{MiB, 3 * MiB}, Upload: []int64{MiB / 2, MiB * 3 / 2}, Bytes: 24 * MiB, Seconds: 90, Candidates: 3, Attempts: 4}
 	}
-	l := Limits{Download: []int64{MiB, 3 * MiB, 4 * MiB, 8 * MiB}, Upload: []int64{MiB, 3 * MiB, 4 * MiB}, Bytes: 144 * MiB, Seconds: 180, Candidates: 6, Attempts: 12}
+	// Larger stages and a 3 s early stop measure fast nodes by sustained
+	// throughput rather than connection setup (PC benchmark 2026-10-12: the
+	// 8 MiB ladder read a 234 Mbps node as ~100). Per node at most 60 MiB
+	// down + 28 MiB up within 45 s; six nodes per batch.
+	l := Limits{Download: []int64{MiB, 3 * MiB, 8 * MiB, 16 * MiB, 32 * MiB}, Upload: []int64{MiB, 3 * MiB, 8 * MiB, 16 * MiB}, EarlyStop: 3 * time.Second, CandidateSeconds: 45, Bytes: 540 * MiB, Seconds: 300, Candidates: 6, Attempts: 12}
 	if broad {
-		l.Bytes = 288 * MiB
-		l.Seconds = 360
+		l.Bytes = 1080 * MiB
+		l.Seconds = 600
 		l.Candidates = 12
 		l.Attempts = 18
 	}
@@ -67,6 +76,9 @@ type ReviewLimits struct {
 	Pause      time.Duration `json:"-"`
 	Bytes      int64         `json:"bytes"`
 	Wall       time.Duration `json:"-"`
+	// Repeat is how many of the best-ranked nodes a second pass measures
+	// again; their two results are combined. Zero on constrained profiles.
+	Repeat int `json:"repeat"`
 }
 
 // Review is the default review: eighteen speed-test candidates.
@@ -84,8 +96,11 @@ func (p Profile) ReviewFor(n int) ReviewLimits {
 		batches := (n + 2) / 3
 		return ReviewLimits{Candidates: n, BatchSize: 3, Pause: time.Minute, Bytes: int64(n) * 6 * MiB, Wall: time.Duration(batches)*90*time.Second + time.Duration(batches-1)*time.Minute + 2*time.Minute}
 	}
-	batches := (n + 5) / 6
-	return ReviewLimits{Candidates: n, BatchSize: 6, Bytes: int64(n) * 24 * MiB, Wall: time.Duration(batches)*180*time.Second + 2*time.Minute}
+	// Standard: 88 MiB worst case per node, 300 s per batch of six, then a
+	// second pass over the best eight.
+	repeat := min(8, n)
+	batches := (n+5)/6 + (repeat+5)/6
+	return ReviewLimits{Candidates: n, BatchSize: 6, Bytes: int64(n+repeat) * 88 * MiB, Wall: time.Duration(batches)*300*time.Second + 2*time.Minute, Repeat: repeat}
 }
 
 func (p Profile) MemoryFloorKiB() uint64 {

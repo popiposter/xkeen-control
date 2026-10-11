@@ -781,8 +781,13 @@ func TestStandardProfileAutomaticReviewReachesApply(t *testing.T) {
 	}
 	v := waitSweep(t, s)
 	m := s.Measurement.(*sweepMeasurement)
-	if v.ManualSample || v.PoolDecision != "best-pool" || v.AppliedState == "not-attempted" || len(m.calls) != 3 || len(m.calls[0]) != 5 {
-		t.Fatal("standard automatic review did not use six-node batches and the Apply path", v.ManualSample, v.PoolDecision, v.AppliedState, len(m.calls))
+	// Three first-pass batches of the fourteen, then a second pass over the
+	// best eight in two batches.
+	if v.ManualSample || v.PoolDecision != "best-pool" || v.AppliedState == "not-attempted" || len(m.calls) != 5 || len(m.calls[0]) != 5 || v.Remeasured != 8 || v.BatchTotal != 5 {
+		t.Fatal("standard automatic review did not use six-node batches, the second pass and the Apply path", v.ManualSample, v.PoolDecision, v.AppliedState, len(m.calls), v.Remeasured)
+	}
+	if again := len(m.calls[3]) + len(m.calls[4]); again != 8 {
+		t.Fatal("second pass size", again)
 	}
 	if q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes); err != nil || q.LastStartedAt.IsZero() {
 		t.Fatal("standard automatic review reserved traffic or did not record its start", q, err)

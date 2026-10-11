@@ -3,6 +3,7 @@ package c1
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 )
 
@@ -11,6 +12,8 @@ const (
 	// RTTProbeTimeout bounds one targeted latency probe, including the probe
 	// rule installation and the zero-byte HTTPS request through the outbound.
 	RTTProbeTimeout = 10 * time.Second
+	// RTTProbeSamples is how many requests one probe makes.
+	RTTProbeSamples = 3
 )
 
 // RTTSample is one targeted probe result. Valid is false when the request did
@@ -112,13 +115,35 @@ func (c *Coordinator) MeasureRTT(ctx context.Context, tags []string) ([]RTTSampl
 		probeContext, stop := context.WithTimeout(ctx, RTTProbeTimeout)
 		var elapsed time.Duration
 		err := probe.WithTarget(probeContext, RTTMode, tag, func(requestContext context.Context) error {
-			started := time.Now()
-			measured, requestErr := transport.Latency(requestContext)
-			elapsed = measured
-			if elapsed <= 0 {
-				elapsed = time.Since(started)
+			// Up to RTTProbeSamples requests, median of those that answered:
+			// one request varies by two to four times (PC benchmark
+			// 2026-10-12). A node that fails its first request is not retried.
+			var answers []time.Duration
+			var lastErr error
+			for attempt := 0; attempt < RTTProbeSamples && requestContext.Err() == nil; attempt++ {
+				started := time.Now()
+				measured, requestErr := transport.Latency(requestContext)
+				if measured <= 0 {
+					measured = time.Since(started)
+				}
+				if requestErr != nil {
+					lastErr = requestErr
+					if len(answers) == 0 {
+						break
+					}
+					continue
+				}
+				answers = append(answers, measured)
 			}
-			return requestErr
+			if len(answers) == 0 {
+				if lastErr == nil {
+					lastErr = requestContext.Err()
+				}
+				return lastErr
+			}
+			sort.Slice(answers, func(i, j int) bool { return answers[i] < answers[j] })
+			elapsed = answers[len(answers)/2]
+			return nil
 		})
 		stop()
 		sample.SampledAt = time.Now().UTC()

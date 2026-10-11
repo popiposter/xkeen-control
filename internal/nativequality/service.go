@@ -55,7 +55,9 @@ type Status struct {
 	RTTProbed int           `json:"rttProbed"`
 	Probes    []ProbeResult `json:"probes,omitempty"`
 	// BatchTotal is the planned number of speed-test batches.
-	BatchTotal           int       `json:"batchTotal"`
+	BatchTotal int `json:"batchTotal"`
+	// Remeasured counts nodes the second pass measured again.
+	Remeasured           int       `json:"remeasured"`
 	AttemptedCount       int       `json:"attemptedCount"`
 	ValidCount           int       `json:"validCount"`
 	BatchCount           int       `json:"batchCount"`

@@ -291,7 +291,7 @@ func (r *AdaptiveRunner) Run(parent context.Context, generation AdaptiveGenerati
 			break
 		}
 
-		candidateContext, cancelCandidate := context.WithTimeout(generationContext, AdaptiveWorkTimeout)
+		candidateContext, cancelCandidate := context.WithTimeout(generationContext, candidateWork(limits))
 		execution := &adaptiveExecution{transport: transport, limits: limits}
 		probeErr := r.Probe.WithTarget(candidateContext, AdaptiveMode, input.Tag, func(probeContext context.Context) error {
 			return execution.run(probeContext)
@@ -428,7 +428,23 @@ func canAdmitResourceCandidate(ctx context.Context, used int64, limits resourcep
 		bytes += n
 	}
 	deadline, ok := ctx.Deadline()
-	return used >= 0 && used <= limits.Bytes-bytes && ok && time.Until(deadline) >= AdaptiveWorkTimeout
+	return used >= 0 && used <= limits.Bytes-bytes && ok && time.Until(deadline) >= candidateWork(limits)
+}
+
+// candidateWork bounds one node's down+up work.
+func candidateWork(limits resourcepolicy.Limits) time.Duration {
+	if limits.CandidateSeconds > 0 {
+		return time.Duration(limits.CandidateSeconds)*time.Second - AdaptiveCleanupReserve
+	}
+	return AdaptiveWorkTimeout
+}
+
+// earlyStop ends a direction after a stage at least this long.
+func earlyStop(limits resourcepolicy.Limits) time.Duration {
+	if limits.EarlyStop > 0 {
+		return limits.EarlyStop
+	}
+	return AdaptiveEarlyStopDuration
 }
 
 func (e *adaptiveExecution) runDirection(ctx context.Context, stages []int64, transfer func(context.Context, int64) (ManualTransfer, error)) (float64, error) {
@@ -459,17 +475,24 @@ func (e *adaptiveExecution) runDirection(ctx context.Context, stages []int64, tr
 		// transport may have read a partial response, and those bytes still
 		// consume the generation envelope.
 		e.bytes += reportedBytes
-		if err != nil || stageContextErr != nil {
+		failed := err != nil || stageContextErr != nil || result.Bytes != payload || result.Duration <= 0
+		if failed {
+			// A larger stage that did not finish in time does not void the
+			// complete smaller stages before it; cancellation of the node or
+			// review still does.
+			if ctx.Err() == nil && len(complete) > 0 {
+				break
+			}
 			if err != nil {
 				return 0, err
 			}
-			return 0, stageContextErr
-		}
-		if result.Bytes < 0 || result.Bytes > payload || result.Bytes != payload || result.Duration <= 0 {
+			if stageContextErr != nil {
+				return 0, stageContextErr
+			}
 			return 0, errors.New("adaptive transfer was incomplete")
 		}
 		complete = append(complete, manualCompleteStage{bytes: result.Bytes, duration: result.Duration})
-		if result.Duration >= AdaptiveEarlyStopDuration {
+		if result.Duration >= earlyStop(e.limits) {
 			break
 		}
 	}

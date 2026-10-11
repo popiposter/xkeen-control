@@ -34,12 +34,21 @@ func TestReviewForScalesBudgetsWithCandidates(t *testing.T) {
 	if got := constrained.ReviewFor(6); got.Candidates != 6 || got.Bytes != 36*MiB || got.Wall != 2*90*time.Second+time.Minute+2*time.Minute {
 		t.Fatal("constrained six", got)
 	}
+	if constrained.Review().Repeat != 0 {
+		t.Fatal("constrained profiles have no second pass")
+	}
+	// Standard: 88 MiB per node, 300 s per batch of six, plus a second pass
+	// over the best eight.
 	standard := Profile{}
-	if got := standard.ReviewFor(18); got.Bytes != 432*MiB || got.Wall != 11*time.Minute {
+	if got := standard.ReviewFor(18); got.Repeat != 8 || got.Bytes != 26*88*MiB || got.Wall != 5*300*time.Second+2*time.Minute {
 		t.Fatal("standard default", got)
 	}
-	if got := standard.ReviewFor(7); got.Candidates != 7 || got.Bytes != 168*MiB || got.Wall != 2*180*time.Second+2*time.Minute {
+	if got := standard.ReviewFor(7); got.Candidates != 7 || got.Repeat != 7 || got.Bytes != 14*88*MiB || got.Wall != 4*300*time.Second+2*time.Minute {
 		t.Fatal("standard seven", got)
+	}
+	// The whole default review stays inside the 30-minute evidence window.
+	if standard.Review().Wall > 30*time.Minute {
+		t.Fatal("review longer than the evidence window")
 	}
 	if standard.ReviewFor(99).Candidates != 18 || standard.ReviewFor(0).Candidates != 2 {
 		t.Fatal("breadth not clamped")
