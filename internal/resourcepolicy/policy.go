@@ -88,8 +88,9 @@ func (p Profile) Review() ReviewLimits {
 
 // ReviewFor bounds a review of n speed-test candidates (clamped to 2..18).
 // Constrained: n × 6 MiB (down 1/3, up 0.5/1.5), batches of three × 90 s
-// with one-minute pauses; standard: n × 24 MiB (down 1/3/4/8, up 1/3/4),
-// batches of six × 180 s. Both keep two minutes of cleanup margin.
+// with one-minute pauses; standard: (n + second pass) × 88 MiB (down
+// 1/3/8/16/32, up 1/3/8/16), batches of six × 300 s. Both keep two minutes
+// of cleanup margin.
 func (p Profile) ReviewFor(n int) ReviewLimits {
 	n = min(max(n, 2), 18)
 	if p.Constrained {

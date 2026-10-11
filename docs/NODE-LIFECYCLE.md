@@ -199,11 +199,12 @@ prove the global best among nodes outside the RTT criterion.
 
 Existing bounded diagnostics temporarily target each candidate and clean their
 owned temporary diagnostic state; they do not replace the production selection.
-Download stages1/3/4/8MiB (max16), upload1/3/4MiB (max8),8s per stage,30s per node;
-each direction stops once a complete stage lasts>=1s. Aggregate complete byte/time
-rates require>=250ms; incomplete transfers fail. On a standard router, manual
-comparisons have288MiB/360s and automatic comparisons144MiB/180s; MIPS keeps the
-smaller per-batch limits above. Cleanup is included in each wall ceiling. All failed bytes count. Replacements
+Per batch, MIPS measures 1/3 MiB down and 0.5/1.5 MiB up, stopping a direction once a
+complete stage lasts at least 1 s; the standard profile measures 1/3/8/16/32 MiB down
+and 1/3/8/16 MiB up with a 3 s early stop, at most 88 MiB and 45 s per node and
+540 MiB/300 s per batch of six (see the accuracy note above). Each stage has 8 s;
+aggregate rates use complete stages of at least 250 ms, and a failed larger stage
+keeps the complete smaller ones. Cleanup is included in each wall ceiling. All failed bytes count. Replacements
 stop at that ceiling; at least two valid results may form an explicitly partial
 recommendation. The action is named Run speed test. Download then upload; do not infer packet loss from
 HTTP failures. Unique retained native observations contribute failure-frequency and

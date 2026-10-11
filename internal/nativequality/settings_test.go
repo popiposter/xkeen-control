@@ -167,3 +167,18 @@ func TestNightlyRecommendationValidity(t *testing.T) {
 		t.Fatal("manual test age")
 	}
 }
+
+// The Apply window runs from the review's completion, so a long review does
+// not shorten it.
+func TestStageAgeRunsFromCompletion(t *testing.T) {
+	s := &Service{}
+	started := time.Now().UTC().Add(-25 * time.Minute)
+	s.result.StartedAt, s.result.CompletedAt = started, started.Add(20*time.Minute)
+	if s.stageAge() != 50*time.Minute {
+		t.Fatal("manual stage age", s.stageAge())
+	}
+	s.status.ManualSample, s.status.ReviewTrigger = true, "nightly"
+	if s.stageAge() != NightlyRecommendationValidity+20*time.Minute {
+		t.Fatal("nightly stage age", s.stageAge())
+	}
+}

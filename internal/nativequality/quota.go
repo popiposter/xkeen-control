@@ -17,8 +17,8 @@ import (
 
 const (
 	defaultQuotaPath = "/tmp/xkeen-control/native-quality-quota.json"
-	// maxReservationBytes bounds any stored reservation; profiles reserve
-	// their own Review().Bytes, never more than this.
+	// maxReservationBytes bounds a legacy stored reservation (written by
+	// panels before the nightly window); new reviews reserve nothing.
 	maxReservationBytes = 432 * resourcepolicy.MiB
 )
 

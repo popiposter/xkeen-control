@@ -433,6 +433,13 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 				s.status.AggregateBytes = result.AggregateBytes
 				s.mu.Unlock()
 			}
+			if reason == "" {
+				// A second pass stopped early still completes the speed
+				// stage: no planned batch is left pending.
+				s.mu.Lock()
+				s.status.BatchTotal = s.status.BatchCount
+				s.mu.Unlock()
+			}
 		}
 	}
 	result.CompletedAt = time.Now().UTC()

@@ -1082,3 +1082,36 @@ func TestApplyReadbackFencesOverrideAndExhaustedWait(t *testing.T) {
 		})
 	}
 }
+
+// A second-pass batch that fails keeps the first pass and still reaches the
+// decision; an uncertain probe cleanup there fences the review instead.
+func TestSecondPassStopKeepsFirstPassButFenceFails(t *testing.T) {
+	for _, mode := range []string{"failed-batch", "cleanup"} {
+		t.Run(mode, func(t *testing.T) {
+			s, _, _, _ := sweepFixture(t, true)
+			s.Resources.Profile = resourcepolicy.ForPlatform("arm64", 1<<20)
+			m := s.Measurement.(*sweepMeasurement)
+			// Batches 1-3 are the first pass; batch 4 opens the second pass.
+			if mode == "failed-batch" {
+				m.failBatch = 4
+			} else {
+				m.cleanupBatch = 4
+			}
+			if err := s.startSweep(context.Background(), "periodic"); err != nil {
+				t.Fatal(err)
+			}
+			v := waitSweep(t, s)
+			if mode == "failed-batch" {
+				// The decision is reached on the first pass (the fixture has no
+				// Apply job, so only the decision is checked here).
+				if v.ReviewReason == "batch-incomplete-or-unknown" || v.Remeasured != 0 || v.BatchTotal != v.BatchCount || v.AttemptedCount != 14 || v.PoolDecision == "" {
+					t.Fatalf("a failed second pass voided the review: %+v", v)
+				}
+				return
+			}
+			if v.State != "failed" || !v.InspectionRequired {
+				t.Fatalf("an uncertain second-pass cleanup did not fence: state=%s inspection=%v reason=%s", v.State, v.InspectionRequired, v.ReviewReason)
+			}
+		})
+	}
+}
