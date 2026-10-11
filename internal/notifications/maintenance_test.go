@@ -106,6 +106,10 @@ func TestMaintenanceAlertShowsStepsTurnedOff(t *testing.T) {
 	if !strings.Contains(text, "recommendation left for Apply in the panel") || !strings.Contains(text, "✅") {
 		t.Fatal("recommend-only night", text)
 	}
+	text = MaintenanceAlert(MaintenanceReport{ReviewStarted: true, Recommended: true, RecommendationCurrent: true, Applied: "not-attempted", Geodata: "completed"}).text
+	if !strings.Contains(text, "the running pool is already the best; nothing to apply") || strings.Contains(text, "left for Apply") {
+		t.Fatal("unchanged recommendation reported as pending Apply", text)
+	}
 	// A review that started but did not complete is never a green night.
 	text = MaintenanceAlert(MaintenanceReport{ReviewStarted: true, Applied: "not-attempted", Geodata: "completed"}).text
 	if !strings.Contains(text, "⚠️") || strings.Contains(text, "recommendation left") {

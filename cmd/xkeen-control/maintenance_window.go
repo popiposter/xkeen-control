@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os/exec"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -79,6 +80,7 @@ func maintenanceReport(m nativequality.MaintenanceStatus, st nativequality.Statu
 		report.SpeedTested, report.Valid = st.AttemptedCount, st.ValidCount
 		report.Decision, report.Applied = st.PoolDecision, st.AppliedState
 		report.Recommended = st.ManualSample && st.ReviewTrigger == "nightly" && st.State == "completed"
+		report.RecommendationCurrent = report.Recommended && sameMembers(st.RecommendedPool, st.ActivePool)
 	}
 	names := make(map[string]nodes.PublicNode, len(registry))
 	for _, node := range registry {
@@ -112,4 +114,15 @@ func maintenanceReport(m nativequality.MaintenanceStatus, st nativequality.Statu
 		report.Pool = append(report.Pool, entry)
 	}
 	return report
+}
+
+// sameMembers reports whether two non-empty pools hold the same tags.
+func sameMembers(a, b []string) bool {
+	if len(a) == 0 || len(a) != len(b) {
+		return false
+	}
+	x, y := append([]string(nil), a...), append([]string(nil), b...)
+	sort.Strings(x)
+	sort.Strings(y)
+	return slices.Equal(x, y)
 }

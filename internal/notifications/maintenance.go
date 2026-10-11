@@ -22,8 +22,9 @@ type MaintenanceReport struct {
 	// SubscriptionsOff and ReviewOff mark steps the operator turned off.
 	SubscriptionsOff, ReviewOff bool
 	// Recommended marks a recommend-only review that completed and left its
-	// recommendation for Apply in the panel.
-	Recommended bool
+	// recommendation for Apply in the panel; RecommendationCurrent marks one
+	// whose members already form the running pool.
+	Recommended, RecommendationCurrent bool
 	// Decision, Applied and Geodata are closed codes; anything else renders
 	// as unknown.
 	Decision, Applied, Geodata string
@@ -98,7 +99,9 @@ func MaintenanceAlert(r MaintenanceReport) Alert {
 	} else if r.ReviewStarted {
 		fmt.Fprintf(&b, "📡 <b>Probe:</b> %d of %d nodes answered\n", r.Answered, r.Eligible)
 		fmt.Fprintf(&b, "⚡ <b>Speed test:</b> %d of %d valid\n", r.Valid, r.SpeedTested)
-		if r.Recommended {
+		if r.Recommended && r.RecommendationCurrent {
+			b.WriteString("🔁 <b>Pool:</b> the running pool is already the best; nothing to apply")
+		} else if r.Recommended {
 			b.WriteString("🔁 <b>Pool:</b> recommendation left for Apply in the panel (12 h)")
 		} else {
 			fmt.Fprintf(&b, "🔁 <b>Pool:</b> %s", closedText(maintenanceDecisions, r.Decision))
