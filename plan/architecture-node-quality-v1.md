@@ -106,7 +106,10 @@ flowchart LR
   counts as unhealthy), and a rotating share of the remaining enabled nodes,
   using the existing fair cursor. Missing evidence is never inferred as
   healthy: a candidate that fails its pre-phase probe is unhealthy for this
-  review and does not take part in the speed phase. Before comparing scores, obtain a fresh RTT for
+  review and does not take part in the speed phase. Health here means the
+  probe answered within its timeout; the probe is a different measurement
+  from a native Observatory sample, so the native maxRTT is not applied to it.
+  REQ-009 recovery stops only for a member that answered within maxRTT. Before comparing scores, obtain a fresh RTT for
   **every** frozen candidate through the same fixed targeted endpoint and
   timeout; do not compare native Observatory RTT with a different outsider
   probe as though they were the same measurement. Attempt the bounded speed

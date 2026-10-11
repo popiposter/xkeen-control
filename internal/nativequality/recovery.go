@@ -163,16 +163,23 @@ func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
 	s.recovery.State = "probing"
 	s.mu.Unlock()
 	probeCtx, stopProbe := context.WithTimeout(parent, time.Duration(len(plan.Candidates))*c1.RTTProbeTimeout+time.Minute)
-	admitted, alive, reason := s.rttPrePhase(probeCtx, plan.Candidates, criteria.maxRTT, w.Digest)
+	admitted, alive, reason := s.rttPrePhase(probeCtx, plan.Candidates, w.Digest)
 	stopProbe()
 	out := RecoveryStatus{Probed: len(plan.Candidates), Verified: len(admitted)}
 	if reason != "" {
 		out.State, out.Reason = "deferred", reason
 		return out
 	}
+	answered := make(map[string]int64, len(admitted))
+	for _, candidate := range admitted {
+		answered[candidate.Tag] = candidate.RTTMS
+	}
 	for _, tag := range resolved {
-		if alive[tag] {
-			// The probe proves a member answers: Xray can still select it.
+		// Stop only for a member that answered within the native maxRTT: a
+		// slower answer is no proof that Xray, which already reports every
+		// member down, will select it again. Missing an outage costs more than
+		// one unneeded recovery Apply.
+		if rtt, ok := answered[tag]; ok && alive[tag] && rtt <= criteria.maxRTT {
 			out.State, out.Reason = "healthy", "member-answers-probe"
 			return out
 		}

@@ -64,6 +64,7 @@ type sweepMeasurement struct {
 	rttCalls     [][]string
 	rttDown      map[string]bool
 	rttSlow      map[string]bool
+	slowMS       int64 // RTT of a slow tag; zero means 20000
 	rttErr       error
 	onRTT        func(int)
 	calls        [][]string
@@ -93,6 +94,9 @@ func (m *sweepMeasurement) MeasureRTT(_ context.Context, tags []string) ([]c1.RT
 			sample.Valid, sample.RTTMS = true, int64(100+index)
 			if m.rttSlow[tag] {
 				sample.RTTMS = 20000
+				if m.slowMS > 0 {
+					sample.RTTMS = m.slowMS
+				}
 			}
 		}
 		out = append(out, sample)
@@ -333,15 +337,27 @@ func TestSweepProbeGateFailureDefersWithoutAnInspectionFence(t *testing.T) {
 	waitSweep(t, s)
 }
 
-func TestSweepIncumbentAboveNativeMaxRTTIsUnhealthy(t *testing.T) {
-	s, _, _, _ := sweepFixture(t, true)
-	s.Measurement.(*sweepMeasurement).rttSlow = map[string]bool{"proxy-05": true}
-	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+// KN1811 shape: maxRTT 750 ms and every incumbent answering the probe in 3 s.
+// They are healthy (they answered), so the review ranks them on measured
+// speed and replaces them only through the margin, never as unhealthy.
+func TestSweepSlowAnsweringIncumbentsAreRankedNotUnhealthy(t *testing.T) {
+	s, _, _, dir := sweepFixture(t, true)
+	routing, err := os.ReadFile(filepath.Join(dir, "05_routing.json"))
+	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "05_routing.json"), []byte(strings.Replace(string(routing), `"maxRTT":"10s"`, `"maxRTT":"750ms"`, 1)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m := s.Measurement.(*sweepMeasurement)
+	m.slowMS = 3000
+	m.rttSlow = map[string]bool{"proxy-00": true, "proxy-01": true, "proxy-02": true, "proxy-03": true, "proxy-04": true, "proxy-05": true}
+	if err := s.startSweep(context.Background(), "periodic"); err != nil {
+		t.Fatal(err, s.Read().ReviewReason)
+	}
 	v := waitSweep(t, s)
-	if v.RTTValidCount != 11 || v.PoolDecision != "unhealthy-incumbent-replaced" {
-		t.Fatal("over-maxRTT incumbent was kept as healthy", v.RTTValidCount, v.PoolDecision, v.ReviewReason)
+	if v.RTTValidCount != 12 || v.PoolDecision != "material-improvement" {
+		t.Fatal("slow answering incumbents were not ranked on speed", v.RTTValidCount, v.PoolDecision, v.ReviewReason)
 	}
 }
 
@@ -463,7 +479,7 @@ func runSweepFixture(t *testing.T, s *Service, g c1.AdaptiveGeneration, digest s
 	for _, candidate := range g.Candidates[:min(12, len(g.Candidates))] {
 		tags = append(tags, candidate.Tag)
 	}
-	s.runSweep(ctx, cancel, done, g, sweepPlan{Candidates: tags, Active: s.status.ActivePool}, 10000, digest, s.QuotaPath, nil, false)
+	s.runSweep(ctx, cancel, done, g, sweepPlan{Candidates: tags, Active: s.status.ActivePool}, digest, s.QuotaPath, nil, false)
 	select {
 	case <-done:
 	default:
