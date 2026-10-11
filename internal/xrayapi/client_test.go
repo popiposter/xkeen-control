@@ -2,6 +2,7 @@ package xrayapi
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -300,5 +301,16 @@ func TestNotifyRuleEncodingBothDomainLayouts(t *testing.T) {
 	var config Config
 	if err != nil || proto.Unmarshal(plain, &config) != nil || config.Rule[0].GetTag() != "proxy-a" || len(config.Rule[0].ProtoReflect().GetUnknown()) != 0 {
 		t.Fatal("probe rule encoding changed")
+	}
+}
+
+func TestNestedDomainRetryOnlyOnInvalidWireData(t *testing.T) {
+	if !invalidWireData(errors.New("rpc error: code = Unknown desc = proto: cannot parse invalid wire-format data")) {
+		t.Fatal("wire rejection not recognised")
+	}
+	for _, other := range []string{"context deadline exceeded", "rpc error: code = Unavailable desc = connection refused", "app/router: duplicate ruleTag xkeen-control-notify"} {
+		if invalidWireData(errors.New(other)) {
+			t.Fatal("retried on", other)
+		}
 	}
 }

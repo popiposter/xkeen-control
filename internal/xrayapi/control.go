@@ -66,9 +66,11 @@ func (c *Client) AddRule(ctx context.Context, rule Rule, shouldAppend bool) erro
 		})
 	}
 	err := add(false)
-	if err != nil && len(rule.Domains) > 0 {
-		// Newer Xray wraps the domain in geodata.DomainRule; it rejects the
-		// older layout as invalid wire data, so the retry is unambiguous.
+	if err != nil && len(rule.Domains) > 0 && invalidWireData(err) {
+		// Newer Xray wraps the domain in geodata.DomainRule and rejects the
+		// older layout as invalid wire data. Only that rejection retries: an
+		// older Xray would accept the nested bytes as a domain that never
+		// matches.
 		return add(true)
 	}
 	return err
@@ -121,6 +123,11 @@ func (c *Client) withRouting(parent context.Context, call func(RoutingServiceCli
 	callContext, cancelCall := context.WithTimeout(parent, timeout)
 	defer cancelCall()
 	return call(NewRoutingServiceClient(conn), callContext)
+}
+
+func invalidWireData(err error) bool {
+	text := err.Error()
+	return strings.Contains(text, "invalid wire-format data") || strings.Contains(text, "cannot parse")
 }
 
 func validRule(rule Rule) bool {

@@ -165,7 +165,7 @@ func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
 	s.recovery.State = "probing"
 	s.mu.Unlock()
 	probeCtx, stopProbe := context.WithTimeout(parent, time.Duration(len(plan.Candidates))*c1.RTTProbeTimeout+time.Minute)
-	admitted, alive, reason := s.rttPrePhase(probeCtx, plan.Candidates, w.Digest)
+	admitted, alive, reason := s.rttPrePhase(probeCtx, plan.Candidates, w.Digest, false)
 	stopProbe()
 	out := RecoveryStatus{Probed: len(plan.Candidates), Verified: len(admitted)}
 	if reason != "" {

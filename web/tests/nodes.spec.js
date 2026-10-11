@@ -618,9 +618,11 @@ test('the last review shows probe latency and speed for nodes outside the pool',
   const nodes = prepared.state.nodes
   nodes[3] = { ...nodes[3], enabled: true, alive: false, lastTry: '', lastSeen: '', lastError: '', displayName: 'Probe answered' }
   nodes[4] = { ...nodes[4], enabled: true, alive: false, lastTry: '', lastSeen: '', lastError: '', displayName: 'Probe silent' }
+  nodes[5] = { ...nodes[5], enabled: true, alive: false, lastTry: '2026-10-11T10:00:00Z', lastSeen: '', lastError: '', displayName: 'Probe observed down' }
   await page.route('**/api/v1/performance/quality', (route) => json(route, { state: 'completed', ranking: [], probes: [
     { tag: nodes[3].outboundTag, answered: true, rttMs: 77, sampledAt: '2026-10-11T10:00:00Z' },
     { tag: nodes[4].outboundTag, answered: false },
+    { tag: nodes[5].outboundTag, answered: true, rttMs: 66 },
   ], progress: { candidates: [{ tag: nodes[3].outboundTag, rttMs: 77, valid: true, downloadBps: 5e6, uploadBps: 1e6 }] } }))
   await openNodes(page)
   await page.getByLabel('Search nodes').fill('Probe')
@@ -629,5 +631,9 @@ test('the last review shows probe latency and speed for nodes outside the pool',
   await expect(answered).toContainText('77 ms probe')
   await expect(answered).toContainText('40.0 Mbps')
   await expect(page.locator('.nodes-table tbody tr').filter({ hasText: 'Probe silent' })).toContainText('no answer')
+  // Xray monitors this pool member and reports it down: no stale probe value.
+  const observed = page.locator('.nodes-table tbody tr').filter({ hasText: 'Probe observed down' })
+  await expect(observed).toContainText('Not alive')
+  await expect(observed).not.toContainText('66 ms')
   expect(prepared.state.requests.filter((request) => request.method === 'POST')).toEqual([])
 })

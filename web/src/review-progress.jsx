@@ -35,7 +35,9 @@ export function reviewSteps(status) {
   const recommend = status?.manualSample
   const rank = {
     key: 'rank', title: recommend ? 'Ranking' : 'Ranking and Apply',
-    state: state === 'applying' ? 'active' : state === 'completed' || state === 'consumed' ? (!recommend && !['applied', 'no-op'].includes(status?.appliedState) ? 'failed' : 'done') : stopped(state) && speedStarted ? 'failed' : 'pending',
+    // A completed review that kept its pool by policy is done; only an Apply
+    // that needs inspection or did not land counts as stopped.
+    state: state === 'applying' ? 'active' : state === 'completed' || state === 'consumed' ? (!recommend && (status?.appliedState === 'inspection-required' || status?.appliedState === 'not-applied' && status?.poolDecision !== 'insufficient-valid-results') ? 'failed' : 'done') : stopped(state) && speedStarted ? 'failed' : 'pending',
     detail: state === 'applying' ? 'applying the best pool and verifying it…' : finished(state) ? (recommend ? (status?.canStage ? 'recommendation ready: Apply it below' : 'measured; no recommendation to apply') : status?.appliedState === 'applied' ? 'best pool applied and verified' : status?.appliedState === 'no-op' ? 'running pool is already the best' : 'pool kept') : `best ${status?.settings?.poolSize || 6} are chosen`,
     fraction: finished(state) && state !== 'applying' ? 1 : 0,
   }
