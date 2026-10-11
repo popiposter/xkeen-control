@@ -333,15 +333,18 @@ func TestSweepProbeGateFailureDefersWithoutAnInspectionFence(t *testing.T) {
 	waitSweep(t, s)
 }
 
-func TestSweepIncumbentAboveNativeMaxRTTIsUnhealthy(t *testing.T) {
+// A slow but answering candidate is healthy: the probe is heavier than native
+// Observatory, so the native maxRTT does not apply to it. Seen on KN1811,
+// where a 750 ms maxRTT on probe latency dropped working incumbents.
+func TestSweepSlowAnsweringIncumbentIsHealthyNotOverMaxRTT(t *testing.T) {
 	s, _, _, _ := sweepFixture(t, true)
 	s.Measurement.(*sweepMeasurement).rttSlow = map[string]bool{"proxy-05": true}
 	if err := s.startSweep(context.Background(), "periodic"); err != nil {
 		t.Fatal(err)
 	}
 	v := waitSweep(t, s)
-	if v.RTTValidCount != 11 || v.PoolDecision != "unhealthy-incumbent-replaced" {
-		t.Fatal("over-maxRTT incumbent was kept as healthy", v.RTTValidCount, v.PoolDecision, v.ReviewReason)
+	if v.RTTValidCount != 12 || v.PoolDecision == "unhealthy-incumbent-replaced" {
+		t.Fatal("a slow answering incumbent was treated as unhealthy", v.RTTValidCount, v.PoolDecision, v.ReviewReason)
 	}
 }
 
@@ -463,7 +466,7 @@ func runSweepFixture(t *testing.T, s *Service, g c1.AdaptiveGeneration, digest s
 	for _, candidate := range g.Candidates[:min(12, len(g.Candidates))] {
 		tags = append(tags, candidate.Tag)
 	}
-	s.runSweep(ctx, cancel, done, g, sweepPlan{Candidates: tags, Active: s.status.ActivePool}, 10000, digest, s.QuotaPath, nil, false)
+	s.runSweep(ctx, cancel, done, g, sweepPlan{Candidates: tags, Active: s.status.ActivePool}, digest, s.QuotaPath, nil, false)
 	select {
 	case <-done:
 	default:

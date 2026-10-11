@@ -141,7 +141,7 @@ func (s *Service) startReview(parent context.Context, trigger string, manual boo
 		s.status.PoolDecision = "first-pool-initialization"
 	}
 	frozen := c1.AdaptiveGeneration{NativeQuality: true, Generation: s.status.Generation, StartedAt: now, CurrentTarget: snapshot.Balancer.NativeSelected}
-	go s.runSweep(job, cancelJob, done, frozen, plan, criteria.maxRTT, w.Digest, quotaPath, quotaUnlock, manual)
+	go s.runSweep(job, cancelJob, done, frozen, plan, w.Digest, quotaPath, quotaUnlock, manual)
 	return nil
 }
 
@@ -151,11 +151,14 @@ const rttPrePhaseChunk = 6
 
 // rttPrePhase probes every frozen candidate once through the same fixed
 // endpoint and timeout. It returns the candidates admitted to the speed phase,
-// in plan order, and every probed tag's health. A tag that does not answer, or
-// answers slower than the native maxRTT, is unhealthy: native Xray would not
-// select it either. Probes run in chunks; each chunk holds the panel lease
-// only for its own duration and first rechecks the frozen configuration.
-func (s *Service) rttPrePhase(ctx context.Context, tags []string, maxRTT int64, digest string) ([]c1.AdaptiveCandidateInput, map[string]bool, string) {
+// in plan order, and every probed tag's health. A tag that does not answer
+// within the probe timeout is unhealthy. The probe is a full HTTPS request
+// through the outbound, a heavier measurement than native Observatory, so the
+// native maxRTT is not applied to it (REQ-007): Xray still applies maxRTT to
+// its own observations, and the speed phase ranks the answering candidates.
+// Probes run in chunks; each chunk holds the panel lease only for its own
+// duration and first rechecks the frozen configuration.
+func (s *Service) rttPrePhase(ctx context.Context, tags []string, digest string) ([]c1.AdaptiveCandidateInput, map[string]bool, string) {
 	alive := make(map[string]bool, len(tags))
 	var admitted []c1.AdaptiveCandidateInput
 	for start := 0; start < len(tags); start += rttPrePhaseChunk {
@@ -189,7 +192,7 @@ func (s *Service) rttPrePhase(ctx context.Context, tags []string, maxRTT int64, 
 			if sample.Tag != chunk[i] {
 				return nil, nil, "rtt-probe-incomplete"
 			}
-			healthy := sample.Valid && sample.RTTMS > 0 && sample.RTTMS <= maxRTT
+			healthy := sample.Valid && sample.RTTMS > 0
 			alive[sample.Tag] = healthy
 			if healthy {
 				admitted = append(admitted, c1.AdaptiveCandidateInput{Tag: sample.Tag, RTTMS: sample.RTTMS, LatestAt: sample.SampledAt})
@@ -199,14 +202,14 @@ func (s *Service) rttPrePhase(ctx context.Context, tags []string, maxRTT int64, 
 	return admitted, alive, ""
 }
 
-func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done chan struct{}, frozen c1.AdaptiveGeneration, plan sweepPlan, maxRTT int64, digest, quotaPath string, quotaUnlock func(), manual bool) {
+func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done chan struct{}, frozen c1.AdaptiveGeneration, plan sweepPlan, digest, quotaPath string, quotaUnlock func(), manual bool) {
 	limits := s.profile().Review()
 	defer close(done)
 	defer cancel()
 	if quotaUnlock != nil {
 		defer quotaUnlock()
 	}
-	ordered, alive, reason := s.rttPrePhase(ctx, plan.Candidates, maxRTT, digest)
+	ordered, alive, reason := s.rttPrePhase(ctx, plan.Candidates, digest)
 	s.mu.Lock()
 	// An orphaned selector has no outbound to probe: it is an unhealthy member.
 	for _, orphan := range s.orphans {

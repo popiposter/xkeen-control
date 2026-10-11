@@ -139,8 +139,8 @@ func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
 	if err != nil {
 		return deferred("eligible-unavailable")
 	}
-	criteria, err := readCriteria(routing, observatory, index)
-	if err != nil {
+	// The criteria still validate 05 and 07 before any probe.
+	if _, err := readCriteria(routing, observatory, index); err != nil {
 		return deferred("criteria-unavailable")
 	}
 	if probeRouteShadowed(routing) {
@@ -163,7 +163,7 @@ func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
 	s.recovery.State = "probing"
 	s.mu.Unlock()
 	probeCtx, stopProbe := context.WithTimeout(parent, time.Duration(len(plan.Candidates))*c1.RTTProbeTimeout+time.Minute)
-	admitted, alive, reason := s.rttPrePhase(probeCtx, plan.Candidates, criteria.maxRTT, w.Digest)
+	admitted, alive, reason := s.rttPrePhase(probeCtx, plan.Candidates, w.Digest)
 	stopProbe()
 	out := RecoveryStatus{Probed: len(plan.Candidates), Verified: len(admitted)}
 	if reason != "" {

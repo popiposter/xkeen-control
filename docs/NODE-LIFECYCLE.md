@@ -73,9 +73,12 @@ Source after #205 (not yet released): the constrained review no longer uses
 Observatory for eligibility or incumbent health. It freezes every incumbent
 plus a fair rotation of the other enabled nodes, probes each with one targeted
 zero-byte RTT request (10s, in chunks of six under the panel lease), and only
-then reserves quota and speed-tests the candidates that answered within native
-maxRTT. A candidate that does not answer, or is slower than maxRTT, is
-unhealthy evidence for the pool decision. Reviews refuse with
+then reserves quota and speed-tests the candidates that answered. A candidate
+that does not answer within the probe timeout is unhealthy evidence for the pool
+decision. The probe is a full HTTPS request through the outbound, heavier than a
+native Observatory sample, so the native maxRTT is not applied to it; Xray keeps
+applying maxRTT to its own observations (a 750 ms maxRTT on probe latency
+dropped working incumbents on KN1811). Reviews refuse with
 probe-route-shadowed when any routing rule lacks an inbound restriction. The
 next paragraph describes the released Observatory-based behaviour.
 Source after #207 and the shared-automatic PR (unreleased): every review on
