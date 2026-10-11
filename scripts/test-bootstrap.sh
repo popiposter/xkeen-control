@@ -275,9 +275,10 @@ PATH="$fakebin:$PATH" XKEEN_CONTROL_TEST_MODE=1 XKEEN_CONTROL_TEST_ROOT="$sh_c_r
 [ -f "$testroot/opt/etc/xkeen-control/auth/password.bcrypt" ]
 # A fresh install records the installed release marker the updater binds.
 marker="$testroot/opt/etc/xkeen-control/state/installed-release.json"
-[ -f "$marker" ] && [ ! -L "$marker" ] && [ "$(stat -c %a "$marker")" = 600 ]
-[ "$(jq -c . "$marker")" = "$(jq -c '{product,version,sourceCommit,channel}' "$fixture/release-manifest.json")" ]
-[ ! -e "$setup_root/opt/etc/xkeen-control/state/installed-release.json" ]
+[ -f "$marker" ] || { echo 'fresh install wrote no release marker' >&2; exit 1; }
+[ ! -L "$marker" ] || { echo 'release marker is a link' >&2; exit 1; }
+[ "$(stat -c %a "$marker")" = 600 ] || { echo 'release marker is not private' >&2; exit 1; }
+[ "$(jq -c . "$marker")" = "$(jq -c '{product,version,sourceCommit,channel}' "$fixture/release-manifest.json")" ] || { echo 'release marker does not match the manifest' >&2; exit 1; }
 [ "$(wc -l < "$testroot/bootstrap-calls" | tr -d '[:space:]')" -eq 1 ]
 before_hash="$(sha256sum "$testroot/opt/etc/xkeen-control/auth/password.bcrypt" | awk '{print $1}')"
 
