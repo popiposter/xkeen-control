@@ -51,20 +51,6 @@ func parseUTCOffset(value string) (*time.Location, bool) {
 	return time.FixedZone("UTC"+value, seconds), true
 }
 
-// maintenanceWindow parses an "HH:MM" local start time.
-func maintenanceWindow(value string) (time.Duration, bool) {
-	hours, minutes, found := strings.Cut(value, ":")
-	if !found || len(hours) != 2 || len(minutes) != 2 {
-		return 0, false
-	}
-	h, errH := strconv.Atoi(hours)
-	m, errM := strconv.Atoi(minutes)
-	if errH != nil || errM != nil || h < 0 || h > 23 || m < 0 || m > 59 {
-		return 0, false
-	}
-	return time.Duration(h)*time.Hour + time.Duration(m)*time.Minute, true
-}
-
 // maintenanceReport builds the closed Telegram report for one finished window
 // from the review status, the node display names and the subscription
 // statuses. Only endpoint-free node labels and measured figures leave the
@@ -73,7 +59,8 @@ func maintenanceReport(m nativequality.MaintenanceStatus, st nativequality.Statu
 	if loc == nil {
 		loc = time.Local
 	}
-	report := notifications.MaintenanceReport{StartedAt: m.StartedAt.In(loc), FinishedAt: m.FinishedAt.In(loc), ReviewStarted: m.ReviewStarted, Geodata: m.GeodataState}
+	report := notifications.MaintenanceReport{StartedAt: m.StartedAt.In(loc), FinishedAt: m.FinishedAt.In(loc), ReviewStarted: m.ReviewStarted, Geodata: m.GeodataState,
+		SubscriptionsOff: !m.SubscriptionsRefreshed, ReviewOff: m.ReviewReason == "review-disabled"}
 	for _, sub := range subscriptions {
 		attempted, err := time.Parse(time.RFC3339, sub.LastAttemptAt)
 		if err != nil || attempted.Before(m.StartedAt.Truncate(time.Second)) {
@@ -91,6 +78,7 @@ func maintenanceReport(m nativequality.MaintenanceStatus, st nativequality.Statu
 		report.Eligible, report.Answered = st.TotalEligible, st.RTTValidCount
 		report.SpeedTested, report.Valid = st.AttemptedCount, st.ValidCount
 		report.Decision, report.Applied = st.PoolDecision, st.AppliedState
+		report.Recommended = st.ManualSample && st.ReviewTrigger == "nightly" && st.State == "completed"
 	}
 	names := make(map[string]nodes.PublicNode, len(registry))
 	for _, node := range registry {

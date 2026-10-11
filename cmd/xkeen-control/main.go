@@ -304,14 +304,11 @@ func main() {
 			return state.Lifecycle.Maintenance, state.Lifecycle.Applying, true
 		},
 	})
-	qualityService := &nativequality.Service{Editor: nativeConfig, Lease: authorityLease, Reader: xrayReader, Nodes: nodeReader, Measurement: coordinator, Probe: probeRouter, Control: xrayReader, Resources: resources, Jobs: nativeJobs, AutomaticDisabled: getenv("XKEEN_QUALITY_AUTO", "") == "off"}
+	qualityService := &nativequality.Service{Editor: nativeConfig, Lease: authorityLease, Reader: xrayReader, Nodes: nodeReader, Measurement: coordinator, Probe: probeRouter, Control: xrayReader, Resources: resources, Jobs: nativeJobs, AutomaticDisabled: getenv("XKEEN_QUALITY_AUTO", "") == "off", Settings: nativequality.NewSettingsStore(nativequality.DefaultSettingsPath)}
 	// One nightly maintenance window owns subscription refresh, the node
 	// review and the geodata update, so Xray restarts only at night.
 	qualitySchedule := nativequality.NewSchedule(qualityService)
 	qualitySchedule.Location = routerLocation
-	if window, ok := maintenanceWindow(getenv("XKEEN_MAINTENANCE_WINDOW", "")); ok {
-		qualitySchedule.Window = window
-	}
 	if qualitySchedule.Enabled() {
 		qualitySchedule.Subscriptions = subscriptionRefresher.RefreshAllNow
 		qualitySchedule.Geodata = qualityService.UpdateGeodata
@@ -321,7 +318,8 @@ func main() {
 			// A disabled or unconfigured channel is not an error here.
 			_ = notificationService.SendReport(ctx, notifications.MaintenanceAlert(report))
 		}
-		subscriptionRefresher.SetMaintenanceWindow(qualitySchedule.NextWindow)
+		subscriptionRefresher.SetMaintenanceWindow(qualitySchedule.NextSubscriptionRefresh)
+		qualitySchedule.SettingsChanged = subscriptionRefresher.Replan
 	}
 	defer qualityService.Stop()
 	nativeTransfer := &nativebackup.Service{Editor: nativeConfig, Nodes: nodeManager, Lease: authorityLease}

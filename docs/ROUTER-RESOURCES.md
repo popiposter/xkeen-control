@@ -62,8 +62,12 @@ review, with the same pressure, batch and cleanup limits. See
 [NODE-LIFECYCLE](NODE-LIFECYCLE.md) for the window order.
 
 The existing measurement owners share a read-only hardware profile and an
-on-demand `/proc` sampler. No new daemon, persistent settings authority or timer
-is installed. Admission uses two CPU deltas: both at least 85% busy refuses work.
+on-demand `/proc` sampler. No new daemon or timer is installed. The only
+persistent setting is the operator's nightly maintenance file (see
+[NODE-LIFECYCLE](NODE-LIFECYCLE.md)); its speed-test breadth (2–18) scales the
+review budget at 6 MiB per node on MIPS and 24 MiB per node on ARM64, and batch
+sizes, pauses, pressure limits and probe timeouts stay derived from the hardware
+profile. Admission uses two CPU deltas: both at least 85% busy refuses work.
 Available memory below 32 MiB (constrained) / 64 MiB (standard), or swap-out above
 1 MiB/s, also refuses admission. During work, three consecutive one-second
 pressure readings (CPU at least 90%, low memory or rapid swap-out) cancel work.

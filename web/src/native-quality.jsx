@@ -23,7 +23,8 @@ const reviewReasons = {
   'rtt-probe-unavailable': 'The latency probe could not run. No speed test ran; the running pool was kept.',
   'rtt-probe-incomplete': 'The latency probe returned an incomplete result. No speed test ran; the running pool was kept.',
   'probe-cleanup-pending': 'A temporary probe rule could not be confirmed removed; the next review retries the cleanup before probing.',
-  'insufficient-valid-results': 'Fewer than six nodes produced valid speed results, which is too few to replace a larger running pool; the running pool was kept.',
+  'insufficient-valid-results': 'Fewer nodes than the pool size produced valid speed results, too few to replace a larger running pool; the running pool was kept.',
+  'review-disabled': 'The review step is off in the maintenance settings.',
   'eligible-unavailable': 'The eligible node set could not be verified; the running pool was kept.',
   'quota-unavailable-or-exhausted': 'The private review receipt is unavailable or needs inspection; the running pool was kept.',
   'quota-busy-or-unavailable': 'Another review or recovery check holds the review receipt; the running pool was kept.',
@@ -59,7 +60,7 @@ const reviewReasons = {
 }
 const poolDecisionText = {
   'pool-unchanged': 'same pool members; no restart',
-  'best-six': 'best six measured nodes applied',
+  'best-pool': 'best measured pool applied',
   'observatory-repair': 'running pool kept; native health observation narrowed to it',
   'insufficient-valid-results': 'too few valid results to replace a larger running pool',
 }
@@ -93,12 +94,12 @@ function automaticText(status) {
   switch (status?.automaticReason) {
     case 'constrained-device': return 'Automatic speed comparisons are disabled on this constrained router.'
     case 'operator-disabled': return 'Automatic node reviews are temporarily disabled by the operator for this panel process.'
-    case undefined: case '': return 'Nightly: subscriptions refresh, every node is probed, the fastest are speed-tested, the best six are applied, then geodata updates.'
+    case undefined: case '': return status?.settings?.enabled === false ? 'The nightly window is off in the maintenance settings below.' : 'Nightly: subscriptions refresh, every node is probed, the fastest are speed-tested, the best pool is applied, then geodata updates. Change it below.'
     default: return 'Automatic comparisons are deferred: a native periodic speed test is configured or its state is unavailable.'
   }
 }
 const maintenancePhases = { subscriptions: 'refreshing subscriptions', settle: 'waiting for Xray', review: 'reviewing nodes', geodata: 'updating geodata' }
-const geodataText = { completed: 'geodata updated', failed: 'geodata update failed', refused: 'geodata update refused (configuration pending or busy)', unknown: 'geodata outcome unknown; inspect the XKeen console', skipped: 'geodata skipped', unavailable: 'geodata unavailable', canceled: 'geodata cancelled' }
+const geodataText = { disabled: 'geodata off in settings', completed: 'geodata updated', failed: 'geodata update failed', refused: 'geodata update refused (configuration pending or busy)', unknown: 'geodata outcome unknown; inspect the XKeen console', skipped: 'geodata skipped', unavailable: 'geodata unavailable', canceled: 'geodata cancelled' }
 function maintenanceText(maintenance) {
   if (!maintenance || maintenance.phase || !validTime(maintenance.finishedAt)) return ''
   const review = maintenance.reviewStarted ? 'review ran' : `review did not run${maintenance.reviewReason ? ` (${reviewReasons[maintenance.reviewReason] || maintenance.reviewReason})` : ''}`
@@ -203,7 +204,7 @@ export function NativeQualitySection({ csrfToken, onUnauthorized, busy, workingE
     } finally { if (mounted.current && ticket === epoch.current) setWorking(false) }
   }
   return <Card>
-    <CardHeader><CardTitle>Speed test</CardTitle><CardDescription>Reviews keep a pool of up to six fast, healthy nodes. Xray selects among them by live health and latency.</CardDescription></CardHeader>
+    <CardHeader><CardTitle>Speed test</CardTitle><CardDescription>Reviews keep a pool of {status?.settings?.poolSize || 'up to six'} fast, healthy nodes. Xray selects among them by live health and latency.</CardDescription></CardHeader>
     <CardContent className="flex flex-col gap-4">
       {(applyError || error) && <Alert variant="destructive"><AlertTitle>Check the current state</AlertTitle><AlertDescription>{applyError || error}</AlertDescription></Alert>}
       {status?.startReason && <p role="alert">{status.startReason === 'native-speed-conflict' ? 'A native periodic speed test is configured. Inspect and quiesce it before starting this comparison.' : 'Resource telemetry is unavailable; the comparison was not started.'}</p>}
@@ -216,7 +217,7 @@ export function NativeQualitySection({ csrfToken, onUnauthorized, busy, workingE
       {status && <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <QualityTile label="Pool" value={status.activePoolState === 'unavailable' ? 'Unavailable' : `${status.activePoolCount || 0} nodes`} detail={status.activePoolState === 'unavailable' ? 'Active pool readback unavailable; inspect the native routing configuration.' : `${validTime(status.provisionalAt) ? 'Provisional' : status.activePoolState === 'frozen-at-review' ? 'At review start' : status.activePoolState === 'degraded-orphaned' ? 'Degraded' : 'Verified'}${status.poolCount ? ` · ${status.poolCount} enabled` : ''}${status.nativeSelectedState === 'observed' && status.nativeSelected ? ` · selected ${nodesByTag?.get(status.nativeSelected)?.name || status.nativeSelected}` : ''}`} />
         <QualityTile label={status.manualSample ? 'Last speed test' : 'Last review'} value={status.batchCount > 0 ? `${status.validCount || 0} of ${status.attemptedCount || 0} valid` : status.state === 'deferred' ? 'Deferred' : 'None yet'} detail={status.batchCount > 0 ? `${((status.aggregateBytes || 0) / 1048576).toFixed(1)} MiB${status.reviewTrigger ? ` · ${status.reviewTrigger}` : ''}${status.poolDecision ? ` · ${poolDecisionText[status.poolDecision] || 'current pool retained'}` : ''}${!status.manualSample && status.appliedState ? ` · ${appliedText[status.appliedState] || status.appliedState}` : ''}` : status.reviewTrigger ? `Trigger: ${status.reviewTrigger}` : ''} />
-        <QualityTile label="Next maintenance" value={status.automaticReason ? 'Off' : validTime(status.nextDueAt) ? new Date(status.nextDueAt).toLocaleString() : '—'} detail={automaticText(status)} />
+        <QualityTile label="Next maintenance" value={status.automaticReason || status.settings?.enabled === false ? 'Off' : validTime(status.nextDueAt) ? new Date(status.nextDueAt).toLocaleString() : '—'} detail={automaticText(status)} />
         {status.resourceProfile?.automatic && !status.automaticReason && <QualityTile label="Last maintenance" value={status.maintenance?.phase ? `Running: ${maintenancePhases[status.maintenance.phase] || status.maintenance.phase}` : validTime(status.maintenance?.finishedAt) ? new Date(status.maintenance.finishedAt).toLocaleString() : 'None yet'} detail={status.quotaState === 'unavailable' ? 'The private review receipt is unavailable. Inspect it before another comparison.' : maintenanceText(status.maintenance)} />}
       </div>}
       {status?.reviewReason && <p role="status">{reviewReasons[status.reviewReason] || `${status.manualSample ? 'Speed test' : 'Automatic review'}: ${status.reviewReason}.`}</p>}
@@ -225,7 +226,7 @@ export function NativeQualitySection({ csrfToken, onUnauthorized, busy, workingE
       {(status?.progress?.candidates?.length > 0) && <Table><TableHeader><TableRow><TableHead>Rank</TableHead><TableHead>Node</TableHead><TableHead>Latency</TableHead><TableHead>Speed ↓ / ↑</TableHead></TableRow></TableHeader><TableBody>{status.progress.candidates.map((node) => { const rank = status.ranking?.find((item) => item.tag === node.tag)?.rank; return <TableRow key={node.tag}><TableCell>{rank ? <Badge variant="secondary">#{rank}</Badge> : '—'}</TableCell><TableCell>{nodesByTag?.get(node.tag)?.name || node.tag}</TableCell><TableCell>{node.rttMs} ms</TableCell><TableCell>{node.valid ? `${rate(node.downloadBps)} / ${rate(node.uploadBps)}` : 'Unavailable'}</TableCell></TableRow> })}</TableBody></Table>}
       {status && <Disclosure title="How reviews work">
         <div className="flex flex-col gap-3 text-sm text-muted-foreground">
-          <p>Once a night the panel refreshes subscriptions, waits for Xray to settle, probes every enabled node, speed-tests the fastest that answered, and applies the best six. If fewer than six nodes measure validly, a larger running pool is kept. The geodata update runs last, so Xray restarts only during this window. Xray applies its own latency limit{status.latencySource === 'native-max-rtt' && status.latencyLimitMs > 0 ? ` (${status.latencyLimitMs} ms)` : ''} to its health checks.{status.selectedForSpeed > 0 ? ` Last review: ${status.rttValidCount || 0} of ${status.totalEligible} nodes answered, ${status.selectedForSpeed} speed-tested.` : ''}{status.recommendedPool?.length || status.appliedPool?.length ? ` Measured recommendation: ${status.recommendedPool?.length || 0} nodes; verified applied pool: ${status.appliedPool?.length || 0}.` : ''}</p>
+          <p>Once a night the panel refreshes subscriptions, waits for Xray to settle, probes every enabled node, speed-tests the {status.settings?.speedCandidates || 18} fastest that answered, and applies the best {status.settings?.poolSize || 6}. If fewer nodes than that measure validly, a larger running pool is kept. The geodata update runs last, so Xray restarts only during this window. Xray applies its own latency limit{status.latencySource === 'native-max-rtt' && status.latencyLimitMs > 0 ? ` (${status.latencyLimitMs} ms)` : ''} to its health checks.{status.selectedForSpeed > 0 ? ` Last review: ${status.rttValidCount || 0} of ${status.totalEligible} nodes answered, ${status.selectedForSpeed} speed-tested.` : ''}{status.recommendedPool?.length || status.appliedPool?.length ? ` Measured recommendation: ${status.recommendedPool?.length || 0} nodes; verified applied pool: ${status.appliedPool?.length || 0}.` : ''}</p>
           {status.limits && <p>Router profile: {status.resourceProfile?.name}. Up to {status.limits.candidates} successful nodes and {status.limits.attempts} attempts, {(status.limits.bytes / 1048576).toFixed(0)} MiB and {status.limits.seconds} seconds including cleanup per batch; a whole review stays within {((status.manualAllowanceBytes || 0) / 1048576).toFixed(0)} MiB; a manual speed test runs the same pipeline. Failed transfers count toward the budget. Tests stop if sustained CPU, memory or swap pressure is detected. External native jobs are outside panel exclusion.</p>}
           <p>A manual speed test needs an explicit Apply; a complete automatic review may apply one verified pool change. Apply saves the pool and restarts XKeen once. Xray then chooses within the pool using its native strategy and live health; rank one is not pinned and existing connections may need to reconnect. The previous configuration remains available in the editor.</p>
         </div>

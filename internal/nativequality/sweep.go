@@ -38,9 +38,10 @@ func (s *Service) startSweep(parent context.Context, trigger string) error {
 }
 
 // startNightly starts the nightly review and returns the channel closed when
-// it, including its native Apply, has finished.
-func (s *Service) startNightly(parent context.Context) (<-chan struct{}, error) {
-	return s.startReviewDone(parent, "nightly", false)
+// it, including its native Apply, has finished. Without apply it measures
+// like a manual test and leaves the recommendation for an explicit Apply.
+func (s *Service) startNightly(parent context.Context, apply bool) (<-chan struct{}, error) {
+	return s.startReviewDone(parent, "nightly", !apply)
 }
 
 func (s *Service) startReview(parent context.Context, trigger string, manual bool) error {
@@ -62,7 +63,7 @@ func (s *Service) startReviewDone(parent context.Context, trigger string, manual
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.cancel != nil || s.autoApplying || s.recovering || manual && s.maintenance.Phase != "" {
+	if s.closed || s.cancel != nil || s.autoApplying || s.recovering || trigger == "manual" && s.maintenance.Phase != "" {
 		return nil, c1.ErrManualBusy
 	}
 	if s.status.InspectionRequired {
@@ -122,7 +123,7 @@ func (s *Service) startReviewDone(parent context.Context, trigger string, manual
 		s.status.ReviewReason = "quota-busy-or-unavailable"
 		return nil, err
 	}
-	limits := s.profile().Review()
+	limits := s.reviewLimits()
 	previous, err := readQuotaLocked(quotaPath, now)
 	if err != nil || previous.InspectionRequired {
 		quotaUnlock()
@@ -131,7 +132,7 @@ func (s *Service) startReviewDone(parent context.Context, trigger string, manual
 	}
 	// Every enabled node is probed; the speed phase then takes the fastest
 	// answering ones (revision 2026-10-11). There is no rotating subset.
-	plan := planAll(pool, activePool, snapshot.Balancer.NativeSelected)
+	plan := planAll(pool, activePool, snapshot.Balancer.NativeSelected, s.poolSize())
 	plan.Provisional = !previous.ProvisionalAt.IsZero()
 	// The speed phase is capped at the profile wall; the probe-all pre-phase
 	// and the separate native Apply have their own bounded margins.
@@ -210,7 +211,7 @@ func (s *Service) rttPrePhase(ctx context.Context, tags []string, digest string)
 }
 
 func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done chan struct{}, frozen c1.AdaptiveGeneration, plan sweepPlan, digest, quotaPath string, quotaUnlock func(), manual bool) {
-	limits := s.profile().Review()
+	limits := s.reviewLimits()
 	defer close(done)
 	defer cancel()
 	if quotaUnlock != nil {
@@ -429,11 +430,12 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 	}
 }
 
-// planAll freezes every eligible node as a probe candidate, in tag order.
-func planAll(eligible, active []string, nativeSelected string) sweepPlan {
+// planAll freezes every eligible node as a probe candidate, in tag order. A
+// selector wider than the pool size is a broad selector to adopt.
+func planAll(eligible, active []string, nativeSelected string, poolSize int) sweepPlan {
 	candidates := append([]string(nil), eligible...)
 	sort.Strings(candidates)
-	return sweepPlan{Candidates: candidates, Active: append([]string(nil), active...), NativeSelected: nativeSelected, TotalEligible: len(eligible), FirstInitialization: len(active) > 6, CursorState: "all-eligible"}
+	return sweepPlan{Candidates: candidates, Active: append([]string(nil), active...), NativeSelected: nativeSelected, TotalEligible: len(eligible), FirstInitialization: len(active) > poolSize, CursorState: "all-eligible"}
 }
 
 // fastestAnswering keeps the limit answering candidates with the lowest probe

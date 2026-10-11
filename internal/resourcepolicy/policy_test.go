@@ -25,3 +25,23 @@ func TestReviewLimitsCoverTheLadderWorstCase(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewForScalesBudgetsWithCandidates(t *testing.T) {
+	constrained := Profile{Constrained: true}
+	if got := constrained.ReviewFor(18); got != constrained.Review() || got.Bytes != 108*MiB || got.Wall != 16*time.Minute {
+		t.Fatal("constrained default", got)
+	}
+	if got := constrained.ReviewFor(6); got.Candidates != 6 || got.Bytes != 36*MiB || got.Wall != 2*90*time.Second+time.Minute+2*time.Minute {
+		t.Fatal("constrained six", got)
+	}
+	standard := Profile{}
+	if got := standard.ReviewFor(18); got.Bytes != 432*MiB || got.Wall != 11*time.Minute {
+		t.Fatal("standard default", got)
+	}
+	if got := standard.ReviewFor(7); got.Candidates != 7 || got.Bytes != 168*MiB || got.Wall != 2*180*time.Second+2*time.Minute {
+		t.Fatal("standard seven", got)
+	}
+	if standard.ReviewFor(99).Candidates != 18 || standard.ReviewFor(0).Candidates != 2 {
+		t.Fatal("breadth not clamped")
+	}
+}

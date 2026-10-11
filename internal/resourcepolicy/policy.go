@@ -69,13 +69,23 @@ type ReviewLimits struct {
 	Wall       time.Duration `json:"-"`
 }
 
+// Review is the default review: eighteen speed-test candidates.
 func (p Profile) Review() ReviewLimits {
+	return p.ReviewFor(18)
+}
+
+// ReviewFor bounds a review of n speed-test candidates (clamped to 2..18).
+// Constrained: n × 6 MiB (down 1/3, up 0.5/1.5), batches of three × 90 s
+// with one-minute pauses; standard: n × 24 MiB (down 1/3/4/8, up 1/3/4),
+// batches of six × 180 s. Both keep two minutes of cleanup margin.
+func (p Profile) ReviewFor(n int) ReviewLimits {
+	n = min(max(n, 2), 18)
 	if p.Constrained {
-		// 18 × 6 MiB (down 1/3, up 0.5/1.5); 6 batches × 90 s + 5 × 1 min.
-		return ReviewLimits{Candidates: 18, BatchSize: 3, Pause: time.Minute, Bytes: 108 * MiB, Wall: 16 * time.Minute}
+		batches := (n + 2) / 3
+		return ReviewLimits{Candidates: n, BatchSize: 3, Pause: time.Minute, Bytes: int64(n) * 6 * MiB, Wall: time.Duration(batches)*90*time.Second + time.Duration(batches-1)*time.Minute + 2*time.Minute}
 	}
-	// 18 × 24 MiB (down 1/3/4/8, up 1/3/4); 3 batches × 180 s.
-	return ReviewLimits{Candidates: 18, BatchSize: 6, Bytes: 432 * MiB, Wall: 11 * time.Minute}
+	batches := (n + 5) / 6
+	return ReviewLimits{Candidates: n, BatchSize: 6, Bytes: int64(n) * 24 * MiB, Wall: time.Duration(batches)*180*time.Second + 2*time.Minute}
 }
 
 func (p Profile) MemoryFloorKiB() uint64 {

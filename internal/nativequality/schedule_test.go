@@ -18,7 +18,7 @@ func TestNextWindowIsTheNextLocalFourOClock(t *testing.T) {
 		// 00:30 UTC is 03:30 at the router: the window is half an hour away.
 		{time.Date(2026, 10, 11, 0, 30, 0, 0, time.UTC), time.Date(2026, 10, 11, 4, 0, 0, 0, loc)},
 	} {
-		if got := nextWindow(c.now, loc, DefaultWindow); !got.Equal(c.want) {
+		if got := nextWindow(c.now, loc, 4*time.Hour); !got.Equal(c.want) {
 			t.Fatal(c.now, got, c.want)
 		}
 	}
@@ -110,7 +110,7 @@ func TestNextWindowKeepsWallTimeAcrossDaylightSaving(t *testing.T) {
 		t.Skip("no zone database", err)
 	}
 	// 2026-10-25 03:00 CEST becomes 02:00 CET.
-	got := nextWindow(time.Date(2026, 10, 24, 23, 0, 0, 0, loc), loc, DefaultWindow)
+	got := nextWindow(time.Date(2026, 10, 24, 23, 0, 0, 0, loc), loc, 4*time.Hour)
 	if got.Hour() != 4 || got.Minute() != 0 || got.Day() != 25 {
 		t.Fatal("window drifted across the DST change", got)
 	}
@@ -123,7 +123,7 @@ func TestNightRetriesBusyReviewStart(t *testing.T) {
 	s := NewSchedule(svc)
 	s.settle, s.retry = 0, 0
 	calls := 0
-	s.start = func(context.Context) (<-chan struct{}, error) {
+	s.start = func(context.Context, bool) (<-chan struct{}, error) {
 		calls++
 		if calls < 3 {
 			return nil, fmt.Errorf("wrapped: %w", c1.ErrManualBusy)
@@ -139,7 +139,7 @@ func TestNightRetriesBusyReviewStart(t *testing.T) {
 		t.Fatal("busy start not retried", calls, svc.maintenance, geodata)
 	}
 	calls = 0
-	s.start = func(context.Context) (<-chan struct{}, error) { calls++; return nil, ErrUnavailable }
+	s.start = func(context.Context, bool) (<-chan struct{}, error) { calls++; return nil, ErrUnavailable }
 	s.runNight(context.Background())
 	if calls != 1 || svc.maintenance.ReviewStarted || svc.maintenance.ReviewReason != "review-unavailable" || geodata != 2 {
 		t.Fatal("final refusal retried or geodata skipped", calls, svc.maintenance, geodata)

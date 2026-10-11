@@ -301,7 +301,7 @@ func TestSweepIncumbentFailingRTTIsUnhealthyAndReplaced(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := waitSweep(t, s)
-	if v.RTTValidCount != 13 || v.PoolDecision != "best-six" {
+	if v.RTTValidCount != 13 || v.PoolDecision != "best-pool" {
 		t.Fatal("failed incumbent probe was not replaced by the best six", v.RTTValidCount, v.PoolDecision, v.ReviewReason)
 	}
 	for _, calls := range s.Measurement.(*sweepMeasurement).calls {
@@ -351,7 +351,7 @@ func TestSweepSlowAnsweringIncumbentsAreRankedNotUnhealthy(t *testing.T) {
 		t.Fatal(err, s.Read().ReviewReason)
 	}
 	v := waitSweep(t, s)
-	if v.RTTValidCount != 14 || v.PoolDecision != "best-six" {
+	if v.RTTValidCount != 14 || v.PoolDecision != "best-pool" {
 		t.Fatal("slow answering incumbents were not ranked on speed", v.RTTValidCount, v.PoolDecision, v.ReviewReason)
 	}
 }
@@ -688,7 +688,7 @@ func TestSweepOrphanedSelectorIsAnUnhealthyMemberAndReplaced(t *testing.T) {
 		t.Fatal("orphaned selector blocked the review", err, s.Read().ReviewReason)
 	}
 	v := waitSweep(t, s)
-	if v.PoolDecision != "best-six" {
+	if v.PoolDecision != "best-pool" {
 		t.Fatal("orphan was not replaced as an unhealthy member", v.PoolDecision, v.ReviewReason)
 	}
 	for _, calls := range s.Measurement.(*sweepMeasurement).rttCalls {
@@ -767,7 +767,7 @@ func TestStandardProfileAutomaticReviewReachesApply(t *testing.T) {
 	}
 	v := waitSweep(t, s)
 	m := s.Measurement.(*sweepMeasurement)
-	if v.ManualSample || v.PoolDecision != "best-six" || v.AppliedState == "not-attempted" || len(m.calls) != 3 || len(m.calls[0]) != 5 {
+	if v.ManualSample || v.PoolDecision != "best-pool" || v.AppliedState == "not-attempted" || len(m.calls) != 3 || len(m.calls[0]) != 5 {
 		t.Fatal("standard automatic review did not use six-node batches and the Apply path", v.ManualSample, v.PoolDecision, v.AppliedState, len(m.calls))
 	}
 	if q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes); err != nil || q.LastStartedAt.IsZero() {
@@ -816,7 +816,7 @@ func TestSweepAllOrphanedPoolWithNarrowedObservatoryIsReplaced(t *testing.T) {
 		t.Fatal("an all-orphaned pool with a narrowed 07 could not be reviewed", err, s.Read().ReviewReason)
 	}
 	v := waitSweep(t, s)
-	if v.PoolDecision != "best-six" {
+	if v.PoolDecision != "best-pool" {
 		t.Fatal("all-orphaned pool was not replaced", v.PoolDecision, v.ReviewReason)
 	}
 	w, err := s.Editor.Workspace(context.Background())
@@ -843,7 +843,7 @@ func TestSweepImportedFiveMemberPoolIsFilledToSix(t *testing.T) {
 		t.Fatal("imported five-member pool could not be reviewed", err, s.Read().ReviewReason)
 	}
 	v := waitSweep(t, s)
-	if v.PoolDecision != "best-six" {
+	if v.PoolDecision != "best-pool" {
 		t.Fatal("five-member pool decision", v.PoolDecision, v.ReviewReason)
 	}
 	w, err := s.Editor.Workspace(context.Background())

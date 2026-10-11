@@ -44,3 +44,10 @@ func acquireQuotaLock(path string) (func(), error) {
 	}
 	return func() { _ = unix.Flock(fd, unix.LOCK_UN); _ = unix.Close(fd) }, nil
 }
+
+// settingsOwnerOK accepts only this process's own files and directories, and
+// a regular file only with a single link.
+func settingsOwnerOK(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && stat.Uid == uint32(os.Geteuid()) && (!info.Mode().IsRegular() || stat.Nlink == 1)
+}
