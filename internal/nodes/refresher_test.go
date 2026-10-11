@@ -123,45 +123,6 @@ func TestSubscriptionRefresherStartupAndRescanTiming(t *testing.T) {
 	}
 }
 
-// REQ-005: only a committed change to the effective outbounds signals the
-// quality scheduler; a manual or automatic no-op refresh does not.
-func TestQualitySignalOnlyFollowsCommittedRuntimeChanges(t *testing.T) {
-	registry := refresherRegistry(t, true)
-	registry.Nodes[0].Enabled = false
-	manager, store, _ := testManager(t, &registry, &countingSubscriptionFetcher{body: []byte(syntheticProfile)})
-	calls := 0
-	manager.SetRuntimeChangeHook(func() { calls++ })
-	preview, err := manager.PreviewRefresh(context.Background(), "csrf", "sub-12345678", "", "")
-	if err != nil || !preview.Noop {
-		t.Fatalf("disabled member changed: %v", err)
-	}
-	if _, err := manager.Apply(context.Background(), "csrf", preview.Token, false); err != nil {
-		t.Fatal(err)
-	}
-	r := NewSubscriptionRefresher(manager)
-	if err := r.reconcile(time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	r.runAttempt(context.Background(), "sub-12345678")
-	if calls != 0 {
-		t.Fatal("a no-op refresh signalled a review", calls)
-	}
-	current, err := store.Load()
-	if err != nil || current.Nodes[0].Enabled {
-		t.Fatal("refresh re-enabled disabled member")
-	}
-	enable, err := manager.PreviewState("csrf", current.Nodes[0].ID, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := manager.Apply(context.Background(), "csrf", enable.Token, false); err != nil {
-		t.Fatal(err)
-	}
-	if calls != 1 {
-		t.Fatal("enabling a node did not signal exactly one review", calls)
-	}
-}
-
 func TestSubscriptionRefresherDisabledAndReenabledUsesStartupDelay(t *testing.T) {
 	registry := refresherRegistry(t, false)
 	manager, store, _ := testManager(t, &registry, &countingSubscriptionFetcher{body: []byte(syntheticProfile)})
@@ -562,38 +523,40 @@ func TestRequestedSubscriptionRefreshUsesOneQueueAndEnabledEntries(t *testing.T)
 	}
 }
 
-// TASK-007: an automatic refresh signals one review for a partial and for a
-// complete subscription change, and none for an unchanged body.
-func TestAutomaticRefreshSignalsOnlyRealSubscriptionChanges(t *testing.T) {
+// In window mode the loop never fetches by itself: every subscription shows
+// the next window and RefreshAllNow fetches each enabled one exactly once.
+func TestMaintenanceWindowOwnsAutomaticRefresh(t *testing.T) {
 	registry := refresherRegistry(t, true)
-	fetcher := &countingSubscriptionFetcher{body: []byte(syntheticProfile)}
-	manager, store, _ := testManager(t, &registry, fetcher)
-	manager.managedCoordinator = &managedRefreshCoordinator{}
-	calls := 0
-	manager.SetRuntimeChangeHook(func() { calls++ })
+	manager, _, _ := testManager(t, &registry, &countingSubscriptionFetcher{body: []byte(syntheticProfile)})
+	window := time.Now().UTC().Add(5 * time.Hour).Truncate(time.Second)
 	r := NewSubscriptionRefresher(manager)
-	if err := r.reconcile(time.Now()); err != nil {
-		t.Fatal(err)
+	r.SetMaintenanceWindow(func(time.Time) time.Time { return window })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r.Start(ctx)
+	defer r.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for r.AutoRefreshStatuses()["sub-12345678"].NextRunAt == "" && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
 	}
-	for _, step := range []struct {
-		name  string
-		body  string
-		calls int
-		nodes int
-	}{
-		{"unchanged", syntheticProfile, 0, 1},
-		{"partial: one node added", syntheticProfile + "\n" + syntheticProfileTwo, 1, 2},
-		{"unchanged again", syntheticProfile + "\n" + syntheticProfileTwo, 1, 2},
-		{"complete: every node replaced", syntheticXHTTPFinalMaskProfile, 2, -1},
-	} {
-		fetcher.body = []byte(step.body)
-		r.runAttempt(context.Background(), "sub-12345678")
-		current, err := store.Load()
-		if err != nil {
-			t.Fatal(step.name, err)
-		}
-		if calls != step.calls || step.nodes >= 0 && len(current.Nodes) != step.nodes {
-			t.Fatalf("%s: signals=%d nodes=%d, want %d/%d (status %+v)", step.name, calls, len(current.Nodes), step.calls, step.nodes, r.AutoRefreshStatuses()["sub-12345678"])
-		}
+	if got := r.AutoRefreshStatuses()["sub-12345678"]; got.NextRunAt != formatAutoRefreshTime(window) {
+		t.Fatalf("status does not show the window: %+v", got)
+	}
+	fetcher := manager.fetcher.(*countingSubscriptionFetcher)
+	r.mu.Lock()
+	if id := r.nextDueLocked(window.Add(time.Hour)); id != "" {
+		t.Fatal("the loop scheduled its own fetch", id)
+	}
+	r.mu.Unlock()
+	r.RefreshAllNow(ctx)
+	if fetcher.calls != 1 {
+		t.Fatal("window refresh fetches", fetcher.calls)
+	}
+	if got := r.AutoRefreshStatuses()["sub-12345678"]; got.LastAttemptAt == "" || got.NextRunAt != formatAutoRefreshTime(window) {
+		t.Fatalf("window refresh status = %+v", got)
+	}
+	r.SetMaintenanceWindow(nil)
+	if r.window == nil {
+		t.Fatal("the window changed after Start")
 	}
 }

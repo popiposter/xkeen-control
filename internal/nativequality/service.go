@@ -62,10 +62,6 @@ type Status struct {
 	AppliedConfigState      string                       `json:"appliedConfigState,omitempty"`
 	ManualAllowanceBytes    int64                        `json:"manualAllowanceBytes"`
 	QuotaState              string                       `json:"quotaState"`
-	QuotaUsedBytes          int64                        `json:"quotaUsedBytes"`
-	QuotaRemainingBytes     int64                        `json:"quotaRemainingBytes"`
-	QuotaReviewsUsed        int                          `json:"quotaReviewsUsed"`
-	QuotaNextResetAt        time.Time                    `json:"quotaNextResetAt,omitempty"`
 	TotalEligible           int                          `json:"totalEligible"`
 	SelectedForSpeed        int                          `json:"selectedForSpeed"`
 	DeferredForFutureReview int                          `json:"deferredForFutureReview"`
@@ -83,8 +79,9 @@ type Status struct {
 	NativeSelectedAt        time.Time                    `json:"nativeSelectedAt,omitempty"`
 	// ProvisionalAt is set while the configured pool is a REQ-009 recovery
 	// pool that no speed review has ranked yet.
-	ProvisionalAt time.Time      `json:"provisionalAt,omitzero"`
-	Recovery      RecoveryStatus `json:"recovery"`
+	ProvisionalAt time.Time         `json:"provisionalAt,omitzero"`
+	Recovery      RecoveryStatus    `json:"recovery"`
+	Maintenance   MaintenanceStatus `json:"maintenance"`
 }
 
 type RankedNode struct {
@@ -128,6 +125,8 @@ type Service struct {
 	recovery       RecoveryStatus
 	recoveryCursor int
 	recoveryHash   string
+	// maintenance is the current or last nightly window.
+	maintenance MaintenanceStatus
 }
 
 func (s *Service) Read() Status {
@@ -136,6 +135,7 @@ func (s *Service) Read() Status {
 	activeReview := s.cancel != nil || s.autoApplying
 	recovering := s.recovering
 	value.Recovery = s.recovery
+	value.Maintenance = s.maintenance
 	value.ResourceProfile = s.profile()
 	value.Limits = s.profile().Comparison(false)
 	value.ManualAllowanceBytes = s.profile().Review().Bytes
@@ -220,8 +220,6 @@ func (s *Service) Read() Status {
 	if value.ResourceProfile.Automatic {
 		if q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes); err == nil {
 			value.QuotaState = "available"
-			value.QuotaUsedBytes, value.QuotaRemainingBytes = q.UsedBytes, q.RemainingBytes
-			value.QuotaReviewsUsed, value.QuotaNextResetAt = q.ReviewsUsed, q.NextResetAt
 			value.FairCursor = q.FairCursor
 			value.ProvisionalAt = q.ProvisionalAt
 			if q.InspectionRequired && !activeReview {

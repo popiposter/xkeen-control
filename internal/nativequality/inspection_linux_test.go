@@ -151,8 +151,8 @@ func TestExplicitQualityInspectionRequiresConcreteReadbacks(t *testing.T) {
 		t.Fatal("next same-process measurement remained blocked", err)
 	}
 	q, err := quotaState(s.QuotaPath, time.Now().UTC(), testReviewBytes)
-	if err != nil || q.InspectionRequired || q.ReviewsUsed != 1 || q.LastStartedAt.IsZero() {
-		t.Fatal("settlement reset cadence or quota", q, err)
+	if err != nil || q.InspectionRequired || q.LastStartedAt.IsZero() {
+		t.Fatal("settlement lost the recorded start", q, err)
 	}
 	if err := restarted.InspectAndResolve(context.Background()); err == nil {
 		t.Fatal("settlement replay accepted")

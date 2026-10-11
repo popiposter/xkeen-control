@@ -19,6 +19,39 @@ comparison can be. It must not change when a review is due, how a winner is
 chosen, or whether a verified recommendation is applied.
 Track the implementation in [#199](https://github.com/popiposter/xkeen-control/issues/199).
 
+## Revision 2026-10-11: one nightly maintenance window
+
+Hardware step 2 on KN1811 showed that the daily quota, six-hour gap, rotating
+12-node subset, 80% speed coverage and 15% challenger margin were complex and
+still did not guarantee the best pool. By operator decision they are replaced
+by one nightly window (04:00 router local time) that runs, strictly in order:
+
+1. **Subscriptions.** Refresh every enabled subscription once, sequentially
+   (replaces the six-hour refresher cadence and the change-aware review
+   trigger). A changed membership restarts Xray through the existing node
+   transaction; an unchanged one does not.
+2. **Settle.** Wait until the native API answers, then one minute, so new
+   outbounds are loaded before any probe.
+3. **Probe all.** One targeted RTT probe for every enabled node (not a
+   rotating subset). Answering within the probe timeout means healthy.
+4. **Speed the 18 fastest.** Speed-test the 18 answering nodes with the lowest
+   probe RTT, in the profile's batches (MIPS sequential, batches of three).
+5. **Best six.** Rank the valid results and take the best six. Apply them
+   (joint 05+07, the existing verified Apply) when the membership differs or
+   07 does not observe exactly them; otherwise no restart. Fewer than six
+   valid results never shrink a larger current pool.
+6. **Geodata.** Run the native `update-geodata` job (`xkeen -ug`, which
+   restarts Xray). XKeen's own geodata cron is removed; the panel owns the
+   only geodata update.
+
+A night therefore restarts Xray once (geodata), twice if the pool changed, and
+three times only when a subscription change and a pool change coincide. There
+is no quota or minimum gap; the window runs once a day by construction. The
+manual speed test uses the same probe-all/speed-18 pipeline and never applies
+without Stage. REQ-009 recovery (all members observed down) stays: it is the
+only automatic action outside the window. Where REQ-005, REQ-006, REQ-007 and
+REQ-008 below conflict with this revision, this revision wins.
+
 ```mermaid
 flowchart LR
   S[Subscriptions and manual nodes] --> R[Private registry and enabled outbounds]
