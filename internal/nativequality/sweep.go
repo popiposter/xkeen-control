@@ -152,10 +152,11 @@ const rttPrePhaseChunk = 6
 // rttPrePhase probes every frozen candidate once through the same fixed
 // endpoint and timeout. It returns the candidates admitted to the speed phase,
 // in plan order, and every probed tag's health. A tag that does not answer
-// within the probe timeout is unhealthy. The probe is a full HTTPS request
-// through the outbound, a heavier measurement than native Observatory, so the
-// native maxRTT is not applied to it (REQ-007): Xray still applies maxRTT to
-// its own observations, and the speed phase ranks the answering candidates.
+// within the probe timeout is unhealthy. The probe (a fixed HTTPS request
+// through the loopback proxy and the outbound) is a different measurement from
+// native Observatory and is not comparable with it, so the native maxRTT is not
+// applied here (REQ-007): Xray still applies maxRTT to its own observations,
+// and the speed phase ranks the answering candidates.
 // Probes run in chunks; each chunk holds the panel lease only for its own
 // duration and first rechecks the frozen configuration.
 func (s *Service) rttPrePhase(ctx context.Context, tags []string, digest string) ([]c1.AdaptiveCandidateInput, map[string]bool, string) {

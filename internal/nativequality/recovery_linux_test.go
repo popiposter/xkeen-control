@@ -285,3 +285,28 @@ func TestRecoveryRefusalBeforeHealthIsNotReportedAsAnOutage(t *testing.T) {
 		t.Fatal("a pending draft was reported as a deferred recovery", v.Recovery)
 	}
 }
+
+// Recovery stops for a member that answers within the native maxRTT, but not
+// for one that answers slower: Xray already reports every member down.
+func TestRecoveryIgnoresAMemberAnsweringSlowerThanMaxRTT(t *testing.T) {
+	s, m, r := recoveryFixture(t)
+	marker := setupNativeApply(t, s, s.Editor.Dir)
+	r.mutate = func(snapshot *xrayapi.Snapshot) {
+		if _, err := os.Stat(marker); err == nil {
+			snapshot.Balancer.NativeSelected = "proxy-06"
+			return
+		}
+		// Observatory still reports every member down.
+		for i := range snapshot.OutboundHealth {
+			if snapshot.OutboundHealth[i].Tag <= "proxy-05" {
+				snapshot.OutboundHealth[i].Alive = false
+			}
+		}
+	}
+	delete(m.rttDown, "proxy-03")
+	m.rttSlow, m.slowMS = map[string]bool{"proxy-03": true}, 15000 // above the fixture's 10 s maxRTT
+	s.recoverPool(context.Background())
+	if v := s.Read(); v.Recovery.State != "applied" {
+		t.Fatal("a slow-answering member stopped recovery", v.Recovery)
+	}
+}

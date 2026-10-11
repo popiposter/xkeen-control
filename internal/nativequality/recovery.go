@@ -139,8 +139,8 @@ func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
 	if err != nil {
 		return deferred("eligible-unavailable")
 	}
-	// The criteria still validate 05 and 07 before any probe.
-	if _, err := readCriteria(routing, observatory, index); err != nil {
+	criteria, err := readCriteria(routing, observatory, index)
+	if err != nil {
 		return deferred("criteria-unavailable")
 	}
 	if probeRouteShadowed(routing) {
@@ -170,9 +170,16 @@ func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
 		out.State, out.Reason = "deferred", reason
 		return out
 	}
+	answered := make(map[string]int64, len(admitted))
+	for _, candidate := range admitted {
+		answered[candidate.Tag] = candidate.RTTMS
+	}
 	for _, tag := range resolved {
-		if alive[tag] {
-			// The probe proves a member answers: Xray can still select it.
+		// Stop only for a member that answered within the native maxRTT: a
+		// slower answer is no proof that Xray, which already reports every
+		// member down, will select it again. Missing an outage costs more than
+		// one unneeded recovery Apply.
+		if rtt, ok := answered[tag]; ok && alive[tag] && rtt <= criteria.maxRTT {
 			out.State, out.Reason = "healthy", "member-answers-probe"
 			return out
 		}

@@ -75,8 +75,8 @@ plus a fair rotation of the other enabled nodes, probes each with one targeted
 zero-byte RTT request (10s, in chunks of six under the panel lease), and only
 then reserves quota and speed-tests the candidates that answered. A candidate
 that does not answer within the probe timeout is unhealthy evidence for the pool
-decision. The probe is a full HTTPS request through the outbound, heavier than a
-native Observatory sample, so the native maxRTT is not applied to it; Xray keeps
+decision. The probe is a different measurement from a native Observatory sample
+and not comparable with it, so the native maxRTT is not applied to it; Xray keeps
 applying maxRTT to its own observations (a 750 ms maxRTT on probe latency
 dropped working incumbents on KN1811). Reviews refuse with
 probe-route-shadowed when any routing rule lacks an inbound restriction. The
@@ -104,8 +104,8 @@ checks whether native Observatory reports every pool member down, or every
 member has vanished from the registry. A member without an Observatory record is
 unknown, never an outage. Recovery then probes up to 12 candidates (the members
 and a rotating share of the other enabled nodes) with the same targeted RTT
-probe, spends no speed-test quota and runs no transfer. If a member answers, it
-stops. Otherwise it applies up to six answering nodes, fastest RTT first, as a
+probe, spends no speed-test quota and runs no transfer. If a member answers within
+the native maxRTT, it stops; a slower answer does not. Otherwise it applies up to six answering nodes, fastest RTT first, as a
 labelled provisional pool with equal anchored costs through the same validated
 05+07 Apply and readback; an unknown outcome sets the inspection fence. At most
 one recovery Apply runs per hour, so a failing provisional pool cannot become a
