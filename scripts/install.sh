@@ -436,6 +436,16 @@ chmod 755 "$BIN.new" "$INIT.new" "$UPDATER.new"
 mv -f "$BIN.new" "$BIN"
 mv -f "$INIT.new" "$INIT"
 mv -f "$UPDATER.new" "$UPDATER"
+if [ "$INSTALL_MODE" != setup ]; then
+	# The updater binds the installed tuple, including this marker; without it
+	# a freshly bootstrapped panel (panel-only or guided setup) could never
+	# update itself.
+	jq -c '{product,version,sourceCommit,channel}' "$TMP_ROOT/release-manifest.json" > "$STATE_DIR/.installed-release.json.new" || fail "release marker could not be prepared"
+	chmod 600 "$STATE_DIR/.installed-release.json.new"
+	sync -f "$STATE_DIR/.installed-release.json.new" || fail "release marker could not be synchronized"
+	mv -f "$STATE_DIR/.installed-release.json.new" "$STATE_DIR/installed-release.json"
+	sync -f "$STATE_DIR" || fail "release marker could not be synchronized"
+fi
 rm -rf "$TMP_ROOT"
 
 if [ "$INSTALL_MODE" = setup-panel ]; then
