@@ -1042,3 +1042,38 @@ func TestApplyReadbackWaitsForNativeSelection(t *testing.T) {
 		t.Fatalf("readback did not wait for the native selection: reads=%d status=%+v", reads.Load(), v)
 	}
 }
+
+// An override that appears while waiting for the selection fences at once,
+// and a wait that never sees a pool member still fences when it runs out.
+func TestApplyReadbackFencesOverrideAndExhaustedWait(t *testing.T) {
+	for _, mode := range []string{"override", "never-selected"} {
+		t.Run(mode, func(t *testing.T) {
+			s, g, digest, dir := sweepFixture(t, false)
+			marker := setupNativeApply(t, s, dir)
+			s.readbackWait = 2 * time.Second
+			var reads atomic.Int64
+			s.Reader.(*sweepReader).mutate = func(snapshot *xrayapi.Snapshot) {
+				if _, err := os.Stat(marker); err != nil {
+					return
+				}
+				reads.Add(1)
+				if mode == "override" {
+					snapshot.Balancer.Override = "proxy-00"
+				} else {
+					snapshot.Balancer.NativeSelected = ""
+				}
+			}
+			runSweepFixture(t, s, g, digest)
+			v := s.Read()
+			if v.AppliedState != "inspection-required" || !v.InspectionRequired || v.ReviewReason != "native-selection-readback-unavailable" {
+				t.Fatalf("not fenced: %+v", v)
+			}
+			if mode == "override" && reads.Load() != 1 {
+				t.Fatal("override did not fence at once", reads.Load())
+			}
+			if mode == "never-selected" && reads.Load() < 5 {
+				t.Fatal("wait gave up early", reads.Load())
+			}
+		})
+	}
+}

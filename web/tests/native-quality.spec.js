@@ -319,3 +319,14 @@ test('a finished speed test whose Apply needs inspection shows the failure on th
   await expect(page.getByRole('progressbar', { name: 'Review progress' })).toHaveAttribute('aria-valuenow', '100')
   await expect(page.getByRole('button', { name: 'Verify and clear inspection block', exact: true })).toBeVisible()
 })
+
+test('while the Apply runs the bar stays below 100% and the last stage is active', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), state: 'applying', manualSample: false, reviewTrigger: 'operator', reviewPhase: 'speed', canStage: false,
+    eligibleCount: 52, rttProbed: 52, probes: [], selectedForSpeed: 18, attemptedCount: 18, validCount: 12, batchCount: 6, batchTotal: 6,
+    poolDecision: 'best-pool', appliedState: 'running' }
+  await open(page)
+  const progress = page.getByRole('region', { name: 'Test all and apply progress' })
+  await expect(progress.locator('[data-step-state="active"]')).toContainText('applying the best pool and verifying it')
+  await expect(page.getByRole('progressbar', { name: 'Review progress' })).toHaveAttribute('aria-valuenow', '95')
+})

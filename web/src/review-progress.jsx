@@ -23,7 +23,7 @@ export function reviewSteps(status) {
   // Every planned batch ran: the speed test itself finished, whatever the
   // later Apply did.
   const speedComplete = batches > 0 && batch >= batches && measured >= planned
-  const applyStage = speedComplete && !status?.manualSample && Boolean(status?.appliedState) && status.appliedState !== 'not-attempted'
+  const applyStage = speedComplete && state !== 'applying' && !status?.manualSample && Boolean(status?.appliedState) && !['not-attempted', 'running'].includes(status.appliedState)
   const probe = {
     key: 'probe', title: 'Latency probe',
     state: phase === 'rtt' && state === 'running' ? 'active' : phase === 'rtt' && stopped(state) ? 'failed' : probed > 0 || speedStarted ? 'done' : 'pending',
