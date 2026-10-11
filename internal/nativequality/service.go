@@ -29,56 +29,70 @@ type Measurement interface {
 }
 
 type Status struct {
-	StartReason          string                       `json:"startReason,omitempty"`
-	LatencySource        string                       `json:"latencySource,omitempty"`
-	ResourceProfile      resourcepolicy.Profile       `json:"resourceProfile"`
-	Limits               resourcepolicy.Limits        `json:"limits"`
-	AutomaticReason      string                       `json:"automaticReason,omitempty"`
-	State                string                       `json:"state"`
-	Digest               string                       `json:"digest,omitempty"`
-	Generation           uint64                       `json:"generation"`
-	Progress             c1.AdaptivePerformanceStatus `json:"progress"`
-	CanStage             bool                         `json:"canStage"`
-	StageReason          string                       `json:"stageReason,omitempty"`
-	PoolCount            int                          `json:"poolCount"`
-	ActivePoolCount      int                          `json:"activePoolCount"`
-	LatencyLimitMS       int64                        `json:"latencyLimitMs"`
-	EligibleCount        int                          `json:"eligibleCount"`
-	ManualSample         bool                         `json:"manualSample"`
-	Ranking              []RankedNode                 `json:"ranking,omitempty"`
-	AppliedRanking       []RankedNode                 `json:"appliedRanking,omitempty"`
-	ReviewTrigger        string                       `json:"reviewTrigger,omitempty"`
-	ReviewPhase          string                       `json:"reviewPhase,omitempty"`
-	RTTValidCount        int                          `json:"rttValidCount"`
-	AttemptedCount       int                          `json:"attemptedCount"`
-	ValidCount           int                          `json:"validCount"`
-	BatchCount           int                          `json:"batchCount"`
-	AggregateBytes       int64                        `json:"aggregateBytes"`
-	NextDueAt            time.Time                    `json:"nextDueAt,omitempty"`
-	ReviewReason         string                       `json:"reviewReason,omitempty"`
-	InspectionRequired   bool                         `json:"inspectionRequired"`
-	AppliedState         string                       `json:"appliedState,omitempty"`
-	AppliedJobState      string                       `json:"appliedJobState,omitempty"`
-	AppliedConfigState   string                       `json:"appliedConfigState,omitempty"`
-	ManualAllowanceBytes int64                        `json:"manualAllowanceBytes"`
-	QuotaState           string                       `json:"quotaState"`
-	TotalEligible        int                          `json:"totalEligible"`
-	SelectedForSpeed     int                          `json:"selectedForSpeed"`
-	PoolDecision         string                       `json:"poolDecision,omitempty"`
-	ActivePool           []string                     `json:"activePool,omitempty"`
-	OrphanedPool         []string                     `json:"orphanedPool,omitempty"`
-	ActivePoolState      string                       `json:"activePoolState,omitempty"`
-	RecommendedPool      []string                     `json:"recommendedPool,omitempty"`
-	AppliedPool          []string                     `json:"appliedPool,omitempty"`
-	NativeSelected       string                       `json:"nativeSelected,omitempty"`
-	NativeSelectedState  string                       `json:"nativeSelectedState,omitempty"`
-	NativeSelectedAt     time.Time                    `json:"nativeSelectedAt,omitempty"`
+	StartReason     string                       `json:"startReason,omitempty"`
+	LatencySource   string                       `json:"latencySource,omitempty"`
+	ResourceProfile resourcepolicy.Profile       `json:"resourceProfile"`
+	Limits          resourcepolicy.Limits        `json:"limits"`
+	AutomaticReason string                       `json:"automaticReason,omitempty"`
+	State           string                       `json:"state"`
+	Digest          string                       `json:"digest,omitempty"`
+	Generation      uint64                       `json:"generation"`
+	Progress        c1.AdaptivePerformanceStatus `json:"progress"`
+	CanStage        bool                         `json:"canStage"`
+	StageReason     string                       `json:"stageReason,omitempty"`
+	PoolCount       int                          `json:"poolCount"`
+	ActivePoolCount int                          `json:"activePoolCount"`
+	LatencyLimitMS  int64                        `json:"latencyLimitMs"`
+	EligibleCount   int                          `json:"eligibleCount"`
+	ManualSample    bool                         `json:"manualSample"`
+	Ranking         []RankedNode                 `json:"ranking,omitempty"`
+	AppliedRanking  []RankedNode                 `json:"appliedRanking,omitempty"`
+	ReviewTrigger   string                       `json:"reviewTrigger,omitempty"`
+	ReviewPhase     string                       `json:"reviewPhase,omitempty"`
+	RTTValidCount   int                          `json:"rttValidCount"`
+	// RTTProbed counts nodes probed so far; Probes is every probe result of
+	// this review, kept in RAM until the next review.
+	RTTProbed int           `json:"rttProbed"`
+	Probes    []ProbeResult `json:"probes,omitempty"`
+	// BatchTotal is the planned number of speed-test batches.
+	BatchTotal           int       `json:"batchTotal"`
+	AttemptedCount       int       `json:"attemptedCount"`
+	ValidCount           int       `json:"validCount"`
+	BatchCount           int       `json:"batchCount"`
+	AggregateBytes       int64     `json:"aggregateBytes"`
+	NextDueAt            time.Time `json:"nextDueAt,omitempty"`
+	ReviewReason         string    `json:"reviewReason,omitempty"`
+	InspectionRequired   bool      `json:"inspectionRequired"`
+	AppliedState         string    `json:"appliedState,omitempty"`
+	AppliedJobState      string    `json:"appliedJobState,omitempty"`
+	AppliedConfigState   string    `json:"appliedConfigState,omitempty"`
+	ManualAllowanceBytes int64     `json:"manualAllowanceBytes"`
+	QuotaState           string    `json:"quotaState"`
+	TotalEligible        int       `json:"totalEligible"`
+	SelectedForSpeed     int       `json:"selectedForSpeed"`
+	PoolDecision         string    `json:"poolDecision,omitempty"`
+	ActivePool           []string  `json:"activePool,omitempty"`
+	OrphanedPool         []string  `json:"orphanedPool,omitempty"`
+	ActivePoolState      string    `json:"activePoolState,omitempty"`
+	RecommendedPool      []string  `json:"recommendedPool,omitempty"`
+	AppliedPool          []string  `json:"appliedPool,omitempty"`
+	NativeSelected       string    `json:"nativeSelected,omitempty"`
+	NativeSelectedState  string    `json:"nativeSelectedState,omitempty"`
+	NativeSelectedAt     time.Time `json:"nativeSelectedAt,omitempty"`
 	// ProvisionalAt is set while the configured pool is a REQ-009 recovery
 	// pool that no speed review has ranked yet.
 	ProvisionalAt time.Time         `json:"provisionalAt,omitzero"`
 	Recovery      RecoveryStatus    `json:"recovery"`
 	Maintenance   MaintenanceStatus `json:"maintenance"`
 	Settings      Settings          `json:"settings"`
+}
+
+// ProbeResult is one node's targeted latency probe in a review.
+type ProbeResult struct {
+	Tag       string    `json:"tag"`
+	RTTMS     int64     `json:"rttMs,omitempty"`
+	Answered  bool      `json:"answered"`
+	SampledAt time.Time `json:"sampledAt,omitzero"`
 }
 
 type RankedNode struct {
@@ -154,6 +168,7 @@ func (s *Service) Read() Status {
 		value.State = "idle"
 	}
 	value.Progress.Candidates = append([]c1.AdaptiveCandidateStatus(nil), value.Progress.Candidates...)
+	value.Probes = append([]ProbeResult(nil), value.Probes...)
 	value.ActivePool = append([]string(nil), value.ActivePool...)
 	value.AppliedPool = append([]string(nil), value.AppliedPool...)
 	value.OrphanedPool = append([]string(nil), value.OrphanedPool...)

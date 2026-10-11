@@ -112,6 +112,13 @@ func (s *Service) statusLocked() Status {
 	}
 	return status
 }
+
+// SetRoute makes Bot API requests go through Xray's local proxy whenever
+// route confirms the panel's Telegram rule; it is set once during wiring.
+func (s *Service) SetRoute(route func(context.Context) bool) {
+	s.transport.route = route
+}
+
 func (s *Service) Status() Status { s.mu.Lock(); defer s.mu.Unlock(); return s.statusLocked() }
 func (s *Service) Configure(token, chat string) (Status, error) {
 	s.mu.Lock()

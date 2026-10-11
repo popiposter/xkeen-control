@@ -150,6 +150,13 @@ it is refused while the nightly window, another review, an Apply or a recovery
 check runs (`POST /api/v1/performance/quality/review`, empty body, session and
 CSRF). "Not monitored" in Nodes only means Xray's Observatory watches the pool
 members; every speed test and review still probes the other enabled nodes.
+Review progress and results (source after the progress PR, unreleased): the
+status publishes each probe chunk as it lands (`rttProbed`, `probes` with
+latency or no answer per node) and the planned speed batches (`batchTotal`).
+Performance shows three stages with a progress bar (latency probe, speed test,
+ranking and Apply or recommendation), and Nodes shows the last review's probe
+latency for nodes Xray does not monitor and speed for every measured node. The
+results stay in RAM until the next review.
 No-healthy-member recovery (unreleased, REQ-009): every 10 minutes the panel
 checks whether native Observatory reports every pool member down, or every
 member has vanished from the registry. A member without an Observatory record is

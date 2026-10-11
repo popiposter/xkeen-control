@@ -224,7 +224,7 @@ const sortNodes = (nodes, key, direction, measurements = new Map()) => {
       case 'upload': return measurements.get(node.outboundTag || node.tag)?.valid ? measurements.get(node.outboundTag || node.tag)?.uploadBps : null
       case 'address': return stringValue(node.address)
       case 'health': return healthRank(node)
-      case 'latency': return node.alive && node.latencyMs ? node.latencyMs : Number.MAX_SAFE_INTEGER
+      case 'latency': { const probe = measurements.get(node.outboundTag || node.tag); return node.alive && node.latencyMs ? node.latencyMs : !nodeObserved(node) && probe?.probeAnswered && probe.probeRttMs ? probe.probeRttMs : Number.MAX_SAFE_INTEGER }
       case 'role': return roleRank(node)
       case 'source': return stringValue(node.sourceType)
       case 'subscription': return stringValue(node.subscriptionName)
@@ -383,7 +383,13 @@ function Dashboard({ dashboard, session, error, onRefresh, onPerformanceRefresh,
   const { status, nodes, performance } = dashboard
   const [section, setSection] = useState('overview')
   const [quality, setQuality] = useState(null)
-  const measurements = useMemo(() => new Map((quality?.progress?.candidates || []).map((node) => [node.tag, { ...node, rank: quality?.ranking?.find((item) => item.tag === node.tag)?.rank }])), [quality])
+  // The last review's results per node: its latency probe of every enabled
+  // node, plus speed for the ones it measured and rank for the chosen pool.
+  const measurements = useMemo(() => {
+    const result = new Map((quality?.progress?.candidates || []).map((node) => [node.tag, { ...node, rank: quality?.ranking?.find((item) => item.tag === node.tag)?.rank }]))
+    for (const probe of quality?.probes || []) result.set(probe.tag, { ...(result.get(probe.tag) || { tag: probe.tag }), probeAnswered: probe.answered, probeRttMs: probe.rttMs, probeAt: probe.sampledAt })
+    return result
+  }, [quality])
   const [configVisited, setConfigVisited] = useState(false)
 	const [configReadback, setConfigReadback] = useState(0)
   const [nativeConfigJob, setNativeConfigJob] = useState(null)
@@ -860,7 +866,7 @@ function NodeRows({ showColumn, measurement, node, selected, onToggle }) {
       <TableCell><NodeName node={node} />{node.stale && <Badge variant="secondary">stale</Badge>}</TableCell>
       {showColumn('address') && <TableCell data-label="Address"><code className="address">{node.address || '—'}</code></TableCell>}
       {showColumn('health') && <TableCell data-label="Health"><span title={node.enabled && !nodeObserved(node) ? notMonitoredTitle : node.enabled && !node.alive && node.lastError ? node.lastError : undefined}><StatusBadge tone={nodeHealthTone(node)}>{nodeHealthLabel(node)}</StatusBadge></span></TableCell>}
-      {showColumn('latency') && <TableCell data-label="Latency">{node.alive ? formatAdaptiveLatency(node.latencyMs) : '—'}</TableCell>}
+      {showColumn('latency') && <TableCell data-label="Latency">{node.alive ? formatAdaptiveLatency(node.latencyMs) : nodeObserved(node) ? '—' : measurement?.probeAnswered ? <span title={`Panel latency probe${measurement.probeAt ? ` at ${new Date(measurement.probeAt).toLocaleString()}` : ''}; Xray does not monitor this node.`}>{measurement.probeRttMs} ms <small className="text-muted-foreground">probe</small></span> : measurement?.probeAnswered === false ? <span className="text-muted-foreground" title="Did not answer the panel's last latency probe.">no answer</span> : '—'}</TableCell>}
       {showColumn('rank') && <TableCell data-label="Quality rank">{measurement?.rank ? <StatusBadge>#{measurement.rank}</StatusBadge> : '—'}</TableCell>}
       {showColumn('download') && <TableCell data-label="Download">{measurement?.valid ? formatRate(measurement.downloadBps) : '—'}</TableCell>}
       {showColumn('upload') && <TableCell data-label="Upload">{measurement?.valid ? formatRate(measurement.uploadBps) : '—'}</TableCell>}

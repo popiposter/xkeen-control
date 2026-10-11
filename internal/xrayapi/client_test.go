@@ -2,11 +2,13 @@ package xrayapi
 
 import (
 	"context"
+	"errors"
 	"net"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -242,5 +244,73 @@ func TestClientSeparatesRoutingAndObservatoryDeadlines(t *testing.T) {
 				t.Fatalf("observatory error = %q", got.ObservatoryErrorClass)
 			}
 		})
+	}
+}
+
+// The notify rule matches one exact domain from the probe inbound and targets
+// the pool balancer, in both Xray domain layouts.
+func TestNotifyRuleEncodingBothDomainLayouts(t *testing.T) {
+	rule := NotifyRule()
+	if !validRule(rule) {
+		t.Fatal("notify rule rejected")
+	}
+	for _, bad := range []Rule{
+		{RuleTag: NotifyRuleTag, InboundTag: "probe", BalancerTag: "bal-other", Domains: []string{NotifyDomain}},
+		{RuleTag: NotifyRuleTag, InboundTag: "probe", BalancerTag: NotifyBalancer, Domains: []string{"example.com"}},
+		{RuleTag: NotifyRuleTag, InboundTag: "redirect", BalancerTag: NotifyBalancer, Domains: []string{NotifyDomain}},
+		{RuleTag: "xkeen-control-probe-rtt", InboundTag: "probe", OutboundTag: "proxy-a", Domains: []string{NotifyDomain}},
+	} {
+		if validRule(bad) {
+			t.Fatal("accepted", bad)
+		}
+	}
+	for _, nested := range []bool{false, true} {
+		encoded, err := encodeRule(rule, nested)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var config Config
+		if err := proto.Unmarshal(encoded, &config); err != nil || len(config.Rule) != 1 {
+			t.Fatal("config did not decode", err)
+		}
+		got := config.Rule[0]
+		if got.GetBalancingTag() != NotifyBalancer || got.GetRuleTag() != NotifyRuleTag || len(got.GetInboundTag()) != 1 || got.GetInboundTag()[0] != "probe" {
+			t.Fatal("rule fields", got)
+		}
+		// Field 2 carries the domain: Domain{type Full, value} directly, or
+		// wrapped as DomainRule.custom (field 2).
+		raw := got.ProtoReflect().GetUnknown()
+		num, typ, n := protowire.ConsumeTag(raw)
+		if num != 2 || typ != protowire.BytesType || n < 0 {
+			t.Fatal("domain field missing", nested)
+		}
+		domain, _ := protowire.ConsumeBytes(raw[n:])
+		if nested {
+			num, _, n = protowire.ConsumeTag(domain)
+			if num != 2 {
+				t.Fatal("DomainRule.custom missing")
+			}
+			domain, _ = protowire.ConsumeBytes(domain[n:])
+		}
+		want := protowire.AppendString(protowire.AppendTag(protowire.AppendVarint(protowire.AppendTag(nil, 1, protowire.VarintType), 3), 2, protowire.BytesType), NotifyDomain)
+		if string(domain) != string(want) {
+			t.Fatalf("domain bytes %x want %x", domain, want)
+		}
+	}
+	plain, err := encodeRule(Rule{RuleTag: "xkeen-control-probe-rtt", InboundTag: "probe", OutboundTag: "proxy-a"}, false)
+	var config Config
+	if err != nil || proto.Unmarshal(plain, &config) != nil || config.Rule[0].GetTag() != "proxy-a" || len(config.Rule[0].ProtoReflect().GetUnknown()) != 0 {
+		t.Fatal("probe rule encoding changed")
+	}
+}
+
+func TestNestedDomainRetryOnlyOnInvalidWireData(t *testing.T) {
+	if !invalidWireData(errors.New("rpc error: code = Unknown desc = proto: cannot parse invalid wire-format data")) {
+		t.Fatal("wire rejection not recognised")
+	}
+	for _, other := range []string{"context deadline exceeded", "rpc error: code = Unavailable desc = connection refused", "app/router: duplicate ruleTag xkeen-control-notify"} {
+		if invalidWireData(errors.New(other)) {
+			t.Fatal("retried on", other)
+		}
 	}
 }

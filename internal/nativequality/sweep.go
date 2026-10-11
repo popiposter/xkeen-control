@@ -59,8 +59,9 @@ func (s *Service) startReviewDone(parent context.Context, trigger string, manual
 		return nil, ErrUnavailable
 	}
 	// The operator's "test all and apply" is explicit, so it runs even when
-	// automatic maintenance is off.
-	if !manual && trigger != "operator" && (!s.profile().Automatic || s.AutomaticDisabled) {
+	// automatic maintenance is switched off; a profile without automatic
+	// reviews still refuses it.
+	if !manual && (!s.profile().Automatic || s.AutomaticDisabled && trigger != "operator") {
 		return nil, ErrUnavailable
 	}
 	s.mu.Lock()
@@ -168,7 +169,10 @@ const rttPrePhaseChunk = 6
 // and the speed phase ranks the answering candidates.
 // Probes run in chunks; each chunk holds the panel lease only for its own
 // duration and first rechecks the frozen configuration.
-func (s *Service) rttPrePhase(ctx context.Context, tags []string, digest string) ([]c1.AdaptiveCandidateInput, map[string]bool, string) {
+// rttPrePhase probes tags in chunks under the panel lease. A review
+// publishes each chunk to its status; a recovery check does not, so its probes
+// never mix with (or grow) the last review's results.
+func (s *Service) rttPrePhase(ctx context.Context, tags []string, digest string, publish bool) ([]c1.AdaptiveCandidateInput, map[string]bool, string) {
 	alive := make(map[string]bool, len(tags))
 	var admitted []c1.AdaptiveCandidateInput
 	for start := 0; start < len(tags); start += rttPrePhaseChunk {
@@ -198,15 +202,26 @@ func (s *Service) rttPrePhase(ctx context.Context, tags []string, digest string)
 		if len(samples) != len(chunk) {
 			return nil, nil, "rtt-probe-incomplete"
 		}
+		probes := make([]ProbeResult, 0, len(samples))
 		for i, sample := range samples {
 			if sample.Tag != chunk[i] {
 				return nil, nil, "rtt-probe-incomplete"
 			}
 			healthy := sample.Valid && sample.RTTMS > 0
 			alive[sample.Tag] = healthy
+			probe := ProbeResult{Tag: sample.Tag, Answered: healthy, SampledAt: sample.SampledAt}
 			if healthy {
+				probe.RTTMS = sample.RTTMS
 				admitted = append(admitted, c1.AdaptiveCandidateInput{Tag: sample.Tag, RTTMS: sample.RTTMS, LatestAt: sample.SampledAt})
 			}
+			probes = append(probes, probe)
+		}
+		// Publish each chunk as it lands, so the operator sees the probe move.
+		if publish {
+			s.mu.Lock()
+			s.status.Probes = append(s.status.Probes, probes...)
+			s.status.RTTProbed += len(chunk)
+			s.mu.Unlock()
 		}
 	}
 	return admitted, alive, ""
@@ -219,7 +234,7 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 	if quotaUnlock != nil {
 		defer quotaUnlock()
 	}
-	ordered, alive, reason := s.rttPrePhase(ctx, plan.Candidates, digest)
+	ordered, alive, reason := s.rttPrePhase(ctx, plan.Candidates, digest, true)
 	s.mu.Lock()
 	// An orphaned selector has no outbound to probe: it is an unhealthy member.
 	for _, orphan := range s.orphans {
@@ -271,6 +286,9 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 	if err != nil {
 		reason = "eligible-unavailable"
 	}
+	s.mu.Lock()
+	s.status.BatchTotal = len(sizes)
+	s.mu.Unlock()
 	batchWall := s.profile().Comparison(false).Wall() + c1.AdaptiveCleanupReserve
 	result := c1.AdaptiveResult{NativeQuality: true, Sweep: true, SweepEligibleCount: len(ordered), Generation: frozen.Generation, StartedAt: time.Now().UTC(), CurrentTarget: frozen.CurrentTarget, State: "running"}
 	position := 0

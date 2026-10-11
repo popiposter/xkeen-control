@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldGroup, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 
 const authorityStates = ['unconfigured', 'configured', 'unavailable']
@@ -80,7 +80,7 @@ export function NotificationsCard({ controller, sessionKey }) {
     <CardHeader><CardTitle>Telegram</CardTitle><CardDescription>Notifications and native commands from one authorized user and chat.</CardDescription></CardHeader>
     <CardContent className="flex flex-col gap-4">
     {status && <div className="system-facts-grid">
-      <div><span>Authority</span><strong>{status.authorityState}</strong></div>
+      <div><span>Credentials</span><strong>{status.authorityState === 'configured' ? 'Saved' : status.authorityState === 'unconfigured' ? 'Not set' : status.authorityState}</strong></div>
       <div><span>Delivery</span><strong>{status.enabled ? 'Enabled' : 'Disabled'}</strong></div>
       <div><span>Last delivery</span><strong>{status.deliveryState}</strong></div>
       <div><span>Last attempt</span><strong>{status.lastAttemptAt}</strong></div>
@@ -88,10 +88,12 @@ export function NotificationsCard({ controller, sessionKey }) {
       {status.errorCode && <div><span>Delivery error</span><strong>{status.errorCode}</strong></div>}
       <div><span>Bot control</span><strong>{status.controlEnabled ? status.controlState : 'Disabled'}</strong></div>
     </div>}
+    {status?.configured && !status.enabled && <p role="status">The bot token and chat ID are saved on the router. Notifications are still off: press Enable notifications, then Send test notification.</p>}
+    {status?.configured && status.enabled && <p className="text-sm text-muted-foreground">The bot token and chat ID are saved on the router and are never shown again. Enter both below only to replace them.</p>}
     <form onSubmit={configure} autoComplete="off"><FieldGroup>
-      <Field><FieldLabel htmlFor="telegram-token">Telegram bot token</FieldLabel><Input id="telegram-token" type="password" autoComplete="off" maxLength={150} value={token} onChange={(event) => setToken(event.target.value)} disabled={pending} /></Field>
-      <Field><FieldLabel htmlFor="telegram-chat">Telegram chat ID</FieldLabel><Input id="telegram-chat" type="text" autoComplete="off" maxLength={21} value={chat} onChange={(event) => setChat(event.target.value)} disabled={pending} /></Field>
-      <Button type="submit" disabled={pending || !token || !chat}>Configure notifications</Button>
+      <Field><FieldLabel htmlFor="telegram-token">Telegram bot token</FieldLabel><Input id="telegram-token" type="password" autoComplete="off" maxLength={150} value={token} onChange={(event) => setToken(event.target.value)} disabled={pending} placeholder={status?.configured ? 'Saved — enter only to replace' : ''} /><FieldDescription>Create a bot with @BotFather (/newbot) and paste the token it gives you.</FieldDescription></Field>
+      <Field><FieldLabel htmlFor="telegram-chat">Telegram chat ID</FieldLabel><Input id="telegram-chat" type="text" autoComplete="off" maxLength={21} value={chat} onChange={(event) => setChat(event.target.value)} disabled={pending} placeholder={status?.configured ? 'Saved — enter only to replace' : ''} /><FieldDescription>Where the bot writes. For a private chat it is your numeric Telegram user ID (for example from @userinfobot); open your bot and press Start first so it may message you. For a group it is the group ID, which starts with -100.</FieldDescription></Field>
+      <Button type="submit" disabled={pending || !token || !chat}>{status?.configured ? 'Replace credentials' : 'Save credentials'}</Button>
       </FieldGroup>
     </form>
     <div className="system-card-actions">
@@ -101,7 +103,7 @@ export function NotificationsCard({ controller, sessionKey }) {
       <Button type="button" variant="ghost" onClick={() => void run()} disabled={pending}>Refresh notifications</Button>
     </div>
     <form onSubmit={(event) => { event.preventDefault(); const id = user; setUser(''); void run('/control', { enabled: true, allowedUserId: id }) }} autoComplete="off"><FieldGroup>
-      <Field><FieldLabel htmlFor="telegram-user">Allowed Telegram user ID</FieldLabel><Input id="telegram-user" inputMode="numeric" autoComplete="off" maxLength={19} value={user} onChange={(event) => setUser(event.target.value)} disabled={pending} /></Field>
+      <Field><FieldLabel htmlFor="telegram-user">Allowed Telegram user ID</FieldLabel><Input id="telegram-user" inputMode="numeric" autoComplete="off" maxLength={19} value={user} onChange={(event) => setUser(event.target.value)} disabled={pending} /><FieldDescription>Optional, for commands to the bot: your numeric Telegram user ID. In a private chat it equals the chat ID above.</FieldDescription></Field>
       <div className="flex flex-wrap gap-2"><Button type="submit" disabled={pending || !status?.configured || !/^[1-9][0-9]{0,18}$/.test(user)}>Enable bot control</Button><Button type="button" variant="outline" disabled={pending || !status?.controlEnabled} onClick={() => void run('/control', { enabled: false, allowedUserId: '' })}>Disable bot control</Button></div>
     </FieldGroup></form>
     <p className="text-muted-foreground">Commands: /status, /start, /stop, /restart, /update_xkeen, /update_xray, /update_geodata, /refresh. Command acceptance is not a verified result. Inspect the native console in the panel for prompts and final state. Pending configurations must be applied in the editor first.</p>

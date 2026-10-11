@@ -280,7 +280,8 @@ test('test all and apply asks first, then starts one operator review with an emp
   const bodies = []
   await page.route('**/api/v1/performance/quality/review', async (route) => {
     bodies.push(route.request().postData())
-    model.quality = { ...model.quality, state: 'running', reviewTrigger: 'operator' }
+    model.quality = { ...model.quality, state: 'running', reviewTrigger: 'operator', reviewPhase: 'rtt', eligibleCount: 46, rttProbed: 12, selectedForSpeed: 0,
+      probes: Array.from({ length: 12 }, (_, i) => ({ tag: `proxy-${i}`, answered: i !== 3, rttMs: i === 3 ? 0 : 40 + i })) }
     await route.fulfill({ status: 202, contentType: 'application/json', body: '{"accepted":true}' })
   })
   await open(page)
@@ -293,7 +294,12 @@ test('test all and apply asks first, then starts one operator review with an emp
   expect(bodies).toEqual([])
   await trigger.click()
   await page.getByRole('button', { name: 'Start test and apply', exact: true }).click()
-  await expect(page.getByRole('status').filter({ hasText: 'Testing nodes' })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'Probing latency: 12 of 46 nodes' })).toBeVisible()
+  const progress = page.getByRole('region', { name: 'Test all and apply progress' })
+  await expect(progress).toContainText('12 of 46 nodes probed, 11 answered')
+  await expect(progress.locator('[data-step-state="active"]')).toContainText('Latency probe')
+  await expect(progress.locator('[data-step-state="pending"]')).toHaveCount(2)
+  await expect(page.getByRole('progressbar', { name: 'Review progress' })).toHaveAttribute('aria-valuenow', '8')
   expect(bodies).toEqual(['{}'])
   await expect(trigger).toBeDisabled()
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])

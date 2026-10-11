@@ -147,6 +147,9 @@ The separate panel-local notification authority is
 secrets directory. Telegram token/chat ID never appear in safe responses or
 logs; this authority is excluded from safe export and encrypted node backup.
 It is separately reconfigurable after reinstall; older binaries ignore it.
+Bot API requests leave through the node pool via Xray's loopback probe
+inbound and one runtime rule limited to exactly api.telegram.org (see
+docs/TELEGRAM-CONTROL.md); without that rule they go direct.
 When outbound notifications are enabled, the nightly maintenance window sends
 one closed HTML report: step outcomes as closed codes, counts, and the running
 pool by stored node name with an inferred country flag (a generic name becomes

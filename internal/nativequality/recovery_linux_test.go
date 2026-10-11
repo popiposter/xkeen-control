@@ -310,3 +310,19 @@ func TestRecoveryIgnoresAMemberAnsweringSlowerThanMaxRTT(t *testing.T) {
 		t.Fatal("a slow-answering member stopped recovery", v.Recovery)
 	}
 }
+
+// A recovery check probes nodes too, but never mixes its results into (or
+// grows) the last review's published probes.
+func TestRecoveryProbesDoNotTouchReviewProbes(t *testing.T) {
+	s, _, _ := recoveryFixture(t)
+	review := []ProbeResult{{Tag: "proxy-00", Answered: true, RTTMS: 40}}
+	s.status.Probes, s.status.RTTProbed = review, 1
+	s.recoverPool(context.Background())
+	v := s.Read()
+	if v.Recovery.Probed == 0 {
+		t.Fatal("recovery did not probe", v.Recovery)
+	}
+	if len(v.Probes) != 1 || v.Probes[0] != review[0] || v.RTTProbed != 1 {
+		t.Fatal("recovery probes leaked into the review status", v.Probes, v.RTTProbed)
+	}
+}
