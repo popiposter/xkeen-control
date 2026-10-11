@@ -2,7 +2,10 @@ package nativequality
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	"github.com/popiposter/xkeen-control/internal/c1"
 )
 
 // qualityCadence is the minimum gap between any two review starts (REQ-006).
@@ -123,21 +126,48 @@ func (s *Schedule) Run(ctx context.Context) {
 				next = retry
 				continue
 			}
-			startErr := s.service.startSweep(ctx, trigger)
-			if startErr != nil {
-				next = now.Add(10 * time.Minute)
-			} else {
-				next = now.Add(cadence)
+			var keep bool
+			next, keep = nextAfterStart(now, s.service.startSweep(ctx, trigger), cadence)
+			if !keep {
+				trigger = "periodic"
 			}
-			trigger = "periodic"
 		}
 	}
 }
 
+// busyRetry is how soon a review that found the panel busy (another review,
+// an Apply or a recovery check) tries again; it keeps its trigger.
+const busyRetry = time.Minute
+
+// nextAfterStart returns the next review time after one start attempt and
+// whether the trigger is kept. A busy panel is transient: retrying on the
+// ten-minute cadence would meet the recovery check again at the same instant.
+func nextAfterStart(now time.Time, err error, cadence time.Duration) (time.Time, bool) {
+	switch {
+	case err == nil:
+		return now.Add(cadence), false
+	case errors.Is(err, c1.ErrManualBusy):
+		return now.Add(busyRetry), true
+	default:
+		return now.Add(10 * time.Minute), false
+	}
+}
+
+// recoveryFirstCheck offsets recovery checks by half an interval from the
+// review schedule, which also starts ten minutes after panel start.
+const recoveryFirstCheck = recoveryInterval + recoveryInterval/2
+
 // runRecovery checks every recoveryInterval whether the pool still has a
-// healthy member and, if not, runs one bounded REQ-009 attempt. The first
-// check follows the same ten-minute startup floor as reviews.
+// healthy member and, if not, runs one bounded REQ-009 attempt.
 func (s *Schedule) runRecovery(ctx context.Context) {
+	first := time.NewTimer(recoveryFirstCheck)
+	defer first.Stop()
+	select {
+	case <-ctx.Done():
+		return
+	case <-first.C:
+		s.service.recoverPool(ctx)
+	}
 	tick := time.NewTicker(recoveryInterval)
 	defer tick.Stop()
 	for {

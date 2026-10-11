@@ -2,8 +2,11 @@ package nativequality
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
+
+	"github.com/popiposter/xkeen-control/internal/c1"
 )
 
 func TestComparisonDueThrottlesRefreshAndManualStarts(t *testing.T) {
@@ -72,5 +75,25 @@ func TestQuotaRetryAtWaitsForTheGapAndTheRollingDay(t *testing.T) {
 	fenced := quotaReceipt{Version: 1, InspectionRequired: true}
 	if got := quotaRetryAt(fenced, now, bytes); !got.Equal(now.Add(time.Hour)) {
 		t.Fatalf("inspection-held retry = %s", got)
+	}
+}
+
+// A review that met a busy panel (for example the recovery check firing at
+// the same instant) retries within a minute and keeps its trigger; other
+// refusals keep the ten-minute retry.
+func TestBusyReviewRetriesSoonAndRecoveryIsOffset(t *testing.T) {
+	now := time.Now()
+	if next, keep := nextAfterStart(now, fmt.Errorf("wrapped: %w", c1.ErrManualBusy), reviewCadence); !next.Equal(now.Add(time.Minute)) || !keep {
+		t.Fatal("busy retry", next.Sub(now), keep)
+	}
+	if next, keep := nextAfterStart(now, ErrUnavailable, reviewCadence); !next.Equal(now.Add(10*time.Minute)) || keep {
+		t.Fatal("refusal retry", next.Sub(now), keep)
+	}
+	if next, keep := nextAfterStart(now, nil, reviewCadence); !next.Equal(now.Add(reviewCadence)) || keep {
+		t.Fatal("started review", next.Sub(now), keep)
+	}
+	// Reviews first run ten minutes after start; recovery must not tick then.
+	if recoveryFirstCheck%recoveryInterval == 0 || recoveryFirstCheck <= 10*time.Minute {
+		t.Fatal("recovery checks align with the review schedule", recoveryFirstCheck)
 	}
 }

@@ -64,6 +64,8 @@ test('an orphaned pool member is reported as replaceable, not as an unavailable 
   await open(page)
   await expect(page.getByRole('status').filter({ hasText: 'One pool member no longer exists' })).toBeVisible()
   await expect(page.getByText('Active pool readback unavailable')).toHaveCount(0)
+  await expect(page.getByText(/^Degraded/)).toBeVisible()
+  await expect(page.getByText(/Verified ·/)).toHaveCount(0)
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
 })
 
