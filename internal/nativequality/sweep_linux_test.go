@@ -978,3 +978,28 @@ func TestNightlyGeodataRetriesBusyRunnerAndWaitsForTheJob(t *testing.T) {
 		t.Fatal("geodata returned before the job finished", err)
 	}
 }
+
+// The operator's test-all-and-apply runs the nightly pipeline now and
+// applies through the same verified Apply, even with automatic maintenance
+// off; it is refused while the nightly window runs.
+func TestOperatorReviewAppliesEvenWithAutomaticOff(t *testing.T) {
+	s, _, _, dir := sweepFixture(t, false)
+	callMarker := setupNativeApply(t, s, dir)
+	s.AutomaticDisabled = true
+	if err := s.startSweep(context.Background(), "nightly"); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("automatic review ran while disabled", err)
+	}
+	s.maintenance.Phase = "geodata"
+	if err := s.StartAndApply(context.Background()); !errors.Is(err, c1.ErrManualBusy) {
+		t.Fatal("operator review admitted during the window", err)
+	}
+	s.maintenance.Phase = ""
+	if err := s.StartAndApply(context.Background()); err != nil {
+		t.Fatal(err, s.Read().ReviewReason)
+	}
+	v := waitSweep(t, s)
+	calls, err := os.ReadFile(callMarker)
+	if err != nil || string(calls) != "x" || v.ReviewTrigger != "operator" || v.ManualSample || v.AppliedState != "applied" || v.InspectionRequired {
+		t.Fatalf("operator review did not apply once: calls=%q err=%v status=%+v", calls, err, v)
+	}
+}

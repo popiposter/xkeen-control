@@ -271,3 +271,30 @@ test('idle quality view has no recurring comparison reads or bandwidth tests', a
   expect(featureCompleteRequests(model, '/api/v1/performance/quality', 'GET')).toHaveLength(1)
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
 })
+
+test('test all and apply asks first, then starts one operator review with an empty body', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { state: 'idle', generation: 0, canStage: false, poolCount: 46, quotaState: 'available',
+    resourceProfile: { name: 'standard', automatic: true }, settings: { speedCandidates: 18, poolSize: 6 },
+    progress: { state: 'idle', candidates: [] } }
+  const bodies = []
+  await page.route('**/api/v1/performance/quality/review', async (route) => {
+    bodies.push(route.request().postData())
+    model.quality = { ...model.quality, state: 'running', reviewTrigger: 'operator' }
+    await route.fulfill({ status: 202, contentType: 'application/json', body: '{"accepted":true}' })
+  })
+  await open(page)
+  const trigger = page.getByRole('button', { name: 'Test all and apply best', exact: true })
+  await trigger.click()
+  await expect(page.getByText('Test all nodes and apply the best pool?', { exact: true })).toBeVisible()
+  await expect(page.getByText(/speed-tests the 18 fastest that answered and, if the best 6 differ/)).toBeVisible()
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(page.getByText('Test all nodes and apply the best pool?', { exact: true })).toHaveCount(0)
+  expect(bodies).toEqual([])
+  await trigger.click()
+  await page.getByRole('button', { name: 'Start test and apply', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Testing nodes' })).toBeVisible()
+  expect(bodies).toEqual(['{}'])
+  await expect(trigger).toBeDisabled()
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
+})

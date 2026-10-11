@@ -443,6 +443,14 @@ func (s *Service) Start(ctx context.Context) error {
 	return s.startReview(ctx, "manual", true)
 }
 
+// StartAndApply runs the nightly review pipeline now, at the operator's
+// request: probe every enabled node, speed-test the fastest, and apply the
+// best pool through the same verified native Apply. It is refused while the
+// nightly window, another review, an Apply or a recovery check runs.
+func (s *Service) StartAndApply(ctx context.Context) error {
+	return s.startReview(ctx, "operator", false)
+}
+
 func (s *Service) Stop() {
 	s.mu.Lock()
 	s.closed = true

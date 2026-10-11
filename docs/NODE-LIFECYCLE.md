@@ -142,6 +142,14 @@ only by hand or by XKeen's own schedule restored in its console. Saving re-plans
 the next window at once; a running window keeps the settings it started with. The
 authenticated API is `GET`/`POST /api/v1/performance/maintenance` (session,
 Origin and CSRF; POST requires exactly the ten fields).
+Test all and apply (source after the operator-review PR, unreleased): Performance
+offers the nightly review on demand. After a confirmation it probes every enabled
+node, speed-tests the fastest that answered and applies the best pool through the
+same verified Apply and inspection fence, even when automatic maintenance is off;
+it is refused while the nightly window, another review, an Apply or a recovery
+check runs (`POST /api/v1/performance/quality/review`, empty body, session and
+CSRF). "Not monitored" in Nodes only means Xray's Observatory watches the pool
+members; every speed test and review still probes the other enabled nodes.
 No-healthy-member recovery (unreleased, REQ-009): every 10 minutes the panel
 checks whether native Observatory reports every pool member down, or every
 member has vanished from the registry. A member without an Observatory record is

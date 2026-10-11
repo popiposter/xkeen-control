@@ -341,6 +341,7 @@ test('labels nodes outside the observed pool as not monitored, not as failed', a
   await openNodes(page)
   await page.getByLabel('Search nodes').fill('Outside pool')
   await expect(page.locator('.nodes-table tbody tr').filter({ hasText: 'Outside pool' })).toContainText('Not monitored')
+  await expect(page.getByText(/Every speed test and nightly review still probes it\. To pick the best pool now, use Test all and apply best in Performance\./)).toBeVisible()
   await page.getByLabel('Search nodes').fill('Observed down')
   await expect(page.locator('.nodes-table tbody tr').filter({ hasText: 'Observed down' })).toContainText('Not alive')
   await page.getByLabel('Search nodes').fill('')

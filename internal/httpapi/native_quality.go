@@ -18,6 +18,9 @@ type NativeQualityService interface {
 
 type nativeQualityInspection interface{ InspectAndResolve(context.Context) error }
 
+// nativeQualityReview is the operator's test-all-and-apply action.
+type nativeQualityReview interface{ StartAndApply(context.Context) error }
+
 func (s *Server) handleNativeQuality(w http.ResponseWriter, r *http.Request) {
 	session, ok := s.requireSession(w, r)
 	if !ok {
@@ -78,6 +81,17 @@ func (s *Server) handleNativeQuality(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, s.nativeQuality.Read())
+	case "/api/v1/performance/quality/review":
+		reviewer, ok := s.nativeQuality.(nativeQualityReview)
+		if !ok {
+			writeError(w, http.StatusServiceUnavailable, "quality review unavailable")
+			return
+		}
+		if err := reviewer.StartAndApply(r.Context()); err != nil {
+			writeError(w, http.StatusConflict, "quality review busy or unavailable")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]bool{"accepted": true})
 	case "/api/v1/performance/quality/start":
 		if err := s.nativeQuality.Start(r.Context()); err != nil {
 			writeError(w, http.StatusConflict, "quality comparison busy or unavailable")

@@ -58,12 +58,14 @@ func (s *Service) startReviewDone(parent context.Context, trigger string, manual
 	if s.Editor == nil || s.Lease == nil || s.Reader == nil || s.Nodes == nil || s.Measurement == nil || s.Resources == nil {
 		return nil, ErrUnavailable
 	}
-	if !manual && (!s.profile().Automatic || s.AutomaticDisabled) {
+	// The operator's "test all and apply" is explicit, so it runs even when
+	// automatic maintenance is off.
+	if !manual && trigger != "operator" && (!s.profile().Automatic || s.AutomaticDisabled) {
 		return nil, ErrUnavailable
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.cancel != nil || s.autoApplying || s.recovering || trigger == "manual" && s.maintenance.Phase != "" {
+	if s.closed || s.cancel != nil || s.autoApplying || s.recovering || (trigger == "manual" || trigger == "operator") && s.maintenance.Phase != "" {
 		return nil, c1.ErrManualBusy
 	}
 	if s.status.InspectionRequired {
