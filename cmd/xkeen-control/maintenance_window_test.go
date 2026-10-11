@@ -63,3 +63,18 @@ func TestMaintenanceReportUsesEndpointFreeLabelsAndTonightsFigures(t *testing.T)
 		t.Fatalf("stale figures reported %+v", r)
 	}
 }
+
+func TestRecommendOnlyNightKnowsWhenNothingWouldChange(t *testing.T) {
+	m := nativequality.MaintenanceStatus{StartedAt: time.Now().Add(-time.Hour), FinishedAt: time.Now(), SubscriptionsRefreshed: true, ReviewStarted: true, GeodataState: "completed"}
+	st := nativequality.Status{State: "completed", ManualSample: true, ReviewTrigger: "nightly", AppliedState: "not-attempted", ActivePool: []string{"a", "b", "c"}, RecommendedPool: []string{"c", "a", "b"}}
+	if r := maintenanceReport(m, st, nil, nil, time.UTC); !r.Recommended || !r.RecommendationCurrent {
+		t.Fatal("same members not recognised", r)
+	}
+	st.RecommendedPool = []string{"a", "b", "d"}
+	if r := maintenanceReport(m, st, nil, nil, time.UTC); !r.Recommended || r.RecommendationCurrent {
+		t.Fatal("a different pool reported as current", r)
+	}
+	if sameMembers(nil, nil) || sameMembers([]string{"a", "a"}, []string{"a", "b"}) || sameMembers([]string{"a", "b"}, []string{"a", "a"}) {
+		t.Fatal("sameMembers edge cases")
+	}
+}

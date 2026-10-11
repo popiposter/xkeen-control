@@ -225,7 +225,8 @@ func (r *SubscriptionRefresher) refreshAll(ctx context.Context) {
 
 // Replan recomputes every waiting subscription's next run from the window,
 // for example after the window time changed or its refresh step was turned
-// off. It never starts a fetch.
+// off. It never starts a fetch, and it leaves a running attempt and a busy
+// retry that a refresh-all is about to make alone.
 func (r *SubscriptionRefresher) Replan() {
 	if r == nil {
 		return
@@ -237,7 +238,7 @@ func (r *SubscriptionRefresher) Replan() {
 		return
 	}
 	for _, entry := range r.entries {
-		if entry.status.state != autoRefreshDisabled && entry.status.state != autoRefreshRunning {
+		if entry.status.state != autoRefreshDisabled && entry.status.state != autoRefreshRunning && entry.status.state != autoRefreshDeferred {
 			entry.nextRunAt = r.window(now)
 		}
 	}

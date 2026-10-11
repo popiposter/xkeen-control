@@ -607,4 +607,12 @@ func TestReplanFollowsTheWindowWithoutFetching(t *testing.T) {
 	if got := r.AutoRefreshStatuses()["sub-12345678"]; got.NextRunAt != formatAutoRefreshTime(window) || manager.fetcher.(*countingSubscriptionFetcher).calls != 0 {
 		t.Fatal("replan", got)
 	}
+	// A busy retry pending inside a refresh-all keeps its short backoff.
+	retry := now.Add(5 * time.Minute)
+	r.entries["sub-12345678"].status.state = autoRefreshDeferred
+	r.entries["sub-12345678"].nextRunAt = retry
+	r.Replan()
+	if !r.entries["sub-12345678"].nextRunAt.Equal(retry) {
+		t.Fatal("replan pushed a busy retry to the next window")
+	}
 }
