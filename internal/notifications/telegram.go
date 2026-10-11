@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"time"
 )
 
@@ -21,7 +22,25 @@ const maxResponseBytes = 16 << 10
 // maxHTMLBytes stays well under Telegram's 4096-character message limit.
 const maxHTMLBytes = 3072
 
-type telegram struct{ client *http.Client }
+// telegram talks to the Bot API directly or, when route reports that the
+// panel's Xray rule is in place, through Xray's local probe proxy so the
+// request leaves through the node pool (Telegram is often blocked for the
+// router's own traffic).
+type telegram struct {
+	client  *http.Client
+	proxied *http.Client
+	route   func(context.Context) bool
+}
+
+// ProxyAddress is Xray's loopback HTTP inbound used for panel traffic.
+const ProxyAddress = "127.0.0.1:10808"
+
+func (t *telegram) http(ctx context.Context) *http.Client {
+	if t.route != nil && t.proxied != nil && t.route(ctx) {
+		return t.proxied
+	}
+	return t.client
+}
 
 type lookupIP func(context.Context, string) ([]net.IPAddr, error)
 type dialIP func(context.Context, string, string) (net.Conn, error)
@@ -37,9 +56,31 @@ func newTelegramWithTimeout(timeout time.Duration) *telegram {
 		TLSHandshakeTimeout: requestTimeout, ResponseHeaderTimeout: timeout,
 		DisableKeepAlives: true, MaxResponseHeaderBytes: maxResponseBytes,
 	}
-	return &telegram{client: &http.Client{Transport: transport, Timeout: timeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return Error("provider-rejected") },
-	}}
+	noRedirect := func(*http.Request, []*http.Request) error { return Error("provider-rejected") }
+	proxyURL := &url.URL{Scheme: "http", Host: ProxyAddress}
+	proxied := &http.Transport{
+		// Only the fixed loopback proxy; the TLS session inside the tunnel
+		// still verifies api.telegram.org.
+		Proxy: func(request *http.Request) (*url.URL, error) {
+			if request.URL.Host != telegramAddress {
+				return nil, Error("unsafe-destination")
+			}
+			return proxyURL, nil
+		},
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			if network != "tcp" || address != ProxyAddress {
+				return nil, Error("unsafe-destination")
+			}
+			return (&net.Dialer{Timeout: requestTimeout}).DialContext(ctx, network, address)
+		},
+		TLSClientConfig:     &tls.Config{ServerName: telegramHost, MinVersion: tls.VersionTLS12},
+		TLSHandshakeTimeout: requestTimeout, ResponseHeaderTimeout: timeout,
+		DisableKeepAlives: true, MaxResponseHeaderBytes: maxResponseBytes,
+	}
+	return &telegram{
+		client:  &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: noRedirect},
+		proxied: &http.Client{Transport: proxied, Timeout: timeout, CheckRedirect: noRedirect},
+	}
 }
 
 func telegramDial(lookup lookupIP, dial dialIP) func(context.Context, string, string) (net.Conn, error) {
@@ -139,7 +180,7 @@ func (t *telegram) sendFormatted(parent context.Context, value authority, messag
 		return Error("transport-failed")
 	}
 	request.Header.Set("Content-Type", "application/json")
-	response, err := t.client.Do(request)
+	response, err := t.http(ctx).Do(request)
 	if err != nil {
 		// Do not return url.Error: its URL contains the secret bot token.
 		var safe Error

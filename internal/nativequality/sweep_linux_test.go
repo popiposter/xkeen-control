@@ -181,7 +181,7 @@ func TestSweepFortySixEligibleRunsBoundedSubsetWithoutApply(t *testing.T) {
 		t.Fatal("bounded review did not settle")
 	}
 	v := s.Read()
-	if v.State != "completed" || v.AppliedState != "no-op" || v.TotalEligible != 46 || v.RTTValidCount != 46 || v.SelectedForSpeed != 18 || v.AttemptedCount != 18 || v.ValidCount != 18 || v.BatchCount != 6 || len(v.Progress.Candidates) != 18 || v.PoolDecision != "pool-unchanged" {
+	if v.State != "completed" || v.AppliedState != "no-op" || v.TotalEligible != 46 || v.RTTValidCount != 46 || v.RTTProbed != 46 || len(v.Probes) != 46 || v.BatchTotal != 6 || v.SelectedForSpeed != 18 || v.AttemptedCount != 18 || v.ValidCount != 18 || v.BatchCount != 6 || len(v.Progress.Candidates) != 18 || v.PoolDecision != "pool-unchanged" {
 		t.Fatal("probe-all/speed-18 review mismatch", v)
 	}
 	if m := s.Measurement.(*sweepMeasurement); len(m.calls) != 6 || m.calls[0][0] != "proxy-00" || m.calls[5][2] != "proxy-17" {
@@ -303,6 +303,20 @@ func TestSweepIncumbentFailingRTTIsUnhealthyAndReplaced(t *testing.T) {
 	v := waitSweep(t, s)
 	if v.RTTValidCount != 13 || v.PoolDecision != "best-pool" {
 		t.Fatal("failed incumbent probe was not replaced by the best six", v.RTTValidCount, v.PoolDecision, v.ReviewReason)
+	}
+	answered := 0
+	for _, probe := range v.Probes {
+		if probe.Answered {
+			answered++
+			if probe.RTTMS <= 0 || probe.SampledAt.IsZero() {
+				t.Fatal("answered probe without a sample", probe)
+			}
+		} else if probe.Tag != "proxy-05" || probe.RTTMS != 0 {
+			t.Fatal("unexpected unanswered probe", probe)
+		}
+	}
+	if len(v.Probes) != 14 || answered != 13 || v.RTTProbed != 14 {
+		t.Fatal("probe results not published", len(v.Probes), answered, v.RTTProbed)
 	}
 	for _, calls := range s.Measurement.(*sweepMeasurement).calls {
 		for _, tag := range calls {

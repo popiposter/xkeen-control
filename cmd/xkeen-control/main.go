@@ -293,6 +293,9 @@ func main() {
 	collector.SetBuildInfo(buildinfo.Current())
 	updateManager := panelupdate.NewManager(panelupdate.Config{Current: buildinfo.Current(), Lifecycle: panelLifecycle})
 	notificationService := notifications.NewService()
+	// Telegram is often blocked for the router's own traffic: send through
+	// the node pool via Xray's local proxy whenever its rule is in place.
+	notificationService.SetRoute(telegramRoute(xrayReader))
 	panelNotifyScheduler := panelupdate.NewNotifyScheduler(panelupdate.NotifySchedulerConfig{
 		Manager: updateManager,
 		Send:    notificationService.Send,

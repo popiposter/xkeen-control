@@ -7,6 +7,16 @@ ID. Notifications and control have separate switches. Replacing credentials
 disables control. Credentials and the user/chat allowlist stay in the root-only
 notification authority and are excluded from portable backups.
 
+The router's own traffic usually bypasses Xray, and the Bot API is often
+blocked there. Before every Bot API request the panel makes sure Xray holds one
+runtime routing rule, `xkeen-control-notify`: exactly `api.telegram.org` from
+the loopback `probe` HTTP inbound to the `bal-proxy` balancer. It then sends
+through `127.0.0.1:10808`, so the request leaves through the node pool; TLS is
+still verified for api.telegram.org. An Xray restart drops runtime rules and the
+next request adds it again. If the Xray API is unreachable or refuses the rule,
+the request goes direct. The rule is encoded for both Xray domain layouts
+(before and after v26.9's geodata `DomainRule`).
+
 | Command | Behavior |
 | --- | --- |
 | `/help` | Show the fixed command list. |

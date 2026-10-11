@@ -59,8 +59,9 @@ func (s *Service) startReviewDone(parent context.Context, trigger string, manual
 		return nil, ErrUnavailable
 	}
 	// The operator's "test all and apply" is explicit, so it runs even when
-	// automatic maintenance is off.
-	if !manual && trigger != "operator" && (!s.profile().Automatic || s.AutomaticDisabled) {
+	// automatic maintenance is switched off; a profile without automatic
+	// reviews still refuses it.
+	if !manual && (!s.profile().Automatic || s.AutomaticDisabled && trigger != "operator") {
 		return nil, ErrUnavailable
 	}
 	s.mu.Lock()
@@ -198,16 +199,25 @@ func (s *Service) rttPrePhase(ctx context.Context, tags []string, digest string)
 		if len(samples) != len(chunk) {
 			return nil, nil, "rtt-probe-incomplete"
 		}
+		probes := make([]ProbeResult, 0, len(samples))
 		for i, sample := range samples {
 			if sample.Tag != chunk[i] {
 				return nil, nil, "rtt-probe-incomplete"
 			}
 			healthy := sample.Valid && sample.RTTMS > 0
 			alive[sample.Tag] = healthy
+			probe := ProbeResult{Tag: sample.Tag, Answered: healthy, SampledAt: sample.SampledAt}
 			if healthy {
+				probe.RTTMS = sample.RTTMS
 				admitted = append(admitted, c1.AdaptiveCandidateInput{Tag: sample.Tag, RTTMS: sample.RTTMS, LatestAt: sample.SampledAt})
 			}
+			probes = append(probes, probe)
 		}
+		// Publish each chunk as it lands, so the operator sees the probe move.
+		s.mu.Lock()
+		s.status.Probes = append(s.status.Probes, probes...)
+		s.status.RTTProbed += len(chunk)
+		s.mu.Unlock()
 	}
 	return admitted, alive, ""
 }
@@ -271,6 +281,9 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 	if err != nil {
 		reason = "eligible-unavailable"
 	}
+	s.mu.Lock()
+	s.status.BatchTotal = len(sizes)
+	s.mu.Unlock()
 	batchWall := s.profile().Comparison(false).Wall() + c1.AdaptiveCleanupReserve
 	result := c1.AdaptiveResult{NativeQuality: true, Sweep: true, SweepEligibleCount: len(ordered), Generation: frozen.Generation, StartedAt: time.Now().UTC(), CurrentTarget: frozen.CurrentTarget, State: "running"}
 	position := 0

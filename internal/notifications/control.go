@@ -104,7 +104,7 @@ func (t *telegram) updates(ctx context.Context, value authority, offset int64, b
 		return nil, Error("transport-failed")
 	}
 	request.Header.Set("Content-Type", "application/json")
-	response, err := t.client.Do(request)
+	response, err := t.http(ctx).Do(request)
 	if err != nil {
 		return nil, Error("transport-failed")
 	}
@@ -186,6 +186,7 @@ func (s *Service) consume(ctx context.Context, snapshot authority, epoch uint64,
 // RAM; only accepted operator commands cause a bounded persistent watermark write.
 func (s *Service) RunControl(ctx context.Context, handler ControlHandler) {
 	poller := newTelegramWithTimeout(25 * time.Second)
+	poller.route = s.transport.route
 	var token, chat, user string
 	var generation uint64
 	offset := int64(-1)
