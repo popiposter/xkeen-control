@@ -109,7 +109,9 @@ func (s *Schedule) Run(ctx context.Context) {
 			if q, err := quotaState(s.service.QuotaPath, time.Now().UTC(), s.service.profile().Review().Bytes); err == nil && q.LastStartedAt.After(last) {
 				last = q.LastStartedAt
 			} else if err != nil {
-				next = time.Now().Add(10 * time.Minute)
+				// A held receipt lock (for example a recovery check) is
+				// transient; a broken receipt keeps the ten-minute retry.
+				next, _ = nextAfterStart(time.Now(), err, cadence)
 				continue
 			}
 			now := time.Now()
@@ -146,7 +148,7 @@ func nextAfterStart(now time.Time, err error, cadence time.Duration) (time.Time,
 	switch {
 	case err == nil:
 		return now.Add(cadence), false
-	case errors.Is(err, c1.ErrManualBusy):
+	case errors.Is(err, c1.ErrManualBusy), errors.Is(err, errQuotaBusy):
 		return now.Add(busyRetry), true
 	default:
 		return now.Add(10 * time.Minute), false

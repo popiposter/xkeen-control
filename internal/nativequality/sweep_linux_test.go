@@ -974,3 +974,25 @@ func TestSweepBroadSelectorIsNotNarrowedByObservatoryRepair(t *testing.T) {
 		t.Fatal("a broad selector review saved configuration", err)
 	}
 }
+
+// A review whose receipt lock is held by another owner (a recovery check or
+// another process) returns the busy error, which the schedule retries soon.
+func TestSweepHeldQuotaLockIsBusy(t *testing.T) {
+	s, _, _, _ := sweepFixture(t, true)
+	release, err := acquireQuotaLock(s.QuotaPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	err = s.startSweep(context.Background(), "periodic")
+	if !errors.Is(err, errQuotaBusy) {
+		t.Fatal("held receipt lock", err)
+	}
+	if next, keep := nextAfterStart(time.Now(), err, reviewCadence); time.Until(next) > 2*time.Minute || !keep {
+		t.Fatal("held receipt lock is not retried soon", time.Until(next), keep)
+	}
+	s.status.InspectionRequired = true
+	if next, _ := nextAfterStart(time.Now(), s.startSweep(context.Background(), "periodic"), reviewCadence); time.Until(next) < 9*time.Minute {
+		t.Fatal("an inspection fence is retried every minute")
+	}
+}

@@ -86,6 +86,12 @@ func TestBusyReviewRetriesSoonAndRecoveryIsOffset(t *testing.T) {
 	if next, keep := nextAfterStart(now, fmt.Errorf("wrapped: %w", c1.ErrManualBusy), reviewCadence); !next.Equal(now.Add(time.Minute)) || !keep {
 		t.Fatal("busy retry", next.Sub(now), keep)
 	}
+	if next, keep := nextAfterStart(now, errQuotaBusy, reviewCadence); !next.Equal(now.Add(time.Minute)) || !keep {
+		t.Fatal("held receipt lock retry", next.Sub(now), keep)
+	}
+	if next, keep := nextAfterStart(now, errQuota, reviewCadence); !next.Equal(now.Add(10*time.Minute)) || keep {
+		t.Fatal("broken receipt retry", next.Sub(now), keep)
+	}
 	if next, keep := nextAfterStart(now, ErrUnavailable, reviewCadence); !next.Equal(now.Add(10*time.Minute)) || keep {
 		t.Fatal("refusal retry", next.Sub(now), keep)
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -24,6 +25,9 @@ const (
 )
 
 var errQuota = errors.New("native quality quota unavailable")
+
+// errQuotaBusy is a held receipt lock; it is still errQuota.
+var errQuotaBusy = fmt.Errorf("%w: receipt lock held", errQuota)
 
 type quotaReservation struct {
 	At    time.Time `json:"at"`
@@ -61,7 +65,7 @@ func quotaState(path string, now time.Time, reviewBytes int64) (quotaView, error
 	}
 	release, err := acquireQuotaLock(path)
 	if err != nil {
-		return quotaView{}, errQuota
+		return quotaView{}, err
 	}
 	defer release()
 	q, err := readQuotaLocked(path, now)

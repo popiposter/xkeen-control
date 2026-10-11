@@ -48,8 +48,12 @@ func (s *Service) startReview(parent context.Context, trigger string, manual boo
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.cancel != nil || s.autoApplying || s.recovering || s.status.InspectionRequired {
+	if s.closed || s.cancel != nil || s.autoApplying || s.recovering {
 		return c1.ErrManualBusy
+	}
+	if s.status.InspectionRequired {
+		// Not transient: the operator must inspect first.
+		return ErrUnavailable
 	}
 	s.status.StartReason = ""
 	if err := s.Resources.CheckConflict(); err != nil {
@@ -101,7 +105,7 @@ func (s *Service) startReview(parent context.Context, trigger string, manual boo
 	quotaUnlock, err := acquireQuotaLock(quotaPath)
 	if err != nil {
 		s.status.ReviewReason = "quota-busy-or-unavailable"
-		return errQuota
+		return err
 	}
 	limits := s.profile().Review()
 	previous, err := readQuotaLocked(quotaPath, now)
