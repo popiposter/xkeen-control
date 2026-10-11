@@ -21,6 +21,13 @@ const (
 	reviewStartAttempts = 30
 	// geodataWait bounds the native geodata update (its own limit is 15 min).
 	geodataWait = 16 * time.Minute
+	// clockCheck is the longest the schedule sleeps before it re-reads the
+	// wall clock, so an NTP correction or a zone change cannot move the
+	// window into the day.
+	clockCheck = 10 * time.Minute
+	// windowGrace is how late a window may still start; a later wake-up
+	// (for example after a forward clock jump) skips to the next night.
+	windowGrace = time.Hour
 )
 
 // MaintenanceStatus is the last nightly maintenance window (revision
@@ -44,35 +51,55 @@ type Schedule struct {
 	// Geodata runs the native geodata update, which restarts Xray, and
 	// returns its terminal job state.
 	Geodata func(context.Context) (string, error)
-	// Location is the router's local time zone; nil means time.Local.
-	Location *time.Location
+	// Finished receives the finished window and the review status read after
+	// it, for the operator report; it must not block for long.
+	Finished func(context.Context, MaintenanceStatus, Status)
+	// Location returns the router's local time zone. It is read again for
+	// every window so a zone change takes effect; nil means time.Local.
+	Location func() *time.Location
 	// Window is the local time of day the maintenance starts.
 	Window time.Duration
-	// settle is the pause after the native API answers; tests shorten it.
-	settle time.Duration
+	// settle is the pause after the native API answers and retry the pause
+	// after a busy start; tests shorten them.
+	settle, retry time.Duration
+	// start starts the nightly review; tests replace it.
+	start func(context.Context) (<-chan struct{}, error)
 }
 
 func NewSchedule(service *Service) *Schedule {
-	return &Schedule{service: service, Window: DefaultWindow, settle: settleDelay}
+	return &Schedule{service: service, Window: DefaultWindow, settle: settleDelay, retry: busyRetry, start: service.startNightly}
 }
 
 // NextWindow returns the next maintenance start after now.
 func (s *Schedule) NextWindow(now time.Time) time.Time {
-	loc := s.Location
-	if loc == nil {
-		loc = time.Local
+	loc := time.Local
+	if s.Location != nil {
+		if l := s.Location(); l != nil {
+			loc = l
+		}
 	}
 	return nextWindow(now, loc, s.Window)
 }
 
 func nextWindow(now time.Time, loc *time.Location, offset time.Duration) time.Time {
 	local := now.In(loc)
-	day := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
-	at := day.Add(offset)
+	hour, minute := int(offset/time.Hour), int(offset%time.Hour/time.Minute)
+	at := time.Date(local.Year(), local.Month(), local.Day(), hour, minute, 0, 0, loc)
 	if !at.After(local) {
-		at = day.AddDate(0, 0, 1).Add(offset)
+		at = time.Date(local.Year(), local.Month(), local.Day()+1, hour, minute, 0, 0, loc)
 	}
 	return at
+}
+
+// due decides, after a wake-up at now, whether the window planned for next
+// starts: only from next until windowGrace after it. Otherwise it returns the
+// window recomputed from the current clock and zone, so a backward or forward
+// clock jump or a zone change moves the plan instead of the start time.
+func (s *Schedule) due(now, next time.Time) (bool, time.Time) {
+	if !now.Before(next) && now.Sub(next) <= windowGrace {
+		return true, next
+	}
+	return false, s.NextWindow(now)
 }
 
 func (s *Schedule) Run(ctx context.Context) {
@@ -80,19 +107,21 @@ func (s *Schedule) Run(ctx context.Context) {
 		return
 	}
 	go s.runRecovery(ctx)
+	next := s.NextWindow(time.Now())
 	for {
-		next := s.NextWindow(time.Now())
 		s.service.mu.Lock()
-		s.service.status.NextDueAt = next
+		s.service.nextMaintenance = next
 		s.service.mu.Unlock()
-		timer := time.NewTimer(time.Until(next))
-		select {
-		case <-ctx.Done():
-			timer.Stop()
+		if !sleepCtx(ctx, max(min(time.Until(next), clockCheck), time.Second)) {
 			return
-		case <-timer.C:
+		}
+		run, planned := s.due(time.Now(), next)
+		next = planned
+		if !run {
+			continue
 		}
 		s.runNight(ctx)
+		next = s.NextWindow(time.Now())
 	}
 }
 
@@ -121,10 +150,13 @@ func (s *Schedule) runNight(ctx context.Context) {
 	var reason string
 	started := false
 	for attempt := 0; attempt < reviewStartAttempts && ctx.Err() == nil; attempt++ {
-		err := svc.startSweep(ctx, "nightly")
+		done, err := s.start(ctx)
 		if err == nil {
 			started = true
-			svc.waitReview(ctx)
+			select {
+			case <-ctx.Done():
+			case <-done:
+			}
 			break
 		}
 		if !busyStart(err) {
@@ -136,7 +168,7 @@ func (s *Schedule) runNight(ctx context.Context) {
 			}
 			break
 		}
-		if !sleepCtx(ctx, busyRetry) {
+		if !sleepCtx(ctx, s.retry) {
 			return
 		}
 	}
@@ -157,7 +189,11 @@ func (s *Schedule) runNight(ctx context.Context) {
 	svc.maintenance.GeodataState = geodata
 	svc.maintenance.Phase = ""
 	svc.maintenance.FinishedAt = time.Now().UTC()
+	finished := svc.maintenance
 	svc.mu.Unlock()
+	if s.Finished != nil && ctx.Err() == nil {
+		s.Finished(ctx, finished, svc.Read())
+	}
 }
 
 // waitNativeReady polls the native API until it answers or readyWait passes.
@@ -240,6 +276,10 @@ func (s *Schedule) Enabled() bool {
 // UpdateGeodata runs the native geodata update through the shared job runner
 // and waits for its terminal state. A busy runner is retried every minute.
 func (s *Service) UpdateGeodata(ctx context.Context) (string, error) {
+	return s.updateGeodata(ctx, busyRetry, 2*time.Second)
+}
+
+func (s *Service) updateGeodata(ctx context.Context, retry, poll time.Duration) (string, error) {
 	if s.Jobs == nil || s.Editor == nil {
 		return "unavailable", ErrUnavailable
 	}
@@ -250,7 +290,7 @@ func (s *Service) UpdateGeodata(ctx context.Context) (string, error) {
 		if !errors.Is(err, authority.ErrBusy) {
 			break
 		}
-		if !sleepCtx(ctx, busyRetry) {
+		if !sleepCtx(ctx, retry) {
 			return "canceled", ctx.Err()
 		}
 	}
@@ -259,7 +299,7 @@ func (s *Service) UpdateGeodata(ctx context.Context) (string, error) {
 	}
 	wait, cancel := context.WithTimeout(ctx, geodataWait)
 	defer cancel()
-	tick := time.NewTicker(2 * time.Second)
+	tick := time.NewTicker(poll)
 	defer tick.Stop()
 	for job.State == "running" {
 		select {

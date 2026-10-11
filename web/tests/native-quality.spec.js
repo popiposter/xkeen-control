@@ -115,7 +115,7 @@ test('large eligible set reports probed and speed-tested nodes and a no-op', asy
   model.quality = { ...complete(), resourceProfile: { name: 'constrained', constrained: true, automatic: true },
     limits: { candidates: 3, attempts: 4, bytes: 24 * 1048576, seconds: 90 },
     poolCount: 52, activePoolCount: 6, eligibleCount: 46, totalEligible: 46,
-    rttValidCount: 41, selectedForSpeed: 18, subsetState: 'all-eligible',
+    rttValidCount: 41, selectedForSpeed: 18,
     attemptedCount: 18, validCount: 15, batchCount: 6,
     aggregateBytes: 48 * 1048576, appliedState: 'no-op', poolDecision: 'pool-unchanged',
     reviewReason: 'pool-unchanged', activePool: ['proxy-a', 'proxy-b'],

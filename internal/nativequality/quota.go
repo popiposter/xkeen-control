@@ -86,21 +86,16 @@ func recordComparisonStart(path string, now time.Time) error {
 		return errQuota
 	}
 	defer release()
-	return recordComparisonStartLocked(path, now, nil)
+	return recordComparisonStartLocked(path, now)
 }
 
-// recordComparisonStartLocked requires the quota lock held by the caller. A
-// manual review also advances the shared fair cursor, so every review rotates.
-func recordComparisonStartLocked(path string, now time.Time, plan *sweepPlan) error {
+// recordComparisonStartLocked requires the quota lock held by the caller.
+func recordComparisonStartLocked(path string, now time.Time) error {
 	q, err := readQuotaLocked(path, now)
 	if err != nil || q.InspectionRequired {
 		return errQuota
 	}
 	q.LastComparisonStartedAt = now
-	if plan != nil {
-		q.FairCursor = plan.NextCursor
-		q.EligibleSetHash = plan.EligibleSetHash
-	}
 	return writeQuotaLocked(path, q)
 }
 

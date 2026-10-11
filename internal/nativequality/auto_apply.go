@@ -157,7 +157,10 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 	}
 	concurrent := !s.profile().Constrained
 	observatory := w.Documents["07_observatory.json"].Text
-	decision := poolDecision(currentActive, orphans, selected, plan.FirstInitialization)
+	s.mu.Lock()
+	alive := s.rttAlive
+	s.mu.Unlock()
+	decision := poolDecision(currentActive, orphans, alive, selected, plan.FirstInitialization)
 	if decision == "pool-unchanged" && !observatoryMatchesPool(observatory, selected, concurrent) {
 		// Same members but 07 still observes a different set: the same
 		// validated joint 05+07 Apply repairs it (REQ-010).

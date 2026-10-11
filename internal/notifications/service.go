@@ -37,11 +37,13 @@ type Status struct {
 	ControlState      string     `json:"controlState"`
 }
 
-// Alert is opaque outside this package. Only the three closed constructors can
+// Alert is opaque outside this package. Only the closed constructors can
 // produce text; API callers cannot supply arbitrary remote message content.
+// An html alert is Telegram HTML built with every outside value escaped.
 type Alert struct {
 	text string
 	test bool
+	html bool
 }
 
 var digestGrammar = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -173,7 +175,7 @@ func (s *Service) Send(ctx context.Context, alert Alert) error {
 	}
 	now := time.Now().UTC()
 	s.status.LastAttemptAt = &now
-	err := s.transport.send(ctx, value, alert.text)
+	err := s.transport.sendFormatted(ctx, value, alert.text, alert.html)
 	if err == nil {
 		s.status.DeliveryState = "delivered"
 		s.status.LastDeliveredAt = &now

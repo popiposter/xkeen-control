@@ -31,31 +31,45 @@ func batchSizes(count, maxBatch int) ([]int, error) {
 	return sizes, nil
 }
 
-// startSweep starts an automatic review. Kept as the scheduler entry point.
+// startSweep starts an automatic review.
 func (s *Service) startSweep(parent context.Context, trigger string) error {
-	return s.startReview(parent, trigger, false)
+	_, err := s.startReviewDone(parent, trigger, false)
+	return err
 }
 
-// startReview freezes candidates and starts one review on either profile. An
+// startNightly starts the nightly review and returns the channel closed when
+// it, including its native Apply, has finished.
+func (s *Service) startNightly(parent context.Context) (<-chan struct{}, error) {
+	return s.startReviewDone(parent, "nightly", false)
+}
+
+func (s *Service) startReview(parent context.Context, trigger string, manual bool) error {
+	_, err := s.startReviewDone(parent, trigger, manual)
+	return err
+}
+
+// startReviewDone freezes candidates and starts one review on either profile. An
 // automatic (nightly) review may apply its decision; a manual review (the
 // operator's speed test) runs the same pipeline and leaves the recommendation
-// for an explicit Stage.
-func (s *Service) startReview(parent context.Context, trigger string, manual bool) error {
+// for an explicit Stage. A manual test is refused while the nightly window
+// runs, because the window restarts Xray around it.
+func (s *Service) startReviewDone(parent context.Context, trigger string, manual bool) (chan struct{}, error) {
 	if s.Editor == nil || s.Lease == nil || s.Reader == nil || s.Nodes == nil || s.Measurement == nil || s.Resources == nil {
-		return ErrUnavailable
+		return nil, ErrUnavailable
 	}
 	if !manual && (!s.profile().Automatic || s.AutomaticDisabled) {
-		return ErrUnavailable
+		return nil, ErrUnavailable
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.cancel != nil || s.autoApplying || s.recovering {
-		return c1.ErrManualBusy
+	if s.closed || s.cancel != nil || s.autoApplying || s.recovering || manual && s.maintenance.Phase != "" {
+		return nil, c1.ErrManualBusy
 	}
 	if s.status.InspectionRequired {
 		// Not transient: the operator must inspect first.
-		return ErrUnavailable
+		return nil, ErrUnavailable
 	}
+
 	s.status.StartReason = ""
 	if err := s.Resources.CheckConflict(); err != nil {
 		s.status.ReviewReason = "native-speed-conflict-or-unavailable"
@@ -65,39 +79,39 @@ func (s *Service) startReview(parent context.Context, trigger string, manual boo
 				s.status.StartReason = "native-speed-conflict"
 			}
 		}
-		return err
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
 	w, err := s.Editor.Workspace(ctx)
 	if err != nil || w.Pending != nil || !w.TargetsComplete {
 		s.status.ReviewReason = "configuration-pending-or-unavailable"
-		return ErrUnavailable
+		return nil, ErrUnavailable
 	}
 	routing := w.Documents["05_routing.json"].Text
 	nodes := s.Nodes(ctx)
 	pool, index, err := measurementPool(routing, nodes, w.Targets)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	resolved, orphans, _, err := resolveActivePool(routing, nodes, w.Targets, true)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	activePool := append(append([]string(nil), resolved...), orphans...)
 	criteria, err := readCriteria(routing, w.Documents["07_observatory.json"].Text, index)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if probeRouteShadowed(routing) {
 		s.status.ReviewReason = "probe-route-shadowed"
-		return ErrUnavailable
+		return nil, ErrUnavailable
 	}
 	now := time.Now().UTC()
 	snapshot := s.Reader.Snapshot(ctx)
 	if !snapshot.APIReachable || !snapshot.RoutingReachable || snapshot.Balancer.Override != "" {
 		s.status.ReviewReason = "native-override-or-unavailable"
-		return ErrUnavailable
+		return nil, ErrUnavailable
 	}
 	quotaPath := s.QuotaPath
 	if quotaPath == "" {
@@ -106,14 +120,14 @@ func (s *Service) startReview(parent context.Context, trigger string, manual boo
 	quotaUnlock, err := acquireQuotaLock(quotaPath)
 	if err != nil {
 		s.status.ReviewReason = "quota-busy-or-unavailable"
-		return err
+		return nil, err
 	}
 	limits := s.profile().Review()
 	previous, err := readQuotaLocked(quotaPath, now)
 	if err != nil || previous.InspectionRequired {
 		quotaUnlock()
 		s.status.ReviewReason = "quota-unavailable-or-exhausted"
-		return errQuota
+		return nil, errQuota
 	}
 	// Every enabled node is probed; the speed phase then takes the fastest
 	// answering ones (revision 2026-10-11). There is no rotating subset.
@@ -130,14 +144,11 @@ func (s *Service) startReview(parent context.Context, trigger string, manual boo
 	s.orphans = append([]string(nil), orphans...)
 	s.rttAlive = nil
 	s.result = c1.AdaptiveResult{}
-	s.status = Status{State: "running", Digest: w.Digest, Generation: s.status.Generation + 1, PoolCount: len(pool), ActivePoolCount: len(activePool), ActivePool: append([]string(nil), activePool...), OrphanedPool: append([]string(nil), orphans...), ActivePoolState: "frozen-at-review", EligibleCount: plan.TotalEligible, TotalEligible: plan.TotalEligible, SubsetState: "all-eligible", LatencyLimitMS: criteria.maxRTT, LatencySource: criteria.latencySource, ReviewTrigger: trigger, ReviewPhase: "rtt", ManualSample: manual, Progress: c1.AdaptivePerformanceStatus{State: "running"}, AppliedState: "not-attempted"}
+	s.status = Status{State: "running", Digest: w.Digest, Generation: s.status.Generation + 1, PoolCount: len(pool), ActivePoolCount: len(activePool), ActivePool: append([]string(nil), activePool...), OrphanedPool: append([]string(nil), orphans...), ActivePoolState: "frozen-at-review", EligibleCount: plan.TotalEligible, TotalEligible: plan.TotalEligible, LatencyLimitMS: criteria.maxRTT, LatencySource: criteria.latencySource, ReviewTrigger: trigger, ReviewPhase: "rtt", ManualSample: manual, Progress: c1.AdaptivePerformanceStatus{State: "running"}, AppliedState: "not-attempted"}
 	observeNativeSelection(&s.status, snapshot, now)
-	if plan.FirstInitialization {
-		s.status.PoolDecision = "first-pool-initialization"
-	}
 	frozen := c1.AdaptiveGeneration{NativeQuality: true, Generation: s.status.Generation, StartedAt: now, CurrentTarget: snapshot.Balancer.NativeSelected}
 	go s.runSweep(job, cancelJob, done, frozen, plan, w.Digest, quotaPath, quotaUnlock, manual)
-	return nil
+	return done, nil
 }
 
 // rttPrePhaseChunk bounds how long one pre-phase step holds the panel lease:
@@ -226,7 +237,7 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 	reserved := false
 	if reason == "" && quotaUnlock != nil && manual {
 		// A manual review records its start; it applies nothing by itself.
-		if err := recordComparisonStartLocked(quotaPath, time.Now().UTC(), nil); err != nil {
+		if err := recordComparisonStartLocked(quotaPath, time.Now().UTC()); err != nil {
 			reason = "quota-unavailable-or-exhausted"
 		}
 	} else if reason == "" && quotaUnlock != nil {
@@ -439,19 +450,4 @@ func fastestAnswering(admitted []c1.AdaptiveCandidateInput, limit int) []c1.Adap
 		out = out[:limit]
 	}
 	return out
-}
-
-// waitReview blocks until the running review, including its native Apply,
-// has finished.
-func (s *Service) waitReview(ctx context.Context) {
-	s.mu.Lock()
-	done := s.done
-	s.mu.Unlock()
-	if done == nil {
-		return
-	}
-	select {
-	case <-ctx.Done():
-	case <-done:
-	}
 }

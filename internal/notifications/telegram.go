@@ -18,6 +18,9 @@ const telegramAddress = telegramHost + ":443"
 const requestTimeout = 5 * time.Second
 const maxResponseBytes = 16 << 10
 
+// maxHTMLBytes stays well under Telegram's 4096-character message limit.
+const maxHTMLBytes = 3072
+
 type telegram struct{ client *http.Client }
 
 type lookupIP func(context.Context, string) ([]net.IPAddr, error)
@@ -107,15 +110,30 @@ func publicDestination(ip net.IP) bool {
 }
 
 func (t *telegram) send(parent context.Context, value authority, message string) error {
-	if !validCredentials(value.BotToken, value.ChatID) || len(message) == 0 || len(message) > 512 {
+	return t.sendFormatted(parent, value, message, false)
+}
+
+// sendFormatted sends plain text up to 512 bytes, or a closed HTML report up
+// to maxHTMLBytes with Telegram's HTML parse mode.
+func (t *telegram) sendFormatted(parent context.Context, value authority, message string, formatted bool) error {
+	limit := 512
+	if formatted {
+		limit = maxHTMLBytes
+	}
+	if !validCredentials(value.BotToken, value.ChatID) || len(message) == 0 || len(message) > limit {
 		return Error("provider-rejected")
 	}
 	ctx, cancel := context.WithTimeout(parent, requestTimeout)
 	defer cancel()
-	data, _ := json.Marshal(struct {
-		ChatID string `json:"chat_id"`
-		Text   string `json:"text"`
-	}{value.ChatID, message})
+	payload := struct {
+		ChatID    string `json:"chat_id"`
+		Text      string `json:"text"`
+		ParseMode string `json:"parse_mode,omitempty"`
+	}{ChatID: value.ChatID, Text: message}
+	if formatted {
+		payload.ParseMode = "HTML"
+	}
+	data, _ := json.Marshal(payload)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://"+telegramAddress+"/bot"+value.BotToken+"/sendMessage", bytes.NewReader(data))
 	if err != nil {
 		return Error("transport-failed")

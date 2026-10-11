@@ -77,3 +77,71 @@ func TestBusyReviewRetriesAndRecoveryIsOffset(t *testing.T) {
 		t.Fatal("recovery checks align with other ten-minute work", recoveryFirstCheck)
 	}
 }
+
+// The window starts only from its planned time until the grace period; any
+// clock jump or zone change re-plans it from the current clock instead.
+func TestDueFollowsClockJumpsAndZoneChanges(t *testing.T) {
+	zone := time.FixedZone("router", 3*3600)
+	s := NewSchedule(&Service{})
+	s.Location = func() *time.Location { return zone }
+	at := func(day, hour, minute int) time.Time { return time.Date(2026, 10, day, hour, minute, 0, 0, zone) }
+	next := at(11, 4, 0)
+	if run, planned := s.due(at(11, 4, 0).Add(time.Second), next); !run || !planned.Equal(next) {
+		t.Fatal("on-time wake did not run", run, planned)
+	}
+	// Booted at 01:00 by a wrong clock; NTP then set 13:00: skip to tomorrow.
+	if run, planned := s.due(at(11, 13, 0), next); run || !planned.Equal(at(12, 4, 0)) {
+		t.Fatal("forward jump ran in the day", run, planned)
+	}
+	// Planned at a wrong 13:00 for tomorrow; NTP then set 01:00 today.
+	if run, planned := s.due(at(11, 1, 0), at(12, 4, 0)); run || !planned.Equal(at(11, 4, 0)) {
+		t.Fatal("backward jump kept a window a day late", run, planned)
+	}
+	// The operator moved the zone two hours east: 04:00 is earlier in UTC.
+	zone = time.FixedZone("router", 5*3600)
+	if run, planned := s.due(next.Add(-3*time.Hour), next); run || !planned.Equal(time.Date(2026, 10, 11, 4, 0, 0, 0, zone)) || !planned.Before(next) {
+		t.Fatal("zone change ignored", run, planned)
+	}
+}
+
+func TestNextWindowKeepsWallTimeAcrossDaylightSaving(t *testing.T) {
+	loc, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Skip("no zone database", err)
+	}
+	// 2026-10-25 03:00 CEST becomes 02:00 CET.
+	got := nextWindow(time.Date(2026, 10, 24, 23, 0, 0, 0, loc), loc, DefaultWindow)
+	if got.Hour() != 4 || got.Minute() != 0 || got.Day() != 25 {
+		t.Fatal("window drifted across the DST change", got)
+	}
+}
+
+// A busy nightly start is retried; a final refusal is not, and geodata still
+// runs in both cases.
+func TestNightRetriesBusyReviewStart(t *testing.T) {
+	svc := &Service{}
+	s := NewSchedule(svc)
+	s.settle, s.retry = 0, 0
+	calls := 0
+	s.start = func(context.Context) (<-chan struct{}, error) {
+		calls++
+		if calls < 3 {
+			return nil, fmt.Errorf("wrapped: %w", c1.ErrManualBusy)
+		}
+		done := make(chan struct{})
+		close(done)
+		return done, nil
+	}
+	geodata := 0
+	s.Geodata = func(context.Context) (string, error) { geodata++; return "completed", nil }
+	s.runNight(context.Background())
+	if calls != 3 || !svc.maintenance.ReviewStarted || geodata != 1 {
+		t.Fatal("busy start not retried", calls, svc.maintenance, geodata)
+	}
+	calls = 0
+	s.start = func(context.Context) (<-chan struct{}, error) { calls++; return nil, ErrUnavailable }
+	s.runNight(context.Background())
+	if calls != 1 || svc.maintenance.ReviewStarted || svc.maintenance.ReviewReason != "review-unavailable" || geodata != 2 {
+		t.Fatal("final refusal retried or geodata skipped", calls, svc.maintenance, geodata)
+	}
+}

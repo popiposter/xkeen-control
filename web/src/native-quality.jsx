@@ -54,16 +54,12 @@ const reviewReasons = {
   'inspection-required': 'Automatic application needs inspection. Do not repeat the operation.',
   'inspection-receipt-unavailable': 'The private inspection receipt could not be settled. Inspect it before another comparison.',
   'pool-unchanged': 'The measured recommendation has the same members as the active pool; no restart was needed.',
-  'healthy-target-sample-invalid': 'The current healthy node had an invalid speed sample; its active pool was retained.',
-  'insufficient-challenger-margin': 'Challengers did not improve the measured pool score by 15%; the active pool was retained.',
-  'incumbent-unmeasured-or-unknown': 'A current pool member lacks fresh, valid evidence; the active pool was retained.',
   'native-health-ambiguous': 'Native health readback is ambiguous; the active pool was retained.',
   'selector-changed': 'The active selector changed during the review; the active pool was retained.',
 }
 const poolDecisionText = {
   'pool-unchanged': 'same pool members; no restart',
   'best-six': 'best six measured nodes applied',
-  'first-pool-initialization': 'first pool from a broad selector',
   'observatory-repair': 'running pool kept; native health observation narrowed to it',
   'insufficient-valid-results': 'too few valid results to replace a larger running pool',
 }

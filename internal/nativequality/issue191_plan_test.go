@@ -45,7 +45,7 @@ func TestIssue191ReadOnlyPlanQualification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := recordComparisonStartLocked(path, now, &plan); err != nil {
+	if err := writeQuotaLocked(path, quotaReceipt{Version: 1, LastComparisonStartedAt: now, FairCursor: plan.NextCursor, EligibleSetHash: plan.EligibleSetHash}); err != nil {
 		t.Fatal(err)
 	}
 	if err := settleSweepLocked(path, now, true, false); err != nil {
@@ -98,20 +98,20 @@ func TestIssue191ReadOnlyPlanQualification(t *testing.T) {
 		t.Fatal("membership drift did not reanchor", err)
 	}
 	// Same members never restart solely to refresh floating weights or order.
-	if got := poolDecision(active, nil, []string{active[5], active[4], active[3], active[2], active[1], active[0]}, false); got != "pool-unchanged" {
+	if got := poolDecision(active, nil, nil, []string{active[5], active[4], active[3], active[2], active[1], active[0]}, false); got != "pool-unchanged" {
 		t.Fatal(got)
 	}
 	// Any different best six replaces the pool; there is no challenger margin.
 	changed := []string{active[0], active[1], active[2], active[3], active[4], all[6]}
-	if got := poolDecision(active, nil, changed, false); got != "best-six" {
+	if got := poolDecision(active, nil, nil, changed, false); got != "best-six" {
 		t.Fatal("best six not applied", got)
 	}
 	// Fewer than six valid results never shrink a larger live pool.
-	if got := poolDecision(active, nil, changed[:5], false); got != "insufficient-valid-results" {
+	if got := poolDecision(active, nil, nil, changed[:5], false); got != "insufficient-valid-results" {
 		t.Fatal("five valid results shrank a six-member pool", got)
 	}
 	// Orphaned members are not live: a two-member live pool may be replaced.
-	if got := poolDecision(active, active[2:], changed[:3], false); got != "best-six" {
+	if got := poolDecision(active, active[2:], nil, changed[:3], false); got != "best-six" {
 		t.Fatal("orphaned members blocked the replacement", got)
 	}
 	// Any two valid samples are ranked; there is no coverage threshold.

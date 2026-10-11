@@ -116,7 +116,14 @@ longer pull a review forward, and the manual speed test runs the same pipeline
 without applying. Recovery checks (REQ-009) keep their ten-minute cadence but
 pause during the window. The stock XKeen geodata cron must be removed on each
 router (`geodata-schedule-remove`) once this build is installed, so Xray restarts
-only inside the window.
+only inside the window. The window time follows the Keenetic zone in `/etc/TZ`
+(then the system date offset), and the schedule re-reads the clock at least every
+ten minutes: it starts only within an hour after the planned time, so an NTP
+correction or a zone change re-plans the night instead of restarting Xray in the
+day. A manual speed test is refused while the window runs. When Telegram
+notifications are enabled, the window ends with one formatted report: step
+outcomes, probe and speed-test counts, and the running pool by display name with
+RTT and throughput.
 No-healthy-member recovery (unreleased, REQ-009): every 10 minutes the panel
 checks whether native Observatory reports every pool member down, or every
 member has vanished from the registry. A member without an Observatory record is

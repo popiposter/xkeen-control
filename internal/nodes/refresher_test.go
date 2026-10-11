@@ -560,3 +560,28 @@ func TestMaintenanceWindowOwnsAutomaticRefresh(t *testing.T) {
 		t.Fatal("the window changed after Start")
 	}
 }
+
+// A busy refusal in the window is retried once after the first backoff and
+// then marked failed until the next window, so the window is not held for the
+// whole backoff ladder.
+func TestWindowRefreshRetriesBusyOnceThenFails(t *testing.T) {
+	registry := refresherRegistry(t, true)
+	manager, _, _ := testManager(t, &registry, &countingSubscriptionFetcher{body: []byte(syntheticProfileTwo)})
+	coordinator := &managedRefreshCoordinator{}
+	manager.managedCoordinator = coordinator
+	owned, err := manager.authority.Acquire(context.Background(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owned()
+	// Each clock read advances ten minutes, past the five-minute backoff.
+	now := time.Date(2026, 10, 11, 1, 0, 0, 0, time.UTC)
+	window := now.Add(27 * time.Hour)
+	r := newSubscriptionRefresher(manager, func() time.Time { now = now.Add(10 * time.Minute); return now })
+	r.window = func(time.Time) time.Time { return window }
+	r.refreshAll(context.Background())
+	status := r.AutoRefreshStatuses()["sub-12345678"]
+	if coordinator.tryCalls != 2 || status.State != autoRefreshFailed || status.ErrorCode != autoRefreshAuthority || status.NextRunAt != formatAutoRefreshTime(window) {
+		t.Fatalf("busy window refresh: attempts=%d status=%+v", coordinator.tryCalls, status)
+	}
+}

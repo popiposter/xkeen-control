@@ -66,20 +66,32 @@ func TestFiftyTwoNodeFairRotationAcrossReviews(t *testing.T) {
 // imported five-member pool grows to six.
 func TestNightlyBestSixDecision(t *testing.T) {
 	five := []string{"a", "b", "c", "d", "e"}
-	if got := poolDecision(five, nil, []string{"a", "b", "c", "d", "e", "g"}, false); got != "best-six" {
+	if got := poolDecision(five, nil, nil, []string{"a", "b", "c", "d", "e", "g"}, false); got != "best-six" {
 		t.Fatal("five-member pool was not filled", got)
 	}
-	if got := poolDecision(five, nil, []string{"a", "b", "c", "d", "g"}, false); got != "best-six" {
+	if got := poolDecision(five, nil, nil, []string{"a", "b", "c", "d", "g"}, false); got != "best-six" {
 		t.Fatal("a better same-size pool was not applied", got)
 	}
 	broad := make([]string, 52)
 	for i := range broad {
 		broad[i] = fmt.Sprintf("proxy-%02d", i)
 	}
-	if got := poolDecision(broad, nil, broad[:3], true); got != "insufficient-valid-results" {
+	if got := poolDecision(broad, nil, nil, broad[:3], true); got != "insufficient-valid-results" {
 		t.Fatal("three results replaced a broad selector", got)
 	}
-	if got := poolDecision(broad, nil, broad[:6], true); got != "best-six" {
+	if got := poolDecision(broad, nil, nil, broad[:6], true); got != "best-six" {
 		t.Fatal("six results did not adopt a broad selector", got)
+	}
+	// Members that failed this review's probe are not live: three valid
+	// results replace a six-member pool with four dead members.
+	six := []string{"a", "b", "c", "d", "e", "f"}
+	alive := map[string]bool{"a": true, "b": true, "c": false, "d": false, "e": false, "f": false, "x": true}
+	if got := poolDecision(six, nil, alive, []string{"a", "b", "x"}, false); got != "best-six" {
+		t.Fatal("dead members kept a pool over valid results", got)
+	}
+	alive["c"] = true
+	alive["d"] = true
+	if got := poolDecision(six, nil, alive, []string{"a", "b", "x"}, false); got != "insufficient-valid-results" {
+		t.Fatal("three results shrank a four-live pool", got)
 	}
 }

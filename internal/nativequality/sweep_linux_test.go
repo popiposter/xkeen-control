@@ -941,3 +941,40 @@ func TestSweepHeldQuotaLockIsBusy(t *testing.T) {
 		t.Fatal("an inspection fence is retried as busy")
 	}
 }
+
+// The nightly window restarts Xray around a manual test, so the server
+// refuses one while a maintenance phase runs, not only the browser.
+func TestManualTestIsBusyDuringMaintenance(t *testing.T) {
+	s, _, _, _ := sweepFixture(t, true)
+	s.maintenance.Phase = "subscriptions"
+	if err := s.Start(context.Background()); !errors.Is(err, c1.ErrManualBusy) {
+		t.Fatal("manual test admitted during maintenance", err)
+	}
+	if len(s.Measurement.(*sweepMeasurement).calls) != 0 {
+		t.Fatal("refused manual test transferred data")
+	}
+}
+
+// The geodata step waits for a busy job runner, then for the job to finish.
+func TestNightlyGeodataRetriesBusyRunnerAndWaitsForTheJob(t *testing.T) {
+	s, _, _, dir := sweepFixture(t, true)
+	marker := filepath.Join(dir, "geodata-ran")
+	script := filepath.Join(dir, "xkeen-geodata")
+	body := "#!/bin/sh\n[ \"$1\" = -ug ] || exit 9\nsleep 0.3\nprintf x > " + shellQuoted(marker) + "\n"
+	if err := os.WriteFile(script, []byte(body), 0700); err != nil {
+		t.Fatal(err)
+	}
+	s.Jobs = xkeen.NewJobs(script, s.Lease)
+	release, err := s.Lease.TryAcquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { time.Sleep(50 * time.Millisecond); release() }()
+	state, err := s.updateGeodata(context.Background(), 20*time.Millisecond, 20*time.Millisecond)
+	if err != nil || state != "completed" {
+		t.Fatal("geodata step", state, err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("geodata returned before the job finished", err)
+	}
+}

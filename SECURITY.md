@@ -147,6 +147,11 @@ The separate panel-local notification authority is
 secrets directory. Telegram token/chat ID never appear in safe responses or
 logs; this authority is excluded from safe export and encrypted node backup.
 It is separately reconfigurable after reinstall; older binaries ignore it.
+When outbound notifications are enabled, the nightly maintenance window sends
+one closed HTML report: step outcomes as closed codes, counts, and the running
+pool by node display name and country with measured RTT and throughput. Names
+are escaped and bounded; endpoints, tags, credentials, URLs, configuration and
+native output are never included.
 Inbound Telegram control is disabled by default and restricted to one explicit
 user and chat, fresh exact commands, a persisted before-dispatch update watermark
 and the existing native jobs/lease. No generic webhook, shell, prompt input,
