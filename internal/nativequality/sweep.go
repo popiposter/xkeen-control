@@ -138,8 +138,10 @@ func (s *Service) startReviewDone(parent context.Context, trigger string, manual
 	plan := planAll(pool, activePool, snapshot.Balancer.NativeSelected, s.poolSize())
 	plan.Provisional = !previous.ProvisionalAt.IsZero()
 	// The speed phase is capped at the profile wall; the probe-all pre-phase
-	// and the separate native Apply have their own bounded margins.
-	job, cancelJob := context.WithTimeout(context.WithoutCancel(parent), limits.Wall+time.Duration(len(plan.Candidates))*c1.RTTProbeTimeout+6*time.Minute)
+	// and the separate native Apply have their own bounded margins. The Apply
+	// chain is the save, the native job (up to four minutes) and the wait for
+	// Xray's selection (up to three), so it gets eleven minutes.
+	job, cancelJob := context.WithTimeout(context.WithoutCancel(parent), limits.Wall+time.Duration(len(plan.Candidates))*c1.RTTProbeTimeout+11*time.Minute)
 	done := make(chan struct{})
 	s.cancel, s.done = cancelJob, done
 	s.lastStartedAt = now

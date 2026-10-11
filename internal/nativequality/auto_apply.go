@@ -14,6 +14,22 @@ import (
 
 const sweepJobOwner = "native-quality-sweep"
 
+// selectionWait bounds waiting for Xray's native selection after an Apply;
+// selectionPoll is the re-read interval. Tests shorten both.
+func (s *Service) selectionWait() time.Duration {
+	if s.readbackWait > 0 {
+		return s.readbackWait
+	}
+	return 3 * time.Minute
+}
+
+func (s *Service) selectionPoll() time.Duration {
+	if s.readbackWait > 0 {
+		return s.readbackWait / 20
+	}
+	return 5 * time.Second
+}
+
 func sameRecommendation(text string, index int, selected []string, costs []c1.NativeQualityCost) bool {
 	var doc struct {
 		Routing struct {
@@ -329,14 +345,26 @@ func (s *Service) applyPool(parent context.Context, digest string, index int, po
 		out.reason = "applied-config-readback-mismatch"
 		return out
 	}
-	actual := s.Reader.Snapshot(readCtx)
 	selectedSet := make(map[string]bool, len(selected))
 	for _, tag := range selected {
 		selectedSet[tag] = true
 	}
-	if !actual.APIReachable || !actual.RoutingReachable || !actual.ObservatoryReachable || actual.Balancer.Override != "" || !selectedSet[actual.Balancer.NativeSelected] || !s.Reader.ProbeReachable(readCtx) {
-		out.reason = "native-selection-readback-unavailable"
-		return out
+	// After the restart Xray needs Observatory samples before it selects a
+	// member; constrained profiles observe one member at a time. Wait for the
+	// native selection to land in the pool instead of judging the first read.
+	waitCtx, waitCancel := context.WithTimeout(parent, s.selectionWait())
+	defer waitCancel()
+	var actual xrayapi.Snapshot
+	for {
+		actual = s.Reader.Snapshot(waitCtx)
+		settled := actual.APIReachable && actual.RoutingReachable && actual.ObservatoryReachable && actual.Balancer.Override == "" && selectedSet[actual.Balancer.NativeSelected] && s.Reader.ProbeReachable(waitCtx)
+		if settled {
+			break
+		}
+		if actual.Balancer.Override != "" || !sleepCtx(waitCtx, s.selectionPoll()) {
+			out.reason = "native-selection-readback-unavailable"
+			return out
+		}
 	}
 	out.state, out.reason, out.inspection, out.actual = "applied", "", false, actual
 	return out
