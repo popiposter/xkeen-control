@@ -3,6 +3,7 @@
 package nativequality
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,5 +149,28 @@ func TestRankedSettleClearsProvisionalLabel(t *testing.T) {
 	}
 	if q, _ := readQuotaLocked(path, now); !q.ProvisionalAt.IsZero() {
 		t.Fatal("a ranked review left the provisional label")
+	}
+}
+
+// A held receipt lock is reported as busy, distinct from a broken receipt,
+// both directly and through quotaState and a review start.
+func TestHeldQuotaLockIsBusyNotBroken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "quota", "receipt.json")
+	release, err := acquireQuotaLock(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if _, err := acquireQuotaLock(path); !errors.Is(err, errQuotaBusy) || !errors.Is(err, errQuota) {
+		t.Fatal("held lock", err)
+	}
+	if _, err := quotaState(path, time.Now().UTC(), 1); !errors.Is(err, errQuotaBusy) {
+		t.Fatal("quotaState under a held lock", err)
+	}
+	if err := os.Chmod(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := quotaState(path, time.Now().UTC(), 1); err == nil || errors.Is(err, errQuotaBusy) {
+		t.Fatal("broken receipt directory reported as busy", err)
 	}
 }

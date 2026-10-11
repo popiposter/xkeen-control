@@ -490,7 +490,7 @@ function Overview({ quality, measurements, status, nodeTotal, nodesByTag, onOpen
     <div role="list" aria-label="Runtime health" className="grid grid-cols-2 gap-2 xl:grid-cols-4">
       <HealthCard label="Xray" ok={status.xray?.running && status.xray?.apiReachable} detail={status.xray?.apiReachable ? 'API reachable' : 'Unavailable'} />
       <HealthCard label="Probe" ok={status.xray?.probeReachable} detail={status.xray?.probeReachable ? 'Probe reachable' : 'Unavailable'} />
-      <HealthCard label="Observatory" ok={status.observatory?.apiReachable} detail={Number.isFinite(status.observatory?.observed) ? `${status.observatory?.healthy || 0}/${status.observatory.observed} pool nodes healthy` : `${status.observatory?.healthy || 0}/${status.observatory?.total || nodeTotal} healthy`} />
+      <HealthCard label="Observatory" ok={status.observatory?.apiReachable} detail={Number.isFinite(status.observatory?.observed) ? `${status.observatory?.healthy || 0}/${status.observatory.observed} ${quality?.activePoolCount && status.observatory.observed === quality.activePoolCount ? 'pool' : 'observed'} nodes healthy` : `${status.observatory?.healthy || 0}/${status.observatory?.total || nodeTotal} healthy`} />
       <HealthCard label="XKeen" ok={status.xkeen?.running} detail={status.xkeen?.running ? 'Running' : 'Not detected'} />
     </div>
     <Disclosure title="Selection details"><div className="grid gap-4 sm:grid-cols-3">

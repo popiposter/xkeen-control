@@ -29,8 +29,17 @@ func acquireQuotaLock(path string) (func(), error) {
 		return nil, errQuota
 	}
 	var st unix.Stat_t
-	if unix.Fstat(fd, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Mode&0777 != 0600 || st.Uid != uint32(os.Geteuid()) || st.Nlink != 1 || unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB) != nil {
+	if unix.Fstat(fd, &st) != nil || st.Mode&unix.S_IFMT != unix.S_IFREG || st.Mode&0777 != 0600 || st.Uid != uint32(os.Geteuid()) || st.Nlink != 1 {
 		_ = unix.Close(fd)
+		return nil, errQuota
+	}
+	if err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		_ = unix.Close(fd)
+		if err == unix.EWOULDBLOCK {
+			// Another owner (a review, a recovery check or another process)
+			// holds the receipt: transient, unlike a broken receipt.
+			return nil, errQuotaBusy
+		}
 		return nil, errQuota
 	}
 	return func() { _ = unix.Flock(fd, unix.LOCK_UN); _ = unix.Close(fd) }, nil
