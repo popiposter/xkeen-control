@@ -151,7 +151,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/update", "/api/v1/update/check", "/api/v1/update/policy", "/api/v1/update/apply", "/api/v1/update/rollback",
 		"/api/v1/notifications", "/api/v1/notifications/configure", "/api/v1/notifications/enabled", "/api/v1/notifications/control", "/api/v1/notifications/test", "/api/v1/notifications/clear",
 		"/api/v1/session/password",
-		"/api/v1/performance/quality", "/api/v1/performance/quality/start", "/api/v1/performance/quality/stage", "/api/v1/performance/quality/apply", "/api/v1/performance/quality/inspect",
+		"/api/v1/performance/quality", "/api/v1/performance/quality/start", "/api/v1/performance/quality/stage", "/api/v1/performance/quality/apply", "/api/v1/performance/quality/inspect", "/api/v1/performance/quality/review",
 		"/api/v1/performance/maintenance",
 		"/api/v1/performance/manual-node",
 		"/api/v1/backup/export-secret",
@@ -193,7 +193,7 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/api/v1/dns/split", "/api/v1/dns/split/sync":
 		s.handleSplitDNS(w, r)
-	case "/api/v1/performance/quality", "/api/v1/performance/quality/start", "/api/v1/performance/quality/stage", "/api/v1/performance/quality/apply", "/api/v1/performance/quality/inspect":
+	case "/api/v1/performance/quality", "/api/v1/performance/quality/start", "/api/v1/performance/quality/stage", "/api/v1/performance/quality/apply", "/api/v1/performance/quality/inspect", "/api/v1/performance/quality/review":
 		s.handleNativeQuality(w, r)
 	case "/api/v1/performance/maintenance":
 		s.handleMaintenanceSettings(w, r)

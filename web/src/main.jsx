@@ -477,7 +477,7 @@ function NavigationContent({ mobile = false, sections, section, total, version, 
 const nodeObserved = (node) => Boolean(node?.alive || node?.lastTry || node?.lastSeen || node?.lastError)
 const nodeHealthLabel = (node) => !node.enabled ? 'Disabled' : node.alive ? 'Alive' : nodeObserved(node) ? 'Not alive' : 'Not monitored'
 const nodeHealthTone = (node) => !node.enabled || (!node.alive && !nodeObserved(node)) ? 'muted' : node.alive ? 'success' : 'warning'
-const notMonitoredTitle = 'Outside the active quality pool: not continuously monitored. Reviews probe it in rotation.'
+const notMonitoredTitle = 'Not in the active pool, so Xray does not health-check it continuously. Every speed test and nightly review still probes it.'
 
 function Overview({ quality, measurements, status, nodeTotal, nodesByTag, onOpenNodes }) {
   const effective = nodesByTag.get(status.balancer?.effective)
@@ -780,6 +780,7 @@ function NodeWorkspace({ measurements, nodes, subscriptions, performance, manual
         <ToggleGroup variant="outline" className="flex-wrap" aria-label="Health filters" value={[statusFilter]} onValueChange={(values) => { if (values.length) chooseFilter('statusFilter', values[0]) }}>
           {[['all', 'All'], ['alive', 'Alive'], ['unhealthy', 'Not alive'], ['unmonitored', 'Not monitored'], ['disabled', 'Disabled'], ['stale', 'Stale']].filter(([value]) => value !== 'stale' || statusCounts.stale > 0 || statusFilter === 'stale').map(([value, label]) => <ToggleGroupItem key={value} value={value}>{label} <span>{statusCounts[value]}</span></ToggleGroupItem>)}
         </ToggleGroup>
+        {statusCounts.unmonitored > 0 && <p className="w-full text-xs text-muted-foreground">{notMonitoredTitle} To pick the best pool now, use Test all and apply best in Performance.</p>}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Field orientation="horizontal" className="w-auto"><FieldLabel>Role</FieldLabel><NativeSelect aria-label="Filter by role" value={roleFilter} onChange={(event) => chooseFilter('roleFilter', event.target.value)}>{[['all', 'Any'], ['native', 'Native'], ['override', 'Override'], ['effective', 'Effective'], ['none', 'No role']].map(([value, label]) => <NativeSelectOption value={value} key={value}>{label}</NativeSelectOption>)}</NativeSelect></Field>
