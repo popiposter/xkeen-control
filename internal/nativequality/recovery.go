@@ -66,7 +66,7 @@ func noHealthyMember(snapshot xrayapi.Snapshot, resolved []string) bool {
 // an inspection fence is active, and holds the quota lock for its duration so
 // a cross-process review cannot interleave.
 func (s *Service) recoverPool(parent context.Context) {
-	if s.Editor == nil || s.Lease == nil || s.Reader == nil || s.Nodes == nil || s.Measurement == nil || s.Jobs == nil || s.Resources == nil || !s.profile().Automatic || s.AutomaticDisabled {
+	if s.Editor == nil || s.Lease == nil || s.Reader == nil || s.Nodes == nil || s.Measurement == nil || s.Jobs == nil || s.Resources == nil || !s.profile().Automatic || s.AutomaticDisabled || !s.settings().Recovery {
 		return
 	}
 	s.mu.Lock()
@@ -195,7 +195,7 @@ func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
 	sort.SliceStable(admitted, func(i, j int) bool { return admitted[i].RTTMS < admitted[j].RTTMS })
 	selected := make([]string, 0, recoveryPoolSize)
 	costs := make([]c1.NativeQualityCost, 0, recoveryPoolSize)
-	for _, candidate := range admitted[:min(recoveryPoolSize, len(admitted))] {
+	for _, candidate := range admitted[:min(recoveryPoolSize, s.poolSize(), len(admitted))] {
 		selected = append(selected, candidate.Tag)
 		// Equal anchored costs: the pool is not speed-ranked, and the anchor
 		// keeps each member quality-owned for orphan detection.

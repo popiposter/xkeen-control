@@ -8,7 +8,7 @@ Current entry points: `cmd/xkeen-control/main.go`, `internal/httpapi`, embedded 
 - Allowlisted native commands through `internal/xkeen` jobs. Interactive commands use a private job-bound PTY; no shell or post-exit command execution.
 - Fixed native config IDs, private JSON/JSONC editors, validation, pending Save/Apply/Discard and optional previous restore.
 - Installed geodata discovery/category/member search and routing examples.
-- Native quality measurement/recommendation using `internal/nativequality`; Xray remains selection owner.
+- Native quality measurement/recommendation using `internal/nativequality`; Xray remains selection owner. The nightly maintenance settings are read and replaced through `/api/v1/performance/maintenance`.
 - Private encrypted native transfer; optional restricted Telegram control.
 - Signed panel update/rollback and exact private management-listener rebind.
 - Optional LAN DNS status/sync through `internal/splitdns` and authenticated `/api/v1/dns/split` plus CSRF-protected `/sync`.

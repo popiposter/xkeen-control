@@ -90,7 +90,7 @@ test('nightly review separates full pool, coverage and applied state without sta
     limits: { candidates: 3, attempts: 4, bytes: 24 * 1048576, seconds: 90 },
     poolCount: 52, activePoolCount: 6, eligibleCount: 14, attemptedCount: 14, validCount: 12,
     manualSample: false, batchCount: 5, aggregateBytes: 44 * 1048576, reviewTrigger: 'subscription-refresh',
-    appliedState: 'applied', nextDueAt: '2026-10-11T01:00:00Z', poolDecision: 'best-six',
+    appliedState: 'applied', nextDueAt: '2026-10-11T01:00:00Z', poolDecision: 'best-pool',
     maintenance: { startedAt: '2026-10-10T01:00:00Z', finishedAt: '2026-10-10T01:40:00Z', reviewStarted: true, geodataState: 'completed' },
     quotaState: 'available', manualAllowanceBytes: 108 * 1048576 }
   await open(page)
@@ -98,7 +98,7 @@ test('nightly review separates full pool, coverage and applied state without sta
   await expect(page.getByText(/Verified · 52 enabled/)).toBeVisible()
   await expect(page.getByText('12 of 14 valid', { exact: true })).toBeVisible()
   await expect(page.getByText(/44\.0 MiB · subscription-refresh · .*applied/)).toBeVisible()
-  await expect(page.getByText(/best six measured nodes applied/)).toBeVisible()
+  await expect(page.getByText(/best measured pool applied/)).toBeVisible()
   await expect(page.getByText(/Nightly: subscriptions refresh, every node is probed/)).toBeVisible()
   await expect(page.getByText(new Date('2026-10-11T01:00:00Z').toLocaleString(), { exact: true })).toBeVisible()
   await expect(page.getByText(new Date('2026-10-10T01:40:00Z').toLocaleString(), { exact: true })).toBeVisible()

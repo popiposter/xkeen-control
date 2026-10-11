@@ -152,6 +152,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/api/v1/notifications", "/api/v1/notifications/configure", "/api/v1/notifications/enabled", "/api/v1/notifications/control", "/api/v1/notifications/test", "/api/v1/notifications/clear",
 		"/api/v1/session/password",
 		"/api/v1/performance/quality", "/api/v1/performance/quality/start", "/api/v1/performance/quality/stage", "/api/v1/performance/quality/apply", "/api/v1/performance/quality/inspect",
+		"/api/v1/performance/maintenance",
 		"/api/v1/performance/manual-node",
 		"/api/v1/backup/export-secret",
 		"/api/v1/xkeen/transfer/preview", "/api/v1/xkeen/transfer/stage", "/api/v1/xkeen/transfer/cancel",
@@ -194,6 +195,8 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleSplitDNS(w, r)
 	case "/api/v1/performance/quality", "/api/v1/performance/quality/start", "/api/v1/performance/quality/stage", "/api/v1/performance/quality/apply", "/api/v1/performance/quality/inspect":
 		s.handleNativeQuality(w, r)
+	case "/api/v1/performance/maintenance":
+		s.handleMaintenanceSettings(w, r)
 	case "/api/v1/xkeen/transfer/preview", "/api/v1/xkeen/transfer/stage", "/api/v1/xkeen/transfer/cancel":
 		s.handleNativeTransfer(w, r)
 	case "/api/v1/geodata", "/api/v1/geodata/query":

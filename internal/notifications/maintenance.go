@@ -19,6 +19,8 @@ type MaintenanceReport struct {
 	// and Valid of them produced a usable result.
 	Eligible, Answered, SpeedTested, Valid int
 	ReviewStarted                          bool
+	// SubscriptionsOff and ReviewOff mark steps the operator turned off.
+	SubscriptionsOff, ReviewOff bool
 	// Decision, Applied and Geodata are closed codes; anything else renders
 	// as unknown.
 	Decision, Applied, Geodata string
@@ -37,7 +39,7 @@ type MaintenanceNode struct {
 const maxMaintenanceNodes = 8
 
 var maintenanceDecisions = map[string]string{
-	"best-six":                   "best six applied",
+	"best-pool":                  "best measured pool applied",
 	"pool-unchanged":             "unchanged, no restart needed",
 	"observatory-repair":         "kept; health checks narrowed to it",
 	"insufficient-valid-results": "kept: too few valid results",
@@ -58,13 +60,14 @@ var maintenanceGeodata = map[string]string{
 	"skipped":     "skipped",
 	"unavailable": "unavailable",
 	"canceled":    "cancelled",
+	"disabled":    "off in settings",
 }
 
 // MaintenanceAlert renders the nightly report as Telegram HTML. Every value
 // from outside the package is escaped; node names are bounded.
 func MaintenanceAlert(r MaintenanceReport) Alert {
-	ok := r.ReviewStarted && r.SubscriptionsFailed == 0 && r.Geodata == "completed" &&
-		(r.Applied == "applied" || r.Applied == "no-op" || r.Decision == "pool-unchanged")
+	reviewOK := r.ReviewOff || r.ReviewStarted && (r.Applied == "applied" || r.Applied == "no-op" || r.Applied == "not-attempted" || r.Decision == "pool-unchanged")
+	ok := reviewOK && r.SubscriptionsFailed == 0 && (r.Geodata == "completed" || r.Geodata == "disabled")
 	var b strings.Builder
 	if ok {
 		b.WriteString("✅ <b>Nightly maintenance completed</b>\n")
@@ -75,19 +78,29 @@ func MaintenanceAlert(r MaintenanceReport) Alert {
 		fmt.Fprintf(&b, "<i>%s – %s</i>\n", r.StartedAt.Format("2 Jan 15:04"), r.FinishedAt.Format("15:04 MST"))
 	}
 	b.WriteString("\n")
-	fmt.Fprintf(&b, "📥 <b>Subscriptions:</b> %d refreshed", r.Subscriptions)
-	if r.SubscriptionsUpdated > 0 {
-		fmt.Fprintf(&b, ", %d changed", r.SubscriptionsUpdated)
+	if r.SubscriptionsOff {
+		b.WriteString("📥 <b>Subscriptions:</b> off in settings\n")
+	} else {
+		fmt.Fprintf(&b, "📥 <b>Subscriptions:</b> %d refreshed", r.Subscriptions)
+		if r.SubscriptionsUpdated > 0 {
+			fmt.Fprintf(&b, ", %d changed", r.SubscriptionsUpdated)
+		}
+		if r.SubscriptionsFailed > 0 {
+			fmt.Fprintf(&b, ", %d failed", r.SubscriptionsFailed)
+		}
+		b.WriteString("\n")
 	}
-	if r.SubscriptionsFailed > 0 {
-		fmt.Fprintf(&b, ", %d failed", r.SubscriptionsFailed)
-	}
-	b.WriteString("\n")
-	if r.ReviewStarted {
+	if r.ReviewOff {
+		b.WriteString("📡 <b>Review:</b> off in settings\n")
+	} else if r.ReviewStarted {
 		fmt.Fprintf(&b, "📡 <b>Probe:</b> %d of %d nodes answered\n", r.Answered, r.Eligible)
 		fmt.Fprintf(&b, "⚡ <b>Speed test:</b> %d of %d valid\n", r.Valid, r.SpeedTested)
-		fmt.Fprintf(&b, "🔁 <b>Pool:</b> %s", closedText(maintenanceDecisions, r.Decision))
-		if r.Applied != "" && r.Decision != "pool-unchanged" {
+		if r.Applied == "not-attempted" {
+			b.WriteString("🔁 <b>Pool:</b> recommendation left for Apply in the panel")
+		} else {
+			fmt.Fprintf(&b, "🔁 <b>Pool:</b> %s", closedText(maintenanceDecisions, r.Decision))
+		}
+		if r.Applied != "" && r.Applied != "not-attempted" && r.Decision != "pool-unchanged" {
 			fmt.Fprintf(&b, " · %s", closedText(maintenanceApplied, r.Applied))
 		}
 		b.WriteString("\n")

@@ -285,6 +285,14 @@ export class FeatureCompleteModel {
         return json(route, updateProjection(this.update))
       case '/api/v1/performance/quality':
         return json(route, this.quality || { state: 'idle', generation: 0, canStage: false, poolCount: 0, progress: { state: 'idle', candidates: [] } })
+      case '/api/v1/performance/maintenance': {
+        const defaults = { enabled: true, window: '04:00', refreshSubscriptions: true, review: true, updateGeodata: true, autoApply: true, speedCandidates: 18, poolSize: 6, recovery: true, report: true }
+        if (entry.method === 'POST') {
+          this.maintenanceSaves = [...(this.maintenanceSaves || []), body]
+          this.maintenance = { ...body }
+        }
+        return json(route, { settings: this.maintenance || defaults, defaults, bounds: { speedCandidates: [2, 18], poolSize: [2, 6] } })
+      }
       case '/api/v1/panel/listener/cancel': {
         const token = body?.previewToken
         this.previewTokens.delete(token)

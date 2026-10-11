@@ -341,3 +341,13 @@ flowchart LR
 
 - [Current architecture](../docs/ARCHITECTURE.md), [node lifecycle](../docs/NODE-LIFECYCLE.md), [resource evidence](../docs/ROUTER-RESOURCES.md), [security](../SECURITY.md).
 - [Xray Observatory](https://xtls.github.io/en/config/observatory.html): prefix selectors and parallel/sequential probe intervals.
+
+### Revision 2026-10-11 (b): operator settings
+
+The window time and its choices are operator settings, not constants. One private
+file holds them with defaults when absent: window on/off and start time; the
+subscription, review (auto-apply or recommend only) and geodata steps; speed-test
+breadth 2–18 (default 18); pool size 2–6 (default 6); recovery on/off; the
+Telegram report on/off. Hardware-derived limits (batches, pauses, pressure and
+probe timeouts) stay computed, and the traffic and time budgets scale with the
+breadth. A step turned off has no other automatic owner.

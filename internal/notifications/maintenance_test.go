@@ -13,7 +13,7 @@ import (
 func TestMaintenanceAlertEscapesNamesAndUsesClosedCodes(t *testing.T) {
 	start := time.Date(2026, 10, 12, 4, 0, 0, 0, time.FixedZone("MSK", 3*3600))
 	report := MaintenanceReport{StartedAt: start, FinishedAt: start.Add(38 * time.Minute), Subscriptions: 2, SubscriptionsUpdated: 1,
-		Eligible: 46, Answered: 41, SpeedTested: 18, Valid: 15, ReviewStarted: true, Decision: "best-six", Applied: "applied", Geodata: "completed"}
+		Eligible: 46, Answered: 41, SpeedTested: 18, Valid: 15, ReviewStarted: true, Decision: "best-pool", Applied: "applied", Geodata: "completed"}
 	report.Pool = []MaintenanceNode{
 		{Name: "🇩🇪 <b>evil</b> & co", RTTMS: 48, DownBPS: 116e6 / 8, UpBPS: 34e6 / 8, Measured: true},
 		{Name: strings.Repeat("x", 60) + "\x07", Measured: false},
@@ -23,7 +23,7 @@ func TestMaintenanceAlertEscapesNamesAndUsesClosedCodes(t *testing.T) {
 	if !alert.html || len(text) > maxHTMLBytes {
 		t.Fatal("report is not a bounded HTML alert", len(text))
 	}
-	for _, want := range []string{"✅ <b>Nightly maintenance completed</b>", "12 Oct 04:00 – 04:38 MSK", "2 refreshed, 1 changed", "41 of 46 nodes answered", "15 of 18 valid", "best six applied · applied and verified", "Geodata:</b> updated", "1. <b>🇩🇪 &lt;b&gt;evil&lt;/b&gt; &amp; co</b>", "48 ms · ↓ 116 Mbps · ↑ 34 Mbps", "— <i>not measured</i>"} {
+	for _, want := range []string{"✅ <b>Nightly maintenance completed</b>", "12 Oct 04:00 – 04:38 MSK", "2 refreshed, 1 changed", "41 of 46 nodes answered", "15 of 18 valid", "best measured pool applied · applied and verified", "Geodata:</b> updated", "1. <b>🇩🇪 &lt;b&gt;evil&lt;/b&gt; &amp; co</b>", "48 ms · ↓ 116 Mbps · ↑ 34 Mbps", "— <i>not measured</i>"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in\n%s", want, text)
 		}
@@ -92,5 +92,18 @@ func TestSendReportWaitsForTheLock(t *testing.T) {
 	go func() { time.Sleep(1200 * time.Millisecond); s.mu.Unlock() }()
 	if err := s.SendReport(context.Background(), alert); err != nil || sends != 1 {
 		t.Fatal("report dropped on a held lock", err, sends)
+	}
+}
+
+func TestMaintenanceAlertShowsStepsTurnedOff(t *testing.T) {
+	text := MaintenanceAlert(MaintenanceReport{SubscriptionsOff: true, ReviewOff: true, Geodata: "disabled"}).text
+	for _, want := range []string{"✅", "Subscriptions:</b> off in settings", "Review:</b> off in settings", "Geodata:</b> off in settings"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in\n%s", want, text)
+		}
+	}
+	text = MaintenanceAlert(MaintenanceReport{ReviewStarted: true, Applied: "not-attempted", Geodata: "completed"}).text
+	if !strings.Contains(text, "recommendation left for Apply in the panel") || !strings.Contains(text, "✅") {
+		t.Fatal("recommend-only night", text)
 	}
 }

@@ -78,6 +78,7 @@ type Status struct {
 	ProvisionalAt time.Time         `json:"provisionalAt,omitzero"`
 	Recovery      RecoveryStatus    `json:"recovery"`
 	Maintenance   MaintenanceStatus `json:"maintenance"`
+	Settings      Settings          `json:"settings"`
 }
 
 type RankedNode struct {
@@ -107,8 +108,11 @@ type Service struct {
 	batchPause        time.Duration // tests shorten this; zero keeps the production floor.
 	Jobs              *xkeen.Jobs
 	AutomaticDisabled bool
-	autoApplying      bool
-	sweepPlan         sweepPlan
+	// Settings holds the operator's nightly maintenance choices; nil means
+	// the defaults.
+	Settings     *SettingsStore
+	autoApplying bool
+	sweepPlan    sweepPlan
 	// rttAlive is the review's RTT pre-phase health: present and true when the
 	// tag answered through its own outbound, present and false when it did not.
 	rttAlive map[string]bool
@@ -137,7 +141,8 @@ func (s *Service) Read() Status {
 	value.NextDueAt = s.nextMaintenance
 	value.ResourceProfile = s.profile()
 	value.Limits = s.profile().Comparison(false)
-	value.ManualAllowanceBytes = s.profile().Review().Bytes
+	value.ManualAllowanceBytes = s.reviewLimits().Bytes
+	value.Settings = s.settings()
 	if s.AutomaticDisabled {
 		value.AutomaticReason = "operator-disabled"
 	} else if !value.ResourceProfile.Automatic {
@@ -165,7 +170,7 @@ func (s *Service) Read() Status {
 		for _, cost := range costs {
 			byMatch[cost.Match] = cost.Value
 		}
-		for i, tag := range c1.NativeQualityRanking(s.result, costs) {
+		for i, tag := range s.rankPool(s.result, costs) {
 			value.Ranking = append(value.Ranking, RankedNode{Tag: tag, Rank: i + 1, Cost: byMatch["^"+regexp.QuoteMeta(tag)+"$"]})
 		}
 	}
@@ -232,6 +237,42 @@ func (s *Service) Read() Status {
 		}
 	}
 	return value
+}
+
+// settings returns the current maintenance settings.
+func (s *Service) settings() Settings {
+	return s.Settings.Get()
+}
+
+// MaintenanceSettings returns the operator's nightly maintenance settings.
+func (s *Service) MaintenanceSettings() Settings {
+	return s.settings()
+}
+
+// SetMaintenanceSettings validates and saves new settings. The schedule
+// re-plans at once; a window already running keeps the settings it started
+// with.
+func (s *Service) SetMaintenanceSettings(value Settings) (Settings, error) {
+	if s.Settings == nil {
+		return Settings{}, ErrUnavailable
+	}
+	return s.Settings.Set(value)
+}
+
+// reviewLimits bounds a review at the configured speed-test breadth.
+func (s *Service) reviewLimits() resourcepolicy.ReviewLimits {
+	return s.profile().ReviewFor(s.settings().SpeedCandidates)
+}
+
+// poolSize is the configured number of pool members.
+func (s *Service) poolSize() int {
+	return s.settings().PoolSize
+}
+
+// rankPool is the measured recommendation: the ranked best poolSize nodes.
+func (s *Service) rankPool(result c1.AdaptiveResult, costs []c1.NativeQualityCost) []string {
+	ranked := c1.NativeQualityRanking(result, costs)
+	return ranked[:min(len(ranked), s.poolSize())]
 }
 
 func (s *Service) profile() resourcepolicy.Profile {
@@ -426,7 +467,7 @@ func (s *Service) Stage(ctx context.Context, digest string) (string, error) {
 	if err != nil || strings.Join(pool, "\x00") != strings.Join(s.pool, "\x00") {
 		return "", ErrUnavailable
 	}
-	selected := c1.NativeQualityRanking(s.result, costs)
+	selected := s.rankPool(s.result, costs)
 	if len(selected) < 2 || !exactSelectors(selected, w.Targets) {
 		return "", ErrUnavailable
 	}

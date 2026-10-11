@@ -23,11 +23,11 @@ func samePoolMembers(a, b []string) bool {
 }
 
 // poolDecision applies the nightly rule (revision 2026-10-11): the ranked
-// best six of the measured nodes replace the pool when the membership
-// differs. Fewer than six valid results never shrink a larger running pool of
+// best poolSize measured nodes replace the pool when the membership differs.
+// Fewer than poolSize valid results never shrink a larger running pool of
 // live members, so a bad night keeps what works. A member is live unless it
 // is orphaned or failed this review's RTT probe (alive[tag] == false).
-func poolDecision(active, orphans []string, alive map[string]bool, selected []string, firstInitialization bool) string {
+func poolDecision(active, orphans []string, alive map[string]bool, selected []string, firstInitialization bool, poolSize int) string {
 	if samePoolMembers(active, selected) {
 		return "pool-unchanged"
 	}
@@ -42,10 +42,10 @@ func poolDecision(active, orphans []string, alive map[string]bool, selected []st
 		}
 	}
 	if firstInitialization {
-		live = 6
+		live = poolSize
 	}
-	if len(selected) < 6 && len(selected) < live {
+	if len(selected) < poolSize && len(selected) < live {
 		return "insufficient-valid-results"
 	}
-	return "best-six"
+	return "best-pool"
 }

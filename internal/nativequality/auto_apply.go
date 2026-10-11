@@ -118,7 +118,7 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 	currentActive := append(append([]string(nil), resolved...), orphans...)
 	plan := s.sweepPlan
 	if plan.TotalEligible == 0 {
-		plan = sweepPlan{Active: currentActive, NativeSelected: result.CurrentTarget, FirstInitialization: len(currentActive) > 6}
+		plan = sweepPlan{Active: currentActive, NativeSelected: result.CurrentTarget, FirstInitialization: len(currentActive) > s.poolSize()}
 	} else if !samePoolMembers(currentActive, plan.Active) || result.CurrentTarget != plan.NativeSelected {
 		s.applyOutcome("not-applied", "selector-changed", false)
 		return
@@ -136,7 +136,7 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		s.applyOutcome("not-applied", "review-insufficient-or-expired", false)
 		return
 	}
-	selected := c1.NativeQualityRanking(result, costs)
+	selected := s.rankPool(result, costs)
 	if len(selected) < 2 || !exactSelectors(selected, w.Targets) {
 		s.applyOutcome("not-applied", "selector-unavailable", false)
 		return
@@ -160,13 +160,13 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 	s.mu.Lock()
 	alive := s.rttAlive
 	s.mu.Unlock()
-	decision := poolDecision(currentActive, orphans, alive, selected, plan.FirstInitialization)
+	decision := poolDecision(currentActive, orphans, alive, selected, plan.FirstInitialization, s.poolSize())
 	if decision == "pool-unchanged" && !observatoryMatchesPool(observatory, selected, concurrent) {
 		// Same members but 07 still observes a different set: the same
 		// validated joint 05+07 Apply repairs it (REQ-010).
 		decision = "observatory-repair"
 	}
-	if keptByPolicy[decision] && len(orphans) == 0 && len(currentActive) <= 6 && samePoolMembers(balancerSelector(w.Documents["05_routing.json"].Text, index), currentActive) && exactSelectors(currentActive, w.Targets) && !observatoryMatchesPool(observatory, currentActive, concurrent) {
+	if keptByPolicy[decision] && len(orphans) == 0 && len(currentActive) <= s.poolSize() && samePoolMembers(balancerSelector(w.Documents["05_routing.json"].Text, index), currentActive) && exactSelectors(currentActive, w.Targets) && !observatoryMatchesPool(observatory, currentActive, concurrent) {
 		// The review keeps the running pool, but 07 still observes a wider
 		// set: narrow 07 to that pool and keep 05 byte for byte (REQ-003).
 		s.mu.Lock()
@@ -188,7 +188,7 @@ func (s *Service) applySweep(parent context.Context, result c1.AdaptiveResult, d
 		s.applyOutcome("no-op", "pool-unchanged", false)
 		return
 	}
-	if decision != "best-six" && decision != "observatory-repair" {
+	if decision != "best-pool" && decision != "observatory-repair" {
 		s.applyOutcome("not-applied", decision, false)
 		return
 	}

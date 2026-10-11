@@ -11,8 +11,6 @@ import (
 )
 
 const (
-	// DefaultWindow is the local time of day the nightly maintenance starts.
-	DefaultWindow = 4 * time.Hour
 	// settleDelay lets a restarted Xray load its outbounds before probes.
 	settleDelay = time.Minute
 	// readyWait bounds waiting for the native API after a restart.
@@ -33,12 +31,13 @@ const (
 // MaintenanceStatus is the last nightly maintenance window (revision
 // 2026-10-11): subscriptions, settle, review, geodata.
 type MaintenanceStatus struct {
-	Phase         string    `json:"phase,omitempty"`
-	StartedAt     time.Time `json:"startedAt,omitzero"`
-	FinishedAt    time.Time `json:"finishedAt,omitzero"`
-	ReviewStarted bool      `json:"reviewStarted"`
-	ReviewReason  string    `json:"reviewReason,omitempty"`
-	GeodataState  string    `json:"geodataState,omitempty"`
+	Phase                  string    `json:"phase,omitempty"`
+	StartedAt              time.Time `json:"startedAt,omitzero"`
+	FinishedAt             time.Time `json:"finishedAt,omitzero"`
+	SubscriptionsRefreshed bool      `json:"subscriptionsRefreshed"`
+	ReviewStarted          bool      `json:"reviewStarted"`
+	ReviewReason           string    `json:"reviewReason,omitempty"`
+	GeodataState           string    `json:"geodataState,omitempty"`
 }
 
 // Schedule runs the nightly maintenance window and the REQ-009 recovery
@@ -57,28 +56,42 @@ type Schedule struct {
 	// Location returns the router's local time zone. It is read again for
 	// every window so a zone change takes effect; nil means time.Local.
 	Location func() *time.Location
-	// Window is the local time of day the maintenance starts.
-	Window time.Duration
 	// settle is the pause after the native API answers and retry the pause
 	// after a busy start; tests shorten them.
 	settle, retry time.Duration
-	// start starts the nightly review; tests replace it.
-	start func(context.Context) (<-chan struct{}, error)
+	// start starts the nightly review, applying its decision when apply is
+	// set; tests replace it.
+	start func(ctx context.Context, apply bool) (<-chan struct{}, error)
 }
 
 func NewSchedule(service *Service) *Schedule {
-	return &Schedule{service: service, Window: DefaultWindow, settle: settleDelay, retry: busyRetry, start: service.startNightly}
+	return &Schedule{service: service, settle: settleDelay, retry: busyRetry, start: service.startNightly}
 }
 
-// NextWindow returns the next maintenance start after now.
+// NextWindow returns the next maintenance start after now at the configured
+// local time, or the zero time when the window is turned off.
 func (s *Schedule) NextWindow(now time.Time) time.Time {
+	settings := s.service.settings()
+	window, err := settings.Validate()
+	if !settings.Enabled || err != nil {
+		return time.Time{}
+	}
 	loc := time.Local
 	if s.Location != nil {
 		if l := s.Location(); l != nil {
 			loc = l
 		}
 	}
-	return nextWindow(now, loc, s.Window)
+	return nextWindow(now, loc, window)
+}
+
+// NextSubscriptionRefresh is when the window will next refresh
+// subscriptions, or the zero time when that step or the window is off.
+func (s *Schedule) NextSubscriptionRefresh(now time.Time) time.Time {
+	if !s.service.settings().RefreshSubscriptions {
+		return time.Time{}
+	}
+	return s.NextWindow(now)
 }
 
 func nextWindow(now time.Time, loc *time.Location, offset time.Duration) time.Time {
@@ -96,7 +109,7 @@ func nextWindow(now time.Time, loc *time.Location, offset time.Duration) time.Ti
 // window recomputed from the current clock and zone, so a backward or forward
 // clock jump or a zone change moves the plan instead of the start time.
 func (s *Schedule) due(now, next time.Time) (bool, time.Time) {
-	if !now.Before(next) && now.Sub(next) <= windowGrace {
+	if !next.IsZero() && !now.Before(next) && now.Sub(next) <= windowGrace {
 		return true, next
 	}
 	return false, s.NextWindow(now)
@@ -112,8 +125,21 @@ func (s *Schedule) Run(ctx context.Context) {
 		s.service.mu.Lock()
 		s.service.nextMaintenance = next
 		s.service.mu.Unlock()
-		if !sleepCtx(ctx, max(min(time.Until(next), clockCheck), time.Second)) {
+		wait := clockCheck
+		if !next.IsZero() {
+			wait = max(min(time.Until(next), clockCheck), time.Second)
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
 			return
+		case <-s.service.Settings.Changes():
+			// A saved setting re-plans the window at once.
+			timer.Stop()
+			next = s.NextWindow(time.Now())
+			continue
+		case <-timer.C:
 		}
 		run, planned := s.due(time.Now(), next)
 		next = planned
@@ -127,9 +153,10 @@ func (s *Schedule) Run(ctx context.Context) {
 
 // runNight performs the window strictly in order. Each step is bounded and a
 // failed step does not skip the later ones: geodata still updates when the
-// review could not run.
+// review could not run. A step the operator turned off is skipped.
 func (s *Schedule) runNight(ctx context.Context) {
 	svc := s.service
+	settings := svc.settings()
 	svc.mu.Lock()
 	svc.maintenance = MaintenanceStatus{Phase: "subscriptions", StartedAt: time.Now().UTC()}
 	svc.mu.Unlock()
@@ -138,19 +165,28 @@ func (s *Schedule) runNight(ctx context.Context) {
 		svc.maintenance.Phase = name
 		svc.mu.Unlock()
 	}
-	if s.Subscriptions != nil {
+	refreshed := settings.RefreshSubscriptions && s.Subscriptions != nil
+	if refreshed {
 		s.Subscriptions(ctx)
 	}
-	phase("settle")
-	s.waitNativeReady(ctx)
-	if !sleepCtx(ctx, s.settle) {
-		return
+	svc.mu.Lock()
+	svc.maintenance.SubscriptionsRefreshed = refreshed
+	svc.mu.Unlock()
+	if settings.Review {
+		phase("settle")
+		s.waitNativeReady(ctx)
+		if refreshed && !sleepCtx(ctx, s.settle) {
+			return
+		}
+		phase("review")
 	}
-	phase("review")
 	var reason string
 	started := false
-	for attempt := 0; attempt < reviewStartAttempts && ctx.Err() == nil; attempt++ {
-		done, err := s.start(ctx)
+	if !settings.Review {
+		reason = "review-disabled"
+	}
+	for attempt := 0; settings.Review && attempt < reviewStartAttempts && ctx.Err() == nil; attempt++ {
+		done, err := s.start(ctx, settings.AutoApply)
 		if err == nil {
 			started = true
 			select {
@@ -177,8 +213,12 @@ func (s *Schedule) runNight(ctx context.Context) {
 	svc.maintenance.ReviewReason = reason
 	svc.mu.Unlock()
 	phase("geodata")
-	geodata := "skipped"
-	if s.Geodata != nil {
+	geodata := "disabled"
+	if !settings.UpdateGeodata {
+		// Off by the operator: nothing updates geodata automatically.
+	} else if s.Geodata == nil {
+		geodata = "skipped"
+	} else {
 		state, err := s.Geodata(ctx)
 		geodata = state
 		if err != nil && geodata == "" {
@@ -191,7 +231,7 @@ func (s *Schedule) runNight(ctx context.Context) {
 	svc.maintenance.FinishedAt = time.Now().UTC()
 	finished := svc.maintenance
 	svc.mu.Unlock()
-	if s.Finished != nil && ctx.Err() == nil {
+	if s.Finished != nil && settings.Report && ctx.Err() == nil {
 		s.Finished(ctx, finished, svc.Read())
 	}
 }
