@@ -55,7 +55,9 @@ type Status struct {
 	RTTProbed int           `json:"rttProbed"`
 	Probes    []ProbeResult `json:"probes,omitempty"`
 	// BatchTotal is the planned number of speed-test batches.
-	BatchTotal           int       `json:"batchTotal"`
+	BatchTotal int `json:"batchTotal"`
+	// Remeasured counts nodes the second pass measured again.
+	Remeasured           int       `json:"remeasured"`
 	AttemptedCount       int       `json:"attemptedCount"`
 	ValidCount           int       `json:"validCount"`
 	BatchCount           int       `json:"batchCount"`
@@ -293,10 +295,16 @@ const NightlyRecommendationValidity = 12 * time.Hour
 // stageAge is how old a completed review may be when staged; the caller
 // holds s.mu.
 func (s *Service) stageAge() time.Duration {
+	base := 30 * time.Minute
 	if s.status.ManualSample && s.status.ReviewTrigger == "nightly" {
-		return NightlyRecommendationValidity
+		base = NightlyRecommendationValidity
 	}
-	return 30 * time.Minute
+	// The window runs from the review's completion: its first samples are
+	// as old as the review itself, which on ARM64 can take ~27 minutes.
+	if span := s.result.CompletedAt.Sub(s.result.StartedAt); span > 0 {
+		base += span
+	}
+	return base
 }
 
 // rankPool is the measured recommendation: the ranked best poolSize nodes.

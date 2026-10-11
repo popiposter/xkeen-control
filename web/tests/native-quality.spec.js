@@ -330,3 +330,12 @@ test('while the Apply runs the bar stays below 100% and the last stage is active
   await expect(progress.locator('[data-step-state="active"]')).toContainText('applying the best pool and verifying it')
   await expect(page.getByRole('progressbar', { name: 'Review progress' })).toHaveAttribute('aria-valuenow', '95')
 })
+
+test('the progress card reports the second pass over the best nodes', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), state: 'running', manualSample: false, reviewTrigger: 'nightly', reviewPhase: 'speed', canStage: false,
+    eligibleCount: 46, rttProbed: 46, probes: [], selectedForSpeed: 18, attemptedCount: 18, validCount: 15, batchCount: 4, batchTotal: 5, remeasured: 6 }
+  await open(page)
+  const progress = page.getByRole('region', { name: 'Nightly review progress' })
+  await expect(progress.locator('[data-step-state="active"]')).toContainText('batch 5 of 5 · 18 of 18 tested, 15 valid, best 6 re-tested')
+})

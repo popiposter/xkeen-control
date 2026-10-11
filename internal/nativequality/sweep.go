@@ -3,6 +3,8 @@ package nativequality
 import (
 	"context"
 	"errors"
+	"math"
+	"regexp"
 	"sort"
 	"time"
 
@@ -298,55 +300,46 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 	if s.batchPause > 0 {
 		pause = s.batchPause
 	}
-	for batchIndex, size := range sizes {
-		if reason != "" {
-			break
-		}
-		if batchIndex > 0 {
+	// measureBatch runs one batch of candidates after the pause between
+	// batches and the same configuration, conflict and native-state checks;
+	// it returns the measurement or why the batch could not run or finish.
+	measureBatch := func(paused bool, candidates []c1.AdaptiveCandidateInput) (c1.AdaptiveResult, string) {
+		if paused {
 			timer := time.NewTimer(pause)
 			select {
 			case <-ctx.Done():
 				timer.Stop()
-				reason = "review-cancelled"
-				break
+				return c1.AdaptiveResult{}, "review-cancelled"
 			case <-timer.C:
-			}
-			if reason != "" {
-				break
 			}
 		}
 		if ctx.Err() != nil {
-			reason = "review-timeout-or-cancelled"
-			break
+			return c1.AdaptiveResult{}, "review-timeout-or-cancelled"
 		}
 		wctx, stop := context.WithTimeout(ctx, 10*time.Second)
 		w, err := s.Editor.Workspace(wctx)
 		if err != nil || w.Pending != nil || !w.TargetsComplete || w.Digest != digest {
-			reason = "configuration-changed-or-pending"
 			stop()
-			break
+			return c1.AdaptiveResult{}, "configuration-changed-or-pending"
 		}
 		if err := s.Resources.CheckConflict(); err != nil {
-			reason = "native-speed-conflict-or-unavailable"
 			stop()
-			break
+			return c1.AdaptiveResult{}, "native-speed-conflict-or-unavailable"
 		}
 		snapshot := s.Reader.Snapshot(wctx)
 		s.mu.Lock()
 		observeNativeSelection(&s.status, snapshot, time.Now().UTC())
 		s.mu.Unlock()
 		if !snapshot.APIReachable || !snapshot.RoutingReachable || !snapshot.ObservatoryReachable || snapshot.Balancer.Override != "" {
-			reason = "native-override-or-unavailable"
 			stop()
-			break
+			return c1.AdaptiveResult{}, "native-override-or-unavailable"
 		}
 		stop()
 		release, err := s.Lease.TryAcquire()
 		if err != nil {
-			reason = "panel-busy"
-			break
+			return c1.AdaptiveResult{}, "panel-busy"
 		}
-		batch := c1.AdaptiveGeneration{NativeQuality: true, Generation: frozen.Generation, StartedAt: time.Now().UTC(), CurrentTarget: frozen.CurrentTarget, Candidates: ordered[position : position+size]}
+		batch := c1.AdaptiveGeneration{NativeQuality: true, Generation: frozen.Generation, StartedAt: time.Now().UTC(), CurrentTarget: frozen.CurrentTarget, Candidates: candidates}
 		batchCtx, batchCancel := context.WithTimeout(ctx, batchWall)
 		measured, measureErr := s.Measurement.MeasureNativeQuality(batchCtx, batch, func(progress c1.AdaptivePerformanceStatus) {
 			s.mu.Lock()
@@ -355,30 +348,16 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 		})
 		batchCancel()
 		release()
-		result.AggregateBytes += measured.AggregateBytes
-		if measured.AggregateBytes < 0 || result.AggregateBytes > limits.Bytes {
-			reason = "review-budget-exceeded"
-			break
-		}
-		result.Candidates = append(result.Candidates, measured.Candidates...)
-		position += len(measured.Candidates)
-		s.mu.Lock()
-		s.status.AttemptedCount = position
-		s.status.ValidCount += measured.ValidCount
-		s.status.BatchCount++
-		s.status.AggregateBytes = result.AggregateBytes
-		s.mu.Unlock()
-		matched := len(measured.Candidates) == size
+		matched := len(measured.Candidates) == len(candidates)
 		if matched {
 			for i, candidate := range measured.Candidates {
-				if candidate.Tag != batch.Candidates[i].Tag {
+				if candidate.Tag != candidates[i].Tag {
 					matched = false
 					break
 				}
 			}
 		}
 		if measureErr != nil || measured.State != "completed" || !matched || measured.AggregateBytes < 0 {
-			reason = "batch-incomplete-or-unknown"
 			// Only an automatic review with an uncertain probe cleanup is fenced:
 			// its quota receipt keeps the flag, so explicit inspection can clear
 			// it. A manual review has no receipt to clear and the probe gate is
@@ -388,7 +367,79 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 				s.status.InspectionRequired = true
 				s.mu.Unlock()
 			}
+			return measured, "batch-incomplete-or-unknown"
+		}
+		return measured, ""
+	}
+	for batchIndex, size := range sizes {
+		if reason != "" {
 			break
+		}
+		measured, batchReason := measureBatch(batchIndex > 0, ordered[position:position+size])
+		result.AggregateBytes += max(measured.AggregateBytes, 0)
+		if result.AggregateBytes > limits.Bytes {
+			reason = "review-budget-exceeded"
+			break
+		}
+		if batchReason == "" || batchReason == "batch-incomplete-or-unknown" {
+			result.Candidates = append(result.Candidates, measured.Candidates...)
+			position += len(measured.Candidates)
+			s.mu.Lock()
+			s.status.AttemptedCount = position
+			s.status.ValidCount += measured.ValidCount
+			s.status.BatchCount++
+			s.status.AggregateBytes = result.AggregateBytes
+			s.mu.Unlock()
+		}
+		if batchReason != "" {
+			reason = batchReason
+			break
+		}
+	}
+	// Second pass (standard profile): measure the best-ranked nodes again and
+	// combine both results, so one lucky or unlucky transfer does not decide
+	// the pool (PC benchmark 2026-10-12: a node read 8 then 186 Mbps).
+	if reason == "" && limits.Repeat > 0 && len(result.Candidates) == len(ordered) {
+		again := s.repeatCandidates(result, ordered, limits.Repeat)
+		repeatSizes, sizeErr := batchSizes(len(again), limits.BatchSize)
+		if sizeErr == nil && len(again) > 0 {
+			s.mu.Lock()
+			s.status.BatchTotal += len(repeatSizes)
+			s.mu.Unlock()
+			at := 0
+			for _, size := range repeatSizes {
+				measured, batchReason := measureBatch(true, again[at:at+size])
+				result.AggregateBytes += max(measured.AggregateBytes, 0)
+				if result.AggregateBytes > limits.Bytes {
+					reason = "review-budget-exceeded"
+					break
+				}
+				if batchReason != "" {
+					// The first pass stands; only an inspection fence or the
+					// review's own cancellation ends the review.
+					s.mu.Lock()
+					fenced := s.status.InspectionRequired
+					s.mu.Unlock()
+					if fenced || ctx.Err() != nil {
+						reason = batchReason
+					}
+					break
+				}
+				combineRepeat(&result, measured.Candidates)
+				at += size
+				s.mu.Lock()
+				s.status.Remeasured += len(measured.Candidates)
+				s.status.BatchCount++
+				s.status.AggregateBytes = result.AggregateBytes
+				s.mu.Unlock()
+			}
+			if reason == "" {
+				// A second pass stopped early still completes the speed
+				// stage: no planned batch is left pending.
+				s.mu.Lock()
+				s.status.BatchTotal = s.status.BatchCount
+				s.mu.Unlock()
+			}
 		}
 	}
 	result.CompletedAt = time.Now().UTC()
@@ -474,4 +525,73 @@ func fastestAnswering(admitted []c1.AdaptiveCandidateInput, limit int) []c1.Adap
 		out = out[:limit]
 	}
 	return out
+}
+
+// repeatCandidates returns the best-ranked valid first-pass nodes, at most
+// limit, in rank order, with the probe RTT they were admitted with.
+func (s *Service) repeatCandidates(result c1.AdaptiveResult, ordered []c1.AdaptiveCandidateInput, limit int) []c1.AdaptiveCandidateInput {
+	provisional := result
+	provisional.CompletedAt = time.Now().UTC()
+	provisional.ShortlistCount = len(provisional.Candidates)
+	provisional.State = "completed"
+	costs, err := c1.NativeQualityCosts(provisional, provisional.CompletedAt, s.pool)
+	if err != nil {
+		return nil
+	}
+	value := make(map[string]float64, len(costs))
+	for _, cost := range costs {
+		value[cost.Match] = cost.Value
+	}
+	type scored struct {
+		input c1.AdaptiveCandidateInput
+		score float64
+	}
+	inputs := make(map[string]c1.AdaptiveCandidateInput, len(ordered))
+	for _, input := range ordered {
+		inputs[input.Tag] = input
+	}
+	var ranked []scored
+	for _, candidate := range result.Candidates {
+		cost, ok := value["^"+regexp.QuoteMeta(candidate.Tag)+"$"]
+		input, known := inputs[candidate.Tag]
+		if !candidate.Valid || !ok || !known {
+			continue
+		}
+		ranked = append(ranked, scored{input: input, score: float64(candidate.RTTMS) * math.Sqrt(cost)})
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].score == ranked[j].score {
+			return ranked[i].input.Tag < ranked[j].input.Tag
+		}
+		return ranked[i].score < ranked[j].score
+	})
+	out := make([]c1.AdaptiveCandidateInput, 0, min(limit, len(ranked)))
+	for _, item := range ranked[:min(limit, len(ranked))] {
+		out = append(out, item.input)
+	}
+	return out
+}
+
+// combineRepeat folds second-pass results into the first: two valid results
+// give their geometric mean; a valid second result replaces an invalid first
+// one; a failed second transfer leaves the first result as it was.
+func combineRepeat(result *c1.AdaptiveResult, again []c1.AdaptiveCandidateResult) {
+	index := make(map[string]int, len(result.Candidates))
+	for i, candidate := range result.Candidates {
+		index[candidate.Tag] = i
+	}
+	for _, second := range again {
+		i, ok := index[second.Tag]
+		if !ok || !second.Valid {
+			continue
+		}
+		first := &result.Candidates[i]
+		if first.Valid {
+			first.DownloadBPS = math.Sqrt(first.DownloadBPS * second.DownloadBPS)
+			first.UploadBPS = math.Sqrt(first.UploadBPS * second.UploadBPS)
+		} else {
+			first.DownloadBPS, first.UploadBPS, first.Valid, first.ErrorCode = second.DownloadBPS, second.UploadBPS, true, ""
+		}
+		first.SampledAt = second.SampledAt
+	}
 }

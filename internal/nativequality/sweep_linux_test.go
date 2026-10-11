@@ -781,8 +781,13 @@ func TestStandardProfileAutomaticReviewReachesApply(t *testing.T) {
 	}
 	v := waitSweep(t, s)
 	m := s.Measurement.(*sweepMeasurement)
-	if v.ManualSample || v.PoolDecision != "best-pool" || v.AppliedState == "not-attempted" || len(m.calls) != 3 || len(m.calls[0]) != 5 {
-		t.Fatal("standard automatic review did not use six-node batches and the Apply path", v.ManualSample, v.PoolDecision, v.AppliedState, len(m.calls))
+	// Three first-pass batches of the fourteen, then a second pass over the
+	// best eight in two batches.
+	if v.ManualSample || v.PoolDecision != "best-pool" || v.AppliedState == "not-attempted" || len(m.calls) != 5 || len(m.calls[0]) != 5 || v.Remeasured != 8 || v.BatchTotal != 5 {
+		t.Fatal("standard automatic review did not use six-node batches, the second pass and the Apply path", v.ManualSample, v.PoolDecision, v.AppliedState, len(m.calls), v.Remeasured)
+	}
+	if again := len(m.calls[3]) + len(m.calls[4]); again != 8 {
+		t.Fatal("second pass size", again)
 	}
 	if q, err := quotaState(s.QuotaPath, time.Now().UTC(), s.profile().Review().Bytes); err != nil || q.LastStartedAt.IsZero() {
 		t.Fatal("standard automatic review reserved traffic or did not record its start", q, err)
@@ -1073,6 +1078,39 @@ func TestApplyReadbackFencesOverrideAndExhaustedWait(t *testing.T) {
 			}
 			if mode == "never-selected" && reads.Load() < 5 {
 				t.Fatal("wait gave up early", reads.Load())
+			}
+		})
+	}
+}
+
+// A second-pass batch that fails keeps the first pass and still reaches the
+// decision; an uncertain probe cleanup there fences the review instead.
+func TestSecondPassStopKeepsFirstPassButFenceFails(t *testing.T) {
+	for _, mode := range []string{"failed-batch", "cleanup"} {
+		t.Run(mode, func(t *testing.T) {
+			s, _, _, _ := sweepFixture(t, true)
+			s.Resources.Profile = resourcepolicy.ForPlatform("arm64", 1<<20)
+			m := s.Measurement.(*sweepMeasurement)
+			// Batches 1-3 are the first pass; batch 4 opens the second pass.
+			if mode == "failed-batch" {
+				m.failBatch = 4
+			} else {
+				m.cleanupBatch = 4
+			}
+			if err := s.startSweep(context.Background(), "periodic"); err != nil {
+				t.Fatal(err)
+			}
+			v := waitSweep(t, s)
+			if mode == "failed-batch" {
+				// The decision is reached on the first pass (the fixture has no
+				// Apply job, so only the decision is checked here).
+				if v.ReviewReason == "batch-incomplete-or-unknown" || v.Remeasured != 0 || v.BatchTotal != v.BatchCount || v.AttemptedCount != 14 || v.PoolDecision == "" {
+					t.Fatalf("a failed second pass voided the review: %+v", v)
+				}
+				return
+			}
+			if v.State != "failed" || !v.InspectionRequired {
+				t.Fatalf("an uncertain second-pass cleanup did not fence: state=%s inspection=%v reason=%s", v.State, v.InspectionRequired, v.ReviewReason)
 			}
 		})
 	}

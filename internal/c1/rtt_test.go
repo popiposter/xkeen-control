@@ -9,6 +9,7 @@ import (
 
 type syntheticLatency struct {
 	durations map[string]time.Duration
+	sequence  map[string][]time.Duration
 	failing   map[string]bool
 	order     []string
 	current   func() string
@@ -19,6 +20,13 @@ func (s *syntheticLatency) Latency(context.Context) (time.Duration, error) {
 	s.order = append(s.order, tag)
 	if s.failing[tag] {
 		return 0, errors.New("synthetic probe failure")
+	}
+	if next := s.sequence[tag]; len(next) > 0 {
+		s.sequence[tag] = next[1:]
+		if next[0] < 0 {
+			return 0, errors.New("synthetic late failure")
+		}
+		return next[0], nil
 	}
 	return s.durations[tag], nil
 }
@@ -47,7 +55,9 @@ func TestMeasureRTTProbesEachTagThroughItsOwnRuleAndCleansUp(t *testing.T) {
 	if len(results) != 3 || !results[0].Valid || results[0].RTTMS != 80 || !results[1].Valid || results[1].RTTMS != 120 || results[2].Valid || results[2].RTTMS != 0 {
 		t.Fatalf("rtt results = %+v", results)
 	}
-	if len(transport.order) != 3 || transport.order[0] != "proxy-a" || transport.order[2] != "proxy-c" {
+	// Three requests per answering node; a node that fails its first request
+	// is not retried.
+	if len(transport.order) != 7 || transport.order[0] != "proxy-a" || transport.order[2] != "proxy-a" || transport.order[3] != "proxy-b" || transport.order[6] != "proxy-c" {
 		t.Fatalf("probe order = %v", transport.order)
 	}
 	for _, rule := range api.adds {
@@ -89,5 +99,26 @@ func TestMeasureRTTStopsOnCleanupFailure(t *testing.T) {
 	results, err := coordinator.MeasureRTT(context.Background(), []string{"proxy-a", "proxy-b"})
 	if !errors.Is(err, ErrProbeCleanup) || len(results) != 0 {
 		t.Fatalf("cleanup failure = %+v, %v", results, err)
+	}
+}
+
+// The probe reports the median of its answered requests, so one slow or
+// failed request does not decide a node's latency.
+func TestMeasureRTTUsesTheMedianOfThreeRequests(t *testing.T) {
+	coordinator, _, transport := rttFixture(t)
+	transport.sequence = map[string][]time.Duration{
+		"proxy-a": {900 * time.Millisecond, 90 * time.Millisecond, 120 * time.Millisecond},
+		"proxy-b": {200 * time.Millisecond, -1, 100 * time.Millisecond},
+	}
+	results, err := coordinator.MeasureRTT(context.Background(), []string{"proxy-a", "proxy-b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !results[0].Valid || results[0].RTTMS != 120 {
+		t.Fatal("median of three", results[0])
+	}
+	// 200 and 100 answered, the middle request failed: the upper of the two.
+	if !results[1].Valid || results[1].RTTMS != 200 {
+		t.Fatal("median with a late failure", results[1])
 	}
 }

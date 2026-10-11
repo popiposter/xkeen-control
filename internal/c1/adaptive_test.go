@@ -107,15 +107,16 @@ func TestAdaptiveRunnerUsesFixedSequentialDownUpPlanWithoutLatencyPhase(t *testi
 	if result.State != "completed" || result.ValidCount != 2 || !result.CurrentValid || result.ShortlistCount != 2 {
 		t.Fatalf("adaptive result = %+v", result)
 	}
-	if result.AggregateBytes != 2*(AdaptiveMaxDownloadBytes+AdaptiveMaxUploadBytes) || len(result.Candidates) != 2 {
+	// The standard ladder: 1/3/8/16/32 MiB down and 1/3/8/16 MiB up, so 88 MiB
+	// per node when no stage reaches the 3 s early stop.
+	if result.AggregateBytes != 2*88*MiB || len(result.Candidates) != 2 {
 		t.Fatalf("adaptive byte/result bounds = %+v", result)
 	}
-	want := []string{
-		"download-1048576", "download-3145728", "download-4194304", "download-8388608",
-		"upload-1048576", "upload-3145728", "upload-4194304",
-		"download-1048576", "download-3145728", "download-4194304", "download-8388608",
-		"upload-1048576", "upload-3145728", "upload-4194304",
+	plan := []string{
+		"download-1048576", "download-3145728", "download-8388608", "download-16777216", "download-33554432",
+		"upload-1048576", "upload-3145728", "upload-8388608", "upload-16777216",
 	}
+	want := append(append([]string(nil), plan...), plan...)
 	if got := transport.callList(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("adaptive fixed stage plan = %v, want %v", got, want)
 	}
@@ -126,7 +127,7 @@ func TestAdaptiveRunnerUsesFixedSequentialDownUpPlanWithoutLatencyPhase(t *testi
 
 func TestAdaptiveRunnerEarlyStopFailureContinuationAndCleanupAbort(t *testing.T) {
 	t.Run("early stop", func(t *testing.T) {
-		transport := &adaptiveTransportStub{duration: AdaptiveEarlyStopDuration, failedDownload: -1, failedUpload: -1}
+		transport := &adaptiveTransportStub{duration: 3 * time.Second, failedDownload: -1, failedUpload: -1}
 		result := (&AdaptiveRunner{Probe: NewProbeRouter(&benchmarkProbeAPI{}), Transport: transport}).Run(context.Background(), adaptiveTestGeneration("proxy-current", "proxy-challenger"), nil)
 		if result.State != "completed" || result.ValidCount != 2 || result.AggregateBytes != 2*(MiB+MiB) {
 			t.Fatalf("early-stop result = %+v", result)
@@ -219,5 +220,29 @@ func waitCoordinatorApplying(t *testing.T, coordinator *Coordinator) {
 			t.Fatalf("Coordinator never projected waiting operator Apply: %+v", snapshot.Lifecycle)
 		case <-ticker.C:
 		}
+	}
+}
+
+// A larger stage that fails after complete smaller stages keeps the node's
+// measurement from those stages; a failing first stage still voids it.
+func TestAdaptiveLaterStageFailureKeepsCompleteStages(t *testing.T) {
+	transport := &adaptiveTransportStub{duration: 300 * time.Millisecond, failedDownload: 3, failedUpload: -1}
+	result := (&AdaptiveRunner{Probe: NewProbeRouter(&benchmarkProbeAPI{}), Transport: transport}).Run(context.Background(), adaptiveTestGeneration("proxy-current", "proxy-challenger"), nil)
+	if result.State != "completed" || result.ValidCount != 2 || !result.Candidates[0].Valid || result.Candidates[0].DownloadBPS <= 0 {
+		t.Fatalf("later-stage failure voided the node: %+v", result)
+	}
+	calls := transport.callList()
+	if calls[3] != "download-16777216" || calls[4] != "upload-1048576" {
+		t.Fatalf("the ladder did not stop at the failed stage: %v", calls)
+	}
+	// 1+3+8 MiB complete, half of the failed 16 MiB, then 28 MiB up; the
+	// second node runs the full 88 MiB.
+	if result.AggregateBytes != (12+8+28)*MiB+88*MiB {
+		t.Fatalf("bytes %d", result.AggregateBytes)
+	}
+	first := &adaptiveTransportStub{duration: 300 * time.Millisecond, failedDownload: 0, failedUpload: -1}
+	result = (&AdaptiveRunner{Probe: NewProbeRouter(&benchmarkProbeAPI{}), Transport: first}).Run(context.Background(), adaptiveTestGeneration("proxy-current", "proxy-challenger"), nil)
+	if result.Candidates[0].Valid {
+		t.Fatal("a failing first stage was accepted")
 	}
 }

@@ -131,3 +131,29 @@ func TestPoolSizeBoundsRecommendationAndDecision(t *testing.T) {
 		t.Fatal("recommendation not bounded by pool size", got)
 	}
 }
+
+// The second pass combines two valid results by geometric mean, lets a valid
+// second result replace an invalid first, and ignores a failed second one.
+func TestCombineRepeatResults(t *testing.T) {
+	now := time.Now().UTC()
+	result := c1.AdaptiveResult{Candidates: []c1.AdaptiveCandidateResult{
+		{Tag: "a", DownloadBPS: 1e6, UploadBPS: 4e6, Valid: true, SampledAt: now.Add(-time.Minute)},
+		{Tag: "b", Valid: false, ErrorCode: "transport-failure"},
+		{Tag: "c", DownloadBPS: 9e6, UploadBPS: 9e6, Valid: true},
+	}}
+	combineRepeat(&result, []c1.AdaptiveCandidateResult{
+		{Tag: "a", DownloadBPS: 100e6, UploadBPS: 1e6, Valid: true, SampledAt: now},
+		{Tag: "b", DownloadBPS: 5e6, UploadBPS: 5e6, Valid: true, SampledAt: now},
+		{Tag: "c", Valid: false},
+	})
+	a, b, c := result.Candidates[0], result.Candidates[1], result.Candidates[2]
+	if a.DownloadBPS != 10e6 || a.UploadBPS != 2e6 || !a.SampledAt.Equal(now) {
+		t.Fatal("geometric mean", a)
+	}
+	if !b.Valid || b.DownloadBPS != 5e6 || b.ErrorCode != "" {
+		t.Fatal("valid second replaced invalid first", b)
+	}
+	if !c.Valid || c.DownloadBPS != 9e6 {
+		t.Fatal("failed second changed the first", c)
+	}
+}
