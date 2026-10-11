@@ -36,3 +36,20 @@ func TestPublicNodePreservesProviderFlag(t *testing.T) {
 		t.Fatalf("provider display = %q %q", name, code)
 	}
 }
+
+func TestReportLabelNeverUsesTheEndpoint(t *testing.T) {
+	for _, c := range []struct {
+		node PublicNode
+		want string
+	}{
+		{PublicNode{Name: "Imported node", DisplayName: "🇩🇪 Germany · 203.0.113.7", Address: "203.0.113.7", CountryCode: "DE"}, "🇩🇪 Germany · Node 3"},
+		{PublicNode{Name: "node 2", DisplayName: "edge-fra", Address: "edge-fra.example.net"}, "Node 3"},
+		{PublicNode{Name: "Frankfurt", CountryCode: "DE"}, "🇩🇪 Frankfurt"},
+		{PublicNode{Name: "🇩🇪 Frankfurt", CountryCode: "DE"}, "🇩🇪 Frankfurt"},
+	} {
+		got := ReportLabel(c.node, 3)
+		if got != c.want || strings.Contains(got, "203.0.113") || strings.Contains(got, "edge-fra") {
+			t.Fatalf("ReportLabel(%+v) = %q, want %q", c.node, got, c.want)
+		}
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/nativequality"
 	"github.com/popiposter/xkeen-control/internal/nodes"
 	"github.com/popiposter/xkeen-control/internal/notifications"
@@ -66,7 +67,8 @@ func maintenanceWindow(value string) (time.Duration, bool) {
 
 // maintenanceReport builds the closed Telegram report for one finished window
 // from the review status, the node display names and the subscription
-// statuses. Only display names and measured figures leave the panel.
+// statuses. Only endpoint-free node labels and measured figures leave the
+// panel.
 func maintenanceReport(m nativequality.MaintenanceStatus, st nativequality.Status, registry []nodes.PublicNode, subscriptions map[string]nodes.AutoRefreshStatus, loc *time.Location) notifications.MaintenanceReport {
 	if loc == nil {
 		loc = time.Local
@@ -94,31 +96,29 @@ func maintenanceReport(m nativequality.MaintenanceStatus, st nativequality.Statu
 	for _, node := range registry {
 		names[node.OutboundTag] = node
 	}
-	samples := make(map[string]int, len(st.Progress.Candidates))
-	for i, sample := range st.Progress.Candidates {
-		samples[sample.Tag] = i
-	}
-	rank := make(map[string]int, len(st.Ranking))
-	for _, node := range st.Ranking {
-		rank[node.Tag] = node.Rank
+	// Figures are reported only from tonight's review, never from an older
+	// or manual one.
+	samples := make(map[string]c1.AdaptiveCandidateStatus)
+	rank := make(map[string]int)
+	if m.ReviewStarted {
+		for _, sample := range st.Progress.Candidates {
+			samples[sample.Tag] = sample
+		}
+		for _, node := range st.Ranking {
+			rank[node.Tag] = node.Rank
+		}
 	}
 	pool := append([]string(nil), st.ActivePool...)
 	sort.SliceStable(pool, func(i, j int) bool {
 		ri, rj := rank[pool[i]], rank[pool[j]]
 		return ri != 0 && (rj == 0 || ri < rj)
 	})
-	for _, tag := range pool {
-		node := names[tag]
-		name := node.DisplayName
-		if name == "" {
-			name = node.Name
+	for i, tag := range pool {
+		entry := notifications.MaintenanceNode{Name: "unknown node"}
+		if node, ok := names[tag]; ok {
+			entry.Name = nodes.ReportLabel(node, i+1)
 		}
-		if name == "" {
-			name = "unknown node"
-		}
-		entry := notifications.MaintenanceNode{Name: name, Country: node.CountryCode, Active: tag == st.NativeSelected}
-		if i, ok := samples[tag]; ok && st.Progress.Candidates[i].Valid {
-			sample := st.Progress.Candidates[i]
+		if sample, ok := samples[tag]; ok && sample.Valid {
 			entry.Measured, entry.RTTMS, entry.DownBPS, entry.UpBPS = true, sample.RTTMS, sample.DownloadBPS, sample.UploadBPS
 		}
 		report.Pool = append(report.Pool, entry)

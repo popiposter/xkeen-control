@@ -319,7 +319,7 @@ func main() {
 			registry, _ := nodeManager.List()
 			report := maintenanceReport(m, st, registry, subscriptionRefresher.AutoRefreshStatuses(), routerLocation())
 			// A disabled or unconfigured channel is not an error here.
-			_ = notificationService.Send(ctx, notifications.MaintenanceAlert(report))
+			_ = notificationService.SendReport(ctx, notifications.MaintenanceAlert(report))
 		}
 		subscriptionRefresher.SetMaintenanceWindow(qualitySchedule.NextWindow)
 	}

@@ -163,6 +163,23 @@ func (s *Service) Send(ctx context.Context, alert Alert) error {
 		return Error("transport-failed")
 	}
 	defer s.mu.Unlock()
+	return s.sendLocked(ctx, alert)
+}
+
+// SendReport is Send for a once-a-night report: a send or configuration
+// change holding the lock is waited for (each is bounded by the request
+// timeout) instead of dropping the report.
+func (s *Service) SendReport(ctx context.Context, alert Alert) error {
+	for attempt := 0; !s.mu.TryLock(); attempt++ {
+		if attempt == 10 || !controlPause(ctx, time.Second) {
+			return Error("transport-failed")
+		}
+	}
+	defer s.mu.Unlock()
+	return s.sendLocked(ctx, alert)
+}
+
+func (s *Service) sendLocked(ctx context.Context, alert Alert) error {
 	value, state := readAuthority(s.path)
 	if state != "configured" {
 		return Error(state)

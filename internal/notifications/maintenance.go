@@ -25,12 +25,13 @@ type MaintenanceReport struct {
 	Pool                       []MaintenanceNode
 }
 
-// MaintenanceNode is one running pool member.
+// MaintenanceNode is one running pool member. Name must be a report label
+// that never derives from the endpoint (nodes.ReportLabel).
 type MaintenanceNode struct {
-	Name, Country    string
-	RTTMS            int64
-	DownBPS, UpBPS   float64
-	Measured, Active bool
+	Name           string
+	RTTMS          int64
+	DownBPS, UpBPS float64
+	Measured       bool
 }
 
 const maxMaintenanceNodes = 8
@@ -101,11 +102,7 @@ func MaintenanceAlert(r MaintenanceReport) Alert {
 				fmt.Fprintf(&b, "… and %d more\n", len(r.Pool)-i)
 				break
 			}
-			name := html.EscapeString(boundedName(node.Name))
-			if node.Active {
-				name = "<b>" + name + "</b>"
-			}
-			fmt.Fprintf(&b, "%d. %s%s", i+1, flag(node.Country), name)
+			fmt.Fprintf(&b, "%d. <b>%s</b>", i+1, html.EscapeString(boundedName(node.Name)))
 			if node.Measured {
 				fmt.Fprintf(&b, "\n    <code>%d ms · ↓ %s · ↑ %s</code>", node.RTTMS, mbps(node.DownBPS), mbps(node.UpBPS))
 			} else {
@@ -140,21 +137,6 @@ func boundedName(name string) string {
 		return "unnamed"
 	}
 	return string(out)
-}
-
-// flag renders an ISO 3166 alpha-2 code as a regional-indicator flag.
-func flag(country string) string {
-	if len(country) != 2 {
-		return ""
-	}
-	var out []rune
-	for _, c := range strings.ToUpper(country) {
-		if c < 'A' || c > 'Z' {
-			return ""
-		}
-		out = append(out, 0x1F1E6+c-'A')
-	}
-	return string(out) + " "
 }
 
 func mbps(bps float64) string {

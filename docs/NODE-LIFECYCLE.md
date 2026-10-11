@@ -122,8 +122,8 @@ ten minutes: it starts only within an hour after the planned time, so an NTP
 correction or a zone change re-plans the night instead of restarting Xray in the
 day. A manual speed test is refused while the window runs. When Telegram
 notifications are enabled, the window ends with one formatted report: step
-outcomes, probe and speed-test counts, and the running pool by display name with
-RTT and throughput.
+outcomes, probe and speed-test counts, and the running pool by stored name (never
+the host) with RTT and throughput.
 No-healthy-member recovery (unreleased, REQ-009): every 10 minutes the panel
 checks whether native Observatory reports every pool member down, or every
 member has vanished from the registry. A member without an Observatory record is
