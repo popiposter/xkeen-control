@@ -2,6 +2,7 @@ package nativequality
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -117,5 +118,52 @@ func TestNightFollowsSettings(t *testing.T) {
 	}
 	if !s.NextWindow(time.Now()).IsZero() {
 		t.Fatal("a disabled window was planned")
+	}
+}
+
+// A transient read failure is retried, and a planted link is never followed.
+func TestSettingsRetryTransientReadAndRefuseLinks(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "file")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := NewSettingsStore(filepath.Join(blocker, "maintenance.json"))
+	if store.Get() != DefaultSettings() || store.loaded {
+		t.Fatal("a transient read failure fixed the defaults")
+	}
+	path := filepath.Join(dir, "state", "maintenance.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "elsewhere.json")
+	if err := os.WriteFile(target, []byte(`{"window":"01:00"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if got := NewSettingsStore(path).Get(); got != DefaultSettings() {
+		t.Fatal("followed a link on read", got)
+	}
+	if _, err := NewSettingsStore(path).Set(DefaultSettings()); !errors.Is(err, ErrSettingsStorage) {
+		t.Fatal("wrote through a link", err)
+	}
+}
+
+// A recommend-only nightly review stays stageable for 12 hours; any other
+// review for 30 minutes.
+func TestNightlyRecommendationValidity(t *testing.T) {
+	s := &Service{}
+	if s.stageAge() != 30*time.Minute {
+		t.Fatal("default staging age")
+	}
+	s.status.ManualSample, s.status.ReviewTrigger = true, "nightly"
+	if s.stageAge() != NightlyRecommendationValidity {
+		t.Fatal("nightly recommendation age")
+	}
+	s.status.ReviewTrigger = "manual"
+	if s.stageAge() != 30*time.Minute {
+		t.Fatal("manual test age")
 	}
 }

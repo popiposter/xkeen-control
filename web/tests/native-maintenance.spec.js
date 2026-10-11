@@ -43,12 +43,12 @@ test('maintenance settings load defaults, validate and save the exact field set'
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/start', 'POST')).toEqual([])
 })
 
-test('turning the window off disables its steps but keeps recovery and pool size editable', async ({ page }) => {
+test('turning the window off disables its steps but keeps recovery, breadth and pool size editable', async ({ page }) => {
   const model = await mountFeatureCompleteDashboard(page)
   await open(page)
   await box(page, 'Run the nightly window').click()
   await expect(page.getByLabel('Start time (router time)')).toBeDisabled()
-  await expect(page.getByLabel('Nodes to speed-test')).toBeDisabled()
+  await expect(page.getByLabel('Nodes to speed-test')).toBeEnabled()
   for (const label of ['Refresh subscriptions', 'Review nodes', 'Update geodata', 'Telegram report after the window']) {
     await expect(box(page, label)).toHaveAttribute('aria-disabled', 'true')
   }

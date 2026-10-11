@@ -41,16 +41,18 @@ replaces an orphaned member), so both narrow 07. For the signed install: KN1811 
 ~19 MiB binary; check it first. Avoid the stock `xkeen -ug` minute (02:00 MSK on KN1810),
 which restarts Xray.
 
-**TASK-008 step 2 and the nightly window:** KN1811 runs signed 0.4.15 (0.4.13–0.4.15
-fixed a review/recovery race, the fresh-install release marker and the RTT probe's
-maxRTT); its first manual review on hardware failed the 80% coverage rule with 7 of 10
-valid speed results. The operator then chose one nightly maintenance window instead of
-the daily quota ([plan revision 2026-10-11](../plan/architecture-node-quality-v1.md)):
-subscriptions, settle, probe all, speed-test the 18 fastest, apply the best six, then
-geodata. It is in source on this branch (see [NODE-LIFECYCLE](NODE-LIFECYCLE.md)).
-Next: release, install on KN1811, remove the stock geodata cron on both routers, then
-KN1810 once its VPN is reachable. A follow-up moves the window time, the speed-test
-breadth and the step switches from constants into persisted UI settings.
+**TASK-008 step 2 and the nightly window:** 0.4.13–0.4.15 fixed a review/recovery race,
+the fresh-install release marker and the RTT probe's maxRTT; the first manual review on
+KN1811 then failed the 80% coverage rule with 7 of 10 valid speed results. The operator
+chose one nightly maintenance window instead of the daily quota
+([plan revision 2026-10-11](../plan/architecture-node-quality-v1.md)): subscriptions,
+settle, probe all, speed-test the 18 fastest, apply the best pool, then geodata, with a
+Telegram report. Signed 0.4.16 ships it and runs on KN1811, whose stock XKeen geodata
+cron was removed; its first nightly report is pending. In source after 0.4.16: the
+window time, steps, speed-test breadth, pool size, recovery and report become persisted
+operator settings in Performance (see [NODE-LIFECYCLE](NODE-LIFECYCLE.md)). Next:
+release them, then KN1810 (signed update and geodata cron removal) once its VPN is
+reachable.
 
 ## Delivered
 

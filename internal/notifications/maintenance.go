@@ -21,6 +21,9 @@ type MaintenanceReport struct {
 	ReviewStarted                          bool
 	// SubscriptionsOff and ReviewOff mark steps the operator turned off.
 	SubscriptionsOff, ReviewOff bool
+	// Recommended marks a recommend-only review that completed and left its
+	// recommendation for Apply in the panel.
+	Recommended bool
 	// Decision, Applied and Geodata are closed codes; anything else renders
 	// as unknown.
 	Decision, Applied, Geodata string
@@ -66,7 +69,7 @@ var maintenanceGeodata = map[string]string{
 // MaintenanceAlert renders the nightly report as Telegram HTML. Every value
 // from outside the package is escaped; node names are bounded.
 func MaintenanceAlert(r MaintenanceReport) Alert {
-	reviewOK := r.ReviewOff || r.ReviewStarted && (r.Applied == "applied" || r.Applied == "no-op" || r.Applied == "not-attempted" || r.Decision == "pool-unchanged")
+	reviewOK := r.ReviewOff || r.ReviewStarted && (r.Applied == "applied" || r.Applied == "no-op" || r.Recommended || r.Decision == "pool-unchanged")
 	ok := reviewOK && r.SubscriptionsFailed == 0 && (r.Geodata == "completed" || r.Geodata == "disabled")
 	var b strings.Builder
 	if ok {
@@ -95,12 +98,12 @@ func MaintenanceAlert(r MaintenanceReport) Alert {
 	} else if r.ReviewStarted {
 		fmt.Fprintf(&b, "📡 <b>Probe:</b> %d of %d nodes answered\n", r.Answered, r.Eligible)
 		fmt.Fprintf(&b, "⚡ <b>Speed test:</b> %d of %d valid\n", r.Valid, r.SpeedTested)
-		if r.Applied == "not-attempted" {
-			b.WriteString("🔁 <b>Pool:</b> recommendation left for Apply in the panel")
+		if r.Recommended {
+			b.WriteString("🔁 <b>Pool:</b> recommendation left for Apply in the panel (12 h)")
 		} else {
 			fmt.Fprintf(&b, "🔁 <b>Pool:</b> %s", closedText(maintenanceDecisions, r.Decision))
 		}
-		if r.Applied != "" && r.Applied != "not-attempted" && r.Decision != "pool-unchanged" {
+		if r.Applied != "" && !r.Recommended && r.Decision != "pool-unchanged" {
 			fmt.Fprintf(&b, " · %s", closedText(maintenanceApplied, r.Applied))
 		}
 		b.WriteString("\n")

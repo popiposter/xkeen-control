@@ -53,6 +53,9 @@ type Schedule struct {
 	// Finished receives the finished window and the review status read after
 	// it, for the operator report; it must not block for long.
 	Finished func(context.Context, MaintenanceStatus, Status)
+	// SettingsChanged runs after a saved setting re-planned the window, so
+	// subscription next-run times follow it at once.
+	SettingsChanged func()
 	// Location returns the router's local time zone. It is read again for
 	// every window so a zone change takes effect; nil means time.Local.
 	Location func() *time.Location
@@ -138,6 +141,9 @@ func (s *Schedule) Run(ctx context.Context) {
 			// A saved setting re-plans the window at once.
 			timer.Stop()
 			next = s.NextWindow(time.Now())
+			if s.SettingsChanged != nil {
+				s.SettingsChanged()
+			}
 			continue
 		case <-timer.C:
 		}

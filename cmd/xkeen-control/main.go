@@ -319,6 +319,7 @@ func main() {
 			_ = notificationService.SendReport(ctx, notifications.MaintenanceAlert(report))
 		}
 		subscriptionRefresher.SetMaintenanceWindow(qualitySchedule.NextSubscriptionRefresh)
+		qualitySchedule.SettingsChanged = subscriptionRefresher.Replan
 	}
 	defer qualityService.Stop()
 	nativeTransfer := &nativebackup.Service{Editor: nativeConfig, Nodes: nodeManager, Lease: authorityLease}

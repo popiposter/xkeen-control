@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/popiposter/xkeen-control/internal/auth"
@@ -85,6 +86,10 @@ func (s *Server) handleMaintenanceSettings(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	saved, err := settings.SetMaintenanceSettings(value)
+	if errors.Is(err, nativequality.ErrSettingsStorage) || errors.Is(err, nativequality.ErrUnavailable) {
+		writeError(w, http.StatusServiceUnavailable, "maintenance settings could not be saved")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "maintenance settings rejected")
 		return

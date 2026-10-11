@@ -78,6 +78,7 @@ func maintenanceReport(m nativequality.MaintenanceStatus, st nativequality.Statu
 		report.Eligible, report.Answered = st.TotalEligible, st.RTTValidCount
 		report.SpeedTested, report.Valid = st.AttemptedCount, st.ValidCount
 		report.Decision, report.Applied = st.PoolDecision, st.AppliedState
+		report.Recommended = st.ManualSample && st.ReviewTrigger == "nightly" && st.State == "completed"
 	}
 	names := make(map[string]nodes.PublicNode, len(registry))
 	for _, node := range registry {

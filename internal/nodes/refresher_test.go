@@ -585,3 +585,26 @@ func TestWindowRefreshRetriesBusyOnceThenFails(t *testing.T) {
 		t.Fatalf("busy window refresh: attempts=%d status=%+v", coordinator.tryCalls, status)
 	}
 }
+
+// A settings save re-plans the shown next runs without fetching.
+func TestReplanFollowsTheWindowWithoutFetching(t *testing.T) {
+	registry := refresherRegistry(t, true)
+	manager, _, _ := testManager(t, &registry, &countingSubscriptionFetcher{body: []byte(syntheticProfile)})
+	now := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	window := now.Add(16 * time.Hour)
+	r := newSubscriptionRefresher(manager, func() time.Time { return now })
+	r.window = func(time.Time) time.Time { return window }
+	if err := r.reconcile(now); err != nil {
+		t.Fatal(err)
+	}
+	window = time.Time{}
+	r.Replan()
+	if got := r.AutoRefreshStatuses()["sub-12345678"]; got.NextRunAt != "" {
+		t.Fatal("next run kept after the step was turned off", got)
+	}
+	window = now.Add(14 * time.Hour)
+	r.Replan()
+	if got := r.AutoRefreshStatuses()["sub-12345678"]; got.NextRunAt != formatAutoRefreshTime(window) || manager.fetcher.(*countingSubscriptionFetcher).calls != 0 {
+		t.Fatal("replan", got)
+	}
+}

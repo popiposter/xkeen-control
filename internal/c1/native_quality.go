@@ -37,6 +37,12 @@ func NativeSweepStatus(result AdaptiveResult) AdaptivePerformanceStatus {
 // including after the panel stops. Callers preserve fallback and
 // validate the complete config through the native editor before explicit Apply.
 func NativeQualityCosts(result AdaptiveResult, now time.Time, pool []string) ([]NativeQualityCost, error) {
+	return NativeQualityCostsWithin(result, now, pool, 30*time.Minute)
+}
+
+// NativeQualityCostsWithin is NativeQualityCosts with an explicit evidence
+// age: how long after completion the measurements may still be staged.
+func NativeQualityCostsWithin(result AdaptiveResult, now time.Time, pool []string, maxAge time.Duration) ([]NativeQualityCost, error) {
 	maxAttempts := AdaptiveMaxCandidates
 	maxWall := AdaptiveMaxGenerationWallTime
 	if result.NativeQuality {
@@ -53,7 +59,7 @@ func NativeQualityCosts(result AdaptiveResult, now time.Time, pool []string) ([]
 		maxWall = 30 * time.Minute
 	}
 	invalid := errors.New("fresh complete quality measurements required")
-	if result.BroadSample && !result.NativeQuality || result.Sweep && (!result.NativeQuality || result.BroadSample) || result.Generation == 0 || result.State != "completed" || result.StartedAt.IsZero() || result.CompletedAt.Before(result.StartedAt) || result.CompletedAt.Sub(result.StartedAt) > maxWall+AdaptiveCleanupReserve || result.CompletedAt.IsZero() || result.CompletedAt.After(now) || now.Sub(result.CompletedAt) > 30*time.Minute || len(result.Candidates) > maxAttempts || result.ShortlistCount != len(result.Candidates) || len(pool) > MaxRegistryNodes {
+	if result.BroadSample && !result.NativeQuality || result.Sweep && (!result.NativeQuality || result.BroadSample) || result.Generation == 0 || result.State != "completed" || result.StartedAt.IsZero() || result.CompletedAt.Before(result.StartedAt) || result.CompletedAt.Sub(result.StartedAt) > maxWall+AdaptiveCleanupReserve || result.CompletedAt.IsZero() || result.CompletedAt.After(now) || now.Sub(result.CompletedAt) > maxAge || len(result.Candidates) > maxAttempts || result.ShortlistCount != len(result.Candidates) || len(pool) > MaxRegistryNodes {
 		return nil, invalid
 	}
 	if result.Sweep {
@@ -65,7 +71,7 @@ func NativeQualityCosts(result AdaptiveResult, now time.Time, pool []string) ([]
 		}
 		validCount := 0
 		for _, candidate := range result.Candidates {
-			if candidate.SampledAt.IsZero() || candidate.SampledAt.Before(result.StartedAt) || candidate.SampledAt.After(result.CompletedAt) || now.Sub(candidate.SampledAt) > 30*time.Minute {
+			if candidate.SampledAt.IsZero() || candidate.SampledAt.Before(result.StartedAt) || candidate.SampledAt.After(result.CompletedAt) || now.Sub(candidate.SampledAt) > maxAge {
 				return nil, invalid
 			}
 			if candidate.Valid && candidate.RTTMS > 0 && finitePositive(candidate.DownloadBPS) && finitePositive(candidate.UploadBPS) && finitePositive(adaptiveHealthPenalty(candidate.HealthPenalty)) {

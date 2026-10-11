@@ -111,7 +111,13 @@ func (s *SettingsStore) Get() Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.loaded {
-		s.current, s.loaded = readSettings(s.Path), true
+		// An unreadable file (for example /opt not yet mounted) is retried on
+		// the next read instead of fixing the defaults for the process.
+		value, ok := readSettings(s.Path)
+		if !ok {
+			return value
+		}
+		s.current, s.loaded = value, true
 	}
 	return s.current
 }
@@ -148,60 +154,80 @@ func (s *SettingsStore) Changes() <-chan struct{} {
 	return s.changes
 }
 
-func readSettings(path string) Settings {
+// readSettings returns the stored settings and whether the file was settled:
+// absent or present but invalid (both mean the defaults for good), as opposed
+// to a transient read failure worth retrying.
+func readSettings(path string) (Settings, bool) {
 	defaults := DefaultSettings()
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > maxSettingsBytes || runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		return defaults
+	if errors.Is(err, os.ErrNotExist) {
+		return defaults, true
+	}
+	if err != nil {
+		return defaults, false
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxSettingsBytes || runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 || !settingsOwnerOK(info) {
+		return defaults, true
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return defaults
+		return defaults, false
 	}
 	defer file.Close()
 	opened, err := file.Stat()
 	if err != nil || !os.SameFile(info, opened) {
-		return defaults
+		return defaults, false
 	}
 	decoder := json.NewDecoder(io.LimitReader(file, maxSettingsBytes+1))
 	decoder.DisallowUnknownFields()
 	value := defaults
 	if decoder.Decode(&value) != nil {
-		return defaults
+		return defaults, true
 	}
 	var trailing json.RawMessage
 	if decoder.Decode(&trailing) != io.EOF {
-		return defaults
+		return defaults, true
 	}
 	if _, err := value.Validate(); err != nil {
-		return defaults
+		return defaults, true
 	}
-	return value
+	return value, true
 }
+
+// ErrSettingsStorage is a settings save that failed on disk, not on input.
+var ErrSettingsStorage = errors.New("maintenance settings could not be saved")
 
 func writeSettings(path string, value Settings) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return errSettings
+		return ErrSettingsStorage
+	}
+	// The directory must be private and the target, when present, a plain
+	// owned file: never follow a planted link.
+	if info, err := os.Lstat(dir); err != nil || !info.IsDir() || runtime.GOOS != "windows" && info.Mode().Perm()&0o022 != 0 || !settingsOwnerOK(info) {
+		return ErrSettingsStorage
+	}
+	if info, err := os.Lstat(path); err == nil && (!info.Mode().IsRegular() || !settingsOwnerOK(info)) {
+		return ErrSettingsStorage
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
-		return errSettings
+		return ErrSettingsStorage
 	}
 	f, err := os.CreateTemp(dir, ".maintenance-*")
 	if err != nil {
-		return errSettings
+		return ErrSettingsStorage
 	}
 	defer os.Remove(f.Name())
 	if err := f.Chmod(0o600); err != nil {
 		_ = f.Close()
-		return errSettings
+		return ErrSettingsStorage
 	}
 	_, writeErr := f.Write(data)
 	syncErr := f.Sync()
 	closeErr := f.Close()
 	if writeErr != nil || syncErr != nil || closeErr != nil || os.Rename(f.Name(), path) != nil {
-		return errSettings
+		return ErrSettingsStorage
 	}
 	if d, err := os.Open(dir); err == nil {
 		_ = d.Sync()

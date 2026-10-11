@@ -157,7 +157,7 @@ func (s *Service) Read() Status {
 	value.ActivePool = append([]string(nil), value.ActivePool...)
 	value.AppliedPool = append([]string(nil), value.AppliedPool...)
 	value.OrphanedPool = append([]string(nil), value.OrphanedPool...)
-	_, err := c1.NativeQualityCosts(s.result, time.Now().UTC(), s.pool)
+	_, err := c1.NativeQualityCostsWithin(s.result, time.Now().UTC(), s.pool, s.stageAge())
 	value.CanStage = value.State == "completed" && value.AppliedState != "applied" && value.AppliedState != "no-op" && err == nil
 	if value.State == "completed" && err != nil {
 		value.StageReason = "measurement-expired-or-incomplete"
@@ -267,6 +267,20 @@ func (s *Service) reviewLimits() resourcepolicy.ReviewLimits {
 // poolSize is the configured number of pool members.
 func (s *Service) poolSize() int {
 	return s.settings().PoolSize
+}
+
+// NightlyRecommendationValidity is how long a recommend-only nightly review
+// stays stageable. Stage still requires the same configuration digest and
+// enabled pool, and Xray's live health keeps guarding the applied pool.
+const NightlyRecommendationValidity = 12 * time.Hour
+
+// stageAge is how old a completed review may be when staged; the caller
+// holds s.mu.
+func (s *Service) stageAge() time.Duration {
+	if s.status.ManualSample && s.status.ReviewTrigger == "nightly" {
+		return NightlyRecommendationValidity
+	}
+	return 30 * time.Minute
 }
 
 // rankPool is the measured recommendation: the ranked best poolSize nodes.
@@ -455,7 +469,7 @@ func (s *Service) Stage(ctx context.Context, digest string) (string, error) {
 	if s.closed || s.cancel != nil || s.recovering || s.status.State != "completed" || s.status.AppliedState == "applied" || s.status.AppliedState == "no-op" || digest == "" || digest != s.status.Digest {
 		return "", ErrUnavailable
 	}
-	costs, err := c1.NativeQualityCosts(s.result, time.Now().UTC(), s.pool)
+	costs, err := c1.NativeQualityCostsWithin(s.result, time.Now().UTC(), s.pool, s.stageAge())
 	if err != nil {
 		return "", ErrUnavailable
 	}

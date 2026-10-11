@@ -107,9 +107,9 @@ order: refresh every enabled subscription once; wait for the native API, then on
 minute; probe every enabled node with the targeted RTT request; speed-test the
 18 fastest that answered (MIPS in batches of three with a one-minute pause,
 108 MiB/16 min; ARM64 in batches of six, 432 MiB/11 min); apply the ranked best
-six when the membership differs or 07 is wider than the pool; finally run the
-native geodata update (`xkeen -ug`) as a panel job. Fewer than six valid results
-never shrink a larger running pool. A step that fails does not skip the later
+pool (six by default) when the membership differs or 07 is wider than the pool;
+finally run the native geodata update (`xkeen -ug`) as a panel job. Fewer valid
+results than the pool size never shrink a larger running pool. A step that fails does not skip the later
 ones. Subscriptions no longer refresh on their own six-hour cadence while the
 window owns them (the Telegram refresh command still works), node changes no
 longer pull a review forward, and the manual speed test runs the same pipeline
@@ -134,7 +134,9 @@ apply automatically or leave a recommendation) and update geodata; how many of t
 fastest answering nodes are speed-tested (2–18, default 18; the traffic and time
 budgets scale with it); pool size (2–6, default 6; the speed-test count must be at least the pool
 size), which also bounds recovery and the shrink guard; availability recovery
-on/off; the Telegram report on/off. A step that is off does not run and has no
+on/off; the Telegram report on/off. With auto-apply off the nightly review
+leaves a recommendation that stays stageable for 12 hours while the
+configuration digest and enabled pool are unchanged. A step that is off does not run and has no
 other automatic owner: subscriptions then refresh only on request, and geodata
 only by hand or by XKeen's own schedule restored in its console. Saving re-plans
 the next window at once; a running window keeps the settings it started with. The
