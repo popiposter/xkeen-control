@@ -46,6 +46,18 @@ func TestReportLabelNeverUsesTheEndpoint(t *testing.T) {
 		{PublicNode{Name: "node 2", DisplayName: "edge-fra", Address: "edge-fra.example.net"}, "Node 3"},
 		{PublicNode{Name: "Frankfurt", CountryCode: "DE"}, "🇩🇪 Frankfurt"},
 		{PublicNode{Name: "🇩🇪 Frankfurt", CountryCode: "DE"}, "🇩🇪 Frankfurt"},
+		// Provider fragments are kept unless they could carry an endpoint
+		// or a credential.
+		{PublicNode{Name: "🇫🇮 [FI] Финляндия-2", CountryCode: "FI"}, "🇫🇮 [FI] Финляндия-2"},
+		{PublicNode{Name: "🇳🇱 Netherlands(W) XH Vless", CountryCode: "NL"}, "🇳🇱 Netherlands(W) XH Vless"},
+		{PublicNode{Name: "Fast 203.0.113.7 node", CountryCode: "DE"}, "🇩🇪 Germany · Node 3"},
+		{PublicNode{Name: "edge [2001:db8::7]"}, "Node 3"},
+		{PublicNode{Name: "FRA edge-fra.example.net:443"}, "Node 3"},
+		{PublicNode{Name: "vless://user@host"}, "Node 3"},
+		{PublicNode{Name: "id 2f0c6e2a-1b2c-4d5e-8f90-a1b2c3d4e5f6"}, "Node 3"},
+		{PublicNode{Name: "sid 6ba85179e30d4fc2"}, "Node 3"},
+		{PublicNode{Name: "key Zm9vYmFyYmF6cXV4cXV1eHF1dXhxdXV4"}, "Node 3"},
+		{PublicNode{Name: "Paris edgehost", Address: "EdgeHost"}, "Node 3"},
 	} {
 		got := ReportLabel(c.node, 3)
 		if got != c.want || strings.Contains(got, "203.0.113") || strings.Contains(got, "edge-fra") {

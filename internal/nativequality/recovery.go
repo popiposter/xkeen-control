@@ -48,6 +48,22 @@ type RecoveryStatus struct {
 	Provisional bool `json:"provisional,omitempty"`
 }
 
+// managedApplier is the coordinator's non-preemptive lifecycle admission.
+type managedApplier interface {
+	TryBeginManagedApply() (func(), error)
+}
+
+// observedAlive reports whether native Observatory holds a healthy record
+// for tag.
+func observedAlive(snapshot xrayapi.Snapshot, tag string) bool {
+	for _, h := range snapshot.OutboundHealth {
+		if h.Tag == tag && h.Alive {
+			return true
+		}
+	}
+	return false
+}
+
 // recoveryGap reports whether a recovery Apply of either kind ran within the
 // last hour; at most one runs per hour.
 func recoveryGap(q quotaReceipt, now time.Time) bool {
@@ -264,10 +280,20 @@ func (s *Service) recoveryApply(parent context.Context, path string, q quotaRece
 	if !check.APIReachable || !check.RoutingReachable || !check.ObservatoryReachable || check.Balancer.Override != "" || !s.Reader.ProbeReachable(applyCtx) {
 		return fail("deferred", "native-override-or-unavailable")
 	}
-	// A removal stands down when Xray left the unusable member by itself.
-	if !provisional && check.Balancer.NativeSelected != out.Unusable {
+	// A removal, or a provisional pool that follows one, stands down when
+	// Xray left the unusable member by itself.
+	if out.Unusable != "" && check.Balancer.NativeSelected != out.Unusable {
 		out.State, out.Reason, out.Pool, out.Provisional = "healthy", "selection-changed", nil, false
 		return out
+	}
+	// Hold the runtime lifecycle, non-preemptively, from the save through
+	// the readback, so a manual node test cannot run beside the restart.
+	if managed, ok := s.Measurement.(managedApplier); ok {
+		release, err := managed.TryBeginManagedApply()
+		if err != nil {
+			return fail("deferred", "panel-busy")
+		}
+		defer release()
 	}
 	// The durable intent precedes the save, so a crash before the proof is
 	// fenced for inspection exactly like a review Apply.
@@ -329,9 +355,13 @@ func (s *Service) checkSelected(parent context.Context, path string, q quotaRece
 	if snapshot.Balancer.Override != "" || !slices.Contains(resolved, selected) {
 		return RecoveryStatus{State: "healthy"}, false
 	}
-	// Removal needs Observatory's own verdict that the pool is healthy.
+	// Removal needs Observatory's own verdict that the selected member is
+	// healthy: a missing or down record is not the case this path handles.
 	if !snapshot.ObservatoryReachable {
 		return unchecked("observatory-unavailable")
+	}
+	if !observedAlive(snapshot, selected) {
+		return unchecked("observatory-unverified")
 	}
 	if probeRouteShadowed(routing) {
 		return unchecked("probe-route-shadowed")
@@ -392,6 +422,9 @@ func (s *Service) checkSelected(parent context.Context, path string, q quotaRece
 		}
 	}
 	if len(others) == 0 {
+		if res, next, same := sameSelection(); !same {
+			return res, next
+		}
 		return out, true
 	}
 	s.mu.Lock()
@@ -415,11 +448,11 @@ func (s *Service) checkSelected(parent context.Context, path string, q quotaRece
 		}
 	}
 	out.Verified = len(keep)
-	if len(keep) == 0 {
-		return out, true
-	}
 	if res, next, same := sameSelection(); !same {
 		return res, next
+	}
+	if len(keep) == 0 {
+		return out, true
 	}
 	eligible, _, err := measurementPool(routing, s.Nodes(parent), w.Targets)
 	if err != nil {

@@ -50,7 +50,8 @@ type quotaReceipt struct {
 	// RecoveryAppliedAt is the last REQ-009 recovery Apply of either kind
 	// (a provisional pool or a pool without an unusable selected member),
 	// so the hourly limit survives a panel restart. A settled review clears
-	// it, which also keeps rollback receipts readable after the next night.
+	// it once the hour has passed, which also keeps rollback receipts
+	// readable after the next night.
 	RecoveryAppliedAt time.Time `json:"recoveryAppliedAt,omitzero"`
 }
 
@@ -117,6 +118,10 @@ func settleSweepLocked(path string, now time.Time, inspected, ranked bool) error
 		if ranked {
 			q.ProvisionalAt = time.Time{}
 		}
+	}
+	// The hourly recovery limit outlives any review result; only an expired
+	// timestamp is dropped.
+	if !q.RecoveryAppliedAt.IsZero() && now.Sub(q.RecoveryAppliedAt) >= recoveryApplyGap {
 		q.RecoveryAppliedAt = time.Time{}
 	}
 	return writeQuotaLocked(path, q)

@@ -64,6 +64,9 @@ type sweepMeasurement struct {
 	rttCalls     [][]string
 	rttDown      map[string]bool
 	rttUnrouted  map[string]bool // probe rule never installed: no request ran
+	managedBusy  bool            // the lifecycle refuses a managed Apply
+	managed      int             // managed Apply admissions
+	managedHeld  int             // admissions not yet released
 	rttSlow      map[string]bool
 	slowMS       int64 // RTT of a slow tag; zero means 20000
 	rttErr       error
@@ -1115,4 +1118,13 @@ func TestSecondPassStopKeepsFirstPassButFenceFails(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (m *sweepMeasurement) TryBeginManagedApply() (func(), error) {
+	if m.managedBusy {
+		return nil, c1.ErrLifecycleBusy
+	}
+	m.managed++
+	m.managedHeld++
+	return func() { m.managedHeld-- }, nil
 }

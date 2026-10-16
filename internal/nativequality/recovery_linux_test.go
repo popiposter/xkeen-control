@@ -366,6 +366,10 @@ func TestRecoveryRemovesASelectedMemberThatCarriesNoTraffic(t *testing.T) {
 	if calls, _ := os.ReadFile(marker); string(calls) != "x" {
 		t.Fatal("expected exactly one native Apply", string(calls))
 	}
+	// The Apply held the runtime lifecycle and released it.
+	if m.managed != 1 || m.managedHeld != 0 {
+		t.Fatal("managed lifecycle admission", m.managed, m.managedHeld)
+	}
 	// The remaining pool is still the review's ranked pool, not provisional.
 	if !v.ProvisionalAt.IsZero() || !reflect.DeepEqual(v.ActivePool, want) {
 		t.Fatal("pool after removal", v.ProvisionalAt, v.ActivePool)
@@ -428,6 +432,25 @@ func TestRecoveryKeepsASelectedMemberThatAnswersOrIsReplaced(t *testing.T) {
 		"observatory unreachable": func(_ *sweepMeasurement, r *sweepReader) {
 			r.mutate = func(snapshot *xrayapi.Snapshot) { snapshot.ObservatoryReachable = false }
 		},
+		// Observatory must itself report the selected member healthy.
+		"selected member has no Observatory record": func(_ *sweepMeasurement, r *sweepReader) {
+			r.mutate = func(snapshot *xrayapi.Snapshot) {
+				snapshot.OutboundHealth = slices.DeleteFunc(snapshot.OutboundHealth, func(h xrayapi.OutboundHealth) bool { return h.Tag == "proxy-00" })
+			}
+		},
+		"selected member observed down": func(_ *sweepMeasurement, r *sweepReader) {
+			r.mutate = func(snapshot *xrayapi.Snapshot) {
+				for i := range snapshot.OutboundHealth {
+					if snapshot.OutboundHealth[i].Tag == "proxy-00" {
+						snapshot.OutboundHealth[i].Alive = false
+					}
+				}
+			}
+		},
+		// A manual node test owns the runtime: the removal waits.
+		"lifecycle busy": func(m *sweepMeasurement, _ *sweepReader) {
+			m.managedBusy = true
+		},
 		// A probe rule that never installed says nothing about the node.
 		"probe never routed": func(m *sweepMeasurement, _ *sweepReader) {
 			m.rttUnrouted = map[string]bool{"proxy-00": true}
@@ -459,11 +482,14 @@ func TestRecoveryKeepsASelectedMemberThatAnswersOrIsReplaced(t *testing.T) {
 				"probe refused":                                        "unchecked/probe-cleanup-pending",
 				"selection outside the pool":                           "healthy/",
 				"observatory unreachable":                              "unchecked/observatory-unavailable",
+				"selected member has no Observatory record":            "unchecked/observatory-unverified",
+				"selected member observed down":                        "unchecked/observatory-unverified",
+				"lifecycle busy":                                       "deferred/panel-busy",
 				"probe never routed":                                   "unchecked/probe-route-unavailable",
 				"selection changes during the third probe":             "healthy/selection-changed",
 				"selection changes while the other members are probed": "healthy/selection-changed",
 			}[name]
-			if got := v.Recovery.State + "/" + v.Recovery.Reason; got != want || v.Recovery.Unusable != "" {
+			if got := v.Recovery.State + "/" + v.Recovery.Reason; got != want || v.Recovery.Unusable != "" && name != "lifecycle busy" {
 				t.Fatalf("recovery = %s %+v, want %s", got, v.Recovery, want)
 			}
 			if recoveryPending(t, s) || v.InspectionRequired {
@@ -562,5 +588,52 @@ func TestRecoveryRemovalFromAProvisionalPoolStaysProvisional(t *testing.T) {
 	v := s.Read()
 	if v.Recovery.State != "applied" || v.Recovery.Reason != "selected-member-unusable" || !v.Recovery.Provisional || !v.ProvisionalAt.Equal(provisional) {
 		t.Fatal("removal from a provisional pool", v.Recovery, v.ProvisionalAt)
+	}
+}
+
+// The provisional fallback after an unusable member also stands down when
+// Xray moves its selection while the other members are probed.
+func TestRecoveryFallbackStandsDownWhenSelectionChanges(t *testing.T) {
+	s, m, r := unusableFixture(t)
+	for _, tag := range recoveryIncumbents {
+		m.rttDown[tag] = true
+	}
+	m.onRTT = func(n int) {
+		if n == 4 {
+			r.mutate = func(snapshot *xrayapi.Snapshot) { snapshot.Balancer.NativeSelected = "proxy-02" }
+		}
+	}
+	marker := setupNativeApply(t, s, s.Editor.Dir)
+	s.recoverPool(context.Background())
+	v := s.Read()
+	if v.Recovery.State+"/"+v.Recovery.Reason != "healthy/selection-changed" || recoveryPending(t, s) {
+		t.Fatal("fallback ignored a selection change", v.Recovery)
+	}
+	if calls, _ := os.ReadFile(marker); len(calls) != 0 {
+		t.Fatal("fallback ran an Apply", string(calls))
+	}
+}
+
+// A settled review keeps a fresh recovery Apply time; only an expired one
+// is dropped.
+func TestSettledReviewKeepsTheRecoveryGap(t *testing.T) {
+	for _, c := range []struct {
+		age  time.Duration
+		kept bool
+	}{{10 * time.Minute, true}, {2 * time.Hour, false}} {
+		s, _, _ := recoveryFixture(t)
+		applied := time.Now().UTC().Add(-c.age)
+		writeRecoveryReceipt(t, s, quotaReceipt{RecoveryAppliedAt: applied})
+		release, err := acquireQuotaLock(s.QuotaPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := settleSweepLocked(s.QuotaPath, time.Now().UTC(), true, true); err != nil {
+			t.Fatal(err)
+		}
+		release()
+		if got := recoveryAppliedRecorded(t, s); got != c.kept {
+			t.Fatalf("age %s: recovery time kept = %v", c.age, got)
+		}
 	}
 }

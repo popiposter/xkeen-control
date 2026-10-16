@@ -18,6 +18,10 @@ type countryHint struct {
 
 var (
 	genericNodeName = regexp.MustCompile(`(?i)^(node|imported node)(\s+\d+)?$`)
+	// unsafeReportName matches stored names that could carry an endpoint or
+	// a credential: an IPv4 or IPv6 address, a host name, a URL or user@host
+	// form, a UUID, a long hex run (REALITY short IDs) or a long token.
+	unsafeReportName = regexp.MustCompile(`(?i)\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f]{0,4}:[0-9a-f]{0,4}:[0-9a-f:]*|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}|://|@|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{12,}|[a-z0-9_+/=-]{24,}`)
 	// Lowercase ISO hints in names require a deliberate numbered provider form.
 	// A bare natural-language "by" is never a Belarus hint.
 	numberedCountryCode = regexp.MustCompile(`(?:^|[^\pL\pN])(?i:(ru|by))[-_][0-9]+(?:$|[^\pL\pN])`)
@@ -159,7 +163,8 @@ func shortHostLabel(host string) string {
 // ReportLabel names a node for an external report such as the Telegram
 // nightly summary. It uses only the stored name and the inferred country,
 // never the endpoint: a generic name (whose display name would carry the
-// host) becomes "<flag> <country> · Node <position>".
+// host), or a stored name that could carry an endpoint or a credential (for
+// example a provider fragment), becomes "<flag> <country> · Node <position>".
 func ReportLabel(node PublicNode, position int) string {
 	var hint countryHint
 	found := false
@@ -170,7 +175,7 @@ func ReportLabel(node PublicNode, position int) string {
 		}
 	}
 	name := safeName(node.Name, "Imported node")
-	if genericNodeName.MatchString(name) {
+	if genericNodeName.MatchString(name) || unsafeReportName.MatchString(name) || node.Address != "" && strings.Contains(strings.ToLower(name), strings.ToLower(node.Address)) {
 		label := fmt.Sprintf("Node %d", position)
 		if found {
 			return hint.flag + " " + hint.name + " · " + label

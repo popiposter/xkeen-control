@@ -195,14 +195,19 @@ pool, each ten-minute check therefore probes Xray's selected member (no manual
 override) with the panel's targeted probe, whose endpoint differs from the
 Observatory URL. Only three failures in a row, 5 s apart and with the same
 selection each time and with every request routed through the member, make it
-unusable. A changed selection (also re-read before Apply), an unreachable
-Observatory or a probe rule that never installed is no outage. The other members
+unusable. A changed selection (also re-read before Apply, including before a
+provisional pool that follows a removal), an unreachable Observatory, a selected
+member without a healthy Observatory record, or a probe rule that never installed
+is no outage. The Apply holds the runtime lifecycle non-preemptively from the save
+through the readback, so it waits for (and never runs beside) a manual node test. The other members
 are then probed: those that answer keep their review costs and are applied as the
 pool through the same Apply path (an older provisional pool stays provisional); if
 none answers, the provisional recovery above runs. Both kinds share one hourly
-limit, kept in the review receipt (`recoveryAppliedAt`, cleared by a settled
-review) so a panel restart does not reset it. An applied recovery sends a Telegram
-report with report labels only. An undersized pool (for example an
+limit, kept in the review receipt (`recoveryAppliedAt`, dropped only once the
+hour has passed) so neither a panel restart nor a review resets it. An applied
+recovery sends a Telegram report with report labels only: a stored name that could
+carry an address, host, URL, UUID, short ID or token is replaced by the country and
+a position, as in the nightly report. An undersized pool (for example an
 imported five-member pool) grows to six measured members when the review keeps
 every incumbent (`pool-filled`); dropping a healthy member still needs the 15% margin. The Nodes table labels nodes without an
 Observatory record "Not monitored" rather than failed.
