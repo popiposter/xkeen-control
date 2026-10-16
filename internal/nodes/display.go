@@ -18,10 +18,12 @@ type countryHint struct {
 
 var (
 	genericNodeName = regexp.MustCompile(`(?i)^(node|imported node)(\s+\d+)?$`)
-	// unsafeReportName matches stored names that could carry an endpoint or
-	// a credential: an IPv4 or IPv6 address, a host name, a URL or user@host
-	// form, a UUID, a long hex run (REALITY short IDs) or a long token.
-	unsafeReportName = regexp.MustCompile(`(?i)\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f]{0,4}:[0-9a-f]{0,4}:[0-9a-f:]*|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}|://|@|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{12,}|[a-z0-9_+/=-]{24,}`)
+	// unsafeReportName matches stored names that could carry an endpoint, a
+	// credential or an outbound tag: an IPv4 or IPv6 address, a host name, a
+	// URL or user@host form, a UUID, a hex run of eight or more (REALITY
+	// short IDs and keys), a long token or a managed outbound tag. Shorter
+	// hex runs are indistinguishable from ordinary words.
+	unsafeReportName = regexp.MustCompile(`(?i)\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f]{0,4}:[0-9a-f]{0,4}:[0-9a-f:]*|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}|://|@|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{8,}|[a-z0-9_+/=-]{24,}|proxy-node-`)
 	// Lowercase ISO hints in names require a deliberate numbered provider form.
 	// A bare natural-language "by" is never a Belarus hint.
 	numberedCountryCode = regexp.MustCompile(`(?:^|[^\pL\pN])(?i:(ru|by))[-_][0-9]+(?:$|[^\pL\pN])`)

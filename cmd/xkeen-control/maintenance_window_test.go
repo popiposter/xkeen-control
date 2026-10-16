@@ -101,3 +101,28 @@ func TestRecoveryReportUsesEndpointFreeLabels(t *testing.T) {
 		t.Fatalf("provisional report %+v", r)
 	}
 }
+
+// Both Telegram reports use report labels: names that could carry an
+// endpoint, a REALITY short ID or an outbound tag never reach the message.
+func TestReportsNeverForwardSecretLikeNames(t *testing.T) {
+	registry := []nodes.PublicNode{
+		{OutboundTag: "proxy-node-00000001", Name: "sid deadbeef", CountryCode: "FI"},
+		{OutboundTag: "proxy-node-00000002", Name: "mirror proxy-node-00000002"},
+		{OutboundTag: "proxy-node-00000003", Name: "edge 198.51.100.4:443"},
+	}
+	pool := []string{"proxy-node-00000001", "proxy-node-00000002", "proxy-node-00000003"}
+	outcome := nativequality.RecoveryStatus{State: "applied", Reason: "selected-member-unusable", Unusable: "proxy-node-00000001", Pool: pool[1:], CheckedAt: time.Now().UTC()}
+	recovery := fmt.Sprint(notifications.RecoveryAlert(recoveryReport(outcome, registry, time.UTC)))
+	m := nativequality.MaintenanceStatus{StartedAt: time.Now().Add(-time.Hour), FinishedAt: time.Now(), ReviewStarted: true, GeodataState: "completed"}
+	nightly := fmt.Sprint(notifications.MaintenanceAlert(maintenanceReport(m, nativequality.Status{ActivePool: pool}, registry, nil, time.UTC)))
+	for _, text := range []string{recovery, nightly} {
+		for _, leak := range []string{"deadbeef", "proxy-node-", "198.51.100"} {
+			if strings.Contains(text, leak) {
+				t.Fatalf("%q leaked in\n%s", leak, text)
+			}
+		}
+	}
+	if !strings.Contains(recovery, "Finland") {
+		t.Fatal("country fallback missing", recovery)
+	}
+}
