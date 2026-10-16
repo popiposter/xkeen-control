@@ -142,6 +142,9 @@ type Service struct {
 	recovery       RecoveryStatus
 	recoveryCursor int
 	recoveryHash   string
+	// Recovered receives every applied recovery outcome for the operator
+	// report; it must not block for long.
+	Recovered func(context.Context, RecoveryStatus)
 	// maintenance is the current or last nightly window and nextMaintenance
 	// the next planned start.
 	maintenance     MaintenanceStatus

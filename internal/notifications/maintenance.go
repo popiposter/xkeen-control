@@ -164,3 +164,49 @@ func mbps(bps float64) string {
 	}
 	return fmt.Sprintf("%.0f Mbps", bps*8/1e6)
 }
+
+// RecoveryReport is one applied availability recovery: Xray's selected
+// member passed native health checks but failed the panel's targeted probes
+// and was removed, and/or no remaining member passed a probe and a new
+// provisional pool replaced the pool (Replaced). Provisional marks a running
+// pool without a speed ranking. Names must be report labels
+// (nodes.ReportLabel).
+type RecoveryReport struct {
+	At          time.Time
+	Removed     string
+	Replaced    bool
+	Provisional bool
+	Pool        []string
+}
+
+// RecoveryAlert renders an applied recovery as Telegram HTML.
+func RecoveryAlert(r RecoveryReport) Alert {
+	var b strings.Builder
+	b.WriteString("🛠 <b>Pool recovered</b>\n")
+	if !r.At.IsZero() {
+		fmt.Fprintf(&b, "<i>%s</i>\n", r.At.Format("2 Jan 15:04 MST"))
+	}
+	b.WriteString("\n")
+	if r.Removed != "" {
+		fmt.Fprintf(&b, "⛔ <b>%s</b> passed Xray's health check but failed 3 targeted probes while selected; it was removed from the pool.\n", html.EscapeString(boundedName(r.Removed)))
+	}
+	switch {
+	case r.Replaced:
+		b.WriteString("🔁 No pool member passed a probe within the native latency limit: a provisional pool of nodes that answered was applied, unranked until the next review.\n")
+	case r.Provisional:
+		b.WriteString("🔁 The other members stay in the provisional pool, unranked until the next review.\n")
+	default:
+		b.WriteString("🔁 The other members keep their measured ranking.\n")
+	}
+	if len(r.Pool) > 0 {
+		b.WriteString("\n🏆 <b>Running pool</b>\n")
+		for i, name := range r.Pool {
+			if i == maxMaintenanceNodes {
+				fmt.Fprintf(&b, "… and %d more\n", len(r.Pool)-i)
+				break
+			}
+			fmt.Fprintf(&b, "%d. <b>%s</b>\n", i+1, html.EscapeString(boundedName(name)))
+		}
+	}
+	return Alert{text: strings.TrimRight(b.String(), "\n"), html: true}
+}

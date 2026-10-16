@@ -47,6 +47,12 @@ type quotaReceipt struct {
 	// clears it. omitzero keeps receipts without a provisional pool readable
 	// by v0.4.12, which rejects unknown fields (rollback target).
 	ProvisionalAt time.Time `json:"provisionalAt,omitzero"`
+	// RecoveryAppliedAt is the last REQ-009 recovery Apply of either kind
+	// (a provisional pool or a pool without an unusable selected member),
+	// so the hourly limit survives a panel restart. A settled review clears
+	// it once the hour has passed, which also keeps rollback receipts
+	// readable after the next night.
+	RecoveryAppliedAt time.Time `json:"recoveryAppliedAt,omitzero"`
 }
 
 type quotaView struct {
@@ -113,6 +119,11 @@ func settleSweepLocked(path string, now time.Time, inspected, ranked bool) error
 			q.ProvisionalAt = time.Time{}
 		}
 	}
+	// The hourly recovery limit outlives any review result; only an expired
+	// timestamp is dropped.
+	if !q.RecoveryAppliedAt.IsZero() && now.Sub(q.RecoveryAppliedAt) >= recoveryApplyGap {
+		q.RecoveryAppliedAt = time.Time{}
+	}
 	return writeQuotaLocked(path, q)
 }
 
@@ -158,7 +169,7 @@ func readQuotaLocked(path string, now time.Time) (quotaReceipt, error) {
 			return quotaReceipt{}, errQuota
 		}
 	}
-	if !q.LastComparisonStartedAt.IsZero() && q.LastComparisonStartedAt.After(now) || q.ProvisionalAt.After(now) {
+	if !q.LastComparisonStartedAt.IsZero() && q.LastComparisonStartedAt.After(now) || q.ProvisionalAt.After(now) || q.RecoveryAppliedAt.After(now) {
 		return quotaReceipt{}, errQuota
 	}
 	for _, r := range q.Reservations {

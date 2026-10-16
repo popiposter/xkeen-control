@@ -116,3 +116,24 @@ func TestMaintenanceAlertShowsStepsTurnedOff(t *testing.T) {
 		t.Fatal("failed review reported green", text)
 	}
 }
+
+func TestRecoveryAlertNamesTheRemovedMemberEscaped(t *testing.T) {
+	at := time.Date(2026, 10, 16, 10, 40, 0, 0, time.FixedZone("MSK", 3*3600))
+	alert := RecoveryAlert(RecoveryReport{At: at, Removed: "🇫🇮 <i>x</i>", Pool: []string{"🇳🇱 a & b", "🇩🇪 c"}})
+	text := alert.text
+	if !alert.html || len(text) > maxHTMLBytes {
+		t.Fatal("recovery alert is not a bounded HTML alert", len(text))
+	}
+	for _, want := range []string{"🛠 <b>Pool recovered</b>", "16 Oct 10:40 MSK", "<b>🇫🇮 &lt;i&gt;x&lt;/i&gt;</b> passed Xray's health check but failed 3 targeted probes", "keep their measured ranking", "1. <b>🇳🇱 a &amp; b</b>", "2. <b>🇩🇪 c</b>"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in\n%s", want, text)
+		}
+	}
+	if text = RecoveryAlert(RecoveryReport{Replaced: true, Provisional: true, Pool: []string{"n"}}).text; strings.Contains(text, "⛔") || !strings.Contains(text, "a provisional pool of nodes that answered was applied") {
+		t.Fatal("provisional recovery text", text)
+	}
+	// Removing a member from an older provisional pool is not "measured".
+	if text = RecoveryAlert(RecoveryReport{Removed: "n", Provisional: true}).text; strings.Contains(text, "measured ranking") || !strings.Contains(text, "stay in the provisional pool") {
+		t.Fatal("removal from a provisional pool", text)
+	}
+}

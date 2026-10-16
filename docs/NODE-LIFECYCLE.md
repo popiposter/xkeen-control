@@ -187,7 +187,27 @@ one recovery Apply runs per hour, so a failing provisional pool cannot become a
 restart loop. An active manual override defers recovery. If nothing answers,
 the configuration is left intact and proxied destinations keep the block
 fallback. The next complete automatic review replaces a provisional pool with its
-measured top six and clears the label. An undersized pool (for example an
+measured top six and clears the label.
+Unusable selected member (unreleased, #229): native Observatory probes one fixed
+URL, so a member whose server passes only that destination stays alive and
+selected while every other destination fails. When Observatory reports a healthy
+pool, each ten-minute check therefore probes Xray's selected member (no manual
+override) with the panel's targeted probe, whose endpoint differs from the
+Observatory URL. Only three failures in a row, 5 s apart and with the same
+selection each time and with every request routed through the member, make it
+unusable. A changed selection (also re-read before Apply, including before a
+provisional pool that follows a removal), an unreachable Observatory, a selected
+member without a healthy Observatory record, or a probe rule that never installed
+is no outage. The Apply holds the runtime lifecycle non-preemptively from the save
+through the readback, so it waits for (and never runs beside) a manual node test. The other members
+are then probed: those that answer keep their review costs and are applied as the
+pool through the same Apply path (an older provisional pool stays provisional); if
+none answers, the provisional recovery above runs. Both kinds share one hourly
+limit, kept in the review receipt (`recoveryAppliedAt`, dropped only once the
+hour has passed) so neither a panel restart nor a review resets it. An applied
+recovery sends a Telegram report with report labels only: a stored name that could
+carry an address, host, URL, UUID, short ID or token is replaced by the country and
+a position, as in the nightly report. An undersized pool (for example an
 imported five-member pool) grows to six measured members when the review keeps
 every incumbent (`pool-filled`); dropping a healthy member still needs the 15% margin. The Nodes table labels nodes without an
 Observatory record "Not monitored" rather than failed.

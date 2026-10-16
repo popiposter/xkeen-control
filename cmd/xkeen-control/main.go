@@ -321,6 +321,10 @@ func main() {
 			// A disabled or unconfigured channel is not an error here.
 			_ = notificationService.SendReport(ctx, notifications.MaintenanceAlert(report))
 		}
+		qualityService.Recovered = func(ctx context.Context, outcome nativequality.RecoveryStatus) {
+			registry, _ := nodeManager.List()
+			_ = notificationService.SendReport(ctx, notifications.RecoveryAlert(recoveryReport(outcome, registry, routerLocation())))
+		}
 		subscriptionRefresher.SetMaintenanceWindow(qualitySchedule.NextSubscriptionRefresh)
 		qualitySchedule.SettingsChanged = subscriptionRefresher.Replan
 	}

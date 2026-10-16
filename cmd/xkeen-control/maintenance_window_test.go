@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -76,5 +77,52 @@ func TestRecommendOnlyNightKnowsWhenNothingWouldChange(t *testing.T) {
 	}
 	if sameMembers(nil, nil) || sameMembers([]string{"a", "a"}, []string{"a", "b"}) || sameMembers([]string{"a", "b"}, []string{"a", "a"}) {
 		t.Fatal("sameMembers edge cases")
+	}
+}
+
+func TestRecoveryReportUsesEndpointFreeLabels(t *testing.T) {
+	registry := []nodes.PublicNode{
+		{OutboundTag: "tag-a", Name: "Imported node", DisplayName: "🇫🇮 Finland · 198.51.100.4", Address: "198.51.100.4", CountryCode: "FI"},
+		{OutboundTag: "tag-b", Name: "Helsinki"},
+	}
+	outcome := nativequality.RecoveryStatus{State: "applied", Reason: "selected-member-unusable", Unusable: "tag-a", Pool: []string{"tag-b", "tag-gone"}, CheckedAt: time.Date(2026, 10, 16, 7, 40, 0, 0, time.UTC)}
+	r := recoveryReport(outcome, registry, time.FixedZone("MSK", 3*3600))
+	if r.Removed != "🇫🇮 Finland" || r.Provisional || r.Replaced || !slices.Equal(r.Pool, []string{"Helsinki", "unknown node"}) || r.At.Hour() != 10 {
+		t.Fatalf("report %+v", r)
+	}
+	text := fmt.Sprint(notifications.RecoveryAlert(r))
+	for _, leak := range []string{"198.51.100", "tag-"} {
+		if strings.Contains(text, leak) {
+			t.Fatal("endpoint or tag leaked", leak)
+		}
+	}
+	outcome.Reason, outcome.Unusable, outcome.Provisional = "no-healthy-member", "", true
+	if r := recoveryReport(outcome, registry, nil); !r.Replaced || !r.Provisional || r.Removed != "" {
+		t.Fatalf("provisional report %+v", r)
+	}
+}
+
+// Both Telegram reports use report labels: names that could carry an
+// endpoint, a REALITY short ID or an outbound tag never reach the message.
+func TestReportsNeverForwardSecretLikeNames(t *testing.T) {
+	registry := []nodes.PublicNode{
+		{OutboundTag: "proxy-node-00000001", Name: "sid deadbeef", CountryCode: "FI"},
+		{OutboundTag: "proxy-node-00000002", Name: "mirror proxy-node-00000002"},
+		{OutboundTag: "proxy-node-00000003", Name: "edge 198.51.100.4:443"},
+	}
+	pool := []string{"proxy-node-00000001", "proxy-node-00000002", "proxy-node-00000003"}
+	outcome := nativequality.RecoveryStatus{State: "applied", Reason: "selected-member-unusable", Unusable: "proxy-node-00000001", Pool: pool[1:], CheckedAt: time.Now().UTC()}
+	recovery := fmt.Sprint(notifications.RecoveryAlert(recoveryReport(outcome, registry, time.UTC)))
+	m := nativequality.MaintenanceStatus{StartedAt: time.Now().Add(-time.Hour), FinishedAt: time.Now(), ReviewStarted: true, GeodataState: "completed"}
+	nightly := fmt.Sprint(notifications.MaintenanceAlert(maintenanceReport(m, nativequality.Status{ActivePool: pool}, registry, nil, time.UTC)))
+	for _, text := range []string{recovery, nightly} {
+		for _, leak := range []string{"deadbeef", "proxy-node-", "198.51.100"} {
+			if strings.Contains(text, leak) {
+				t.Fatalf("%q leaked in\n%s", leak, text)
+			}
+		}
+	}
+	if !strings.Contains(recovery, "Finland") {
+		t.Fatal("country fallback missing", recovery)
 	}
 }

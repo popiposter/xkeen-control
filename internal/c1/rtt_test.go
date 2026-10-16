@@ -122,3 +122,19 @@ func TestMeasureRTTUsesTheMedianOfThreeRequests(t *testing.T) {
 		t.Fatal("median with a late failure", results[1])
 	}
 }
+
+// A probe whose rule never installed sent no request through the node: its
+// invalid sample is not routed, unlike a node that failed its request.
+func TestMeasureRTTMarksProbeRouteFailuresUnrouted(t *testing.T) {
+	coordinator, api, transport := rttFixture(t)
+	results, err := coordinator.MeasureRTT(context.Background(), []string{"proxy-a", "proxy-c"})
+	if err != nil || !results[0].Routed || !results[1].Routed || results[1].Valid {
+		t.Fatalf("routed results = %+v, %v", results, err)
+	}
+	api.failAdd = true
+	transport.order = nil
+	results, err = coordinator.MeasureRTT(context.Background(), []string{"proxy-a"})
+	if err != nil || len(results) != 1 || results[0].Valid || results[0].Routed || len(transport.order) != 0 {
+		t.Fatalf("unrouted results = %+v, %v, requests %v", results, err, transport.order)
+	}
+}
