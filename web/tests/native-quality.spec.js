@@ -90,10 +90,18 @@ test('availability recovery names a selected node that carried no traffic', asyn
   model.quality = { ...complete(), state: 'idle', canStage: false,
     recovery: { state: 'applied', reason: 'selected-member-unusable', unusable: 'proxy-node-gone', checkedAt: '2026-10-16T07:40:00Z', probed: 3, verified: 2, pool } }
   await open(page)
-  await expect(page.getByRole('status').filter({ hasText: /selected node proxy-node-gone passed its health check but carried no traffic/ })).toContainText('the other 2 members keep their measured ranking')
+  await expect(page.getByRole('status').filter({ hasText: /selected node proxy-node-gone passed its health check but failed 3 targeted probes/ })).toContainText('the other 2 members keep their measured ranking')
   model.quality = { ...model.quality, recovery: { state: 'deferred', reason: 'recovery-apply-gap', unusable: 'proxy-node-gone', probed: 1 } }
   await page.getByRole('button', { name: 'Refresh', exact: true }).click()
-  await expect(page.getByRole('status').filter({ hasText: /carried no traffic/ })).toContainText('Removing it is deferred: a recovery pool was applied less than an hour ago')
+  await expect(page.getByRole('status').filter({ hasText: /failed 3 targeted probes/ })).toContainText('Removing it is deferred: a recovery pool was applied less than an hour ago')
+  // In flight, the removal is not shown as an outage of the whole pool.
+  model.quality = { ...model.quality, recovery: { state: 'applying', unusable: 'proxy-node-gone' } }
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: /failed 3 targeted probes/ })).toContainText('applying a pool without it')
+  // A removal from a provisional pool is not called measured.
+  model.quality = { ...model.quality, recovery: { state: 'applied', reason: 'selected-member-unusable', unusable: 'proxy-node-gone', provisional: true, pool } }
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: /failed 3 targeted probes/ })).toContainText('stay in the provisional pool')
   await expect(page.getByText(/No pool member is healthy/)).toHaveCount(0)
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
 })

@@ -15,6 +15,7 @@ type benchmarkProbeAPI struct {
 	appends    []bool
 	removes    []string
 	failRemove bool
+	failAdd    bool
 	rules      map[string]xrayapi.Rule
 }
 
@@ -22,6 +23,9 @@ func (f *benchmarkProbeAPI) OverrideBalancerTarget(context.Context, string, stri
 func (f *benchmarkProbeAPI) AddRule(_ context.Context, rule xrayapi.Rule, appendOnly bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failAdd {
+		return errors.New("add failed")
+	}
 	f.adds = append(f.adds, rule)
 	f.appends = append(f.appends, appendOnly)
 	if f.rules == nil {

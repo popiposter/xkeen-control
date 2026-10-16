@@ -68,6 +68,8 @@ const poolDecisionText = {
 const recoveryReasons = {
   'manual-override-active': 'a manual node override is active; clear it to allow recovery',
   'recovery-apply-gap': 'a recovery pool was applied less than an hour ago; recovery does not restart XKeen again before then',
+  'probe-route-unavailable': 'a probe could not be routed through the node',
+  'observatory-unavailable': 'native Observatory is unavailable',
   'inspection-required': 'an earlier operation needs inspection',
   'probe-route-shadowed': 'a routing rule could capture probe traffic',
   'probe-cleanup-pending': 'a temporary probe rule could not be confirmed removed',
@@ -81,11 +83,14 @@ function recoveryText(recovery, nodesByTag) {
   const reason = recoveryReasons[recovery?.reason] || recovery?.reason || 'unavailable'
   if (recovery?.unusable) {
     const name = nodesByTag?.get(recovery.unusable)?.name || recovery.unusable
-    const lead = `Xray's selected node ${name} passed its health check but carried no traffic in 3 probes.`
+    const lead = `Xray's selected node ${name} passed its health check but failed 3 targeted probes.`
     switch (recovery.state) {
+      case 'probing': return `${lead} Availability recovery is probing the other pool members…`
+      case 'applying': return `${lead} Availability recovery is applying a pool without it…`
       case 'applied': return recovery.reason === 'no-healthy-member'
-        ? `${lead} No other pool member answered, so availability recovery applied a provisional pool of ${recovery.pool?.length || 0} nodes that answered a latency probe.`
-        : `${lead} Availability recovery removed it from the pool; the other ${recovery.pool?.length || 0} members keep their measured ranking.`
+        ? `${lead} No pool member passed a probe within the native latency limit, so availability recovery applied a provisional pool of ${recovery.pool?.length || 0} nodes that answered.`
+        : `${lead} Availability recovery removed it from the pool; the other ${recovery.pool?.length || 0} members ${recovery.provisional ? 'stay in the provisional pool, unranked until the next review' : 'keep their measured ranking'}.`
+      case 'vpn-unavailable': return `${lead} No other node answered a probe; the configuration was left unchanged. Recovery retries every 10 minutes.`
       case 'deferred': return `${lead} Removing it is deferred: ${reason}.`
       case 'failed': return `${lead} Availability recovery could not remove it: ${reason}. The configuration was kept.`
       case 'inspection-required': return `${lead} Availability recovery needs inspection: ${reason}.`

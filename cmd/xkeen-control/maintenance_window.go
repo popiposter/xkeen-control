@@ -143,7 +143,7 @@ func recoveryReport(outcome nativequality.RecoveryStatus, registry []nodes.Publi
 		}
 		return "unknown node"
 	}
-	report := notifications.RecoveryReport{At: outcome.CheckedAt.In(loc), Provisional: outcome.Reason == "no-healthy-member"}
+	report := notifications.RecoveryReport{At: outcome.CheckedAt.In(loc), Replaced: outcome.Reason == "no-healthy-member", Provisional: outcome.Provisional}
 	if outcome.Unusable != "" {
 		// The removed member has no pool position: a generic imported name
 		// keeps only its country.

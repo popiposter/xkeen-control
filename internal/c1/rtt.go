@@ -17,11 +17,15 @@ const (
 )
 
 // RTTSample is one targeted probe result. Valid is false when the request did
-// not complete through the requested outbound within RTTProbeTimeout.
+// not complete through the requested outbound within RTTProbeTimeout. Routed
+// is true once the probe rule was installed and a request went through the
+// outbound, so an invalid routed sample is the node's failure, not the
+// probe's.
 type RTTSample struct {
 	Tag       string
 	RTTMS     int64
 	Valid     bool
+	Routed    bool
 	SampledAt time.Time
 }
 
@@ -114,7 +118,9 @@ func (c *Coordinator) MeasureRTT(ctx context.Context, tags []string) ([]RTTSampl
 		sample := RTTSample{Tag: tag}
 		probeContext, stop := context.WithTimeout(ctx, RTTProbeTimeout)
 		var elapsed time.Duration
+		routed := false
 		err := probe.WithTarget(probeContext, RTTMode, tag, func(requestContext context.Context) error {
+			routed = true
 			// Up to RTTProbeSamples requests, median of those that answered:
 			// one request varies by two to four times (PC benchmark
 			// 2026-10-12). A node that fails its first request is not retried.
@@ -150,6 +156,7 @@ func (c *Coordinator) MeasureRTT(ctx context.Context, tags []string) ([]RTTSampl
 		if errors.Is(err, ErrProbeCleanup) || errors.Is(err, ErrProbeBlocked) {
 			return results, err
 		}
+		sample.Routed = routed
 		if err == nil && elapsed > 0 {
 			sample.Valid = true
 			sample.RTTMS = max(int64(1), elapsed.Milliseconds())

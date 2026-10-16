@@ -87,7 +87,7 @@ func TestRecoveryReportUsesEndpointFreeLabels(t *testing.T) {
 	}
 	outcome := nativequality.RecoveryStatus{State: "applied", Reason: "selected-member-unusable", Unusable: "tag-a", Pool: []string{"tag-b", "tag-gone"}, CheckedAt: time.Date(2026, 10, 16, 7, 40, 0, 0, time.UTC)}
 	r := recoveryReport(outcome, registry, time.FixedZone("MSK", 3*3600))
-	if r.Removed != "🇫🇮 Finland" || r.Provisional || !slices.Equal(r.Pool, []string{"Helsinki", "unknown node"}) || r.At.Hour() != 10 {
+	if r.Removed != "🇫🇮 Finland" || r.Provisional || r.Replaced || !slices.Equal(r.Pool, []string{"Helsinki", "unknown node"}) || r.At.Hour() != 10 {
 		t.Fatalf("report %+v", r)
 	}
 	text := fmt.Sprint(notifications.RecoveryAlert(r))
@@ -96,8 +96,8 @@ func TestRecoveryReportUsesEndpointFreeLabels(t *testing.T) {
 			t.Fatal("endpoint or tag leaked", leak)
 		}
 	}
-	outcome.Reason, outcome.Unusable = "no-healthy-member", ""
-	if r := recoveryReport(outcome, registry, nil); !r.Provisional || r.Removed != "" {
+	outcome.Reason, outcome.Unusable, outcome.Provisional = "no-healthy-member", "", true
+	if r := recoveryReport(outcome, registry, nil); !r.Replaced || !r.Provisional || r.Removed != "" {
 		t.Fatalf("provisional report %+v", r)
 	}
 }

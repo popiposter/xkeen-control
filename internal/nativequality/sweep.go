@@ -177,42 +177,52 @@ const rttPrePhaseChunk = 6
 // publishes each chunk to its status; a recovery check does not, so its probes
 // never mix with (or grow) the last review's results.
 func (s *Service) rttPrePhase(ctx context.Context, tags []string, digest string, publish bool) ([]c1.AdaptiveCandidateInput, map[string]bool, string) {
+	admitted, alive, _, reason := s.rttProbe(ctx, tags, digest, publish)
+	return admitted, alive, reason
+}
+
+// rttProbe is rttPrePhase that also reports, per tag, whether the probe was
+// routed through the outbound: an unrouted failure is the probe's, not the
+// node's.
+func (s *Service) rttProbe(ctx context.Context, tags []string, digest string, publish bool) ([]c1.AdaptiveCandidateInput, map[string]bool, map[string]bool, string) {
 	alive := make(map[string]bool, len(tags))
+	routed := make(map[string]bool, len(tags))
 	var admitted []c1.AdaptiveCandidateInput
 	for start := 0; start < len(tags); start += rttPrePhaseChunk {
 		chunk := tags[start:min(start+rttPrePhaseChunk, len(tags))]
 		if ctx.Err() != nil {
-			return nil, nil, "review-timeout-or-cancelled"
+			return nil, nil, nil, "review-timeout-or-cancelled"
 		}
 		release, err := s.Lease.TryAcquire()
 		if err != nil {
-			return nil, nil, "panel-busy"
+			return nil, nil, nil, "panel-busy"
 		}
 		wctx, stop := context.WithTimeout(ctx, 10*time.Second)
 		w, err := s.Editor.Workspace(wctx)
 		stop()
 		if err != nil || w.Pending != nil || !w.TargetsComplete || w.Digest != digest {
 			release()
-			return nil, nil, "configuration-changed-or-pending"
+			return nil, nil, nil, "configuration-changed-or-pending"
 		}
 		samples, err := s.Measurement.MeasureRTT(ctx, chunk)
 		release()
 		if err != nil {
 			if errors.Is(err, c1.ErrProbeCleanup) || errors.Is(err, c1.ErrProbeBlocked) {
-				return nil, nil, "probe-cleanup-pending"
+				return nil, nil, nil, "probe-cleanup-pending"
 			}
-			return nil, nil, "rtt-probe-unavailable"
+			return nil, nil, nil, "rtt-probe-unavailable"
 		}
 		if len(samples) != len(chunk) {
-			return nil, nil, "rtt-probe-incomplete"
+			return nil, nil, nil, "rtt-probe-incomplete"
 		}
 		probes := make([]ProbeResult, 0, len(samples))
 		for i, sample := range samples {
 			if sample.Tag != chunk[i] {
-				return nil, nil, "rtt-probe-incomplete"
+				return nil, nil, nil, "rtt-probe-incomplete"
 			}
 			healthy := sample.Valid && sample.RTTMS > 0
 			alive[sample.Tag] = healthy
+			routed[sample.Tag] = sample.Routed
 			probe := ProbeResult{Tag: sample.Tag, Answered: healthy, SampledAt: sample.SampledAt}
 			if healthy {
 				probe.RTTMS = sample.RTTMS
@@ -228,7 +238,7 @@ func (s *Service) rttPrePhase(ctx context.Context, tags []string, digest string,
 			s.mu.Unlock()
 		}
 	}
-	return admitted, alive, ""
+	return admitted, alive, routed, ""
 }
 
 func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done chan struct{}, frozen c1.AdaptiveGeneration, plan sweepPlan, digest, quotaPath string, quotaUnlock func(), manual bool) {

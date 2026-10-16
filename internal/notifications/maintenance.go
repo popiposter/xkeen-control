@@ -165,13 +165,16 @@ func mbps(bps float64) string {
 	return fmt.Sprintf("%.0f Mbps", bps*8/1e6)
 }
 
-// RecoveryReport is one applied availability recovery: either Xray's
-// selected member passed native health checks but carried no traffic and was
-// removed, or no member was healthy and a provisional pool was applied.
-// Names must be report labels (nodes.ReportLabel).
+// RecoveryReport is one applied availability recovery: Xray's selected
+// member passed native health checks but failed the panel's targeted probes
+// and was removed, and/or no remaining member passed a probe and a new
+// provisional pool replaced the pool (Replaced). Provisional marks a running
+// pool without a speed ranking. Names must be report labels
+// (nodes.ReportLabel).
 type RecoveryReport struct {
 	At          time.Time
 	Removed     string
+	Replaced    bool
 	Provisional bool
 	Pool        []string
 }
@@ -185,11 +188,14 @@ func RecoveryAlert(r RecoveryReport) Alert {
 	}
 	b.WriteString("\n")
 	if r.Removed != "" {
-		fmt.Fprintf(&b, "⛔ <b>%s</b> passed Xray's health check but carried no traffic in 3 probes; it was removed from the pool.\n", html.EscapeString(boundedName(r.Removed)))
+		fmt.Fprintf(&b, "⛔ <b>%s</b> passed Xray's health check but failed 3 targeted probes while selected; it was removed from the pool.\n", html.EscapeString(boundedName(r.Removed)))
 	}
-	if r.Provisional {
-		b.WriteString("🔁 No other pool member answered: a provisional pool of nodes that answered a probe was applied, unranked until the next review.\n")
-	} else {
+	switch {
+	case r.Replaced:
+		b.WriteString("🔁 No pool member passed a probe within the native latency limit: a provisional pool of nodes that answered was applied, unranked until the next review.\n")
+	case r.Provisional:
+		b.WriteString("🔁 The other members stay in the provisional pool, unranked until the next review.\n")
+	default:
 		b.WriteString("🔁 The other members keep their measured ranking.\n")
 	}
 	if len(r.Pool) > 0 {
