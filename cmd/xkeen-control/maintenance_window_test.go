@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -76,5 +77,27 @@ func TestRecommendOnlyNightKnowsWhenNothingWouldChange(t *testing.T) {
 	}
 	if sameMembers(nil, nil) || sameMembers([]string{"a", "a"}, []string{"a", "b"}) || sameMembers([]string{"a", "b"}, []string{"a", "a"}) {
 		t.Fatal("sameMembers edge cases")
+	}
+}
+
+func TestRecoveryReportUsesEndpointFreeLabels(t *testing.T) {
+	registry := []nodes.PublicNode{
+		{OutboundTag: "tag-a", Name: "Imported node", DisplayName: "🇫🇮 Finland · 198.51.100.4", Address: "198.51.100.4", CountryCode: "FI"},
+		{OutboundTag: "tag-b", Name: "Helsinki"},
+	}
+	outcome := nativequality.RecoveryStatus{State: "applied", Reason: "selected-member-unusable", Unusable: "tag-a", Pool: []string{"tag-b", "tag-gone"}, CheckedAt: time.Date(2026, 10, 16, 7, 40, 0, 0, time.UTC)}
+	r := recoveryReport(outcome, registry, time.FixedZone("MSK", 3*3600))
+	if r.Removed != "🇫🇮 Finland" || r.Provisional || !slices.Equal(r.Pool, []string{"Helsinki", "unknown node"}) || r.At.Hour() != 10 {
+		t.Fatalf("report %+v", r)
+	}
+	text := fmt.Sprint(notifications.RecoveryAlert(r))
+	for _, leak := range []string{"198.51.100", "tag-"} {
+		if strings.Contains(text, leak) {
+			t.Fatal("endpoint or tag leaked", leak)
+		}
+	}
+	outcome.Reason, outcome.Unusable = "no-healthy-member", ""
+	if r := recoveryReport(outcome, registry, nil); !r.Provisional || r.Removed != "" {
+		t.Fatalf("provisional report %+v", r)
 	}
 }

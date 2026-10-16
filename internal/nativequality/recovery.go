@@ -3,10 +3,13 @@ package nativequality
 import (
 	"context"
 	"regexp"
+	"slices"
 	"sort"
 	"time"
 
 	"github.com/popiposter/xkeen-control/internal/c1"
+	"github.com/popiposter/xkeen-control/internal/configjson"
+	"github.com/popiposter/xkeen-control/internal/xkeen"
 	"github.com/popiposter/xkeen-control/internal/xrayapi"
 )
 
@@ -21,6 +24,11 @@ const (
 	recoveryCandidates = 12
 	// recoveryPoolSize is the largest provisional pool.
 	recoveryPoolSize = 6
+	// selectedProbes is how many targeted probes in a row Xray's selected
+	// member must fail before it counts as carrying no traffic; the gap
+	// between them keeps one dropped request from becoming an Apply.
+	selectedProbes   = 3
+	selectedProbeGap = 5 * time.Second
 )
 
 // RecoveryStatus is the last REQ-009 no-healthy-member recovery attempt. It is
@@ -32,6 +40,9 @@ type RecoveryStatus struct {
 	Probed    int       `json:"probed"`
 	Verified  int       `json:"verified"`
 	Pool      []string  `json:"pool,omitempty"`
+	// Unusable is Xray's selected member that native Observatory reported
+	// healthy but that failed every targeted probe.
+	Unusable string `json:"unusable,omitempty"`
 }
 
 // noHealthyMember reports whether no configured pool member is healthy. Every
@@ -84,7 +95,13 @@ func (s *Service) recoverPool(parent context.Context) {
 	s.mu.Lock()
 	s.recovering = false
 	s.recovery = outcome
+	if outcome.State == "applied" && outcome.Unusable != "" {
+		s.unusableAppliedAt = outcome.CheckedAt
+	}
 	s.mu.Unlock()
+	if outcome.State == "applied" && s.Recovered != nil {
+		s.Recovered(parent, outcome)
+	}
 }
 
 func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
@@ -125,10 +142,21 @@ func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
 	if !snapshot.APIReachable || !snapshot.RoutingReachable {
 		return deferred("native-unavailable")
 	}
+	unusable := ""
 	if !noHealthyMember(snapshot, resolved) {
-		return RecoveryStatus{State: "healthy"}
+		// Observatory probes one fixed URL; a member whose server passes only
+		// that destination stays alive and selected while it carries nothing
+		// else. Check the selected member with the panel's own probe.
+		cancel()
+		outcome, next := s.checkSelected(parent, path, q, now, w, routing, observatory, index, resolved, snapshot)
+		if !next {
+			return outcome
+		}
+		unusable = outcome.Unusable
 	}
-	deferred = func(reason string) RecoveryStatus { return RecoveryStatus{State: "deferred", Reason: reason} }
+	deferred = func(reason string) RecoveryStatus {
+		return RecoveryStatus{State: "deferred", Reason: reason, Unusable: unusable}
+	}
 	// The operator's native override owns selection; recovery never clears or
 	// overwrites it.
 	if snapshot.Balancer.Override != "" {
@@ -167,7 +195,7 @@ func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
 	probeCtx, stopProbe := context.WithTimeout(parent, time.Duration(len(plan.Candidates))*c1.RTTProbeTimeout+time.Minute)
 	admitted, alive, reason := s.rttPrePhase(probeCtx, plan.Candidates, w.Digest, false)
 	stopProbe()
-	out := RecoveryStatus{Probed: len(plan.Candidates), Verified: len(admitted)}
+	out := RecoveryStatus{Probed: len(plan.Candidates), Verified: len(admitted), Unusable: unusable}
 	if reason != "" {
 		out.State, out.Reason = "deferred", reason
 		return out
@@ -202,6 +230,14 @@ func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
 		costs = append(costs, c1.NativeQualityCost{Regexp: true, Match: "^" + regexp.QuoteMeta(candidate.Tag) + "$", Value: 1})
 	}
 	out.Pool = selected
+	return s.recoveryApply(parent, path, q, w, index, eligible, selected, costs, routing, observatory, true, out)
+}
+
+// recoveryApply applies one recovery pool through the review Apply path: the
+// durable inspection intent precedes the save. A provisional pool records
+// ProvisionalAt for the hourly gap; a pool that only drops an unusable member
+// keeps the review costs and is not provisional.
+func (s *Service) recoveryApply(parent context.Context, path string, q quotaReceipt, w xkeen.EditorWorkspace, index int, eligible, selected []string, costs []c1.NativeQualityCost, routing, observatory string, provisional bool, out RecoveryStatus) RecoveryStatus {
 	fail := func(state, reason string) RecoveryStatus {
 		out.State, out.Reason = state, reason
 		return out
@@ -234,7 +270,7 @@ func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
 	if !result.inspection {
 		q.InspectionRequired = false
 	}
-	if result.state == "applied" {
+	if result.state == "applied" && provisional {
 		q.ProvisionalAt = time.Now().UTC()
 	}
 	if writeQuotaLocked(path, q) != nil {
@@ -249,5 +285,140 @@ func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
 	if result.state != "applied" {
 		return fail("failed", result.reason)
 	}
-	return fail("applied", "no-healthy-member")
+	if provisional {
+		return fail("applied", "no-healthy-member")
+	}
+	return fail("applied", "selected-member-unusable")
+}
+
+func (s *Service) selectedProbeGap() time.Duration {
+	if s.readbackWait > 0 {
+		return s.readbackWait / 20
+	}
+	return selectedProbeGap
+}
+
+// checkSelected probes Xray's selected member while Observatory reports a
+// healthy pool. A member that answers, a changed selection or a refused probe
+// ends the attempt as healthy or unchecked. After selectedProbes failures the
+// member is removed: the other members that answer keep their review costs
+// and are applied as the pool. next asks the caller to continue with the
+// provisional recovery when no other member answers.
+func (s *Service) checkSelected(parent context.Context, path string, q quotaReceipt, now time.Time, w xkeen.EditorWorkspace, routing, observatory string, index int, resolved []string, snapshot xrayapi.Snapshot) (RecoveryStatus, bool) {
+	unchecked := func(reason string) (RecoveryStatus, bool) {
+		return RecoveryStatus{State: "unchecked", Reason: reason}, false
+	}
+	selected := snapshot.Balancer.NativeSelected
+	// The operator's native override owns selection.
+	if snapshot.Balancer.Override != "" || !slices.Contains(resolved, selected) {
+		return RecoveryStatus{State: "healthy"}, false
+	}
+	if probeRouteShadowed(routing) {
+		return unchecked("probe-route-shadowed")
+	}
+	for attempt := 1; ; attempt++ {
+		probeCtx, stop := context.WithTimeout(parent, c1.RTTProbeTimeout+time.Minute)
+		_, alive, reason := s.rttPrePhase(probeCtx, []string{selected}, w.Digest, false)
+		stop()
+		if reason != "" {
+			return unchecked(reason)
+		}
+		if alive[selected] {
+			return RecoveryStatus{State: "healthy"}, false
+		}
+		if attempt == selectedProbes {
+			break
+		}
+		if !sleepCtx(parent, s.selectedProbeGap()) {
+			return unchecked("review-timeout-or-cancelled")
+		}
+		readCtx, stopRead := context.WithTimeout(parent, 10*time.Second)
+		check := s.Reader.Snapshot(readCtx)
+		stopRead()
+		if !check.APIReachable || !check.RoutingReachable {
+			return unchecked("native-unavailable")
+		}
+		// Xray moved on by itself, or the operator took over.
+		if check.Balancer.Override != "" || check.Balancer.NativeSelected != selected {
+			return RecoveryStatus{State: "healthy", Reason: "selection-changed"}, false
+		}
+	}
+	out := RecoveryStatus{Unusable: selected, Probed: 1}
+	deferred := func(reason string) (RecoveryStatus, bool) {
+		out.State, out.Reason = "deferred", reason
+		return out, false
+	}
+	s.mu.Lock()
+	last := s.unusableAppliedAt
+	s.mu.Unlock()
+	if !last.IsZero() && now.Sub(last) < recoveryApplyGap || !q.ProvisionalAt.IsZero() && now.Sub(q.ProvisionalAt) < recoveryApplyGap {
+		return deferred("recovery-apply-gap")
+	}
+	others := make([]string, 0, len(resolved))
+	for _, tag := range resolved {
+		if tag != selected {
+			others = append(others, tag)
+		}
+	}
+	if len(others) == 0 {
+		return out, true
+	}
+	probeCtx, stopProbe := context.WithTimeout(parent, time.Duration(len(others))*c1.RTTProbeTimeout+time.Minute)
+	_, alive, reason := s.rttPrePhase(probeCtx, others, w.Digest, false)
+	stopProbe()
+	if reason != "" {
+		return deferred(reason)
+	}
+	out.Probed += len(others)
+	var keep []string
+	for _, tag := range others {
+		if alive[tag] {
+			keep = append(keep, tag)
+		}
+	}
+	out.Verified = len(keep)
+	if len(keep) == 0 {
+		return out, true
+	}
+	eligible, _, err := measurementPool(routing, s.Nodes(parent), w.Targets)
+	if err != nil {
+		return deferred("eligible-unavailable")
+	}
+	out.Pool = keep
+	return s.recoveryApply(parent, path, q, w, index, eligible, keep, memberCosts(routing, index, keep), routing, observatory, false, out), false
+}
+
+// memberCosts returns each member's anchored native cost from the balancer,
+// so a pool without the unusable member keeps the review ranking. A member
+// without a cost (or a leastPing balancer) gets the neutral cost 1.
+func memberCosts(text string, index int, members []string) []c1.NativeQualityCost {
+	var doc struct {
+		Routing struct {
+			Balancers []struct {
+				Strategy struct {
+					Settings struct {
+						Costs []c1.NativeQualityCost `json:"costs"`
+					} `json:"settings"`
+				} `json:"strategy"`
+			} `json:"balancers"`
+		} `json:"routing"`
+	}
+	byMatch := map[string]float64{}
+	if configjson.Decode([]byte(text), &doc) == nil && index >= 0 && index < len(doc.Routing.Balancers) {
+		for _, cost := range doc.Routing.Balancers[index].Strategy.Settings.Costs {
+			if cost.Regexp {
+				byMatch[cost.Match] = cost.Value
+			}
+		}
+	}
+	costs := make([]c1.NativeQualityCost, 0, len(members))
+	for _, tag := range members {
+		match := "^" + regexp.QuoteMeta(tag) + "$"
+		value, ok := byMatch[match]
+		if !ok || value < 1 {
+			value = 1
+		}
+		costs = append(costs, c1.NativeQualityCost{Regexp: true, Match: match, Value: value})
+	}
+	return costs
 }

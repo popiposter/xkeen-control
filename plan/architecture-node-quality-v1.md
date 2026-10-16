@@ -177,7 +177,10 @@ flowchart LR
   when two consecutive CPU samples are each at least 85% busy or swap-out
   exceeds 1 MiB/s, and cancel after three consecutive pressured samples.
   These ceilings are maxima, not promised traffic use or proven optimums.
-- **REQ-009**: If no selected member is freshly healthy, run bounded targeted
+- **REQ-009**: A member Observatory reports alive but that fails three targeted
+  probes in a row while Xray selects it is not healthy: it is removed and the
+  answering members keep their costs (#229).
+  If no selected member is freshly healthy, run bounded targeted
   RTT probes immediately, without waiting for the next speed review: at most
   12 candidates per attempt from the same fair rotation, at most one attempt
   every 10 minutes, under the same lifecycle token, so a manual test or Apply

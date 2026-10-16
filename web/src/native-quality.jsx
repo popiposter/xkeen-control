@@ -67,7 +67,7 @@ const poolDecisionText = {
 }
 const recoveryReasons = {
   'manual-override-active': 'a manual node override is active; clear it to allow recovery',
-  'recovery-apply-gap': 'a provisional pool was applied less than an hour ago; recovery does not restart XKeen again before then',
+  'recovery-apply-gap': 'a recovery pool was applied less than an hour ago; recovery does not restart XKeen again before then',
   'inspection-required': 'an earlier operation needs inspection',
   'probe-route-shadowed': 'a routing rule could capture probe traffic',
   'probe-cleanup-pending': 'a temporary probe rule could not be confirmed removed',
@@ -77,8 +77,21 @@ const recoveryReasons = {
   'resource-pressure-or-unavailable': 'router resources are busy',
 }
 const validTime = (value) => value && new Date(value).getFullYear() >= 2020
-function recoveryText(recovery) {
+function recoveryText(recovery, nodesByTag) {
   const reason = recoveryReasons[recovery?.reason] || recovery?.reason || 'unavailable'
+  if (recovery?.unusable) {
+    const name = nodesByTag?.get(recovery.unusable)?.name || recovery.unusable
+    const lead = `Xray's selected node ${name} passed its health check but carried no traffic in 3 probes.`
+    switch (recovery.state) {
+      case 'applied': return recovery.reason === 'no-healthy-member'
+        ? `${lead} No other pool member answered, so availability recovery applied a provisional pool of ${recovery.pool?.length || 0} nodes that answered a latency probe.`
+        : `${lead} Availability recovery removed it from the pool; the other ${recovery.pool?.length || 0} members keep their measured ranking.`
+      case 'deferred': return `${lead} Removing it is deferred: ${reason}.`
+      case 'failed': return `${lead} Availability recovery could not remove it: ${reason}. The configuration was kept.`
+      case 'inspection-required': return `${lead} Availability recovery needs inspection: ${reason}.`
+      default: break
+    }
+  }
   switch (recovery?.state) {
     case 'probing': case 'applying': return 'No pool member is healthy. Availability recovery is probing other enabled nodes…'
     case 'vpn-unavailable': return `No pool member is healthy and none of the ${recovery.probed || 0} probed nodes answered. VPN destinations are unavailable; the configuration was left unchanged and they stay blocked rather than going direct. Recovery retries other nodes every 10 minutes.`
@@ -220,7 +233,7 @@ export function NativeQualitySection({ csrfToken, onUnauthorized, busy, workingE
       {['resource-pressure', 'resource-telemetry-unavailable', 'native-speed-conflict'].includes(status?.progress?.reasonCode) && <p role="alert">{status.progress.reasonCode === 'resource-pressure' ? 'Test stopped because router resources are busy. Partial results are shown below.' : status.progress.reasonCode === 'native-speed-conflict' ? 'Quiesce the native periodic speed test before testing here.' : 'Resource telemetry is unavailable; testing stopped.'}</p>}
       {status?.orphanedPool?.length > 0 && <p role="status">{status.orphanedPool.length === 1 ? 'One pool member no longer exists' : `${status.orphanedPool.length} pool members no longer exist`} in the enabled nodes (for example after a subscription update). The next automatic review treats them as unhealthy and replaces them{status.activePoolCount > 0 ? '; the remaining members keep working.' : '. No pool member remains enabled, so proxied destinations may be unavailable until then.'}</p>}
       {validTime(status?.provisionalAt) && <p role="status">Provisional pool since <time dateTime={status.provisionalAt}>{new Date(status.provisionalAt).toLocaleString()}</time>: availability recovery chose its members by latency probe only, not by speed. The next complete automatic review replaces it with measured nodes.</p>}
-      {recoveryText(status?.recovery) && <p role="status">{recoveryText(status.recovery)}{validTime(status.recovery.checkedAt) ? ` Last check: ${new Date(status.recovery.checkedAt).toLocaleString()}.` : ''}</p>}
+      {recoveryText(status?.recovery, nodesByTag) && <p role="status">{recoveryText(status.recovery, nodesByTag)}{validTime(status.recovery.checkedAt) ? ` Last check: ${new Date(status.recovery.checkedAt).toLocaleString()}.` : ''}</p>}
       {status && <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <QualityTile label="Pool" value={status.activePoolState === 'unavailable' ? 'Unavailable' : `${status.activePoolCount || 0} nodes`} detail={status.activePoolState === 'unavailable' ? 'Active pool readback unavailable; inspect the native routing configuration.' : `${validTime(status.provisionalAt) ? 'Provisional' : status.activePoolState === 'frozen-at-review' ? 'At review start' : status.activePoolState === 'degraded-orphaned' ? 'Degraded' : 'Verified'}${status.poolCount ? ` · ${status.poolCount} enabled` : ''}${status.nativeSelectedState === 'observed' && status.nativeSelected ? ` · selected ${nodesByTag?.get(status.nativeSelected)?.name || status.nativeSelected}` : ''}`} />
         <QualityTile label={`Last ${triggerLabel(status).toLowerCase()}`} value={status.batchCount > 0 ? `${status.validCount || 0} of ${status.attemptedCount || 0} valid` : status.state === 'deferred' ? 'Deferred' : 'None yet'} detail={status.batchCount > 0 ? `${((status.aggregateBytes || 0) / 1048576).toFixed(1)} MiB${status.reviewTrigger ? ` · ${status.reviewTrigger}` : ''}${status.poolDecision ? ` · ${poolDecisionText[status.poolDecision] || 'current pool retained'}` : ''}${!status.manualSample && status.appliedState ? ` · ${appliedText[status.appliedState] || status.appliedState}` : ''}` : status.reviewTrigger ? `Trigger: ${status.reviewTrigger}` : ''} />

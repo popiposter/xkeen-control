@@ -142,6 +142,12 @@ type Service struct {
 	recovery       RecoveryStatus
 	recoveryCursor int
 	recoveryHash   string
+	// unusableAppliedAt is the last Apply that removed an unusable selected
+	// member; it limits those Applies to one an hour.
+	unusableAppliedAt time.Time
+	// Recovered receives every applied recovery outcome for the operator
+	// report; it must not block for long.
+	Recovered func(context.Context, RecoveryStatus)
 	// maintenance is the current or last nightly window and nextMaintenance
 	// the next planned start.
 	maintenance     MaintenanceStatus

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -162,8 +163,9 @@ func TestRecoveryLeavesConfigurationWhenNothingIsProven(t *testing.T) {
 				snapshot.Balancer.Override = "proxy-00"
 			}
 		},
-		"healthy member": func(_ *Service, _ *sweepMeasurement, r *sweepReader) {
+		"healthy member": func(_ *Service, m *sweepMeasurement, r *sweepReader) {
 			r.mutate = nil
+			m.rttDown = map[string]bool{}
 		},
 		"probe gate closed": func(_ *Service, m *sweepMeasurement, _ *sweepReader) {
 			m.rttErr = c1.ErrProbeBlocked
@@ -187,8 +189,12 @@ func TestRecoveryLeavesConfigurationWhenNothingIsProven(t *testing.T) {
 			if recoveryPending(t, s) || v.InspectionRequired || !v.ProvisionalAt.IsZero() {
 				t.Fatal("recovery changed configuration without proof")
 			}
-			if (name == "manual override" || name == "healthy member") && len(m.rttCalls) != 0 {
+			if name == "manual override" && len(m.rttCalls) != 0 {
 				t.Fatal("recovery probed while it had to stand down", m.rttCalls)
+			}
+			// A healthy pool costs one probe of Xray's selected member.
+			if name == "healthy member" && !reflect.DeepEqual(m.rttCalls, [][]string{{"proxy-00"}}) {
+				t.Fatal("a healthy pool was not checked through its selected member", m.rttCalls)
 			}
 		})
 	}
@@ -324,5 +330,131 @@ func TestRecoveryProbesDoNotTouchReviewProbes(t *testing.T) {
 	}
 	if len(v.Probes) != 1 || v.Probes[0] != review[0] || v.RTTProbed != 1 {
 		t.Fatal("recovery probes leaked into the review status", v.Probes, v.RTTProbed)
+	}
+}
+
+// unusableFixture is a pool that native Observatory reports healthy while
+// Xray's selected member proxy-00 fails every targeted probe.
+func unusableFixture(t *testing.T) (*Service, *sweepMeasurement, *sweepReader) {
+	t.Helper()
+	s, m, r := recoveryFixture(t)
+	r.mutate = nil
+	m.rttDown = map[string]bool{"proxy-00": true}
+	return s, m, r
+}
+
+func TestRecoveryRemovesASelectedMemberThatCarriesNoTraffic(t *testing.T) {
+	s, m, r := unusableFixture(t)
+	marker := setupNativeApply(t, s, s.Editor.Dir)
+	var reported []RecoveryStatus
+	s.Recovered = func(_ context.Context, outcome RecoveryStatus) { reported = append(reported, outcome) }
+	r.mutate = func(snapshot *xrayapi.Snapshot) {
+		if _, err := os.Stat(marker); err == nil {
+			snapshot.Balancer.NativeSelected = "proxy-01"
+		}
+	}
+	s.recoverPool(context.Background())
+	v := s.Read()
+	want := []string{"proxy-01", "proxy-02", "proxy-03", "proxy-04", "proxy-05"}
+	if v.Recovery.State != "applied" || v.Recovery.Reason != "selected-member-unusable" || v.Recovery.Unusable != "proxy-00" || !reflect.DeepEqual(v.Recovery.Pool, want) || v.Recovery.Probed != 6 || v.Recovery.Verified != 5 || v.InspectionRequired {
+		t.Fatalf("recovery outcome = %+v inspection=%v", v.Recovery, v.InspectionRequired)
+	}
+	wantCalls := [][]string{{"proxy-00"}, {"proxy-00"}, {"proxy-00"}, want}
+	if !reflect.DeepEqual(m.rttCalls, wantCalls) {
+		t.Fatal("probes", m.rttCalls)
+	}
+	if calls, _ := os.ReadFile(marker); string(calls) != "x" {
+		t.Fatal("expected exactly one native Apply", string(calls))
+	}
+	// The remaining pool is still the review's ranked pool, not provisional.
+	if !v.ProvisionalAt.IsZero() || !reflect.DeepEqual(v.ActivePool, want) {
+		t.Fatal("pool after removal", v.ProvisionalAt, v.ActivePool)
+	}
+	w, _ := s.Editor.Workspace(context.Background())
+	routing := w.Documents["05_routing.json"].Text
+	if !observatoryMatchesPool(w.Documents["07_observatory.json"].Text, want, false) || !sameRecommendation(routing, 0, want, memberCosts(routing, 0, want)) || strings.Contains(routing, `"proxy-00"`) {
+		t.Fatal("applied 05/07 still hold the unusable member")
+	}
+	if len(reported) != 1 || reported[0].Unusable != "proxy-00" {
+		t.Fatal("recovery Apply not reported", reported)
+	}
+	// A second unusable selection inside the hour is not applied again.
+	m.rttDown["proxy-01"] = true
+	m.rttCalls = nil
+	s.recoverPool(context.Background())
+	if v := s.Read(); v.Recovery.State != "deferred" || v.Recovery.Reason != "recovery-apply-gap" || v.Recovery.Unusable != "proxy-01" || len(m.rttCalls) != 3 {
+		t.Fatal("a second removal inside the hour", v.Recovery, m.rttCalls)
+	}
+	if calls, _ := os.ReadFile(marker); string(calls) != "x" || len(reported) != 1 {
+		t.Fatal("a deferred removal ran an Apply or a report", string(calls), reported)
+	}
+}
+
+func TestRecoveryKeepsASelectedMemberThatAnswersOrIsReplaced(t *testing.T) {
+	for name, setup := range map[string]func(*sweepMeasurement, *sweepReader){
+		// One dropped request is not an outage.
+		"answers a later probe": func(m *sweepMeasurement, _ *sweepReader) {
+			m.onRTT = func(n int) {
+				if n == 2 {
+					delete(m.rttDown, "proxy-00")
+				}
+			}
+		},
+		// Xray left the member by itself.
+		"selection changes": func(m *sweepMeasurement, r *sweepReader) {
+			m.onRTT = func(int) {
+				r.mutate = func(snapshot *xrayapi.Snapshot) { snapshot.Balancer.NativeSelected = "proxy-02" }
+			}
+		},
+		"operator override": func(m *sweepMeasurement, r *sweepReader) {
+			m.onRTT = func(int) {
+				r.mutate = func(snapshot *xrayapi.Snapshot) { snapshot.Balancer.Override = "proxy-00" }
+			}
+		},
+		"probe refused": func(m *sweepMeasurement, _ *sweepReader) {
+			m.rttErr = c1.ErrProbeBlocked
+		},
+		"selection outside the pool": func(_ *sweepMeasurement, r *sweepReader) {
+			r.mutate = func(snapshot *xrayapi.Snapshot) { snapshot.Balancer.NativeSelected = "proxy-12" }
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, m, r := unusableFixture(t)
+			setup(m, r)
+			s.recoverPool(context.Background())
+			v := s.Read()
+			want := map[string]string{
+				"answers a later probe":      "healthy/",
+				"selection changes":          "healthy/selection-changed",
+				"operator override":          "healthy/selection-changed",
+				"probe refused":              "unchecked/probe-cleanup-pending",
+				"selection outside the pool": "healthy/",
+			}[name]
+			if got := v.Recovery.State + "/" + v.Recovery.Reason; got != want || v.Recovery.Unusable != "" {
+				t.Fatalf("recovery = %s %+v, want %s", got, v.Recovery, want)
+			}
+			if recoveryPending(t, s) || v.InspectionRequired {
+				t.Fatal("recovery changed configuration without proof")
+			}
+		})
+	}
+}
+
+// When no other member answers either, the provisional recovery takes over.
+func TestRecoveryFallsBackWhenNoOtherMemberAnswers(t *testing.T) {
+	s, m, r := unusableFixture(t)
+	for _, tag := range recoveryIncumbents {
+		m.rttDown[tag] = true
+	}
+	marker := setupNativeApply(t, s, s.Editor.Dir)
+	r.mutate = func(snapshot *xrayapi.Snapshot) {
+		if _, err := os.Stat(marker); err == nil {
+			snapshot.Balancer.NativeSelected = "proxy-06"
+		}
+	}
+	s.recoverPool(context.Background())
+	v := s.Read()
+	if v.Recovery.State != "applied" || v.Recovery.Reason != "no-healthy-member" || v.Recovery.Unusable != "proxy-00" || v.ProvisionalAt.IsZero() || slices.Contains(v.Recovery.Pool, "proxy-00") {
+		t.Fatal("no provisional recovery after an unusable member", v.Recovery)
 	}
 }

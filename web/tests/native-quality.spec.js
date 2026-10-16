@@ -84,6 +84,20 @@ test('availability recovery and a provisional pool are labelled apart from a mea
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
 })
 
+test('availability recovery names a selected node that carried no traffic', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  const pool = ['proxy-node-00000002', 'proxy-node-00000003']
+  model.quality = { ...complete(), state: 'idle', canStage: false,
+    recovery: { state: 'applied', reason: 'selected-member-unusable', unusable: 'proxy-node-gone', checkedAt: '2026-10-16T07:40:00Z', probed: 3, verified: 2, pool } }
+  await open(page)
+  await expect(page.getByRole('status').filter({ hasText: /selected node proxy-node-gone passed its health check but carried no traffic/ })).toContainText('the other 2 members keep their measured ranking')
+  model.quality = { ...model.quality, recovery: { state: 'deferred', reason: 'recovery-apply-gap', unusable: 'proxy-node-gone', probed: 1 } }
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: /carried no traffic/ })).toContainText('Removing it is deferred: a recovery pool was applied less than an hour ago')
+  await expect(page.getByText(/No pool member is healthy/)).toHaveCount(0)
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
+})
+
 test('nightly review separates full pool, coverage and applied state without starting traffic from the browser', async ({ page }) => {
   const model = await mountFeatureCompleteDashboard(page)
   model.quality = { ...complete(), resourceProfile: { name: 'constrained', constrained: true, automatic: true },

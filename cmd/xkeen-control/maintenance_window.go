@@ -126,3 +126,34 @@ func sameMembers(a, b []string) bool {
 	sort.Strings(y)
 	return slices.Equal(x, y)
 }
+
+// recoveryReport builds the closed Telegram report for one applied recovery
+// from endpoint-free node labels.
+func recoveryReport(outcome nativequality.RecoveryStatus, registry []nodes.PublicNode, loc *time.Location) notifications.RecoveryReport {
+	if loc == nil {
+		loc = time.Local
+	}
+	names := make(map[string]nodes.PublicNode, len(registry))
+	for _, node := range registry {
+		names[node.OutboundTag] = node
+	}
+	label := func(tag string, position int) string {
+		if node, ok := names[tag]; ok {
+			return nodes.ReportLabel(node, position)
+		}
+		return "unknown node"
+	}
+	report := notifications.RecoveryReport{At: outcome.CheckedAt.In(loc), Provisional: outcome.Reason == "no-healthy-member"}
+	if outcome.Unusable != "" {
+		// The removed member has no pool position: a generic imported name
+		// keeps only its country.
+		report.Removed = strings.TrimSuffix(label(outcome.Unusable, 0), " · Node 0")
+		if report.Removed == "Node 0" {
+			report.Removed = "Imported node"
+		}
+	}
+	for i, tag := range outcome.Pool {
+		report.Pool = append(report.Pool, label(tag, i+1))
+	}
+	return report
+}
