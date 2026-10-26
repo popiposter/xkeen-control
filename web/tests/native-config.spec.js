@@ -269,7 +269,7 @@ test('installed geodata adds an ordered category rule only to the shared draft',
   await page.route('**/api/v1/geodata/query', (route) => {
     const body = route.request().postDataJSON()
     queries.push(body)
-    if (body.view === 'entries') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ file: body.file, kind: 'geosite', snapshot: 'c'.repeat(64), offset: 0, total: 2, more: false, items: [{ category: 'video', type: 'domain', value: 'cdn.video.example' }, { category: 'video', type: 'full', value: 'video.example' }] }) })
+    if (body.view === 'entries') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ file: body.file, kind: 'geosite', snapshot: 'c'.repeat(64), offset: 0, total: 2, more: false, items: [{ category: 'video', type: 'domain', value: 'cdn.video.example', attributes: ['cn', 'ads'] }, { category: 'video', type: 'full', value: 'video.example' }] }) })
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ file: body.file, kind: 'geosite', snapshot: 'c'.repeat(64), offset: 0, total: 1, more: false, items: [{ category: 'video', type: 'category', value: 'video', count: 2 }] }) })
   })
   await selectConfig(page, '05_routing.json')
@@ -279,7 +279,9 @@ test('installed geodata adds an ordered category rule only to the shared draft',
   await page.getByRole('button', { name: 'Show categories', exact: true }).click()
   await expect(page.getByText('2 domain entries', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Show contents of video', exact: true }).click()
-  await expect(page.getByText('cdn.video.example', { exact: true })).toBeVisible()
+  // Geosite attribute annotations stay visible in the contents.
+  await expect(page.getByText('cdn.video.example · @cn @ads', { exact: true })).toBeVisible()
+  await expect(page.getByText('video.example · full', { exact: true })).toBeVisible()
   await page.getByRole('checkbox', { name: 'Select geosite_vendor.dat video', exact: true }).check()
   await page.getByLabel('Rule destination', { exact: true }).selectOption('outbound:vpn')
   await page.getByLabel('Rule position', { exact: true }).selectOption('first')
