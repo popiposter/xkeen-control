@@ -88,10 +88,22 @@ literal domain/IP membership using the encoded domain match types/CIDRs. Inverse
 IP categories are labelled explicitly. This is database membership, not a claim
 about the eventual first winning Xray rule or DNS resolution.
 
-Each page is bound to a fresh file SHA256; a changed database invalidates paging.
-Select an existing outbound or native balancer and place a category rule before
-or after the existing rules. The operation edits the common working document
-only, preserves its existing tokens/comments and can be undone. Save validates
+The browser is one three-step flow: find categories (a search across every
+installed file, or every category of one file, with each category's contents
+expandable in place), review the selected categories, then choose the destination
+(an existing outbound or native balancer, the VPN pool by default) and the
+position, with a preview of the resulting rule and its number. Sites and IP ranges
+become separate rules, because one rule needing both would miss traffic. A new
+rule names the inbounds the draft's user rules already use (the XKeen
+`redirect`/`tproxy`/`socks` defaults otherwise), so it never captures the panel's
+API or probe traffic; a rule without inbound tags is flagged in the rule list
+because it pauses node reviews and availability recovery. "Before the final
+catch-all rule" (the default) lands above a last rule that matches everything;
+"At the top" prepends. A manually added rule gets the same inbound tags.
+
+Each page is bound to a fresh file SHA256; a changed database invalidates paging
+and clears the selection built from it. The operation edits the common working
+document only, preserves its existing tokens/comments and can be undone. Save validates
 the whole set; Apply still requires the explicit native restart. Destination
 metadata projects outbound tags/protocols only, never node credentials.
 

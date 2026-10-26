@@ -91,3 +91,25 @@ export function RoutingOverview() {
   ]
   return <section aria-label="How routing works" className="grid gap-3 md:grid-cols-3">{steps.map(({ icon: Glyph, title, text }, index) => <div key={title} className="flex gap-3 rounded-xl border p-4"><span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted"><Glyph className="size-4 text-info" aria-hidden="true" /></span><div className="flex flex-col gap-1"><strong className="text-sm">{index + 1}. {title}</strong><span className="text-sm text-muted-foreground">{text}</span></div></div>)}</section>
 }
+
+// The XKeen interception inbounds: a user rule names them so it never also
+// captures the panel's probe or API traffic.
+const defaultTrafficInbounds = ['redirect', 'tproxy', 'socks']
+
+// trafficInbounds returns the inbound tags user rules in this draft already
+// use (from the last rule that names non-system inbounds), or the XKeen
+// interception defaults.
+export function trafficInbounds(rules = []) {
+  for (let index = rules.length - 1; index >= 0; index--) {
+    const inbound = Array.isArray(rules[index]?.inboundTag) ? rules[index].inboundTag.filter((tag) => typeof tag === 'string') : []
+    if (inbound.length && !inbound.some((tag) => systemInbounds.has(tag))) return inbound
+  }
+  return defaultTrafficInbounds
+}
+
+// catchAllRule reports a rule with no destination condition: it matches every
+// connection that reaches it, so rules after it never run.
+export function catchAllRule(rule) {
+  if (!rule || typeof rule !== 'object' || Array.isArray(rule)) return false
+  return Object.keys(rule).every((key) => ['type', 'outboundTag', 'balancerTag', 'ruleTag', 'inboundTag', 'network'].includes(key) || rule[key] === undefined || rule[key] === null || Array.isArray(rule[key]) && !rule[key].length)
+}
