@@ -460,6 +460,38 @@ test('membership matches page past one large category, and an empty or failed re
   expect(writes).toEqual([])
 })
 
+test('rules without an effective inbound are flagged, and a final "udp, tcp" rule is not a catch-all', async ({ page }) => {
+  const { documents, writes } = await mountEditor(page)
+  documents['05_routing.json'].text = JSON.stringify({ routing: { rules: [
+    { type: 'field', inboundTag: '', domain: ['domain:a.example'], outboundTag: 'vpn' },
+    { type: 'field', inboundTag: ['', ''], domain: ['domain:b.example'], outboundTag: 'vpn' },
+    { domain: ['domain:c.example'], outboundTag: 'vpn' },
+    { type: 'field', inboundTag: ['redirect', 'tproxy'], network: 'udp, tcp', outboundTag: 'direct' },
+  ], balancers: [] } })
+  await page.route('**/api/v1/geodata', (route) => route.fulfill({ json: [{ name: 'geosite_vendor.dat', kind: 'geosite', available: true, size: 100 }] }))
+  await page.route('**/api/v1/geodata/query', (route) => { const body = route.request().postDataJSON(); return route.fulfill({ json: { file: body.file, kind: 'geosite', snapshot: 'c'.repeat(64), items: [{ category: 'microsoft', type: 'category', value: 'microsoft', count: 2 }], total: 1, offset: 0, more: false } }) })
+  await selectConfig(page, '05_routing.json')
+  for (const rule of ['1', '2', '3']) await expect(page.locator(`[data-rule="${rule}"]`).getByText('All inbounds · pauses node reviews')).toBeVisible()
+  await expect(page.locator('[data-rule="4"]').getByText('All inbounds · pauses node reviews')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Browse installed geodata', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Search installed geodata' })
+  await dialog.getByLabel('Find a service across all databases').fill('microsoft')
+  await dialog.getByRole('button', { name: 'Search all databases', exact: true }).click()
+  await dialog.getByRole('checkbox', { name: 'Select geosite_vendor.dat microsoft', exact: true }).check()
+  await dialog.getByLabel('Rule destination').selectOption('outbound:vpn')
+  // "udp, tcp" admits UDP only in Xray: the new rule goes after it.
+  await expect(dialog.getByLabel('Rule preview')).toContainText('Rule 5')
+  await expect(dialog.getByLabel('Rule preview')).not.toContainText('Placed before the final rule')
+  await dialog.getByRole('button', { name: 'Add rule', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Done browsing', exact: true }).click()
+  await page.getByRole('button', { name: 'Text', exact: true }).click()
+  const rules = JSON.parse(await page.getByRole('textbox', { name: 'Configuration text' }).innerText()).routing.rules
+  expect(rules).toHaveLength(5)
+  expect(rules[3].network).toBe('udp, tcp')
+  expect(rules[4]).toEqual({ type: 'field', inboundTag: ['redirect', 'tproxy'], domain: ['ext:geosite_vendor.dat:microsoft'], outboundTag: 'vpn' })
+  expect(writes).toEqual([])
+})
+
 test('native database replacement invalidates pagination without changing configuration', async ({ page }) => {
   const { writes, state } = await mountEditor(page)
   state.targets = [{ tag: 'direct', kind: 'outbound', protocol: 'freedom' }]

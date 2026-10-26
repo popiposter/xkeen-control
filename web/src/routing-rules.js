@@ -33,10 +33,18 @@ export function trafficInbounds(rules = []) {
 }
 
 // everyNetwork reports a network condition that admits both TCP and UDP:
-// absent or empty (Xray adds no condition), or naming both.
+// absent or an empty list (Xray adds no condition), or naming both. Like
+// Xray, names are not trimmed: "udp, tcp" admits UDP only.
 function everyNetwork(value) {
-  const parts = new Set(stringList(value).map((part) => part.trim().toLowerCase()).filter(Boolean))
+  const parts = new Set(stringList(value).map((part) => part.toLowerCase()))
   return parts.size === 0 || parts.has('tcp') && parts.has('udp')
+}
+
+// scopedInbounds reports whether a rule names at least one non-empty inbound
+// tag. A rule that does not also captures the panel's probe traffic, and the
+// panel pauses node reviews while it exists (probeRouteShadowed).
+export function scopedInbounds(rule) {
+  return stringList(rule?.inboundTag).some(Boolean)
 }
 
 // emptyCondition reports a condition value Xray ignores: absent, an empty

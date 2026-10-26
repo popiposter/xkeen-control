@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { catchAllRule, membershipKind, trafficInbounds } from '../src/routing-rules.js'
+import { catchAllRule, membershipKind, scopedInbounds, trafficInbounds } from '../src/routing-rules.js'
 
 test('new rules cover every user inbound the draft names, never a system one', () => {
   const lan = ['redirect', 'tproxy']
@@ -19,7 +19,10 @@ test('new rules cover every user inbound the draft names, never a system one', (
 
 test('only a rule that admits every connection is a catch-all', () => {
   assert.equal(catchAllRule({ type: 'field', inboundTag: ['redirect'], network: 'tcp,udp', outboundTag: 'direct' }), true)
-  assert.equal(catchAllRule({ type: 'field', network: 'udp, tcp', outboundTag: 'direct' }), true)
+  // Xray does not trim network names: " tcp" is no TCP condition.
+  assert.equal(catchAllRule({ type: 'field', network: 'udp, tcp', outboundTag: 'direct' }), false)
+  assert.equal(catchAllRule({ type: 'field', network: 'UDP,TCP', outboundTag: 'direct' }), true)
+  assert.equal(catchAllRule({ type: 'field', network: '', outboundTag: 'direct' }), false)
   assert.equal(catchAllRule({ type: 'field', outboundTag: 'direct' }), true)
   assert.equal(catchAllRule({ type: 'field', network: 'udp', outboundTag: 'block' }), false)
   assert.equal(catchAllRule({ type: 'field', network: 'tcp', outboundTag: 'direct' }), false)
@@ -47,4 +50,13 @@ test('membership lookups are offered for addresses and host names only', () => {
   assert.equal(membershipKind('microsoft'), '')
   assert.equal(membershipKind('192.0.2.0/24'), '')
   assert.equal(membershipKind('a b.com'), '')
+})
+
+test('a rule is scoped only by a non-empty inbound tag', () => {
+  assert.equal(scopedInbounds({ inboundTag: ['redirect'] }), true)
+  assert.equal(scopedInbounds({ inboundTag: 'redirect' }), true)
+  assert.equal(scopedInbounds({ inboundTag: '' }), false)
+  assert.equal(scopedInbounds({ inboundTag: ['', ''] }), false)
+  assert.equal(scopedInbounds({ inboundTag: [] }), false)
+  assert.equal(scopedInbounds({ outboundTag: 'direct' }), false)
 })
