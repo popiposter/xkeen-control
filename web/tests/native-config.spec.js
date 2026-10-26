@@ -413,6 +413,53 @@ test('an address finds categories by native membership, and a rescanned database
   expect(writes).toEqual([])
 })
 
+test('membership matches page past one large category, and an empty or failed rescan still drops a stale selection', async ({ page }) => {
+  const { writes } = await mountEditor(page)
+  let snapshot = 'c'.repeat(64), failing = false
+  const queries = []
+  await page.route('**/api/v1/geodata', (route) => route.fulfill({ json: [{ name: 'geoip_vendor.dat', kind: 'geoip', available: true, size: 100 }] }))
+  await page.route('**/api/v1/geodata/query', (route) => {
+    const body = route.request().postDataJSON(); queries.push(body)
+    if (failing) return route.fulfill({ status: 409, json: { error: 'installed geodata changed; reload the file' } })
+    if (body.view === 'match' && body.search === '192.0.2.5') {
+      // Fifty matching entries of one category fill the first page.
+      if (body.offset === 0) return route.fulfill({ json: { file: body.file, kind: 'geoip', snapshot, offset: 0, total: 51, more: true, items: Array.from({ length: 50 }, (_, index) => ({ category: 'big', type: 'cidr', value: `192.0.${index}.0/16` })) } })
+      return route.fulfill({ json: { file: body.file, kind: 'geoip', snapshot, offset: 50, total: 51, more: false, items: [{ category: 'late', type: 'cidr', value: '192.0.2.0/24' }] } })
+    }
+    return route.fulfill({ json: { file: body.file, kind: 'geoip', snapshot, offset: body.offset, total: 0, more: false, items: [] } })
+  })
+  await selectConfig(page, '05_routing.json')
+  await page.getByRole('button', { name: 'Browse installed geodata', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Search installed geodata' })
+  const find = dialog.getByLabel('Find a service across all databases')
+  await find.fill('192.0.2.5')
+  await dialog.getByRole('button', { name: 'Search all databases', exact: true }).click()
+  await expect(dialog.getByRole('checkbox', { name: 'Select geoip_vendor.dat big', exact: true })).toBeVisible()
+  await expect(dialog.getByRole('checkbox', { name: 'Select geoip_vendor.dat late', exact: true })).toHaveCount(0)
+  await dialog.getByRole('button', { name: 'More categories in geoip_vendor.dat', exact: true }).click()
+  await expect(dialog.getByText('IP ranges · matches via 192.0.2.0/24', { exact: true })).toBeVisible()
+  expect(queries.filter((query) => query.view === 'match').map((query) => [query.offset, query.snapshot])).toEqual([[0, 'c'.repeat(64)], [50, 'c'.repeat(64)]])
+  await expect(dialog.getByRole('button', { name: 'More categories in geoip_vendor.dat', exact: true })).toHaveCount(0)
+  // The database is replaced; a rescan that finds nothing still drops the
+  // selection made from the old snapshot.
+  await dialog.getByRole('checkbox', { name: 'Select geoip_vendor.dat late', exact: true }).check()
+  snapshot = 'e'.repeat(64)
+  await find.fill('absent')
+  await dialog.getByRole('button', { name: 'Search all databases', exact: true }).click()
+  await expect(dialog.getByRole('status')).toContainText('No category in the installed databases matches')
+  await expect(dialog.getByText('2. Selected categories (0)', { exact: true })).toBeVisible()
+  // A rescan that fails also drops it.
+  await find.fill('192.0.2.5')
+  await dialog.getByRole('button', { name: 'Search all databases', exact: true }).click()
+  await dialog.getByRole('checkbox', { name: 'Select geoip_vendor.dat big', exact: true }).check()
+  failing = true
+  await dialog.getByRole('button', { name: 'Search all databases', exact: true }).click()
+  await expect(dialog.getByRole('status')).toContainText('Some databases could not be read: geoip_vendor.dat')
+  await expect(dialog.getByText('2. Selected categories (0)', { exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Add rule', exact: true })).toBeDisabled()
+  expect(writes).toEqual([])
+})
+
 test('native database replacement invalidates pagination without changing configuration', async ({ page }) => {
   const { writes, state } = await mountEditor(page)
   state.targets = [{ tag: 'direct', kind: 'outbound', protocol: 'freedom' }]
