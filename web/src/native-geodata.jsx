@@ -248,7 +248,7 @@ export default function NativeGeodata({ request, disabled, targets, rules = [], 
               </div>
               {expanded && <div className="mt-2 rounded-md bg-muted/40 p-2">
                 <p className="mb-1 text-xs text-muted-foreground">Showing {open.items.length} of {open.total}</p>
-                <ul className="grid gap-x-4 sm:grid-cols-2">{open.items.map((entry, index) => <li key={index} className="break-all font-mono text-xs">{entry.value}{entry.type && entry.type !== 'cidr' && entry.type !== 'domain' ? <span className="text-muted-foreground"> · {entry.type}</span> : ''}</li>)}</ul>
+                <ul className="grid gap-x-4 sm:grid-cols-2">{open.items.map((entry, index) => <li key={index} className="break-all font-mono text-xs">{entry.value}{entry.type && entry.type !== 'cidr' && entry.type !== 'domain' ? <span className="text-muted-foreground"> · {entry.type}</span> : ''}{Array.isArray(entry.attributes) && entry.attributes.length > 0 ? <span className="text-muted-foreground"> · {entry.attributes.filter((attribute) => typeof attribute === 'string').map((attribute) => `@${attribute}`).join(' ')}</span> : ''}</li>)}</ul>
                 {open.more && <Button className="mt-2" variant="outline" size="sm" disabled={locked} onClick={() => contents(group, item.category, true)}>Show more entries</Button>}
               </div>}
             </li>
