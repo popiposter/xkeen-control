@@ -8,6 +8,13 @@ export const systemInbounds = new Set(['api', 'probe', 'force-proxy-redirect', '
 // The XKeen interception inbounds: LAN TCP, LAN UDP and the local SOCKS port.
 export const defaultTrafficInbounds = ['redirect', 'tproxy', 'socks']
 
+// stringList reads an Xray StringList: an array of strings or one string,
+// either possibly comma-separated.
+export function stringList(value) {
+  const items = Array.isArray(value) ? value : typeof value === 'string' ? [value] : []
+  return items.filter((item) => typeof item === 'string').flatMap((item) => item.split(',')).map((item) => item.trim()).filter(Boolean)
+}
+
 // trafficInbounds returns every non-system inbound the draft's rules name, in
 // first-seen order, so a new rule covers all user traffic those rules cover
 // (LAN and SOCKS alike). A system tag in a mixed list is dropped on its own.
@@ -16,9 +23,8 @@ export function trafficInbounds(rules = []) {
   const seen = new Set()
   const tags = []
   for (const rule of rules) {
-    if (!Array.isArray(rule?.inboundTag)) continue
-    for (const tag of rule.inboundTag) {
-      if (typeof tag !== 'string' || !tag || systemInbounds.has(tag) || seen.has(tag)) continue
+    for (const tag of stringList(rule?.inboundTag)) {
+      if (systemInbounds.has(tag) || seen.has(tag)) continue
       seen.add(tag)
       tags.push(tag)
     }
@@ -26,11 +32,11 @@ export function trafficInbounds(rules = []) {
   return tags.length ? tags : [...defaultTrafficInbounds]
 }
 
-// everyNetwork reports a network condition that admits both TCP and UDP.
+// everyNetwork reports a network condition that admits both TCP and UDP:
+// absent or empty (Xray adds no condition), or naming both.
 function everyNetwork(value) {
-  if (value === undefined || value === null || value === '') return true
-  const parts = new Set(String(value).toLowerCase().split(',').map((part) => part.trim()).filter(Boolean))
-  return parts.has('tcp') && parts.has('udp')
+  const parts = new Set(stringList(value).map((part) => part.toLowerCase()))
+  return parts.size === 0 || parts.has('tcp') && parts.has('udp')
 }
 
 // catchAllRule reports a rule that matches every connection reaching it

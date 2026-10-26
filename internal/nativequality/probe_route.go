@@ -1,6 +1,9 @@
 package nativequality
 
 import (
+	"encoding/json"
+	"strings"
+
 	"github.com/popiposter/xkeen-control/internal/c1"
 	"github.com/popiposter/xkeen-control/internal/configjson"
 )
@@ -15,7 +18,7 @@ func probeRouteShadowed(routing string) bool {
 	var doc struct {
 		Routing struct {
 			Rules []struct {
-				InboundTag []string `json:"inboundTag"`
+				InboundTag stringList `json:"inboundTag"`
 			} `json:"rules"`
 		} `json:"routing"`
 	}
@@ -33,4 +36,28 @@ func probeRouteShadowed(routing string) bool {
 		}
 	}
 	return false
+}
+
+// stringList decodes an Xray StringList: an array of strings or one string,
+// either possibly comma-separated.
+type stringList []string
+
+func (l *stringList) UnmarshalJSON(data []byte) error {
+	var items []string
+	if err := json.Unmarshal(data, &items); err != nil {
+		var one string
+		if err := json.Unmarshal(data, &one); err != nil {
+			return err
+		}
+		items = []string{one}
+	}
+	*l = nil
+	for _, item := range items {
+		for _, part := range strings.Split(item, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				*l = append(*l, part)
+			}
+		}
+	}
+	return nil
 }
