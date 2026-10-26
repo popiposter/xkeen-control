@@ -1,31 +1,66 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Checkbox } from '@/components/ui/checkbox'
-import { IconSearch, IconDatabase } from '@tabler/icons-react'
+import { IconSearch, IconDatabase, IconChevronDown, IconChevronRight, IconX } from '@tabler/icons-react'
 import { DestinationBadge } from './status-ui'
+import { catchAllRule, membershipKind, trafficInbounds } from './routing-rules.js'
 
-export default function NativeGeodata({ request, disabled, targets, onAdd }) {
+const pageSize = 50
+const inboundLabel = { redirect: 'LAN devices', tproxy: 'LAN devices', socks: 'Local SOCKS' }
+
+// A native reference to one category: the short form for the default
+// geosite.dat/geoip.dat, ext:<file>:<category> for any other file.
+function reference(file, kind, category) {
+  return file === `${kind}.dat` ? `${kind}:${category}` : `ext:${file}:${category}`
+}
+
+function validPage(value, body) {
+  return value && value.file === body.file && Array.isArray(value.items) && value.items.length <= pageSize && /^[a-f0-9]{64}$/.test(value.snapshot) && value.offset === body.offset && Number.isInteger(value.total)
+}
+
+// rows lists a group's categories: those found by name or text first, then
+// those found only by native membership, each with the entry that matched.
+function rows(group) {
+  const out = group.items.filter((item) => item.type === 'category').map((item) => ({ category: item.category, count: item.count, inverse: item.inverse }))
+  const index = new Map(out.map((row) => [row.category, row]))
+  for (const item of group.matches || []) {
+    if (!item.category) continue
+    let row = index.get(item.category)
+    if (!row) { row = { category: item.category, inverse: item.inverse }; index.set(item.category, row); out.push(row) }
+    if (!row.match) row.match = item.type === 'inverse' ? 'it lies outside the listed networks (inverse category)' : item.value
+  }
+  return out
+}
+
+function targetLabel(item) {
+  return `${item.tag}${item.kind === 'balancer' ? ' · VPN pool' : item.protocol === 'freedom' ? ' · DIRECT' : item.protocol === 'blackhole' ? ' · BLOCK' : ''}`
+}
+
+// NativeGeodata finds categories in the installed geodata files, shows what
+// they contain and adds them to the routing draft as one rule per kind
+// (sites, IPs). rules is the current draft's rule list, used for the preview:
+// a new rule covers the same inbounds as the draft's user rules and lands
+// before a final catch-all rule unless placed at the top.
+export default function NativeGeodata({ request, disabled, targets, rules = [], onAdd }) {
   const [files, setFiles] = useState([])
-  const [file, setFile] = useState('')
-  const [view, setView] = useState('categories')
-  const [category, setCategory] = useState('')
   const [search, setSearch] = useState('')
-  const [result, setResult] = useState(null)
-  const [activeQuery, setActiveQuery] = useState(null)
+  const [browseFile, setBrowseFile] = useState('')
+  const [groups, setGroups] = useState([])
+  const [open, setOpen] = useState(null)
+  const [selected, setSelected] = useState([])
+  const [target, setTarget] = useState('')
+  const [position, setPosition] = useState('last')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
-  const [target, setTarget] = useState('')
-  const [position, setPosition] = useState('first')
-  const [globalPages, setGlobalPages] = useState([])
-  const [selected, setSelected] = useState(new Set())
   const alive = useRef(true)
   const initialRequest = useRef(request)
-  const currentFile = files.find((item) => item.name === file)
   const locked = disabled || busy
+  const available = files.filter((item) => item.available)
 
   useEffect(() => {
     let active = true
@@ -35,109 +70,212 @@ export default function NativeGeodata({ request, disabled, targets, onAdd }) {
       if (!active) return
       if (!Array.isArray(items) || items.length > 32 || items.some((item) => typeof item.name !== 'string' || !['geosite', 'geoip'].includes(item.kind))) throw new Error('Geodata inventory was not confirmed.')
       setFiles(items)
-      setFile(items.find((item) => item.available)?.name || '')
+      setBrowseFile(items.find((item) => item.available)?.name || '')
     }).catch((error) => { if (active) setNotice(error.message) }).finally(() => { if (active) setBusy(false) })
     return () => { active = false; alive.current = false }
   }, [])
 
-  async function query(body) {
-    setBusy(true); setNotice('')
-    try {
-      const value = await request('geodata/query', body)
-      if (!alive.current) return
-      if (value.file !== body.file || !Array.isArray(value.items) || value.items.length > 100 || !/^[a-f0-9]{64}$/.test(value.snapshot) || value.offset !== body.offset || !Number.isInteger(value.total)) throw new Error('Geodata page was not confirmed.')
-      setResult(value); setActiveQuery(body)
-    } catch (error) { if (alive.current) { setResult(null); setNotice(error.message) } }
-    finally { if (alive.current) setBusy(false) }
+  // The default destination is the VPN pool when the draft has one.
+  useEffect(() => {
+    if (!target && targets.length) {
+      const preferred = targets.find((item) => item.kind === 'balancer') || targets.find((item) => item.protocol !== 'freedom' && item.protocol !== 'blackhole')
+      if (preferred) setTarget(`${preferred.kind}:${preferred.tag}`)
+    }
+  }, [targets, target])
+
+  async function read(body) {
+    const value = await request('geodata/query', body)
+    if (!validPage(value, body)) throw new Error('Geodata page was not confirmed.')
+    return value
+  }
+
+  // A read that finds the database replaced (or unreadable) drops everything
+  // built from that file: its listed categories, open contents and selection.
+  function invalidate(file, message) {
+    setGroups((previous) => previous.filter((group) => group.file !== file))
+    setOpen((previous) => previous?.file === file ? null : previous)
+    setSelected((previous) => previous.filter((item) => item.file !== file))
+    setNotice(message)
+  }
+
+  // New results replace the list. scanned maps every file read successfully
+  // (with or without results) to its snapshot; a selection from a scanned
+  // file with another snapshot, or from a file that failed, no longer names
+  // what the user inspected.
+  function showGroups(found, scanned, failed = []) {
+    setOpen(null)
+    setGroups(found)
+    setSelected((previous) => previous.filter((item) => !failed.includes(item.file) && (!scanned.has(item.file) || scanned.get(item.file) === item.snapshot)))
   }
 
   async function searchAll() {
-    if (!search.trim()) { setNotice('Enter a service, category, domain or IP fragment.'); return }
-    setBusy(true); setNotice(''); setSelected(new Set()); setGlobalPages([])
-    const pages = [], failed = []
+    const text = search.trim()
+    if (!text) { setNotice('Enter a service, category, domain or IP fragment.'); return }
+    // An address or host name is also looked up by native matching, so
+    // 192.0.2.5 finds a category holding 192.0.2.0/24 and login.example.com
+    // one holding domain:example.com, not only literal text.
+    const membership = membershipKind(text)
+    setBusy(true); setNotice('')
+    const found = [], failed = [], scanned = new Map()
     try {
       // The reader serializes bounded scans. Search each installed file once;
-      // later pages remain pinned to each file's content hash.
-      for (const item of files.filter((item) => item.available)) {
+      // later pages stay pinned to each file's content hash.
+      for (const item of available) {
         try {
-          const page = await request('geodata/query', { file: item.name, view: 'search', category: '', search: search.trim(), offset: 0, limit: 50, snapshot: '' })
+          const body = { file: item.name, view: 'search', category: '', search: text, offset: 0, limit: pageSize, snapshot: '' }
+          const page = await read(body)
           if (!alive.current) return
-          if (page.file !== item.name || !Array.isArray(page.items) || page.items.length > 50 || !/^[a-f0-9]{64}$/.test(page.snapshot)) throw new Error('Invalid page')
-          pages.push({ ...page, search: search.trim() })
+          const group = { ...page, query: body, matches: [], matchMore: false }
+          if (membership === (item.kind === 'geoip' ? 'ip' : 'domain')) {
+            const matchQuery = { file: item.name, view: 'match', category: '', search: text, offset: 0, limit: pageSize, snapshot: page.snapshot }
+            const matched = await read(matchQuery)
+            if (!alive.current) return
+            if (matched.snapshot !== page.snapshot) throw new Error('changed')
+            Object.assign(group, { matchQuery, matches: matched.items, matchMore: matched.more })
+          }
+          scanned.set(item.name, page.snapshot)
+          if (rows(group).length) found.push(group)
         } catch { failed.push(item.name) }
       }
-      if (alive.current) { setGlobalPages(pages); setNotice(failed.length ? `Some databases could not be read: ${failed.join(', ')}. Results are partial.` : pages.length ? 'All installed databases searched. Select categories to add routing rules.' : 'No available databases.') }
+      if (!alive.current) return
+      showGroups(found, scanned, failed)
+      setNotice(failed.length ? `Some databases could not be read: ${failed.join(', ')}. Results are partial.` : found.length ? '' : `No category in the installed databases matches “${text}”.`)
     } finally { if (alive.current) setBusy(false) }
   }
 
-  async function more(page) {
-    setBusy(true)
+  async function browse() {
+    if (!browseFile) return
+    setBusy(true); setNotice('')
     try {
-      const next = await request('geodata/query', { file: page.file, view: 'search', category: '', search: page.search, offset: page.offset + 50, limit: 50, snapshot: page.snapshot })
-      if (!alive.current) return
-      if (next.snapshot !== page.snapshot || next.file !== page.file || !Array.isArray(next.items) || next.items.length > 50 || next.offset !== page.offset+50) throw new Error('Database changed; search again.')
-      setGlobalPages((previous) => previous.map((item) => item.file === page.file ? { ...next, items: [...item.items, ...next.items], search: page.search } : item))
-    } catch (error) { if (alive.current) { setNotice(error.message); setSelected(new Set()) } }
+      const body = { file: browseFile, view: 'categories', category: '', search: '', offset: 0, limit: pageSize, snapshot: '' }
+      const page = await read(body)
+      if (alive.current) showGroups([{ ...page, query: body, matches: [], matchMore: false }], new Map([[browseFile, page.snapshot]]))
+    } catch (error) { if (alive.current) invalidate(browseFile, `${browseFile} could not be read (${error.message}).`) }
     finally { if (alive.current) setBusy(false) }
   }
 
-  function addSelected() {
-    const destination = targets.find((item) => `${item.kind}:${item.tag}` === target)
-    if (!destination) return
-    const domain = [], ip = []
-    for (const page of globalPages) for (const item of page.items) {
-      if (!selected.has(`${page.file}:${item.category}`)) continue
-      const reference = page.file === `${page.kind}.dat` ? `${page.kind}:${item.category}` : `ext:${page.file}:${item.category}`
-      ;(page.kind === 'geosite' ? domain : ip).push(reference)
-    }
-    const key = destination.kind === 'balancer' ? 'balancerTag' : 'outboundTag'
-    // Separate alternatives: combining domain AND IP in one rule would miss
-    // traffic. One atomic draft edit creates the two category groups together.
-    const rules = [domain.length && { type: 'field', domain, [key]: destination.tag }, ip.length && { type: 'field', ip, [key]: destination.tag }].filter(Boolean)
-    if (rules.length && onAdd(rules, position) !== false) { setSelected(new Set()); setNotice('Selected categories added to the draft. Save and apply when ready.') }
+  // more loads the next page of the text search and, for an address or host
+  // name, of the membership matches. Membership pages count matching entries,
+  // so one large category can fill a page; categories are deduplicated.
+  async function more(group) {
+    setBusy(true)
+    try {
+      const update = {}
+      if (group.more) {
+        const body = { ...group.query, offset: group.items.length, snapshot: group.snapshot }
+        const next = await request('geodata/query', body)
+        if (!alive.current) return
+        if (!validPage(next, body) || next.snapshot !== group.snapshot) throw new Error('changed')
+        Object.assign(update, { more: next.more, total: next.total, items: [...group.items, ...next.items] })
+      }
+      if (group.matchMore) {
+        const body = { ...group.matchQuery, offset: group.matches.length, snapshot: group.snapshot }
+        const next = await request('geodata/query', body)
+        if (!alive.current) return
+        if (!validPage(next, body) || next.snapshot !== group.snapshot) throw new Error('changed')
+        Object.assign(update, { matchMore: next.more, matches: [...group.matches, ...next.items] })
+      }
+      setGroups((previous) => previous.map((item) => item.file === group.file ? { ...item, ...update } : item))
+    } catch (error) { if (alive.current) invalidate(group.file, `${group.file} changed or could not be read (${error.message === 'changed' ? 'database replaced' : error.message}); search again.`) }
+    finally { if (alive.current) setBusy(false) }
   }
 
-  function addCategory(item) {
-    const destination = targets.find((item) => `${item.kind}:${item.tag}` === target)
-    if (!destination || !result) { setNotice('Choose a destination first.'); return }
-    const kind = result.kind === 'geosite' ? 'domain' : 'ip'
-    const reference = result.file === `${result.kind}.dat` ? `${result.kind}:${item.category}` : `ext:${result.file}:${item.category}`
-    const rule = { type: 'field', [kind]: [reference], [destination.kind === 'balancer' ? 'balancerTag' : 'outboundTag']: destination.tag }
-    if (onAdd(rule, position) !== false) setNotice('Category added to the routing draft. Save and restart to apply it.')
+  async function contents(group, category, more = false) {
+    const key = `${group.file}:${category}`
+    if (!more && open?.key === key) { setOpen(null); return }
+    // Each page continues after the entries already shown.
+    const offset = more && open?.key === key ? open.items.length : 0
+    setBusy(true); setNotice('')
+    try {
+      const body = { file: group.file, view: 'entries', category, search: '', offset, limit: pageSize, snapshot: group.snapshot }
+      const page = await read(body)
+      if (!alive.current) return
+      if (page.snapshot !== group.snapshot) throw new Error('changed')
+      setOpen((previous) => ({ key, file: group.file, category, total: page.total, more: page.more, items: offset && previous?.key === key ? [...previous.items, ...page.items] : page.items }))
+    } catch (error) { if (alive.current) invalidate(group.file, `${group.file} changed or could not be read (${error.message === 'changed' ? 'database replaced' : error.message}); search again.`) }
+    finally { if (alive.current) setBusy(false) }
+  }
+
+  function toggle(group, row, checked) {
+    const key = `${group.file}:${row.category}`
+    setSelected((old) => checked ? [...old.filter((entry) => entry.key !== key), { key, file: group.file, kind: group.kind, snapshot: group.snapshot, category: row.category, reference: reference(group.file, group.kind, row.category) }] : old.filter((entry) => entry.key !== key))
+  }
+
+  const destination = targets.find((item) => `${item.kind}:${item.tag}` === target)
+  const inboundTag = trafficInbounds(rules)
+  const domain = selected.filter((item) => item.kind === 'geosite').map((item) => item.reference)
+  const ip = selected.filter((item) => item.kind === 'geoip').map((item) => item.reference)
+  const destinationKey = destination?.kind === 'balancer' ? 'balancerTag' : 'outboundTag'
+  // Separate alternatives: one rule with both sites AND IPs would match only
+  // connections that satisfy both, and miss traffic.
+  const planned = destination ? [domain.length && { type: 'field', inboundTag, domain, [destinationKey]: destination.tag }, ip.length && { type: 'field', inboundTag, ip, [destinationKey]: destination.tag }].filter(Boolean) : []
+  const beforeCatchAll = position !== 'first' && rules.length > 0 && catchAllRule(rules[rules.length - 1])
+  const firstNumber = position === 'first' ? 1 : beforeCatchAll ? rules.length : rules.length + 1
+  const inboundText = [...new Set(inboundTag.map((tag) => inboundLabel[tag] || tag))].join(', ')
+
+  function add() {
+    if (!planned.length) return
+    const count = planned.length
+    if (onAdd(planned, position) !== false) {
+      setSelected([])
+      setNotice(`Added as rule${count > 1 ? `s ${firstNumber}–${firstNumber + count - 1}` : ` ${firstNumber}`}. Save and apply the configuration to activate ${count > 1 ? 'them' : 'it'}.`)
+    }
   }
 
   return <Card>
-    <CardHeader><CardTitle>Installed geodata</CardTitle><CardDescription>Inspect local categories and their domain/IP matches. Reading or searching does not change routing.</CardDescription></CardHeader>
-    <CardContent className="flex flex-col gap-4">
-      <Field><FieldLabel htmlFor="geo-global-search">Find a service across all databases</FieldLabel><Input id="geo-global-search" value={search} maxLength={253} placeholder="microsoft, youtube, domain or IP fragment…" disabled={locked} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !locked) { event.preventDefault(); void searchAll() } }} /></Field>
-      <Button className="self-start" disabled={locked || !search.trim()} onClick={searchAll}><IconSearch />{busy ? 'Searching…' : 'Search all databases'}</Button>
-      <div className="grid gap-2">{globalPages.map((page) => <section key={page.file} className="rounded-lg border p-3"><h4 className="mb-2 flex items-center gap-2 font-medium"><IconDatabase className="text-info" />{page.file} · {page.total} categories</h4>{page.items.map((item) => { const key = `${page.file}:${item.category}`; return <div key={key} className="flex flex-wrap items-center gap-3 border-b py-2 last:border-0"><Checkbox aria-label={`Select ${page.file} ${item.category}`} checked={selected.has(key)} disabled={locked} onCheckedChange={(checked) => setSelected((old) => { const next = new Set(old); if (checked) next.add(key); else next.delete(key); return next })} /><div className="min-w-0 flex-1"><strong className="break-all">{item.category}</strong><p className="text-xs text-muted-foreground">{page.kind === 'geoip' ? 'IP / CIDR' : 'Host / domain'} · {item.count || 0} entries{item.inverse ? ' · inverse match' : ''}</p></div><Button variant="ghost" disabled={locked} onClick={() => { setFile(page.file); setView('entries'); setCategory(item.category); query({ file: page.file, view: 'entries', category: item.category, search: '', offset: 0, limit: 50, snapshot: page.snapshot }) }}>View contents</Button></div> })}{page.more && <Button className="mt-2" variant="outline" disabled={locked} onClick={() => more(page)}>More categories in {page.file}</Button>}</section>)}</div>
-      <details className="disclosure"><summary>Browse one database / inspect category contents</summary><div className="disclosure-body flex flex-col gap-4">
-      <FieldGroup>
-        <Field><FieldLabel htmlFor="geo-file">Database file</FieldLabel><NativeSelect id="geo-file" value={file} disabled={locked || files.length === 0} onChange={(event) => { setFile(event.target.value); setCategory(''); setResult(null); setSearch('') }}><option value="" disabled>Select installed file</option>{files.map((item) => <option key={item.name} value={item.name} disabled={!item.available}>{item.name} · {Math.round(item.size / 1024)} KiB{item.available ? '' : ' · unavailable'}</option>)}</NativeSelect></Field>
-        <Field><FieldLabel htmlFor="geo-view">Browse mode</FieldLabel><NativeSelect id="geo-view" value={view} disabled={locked} onChange={(event) => { setView(event.target.value); setSearch(''); setResult(null) }}><option value="categories">Categories</option><option value="entries">Category contents</option><option value="match">Find matching categories</option></NativeSelect></Field>
-        {view !== 'categories' && <Field><FieldLabel htmlFor="geo-category">Category filter (optional)</FieldLabel><Input id="geo-category" maxLength={128} value={category} disabled={locked} onChange={(event) => setCategory(event.target.value)} /></Field>}
-        <Field><FieldLabel htmlFor="geo-search">{view === 'match' ? currentFile?.kind === 'geoip' ? 'IP address to match' : 'Domain name to match' : 'Search text (optional)'}</FieldLabel><Input id="geo-search" value={search} maxLength={253} disabled={locked} onChange={(event) => setSearch(event.target.value)} /></Field>
-      </FieldGroup>
-      <Button disabled={locked || !file || view === 'match' && !search.trim()} onClick={() => query({ file, view, category: view === 'categories' ? '' : category, search, offset: 0, limit: 50, snapshot: '' })}>{busy ? 'Reading database…' : 'Search installed database'}</Button>
-      </div></details>
-      <FieldGroup>
-        <Field><FieldLabel htmlFor="geo-target">Rule destination</FieldLabel><NativeSelect id="geo-target" value={target} disabled={locked} onChange={(event) => setTarget(event.target.value)}><option value="" disabled>Choose existing VPN / DIRECT / BLOCK target</option>{targets.map((item) => <option key={`${item.kind}:${item.tag}`} value={`${item.kind}:${item.tag}`}>{item.tag}{item.kind === 'balancer' ? ' · VPN balancer' : item.protocol === 'freedom' ? ' · DIRECT' : item.protocol === 'blackhole' ? ' · BLOCK' : ''}</option>)}</NativeSelect></Field>
-        <Field><FieldLabel htmlFor="geo-position">Rule position</FieldLabel><NativeSelect id="geo-position" value={position} disabled={locked} onChange={(event) => setPosition(event.target.value)}><option value="first">Before existing rules</option><option value="last">After existing rules</option></NativeSelect></Field>
-      </FieldGroup>
-      <div className="flex flex-wrap items-center gap-2"><Button disabled={locked || !target || !selected.size} onClick={addSelected}>Add selected categories ({selected.size})</Button>{target && <DestinationBadge tag={targets.find((item) => `${item.kind}:${item.tag}` === target)?.tag} target={targets.find((item) => `${item.kind}:${item.tag}` === target)} />}</div>
-      <p className="text-sm text-muted-foreground">The first matching rule wins. Rules placed after a catch-all will not take effect. DNS selection is configured separately.</p>
+    <CardHeader><CardTitle>Add rules from geodata</CardTitle><CardDescription>Find categories in the installed geosite (sites) and geoip (IP) files, check what they contain, and add them to the routing draft. Nothing changes on the router until you save and apply.</CardDescription></CardHeader>
+    <CardContent className="flex flex-col gap-5">
+      <section className="flex flex-col gap-3" aria-label="Find categories">
+        <h4 className="font-medium">1. Find categories</h4>
+        <div className="flex flex-wrap items-end gap-2">
+          <Field className="min-w-56 flex-1"><FieldLabel htmlFor="geo-global-search">Find a service across all databases</FieldLabel><Input id="geo-global-search" value={search} maxLength={253} placeholder="microsoft, youtube, a domain or IP fragment…" disabled={locked} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !locked) { event.preventDefault(); void searchAll() } }} /></Field>
+          <Button disabled={locked || !search.trim()} onClick={searchAll}><IconSearch />{busy ? 'Searching…' : 'Search all databases'}</Button>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <Field className="min-w-56 flex-1"><FieldLabel htmlFor="geo-file">Or list every category of one database</FieldLabel><NativeSelect id="geo-file" value={browseFile} disabled={locked || available.length === 0} onChange={(event) => setBrowseFile(event.target.value)}><option value="" disabled>Select installed file</option>{files.map((item) => <option key={item.name} value={item.name} disabled={!item.available}>{item.name} · {item.kind === 'geoip' ? 'IPs' : 'sites'} · {Math.round(item.size / 1024)} KiB{item.available ? '' : ' · unavailable'}</option>)}</NativeSelect></Field>
+          <Button variant="outline" disabled={locked || !browseFile} onClick={browse}><IconDatabase />Show categories</Button>
+        </div>
+        {groups.map((group) => <section key={group.file} className="rounded-lg border" aria-label={`Categories in ${group.file}`}>
+          <h5 className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-sm font-medium"><IconDatabase className="text-info" />{group.file}<Badge variant="outline">{group.kind === 'geoip' ? 'IP ranges' : 'Sites'}</Badge><span className="text-muted-foreground">{rows(group).length}{group.more || group.matchMore ? '+' : ''} {rows(group).length === 1 && !group.more && !group.matchMore ? 'category' : 'categories'}</span></h5>
+          <ul>{rows(group).map((item) => {
+            const key = `${group.file}:${item.category}`
+            const expanded = open?.key === key
+            return <li key={key} className="border-b px-3 py-2 last:border-0">
+              <div className="flex flex-wrap items-center gap-3">
+                <Checkbox aria-label={`Select ${group.file} ${item.category}`} checked={selected.some((entry) => entry.key === key)} disabled={locked} onCheckedChange={(checked) => toggle(group, item, checked)} />
+                <div className="min-w-0 flex-1"><strong className="break-all">{item.category}</strong><p className="text-xs text-muted-foreground">{item.count !== undefined ? `${item.count} ${group.kind === 'geoip' ? 'IP ranges' : 'domain entries'}` : group.kind === 'geoip' ? 'IP ranges' : 'Domain entries'}{item.inverse ? ' · inverse match' : ''}{item.match ? ` · matches via ${item.match}` : ''}</p></div>
+                <Button variant="ghost" size="sm" aria-expanded={expanded} aria-label={`${expanded ? 'Hide' : 'Show'} contents of ${item.category}`} disabled={locked} onClick={() => contents(group, item.category)}>{expanded ? <IconChevronDown /> : <IconChevronRight />}{expanded ? 'Hide contents' : 'Show contents'}</Button>
+              </div>
+              {expanded && <div className="mt-2 rounded-md bg-muted/40 p-2">
+                <p className="mb-1 text-xs text-muted-foreground">Showing {open.items.length} of {open.total}</p>
+                <ul className="grid gap-x-4 sm:grid-cols-2">{open.items.map((entry, index) => <li key={index} className="break-all font-mono text-xs">{entry.value}{entry.type && entry.type !== 'cidr' && entry.type !== 'domain' ? <span className="text-muted-foreground"> · {entry.type}</span> : ''}</li>)}</ul>
+                {open.more && <Button className="mt-2" variant="outline" size="sm" disabled={locked} onClick={() => contents(group, item.category, true)}>Show more entries</Button>}
+              </div>}
+            </li>
+          })}</ul>
+          {(group.more || group.matchMore) && <Button className="m-3" variant="outline" size="sm" disabled={locked} onClick={() => more(group)}>More categories in {group.file}</Button>}
+        </section>)}
+      </section>
+
+      <section className="flex flex-col gap-2" aria-label="Selected categories">
+        <h4 className="font-medium">2. Selected categories ({selected.length})</h4>
+        {selected.length === 0 ? <p className="text-sm text-muted-foreground">Tick categories above. Sites and IP ranges become separate rules.</p>
+          : <div className="flex flex-wrap gap-2">{selected.map((item) => <Badge key={item.key} variant="secondary" className="gap-1">{item.category}<span className="text-muted-foreground">· {item.file}</span><button type="button" aria-label={`Remove ${item.category} from selection`} disabled={locked} onClick={() => setSelected((old) => old.filter((entry) => entry.key !== item.key))}><IconX className="size-3" /></button></Badge>)}</div>}
+      </section>
+
+      <section className="flex flex-col gap-3" aria-label="Rule">
+        <h4 className="font-medium">3. Rule</h4>
+        <FieldGroup className="grid gap-4 sm:grid-cols-2">
+          <Field><FieldLabel htmlFor="geo-target">Rule destination</FieldLabel><NativeSelect id="geo-target" value={target} disabled={locked} onChange={(event) => setTarget(event.target.value)}><option value="" disabled>Choose VPN pool, DIRECT or BLOCK</option>{targets.map((item) => <option key={`${item.kind}:${item.tag}`} value={`${item.kind}:${item.tag}`}>{targetLabel(item)}</option>)}</NativeSelect></Field>
+          <Field><FieldLabel htmlFor="geo-position">Rule position</FieldLabel><NativeSelect id="geo-position" value={position} disabled={locked} onChange={(event) => setPosition(event.target.value)}><option value="last">Before the final catch-all rule</option><option value="first">At the top, before all rules</option></NativeSelect><FieldDescription>Rules are checked top to bottom; the first match decides.</FieldDescription></Field>
+        </FieldGroup>
+        {planned.length > 0 && <div className="flex flex-col gap-2 rounded-lg border p-3" aria-label="Rule preview">
+          {planned.map((rule, index) => <p key={index} className="flex flex-wrap items-center gap-2 text-sm"><Badge variant="outline">Rule {firstNumber + index}</Badge><span>From {inboundText}</span><span>·</span><span>{rule.domain ? `Sites: ${selected.filter((item) => item.kind === 'geosite').map((item) => item.category).join(', ')}` : `IPs: ${selected.filter((item) => item.kind === 'geoip').map((item) => item.category).join(', ')}`}</span><span aria-hidden="true">→</span><DestinationBadge tag={destination.tag} target={destination} /></p>)}
+          {beforeCatchAll && <p className="text-xs text-muted-foreground">Placed before the final rule that sends all other traffic to {rules[rules.length - 1].balancerTag || rules[rules.length - 1].outboundTag || 'its destination'}.</p>}
+        </div>}
+        <Button className="self-start" disabled={locked || !planned.length} onClick={add}>{planned.length > 1 ? `Add ${planned.length} rules` : 'Add rule'}</Button>
+      </section>
       {notice && <p role="status">{notice}</p>}
-      {result && <>
-        <p className="text-sm">{result.total} results · {activeQuery.file}{activeQuery.category ? ` / ${activeQuery.category}` : ''}{activeQuery.search ? ` / ${activeQuery.search}` : ''}. Snapshot {result.snapshot.slice(0, 12)}.</p>
-        {result.items.length === 0 && <p>No matches in this installed snapshot.</p>}
-        <ul className="flex flex-col gap-2">{result.items.map((item, index) => <li key={`${result.offset + index}`} className="flex flex-wrap items-center gap-2 rounded-md border p-3">
-          <div className="min-w-0 flex-1"><p className="break-all font-medium">{item.value}</p><p className="text-sm text-muted-foreground">{item.category} · {item.type}{item.count !== undefined ? ` · ${item.count} entries` : ''}{item.attributes?.length ? ` · attributes: ${item.attributes.join(', ')}` : ''}{item.inverse ? ' · inverse category' : ''}</p></div>
-          {item.type === 'category' && <Button variant="outline" disabled={locked} onClick={() => { setView('entries'); setCategory(item.category); setSearch(''); query({ file: result.file, view: 'entries', category: item.category, search: '', offset: 0, limit: 50, snapshot: result.snapshot }) }}>View contents</Button>}
-          <Button variant="outline" disabled={locked || !target} onClick={() => addCategory(item)}>Add category rule</Button>
-        </li>)}</ul>
-        <div className="flex gap-2"><Button variant="outline" disabled={locked || result.offset === 0} onClick={() => query({ ...activeQuery, offset: Math.max(0, result.offset - 50), snapshot: result.snapshot })}>Previous page</Button><Button variant="outline" disabled={locked || !result.more} onClick={() => query({ ...activeQuery, offset: result.offset + 50, snapshot: result.snapshot })}>Next page</Button></div>
-      </>}
     </CardContent>
   </Card>
 }

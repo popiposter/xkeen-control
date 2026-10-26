@@ -2,9 +2,9 @@
 // glance. They never edit; the editable fields stay in native-config-form.
 import { IconArrowRight, IconDevices, IconFilter, IconNetwork, IconPlug, IconRoute, IconRouter, IconServer, IconSitemap, IconWorldWww } from '@tabler/icons-react'
 import { Badge } from '@/components/ui/badge'
+import { systemInbounds } from './routing-rules.js'
 
 const inboundNames = { redirect: 'LAN devices', tproxy: 'LAN devices', socks: 'Local SOCKS', 'force-proxy-redirect': 'Forced VPN devices', 'force-proxy-tproxy': 'Forced VPN devices', api: 'Panel API', probe: 'Panel probes' }
-const systemInbounds = new Set(['api', 'probe', 'force-proxy-redirect', 'force-proxy-tproxy'])
 const privateRanges = new Set(['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '127.0.0.0/8', '::1/128', 'fc00::/7', 'fe80::/10'])
 const protocolNames = { bittorrent: 'BitTorrent', http: 'HTTP', tls: 'TLS', quic: 'QUIC' }
 

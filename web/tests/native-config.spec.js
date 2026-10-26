@@ -22,7 +22,9 @@ test('global service search selects host and IP categories as separate alternati
   await dialog.getByRole('checkbox',{name:'Select geosite_vendor.dat microsoft',exact:true}).check()
   await dialog.getByRole('checkbox',{name:'Select geoip_vendor.dat microsoft',exact:true}).check()
   await dialog.getByLabel('Rule destination').selectOption('outbound:vpn')
-  await dialog.getByRole('button',{name:'Add selected categories (2)',exact:true}).click()
+  await expect(dialog.getByLabel('Rule preview')).toContainText('From LAN devices, Local SOCKS')
+  await dialog.getByRole('button',{name:'Add 2 rules',exact:true}).click()
+  await expect(dialog.getByRole('status')).toContainText('Added as rules 1–2')
   await dialog.getByRole('button',{name:'Done browsing',exact:true}).click()
   await page.getByRole('button',{name:'Text',exact:true}).click()
   const raw=page.getByRole('textbox',{name:'Configuration text'})
@@ -30,6 +32,7 @@ test('global service search selects host and IP categories as separate alternati
   await expect(raw).toContainText('ext:geoip_vendor.dat:microsoft')
   const rules=JSON.parse(await raw.innerText()).routing.rules
   expect(rules).toHaveLength(2);expect(rules.every((rule)=>!(rule.domain && rule.ip))).toBe(true)
+  expect(rules.every((rule)=>JSON.stringify(rule.inboundTag)==='["redirect","tproxy","socks"]')).toBe(true)
   expect(writes).toEqual([])
 })
 
@@ -266,17 +269,21 @@ test('installed geodata adds an ordered category rule only to the shared draft',
   await page.route('**/api/v1/geodata/query', (route) => {
     const body = route.request().postDataJSON()
     queries.push(body)
+    if (body.view === 'entries') return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ file: body.file, kind: 'geosite', snapshot: 'c'.repeat(64), offset: 0, total: 2, more: false, items: [{ category: 'video', type: 'domain', value: 'cdn.video.example' }, { category: 'video', type: 'full', value: 'video.example' }] }) })
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ file: body.file, kind: 'geosite', snapshot: 'c'.repeat(64), offset: 0, total: 1, more: false, items: [{ category: 'video', type: 'category', value: 'video', count: 2 }] }) })
   })
   await selectConfig(page, '05_routing.json')
   expect(inventoryReads).toBe(0)
   await page.getByRole('button', { name: 'Browse installed geodata', exact: true }).click()
-  await expect(page.getByLabel('Database file', { exact: true })).toHaveValue('geosite_vendor.dat')
-  await page.locator('summary').filter({ hasText: 'Browse one database' }).click()
-  await page.getByRole('button', { name: 'Search installed database', exact: true }).click()
-  await expect(page.getByText('video · category · 2 entries', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('Or list every category of one database', { exact: true })).toHaveValue('geosite_vendor.dat')
+  await page.getByRole('button', { name: 'Show categories', exact: true }).click()
+  await expect(page.getByText('2 domain entries', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Show contents of video', exact: true }).click()
+  await expect(page.getByText('cdn.video.example', { exact: true })).toBeVisible()
+  await page.getByRole('checkbox', { name: 'Select geosite_vendor.dat video', exact: true }).check()
   await page.getByLabel('Rule destination', { exact: true }).selectOption('outbound:vpn')
-  await page.getByRole('button', { name: 'Add category rule', exact: true }).click()
+  await page.getByLabel('Rule position', { exact: true }).selectOption('first')
+  await page.getByRole('button', { name: 'Add rule', exact: true }).click()
   await page.getByRole('button', { name: 'Done browsing', exact: true }).click()
   await page.getByRole('button', { name: 'Edit rule 1', exact: true }).click()
   await expect(page.getByLabel('Rule 1 domains / geosite (one per line)', { exact: true })).toHaveValue('ext:geosite_vendor.dat:video')
@@ -287,9 +294,202 @@ test('installed geodata adds an ordered category rule only to the shared draft',
   await expect(editor).toContainText('keep catch-all')
   await page.getByRole('button', { name: 'Undo', exact: true }).click()
   await expect(editor).not.toContainText('geosite_vendor.dat')
-  expect(queries).toHaveLength(1)
+  expect(queries.map((query) => query.view)).toEqual(['categories', 'entries'])
+  expect(queries[1]).toMatchObject({ category: 'video', snapshot: 'c'.repeat(64) })
   expect(writes).toEqual([])
   expect(model.requests.filter((request) => request.path === '/api/v1/xkeen/jobs/start')).toEqual([])
+})
+
+test('a category rule added after existing rules covers LAN inbounds and lands before the final catch-all', async ({ page }) => {
+  const { documents, writes } = await mountEditor(page)
+  const lan = ['redirect', 'tproxy', 'socks']
+  documents['05_routing.json'].text = JSON.stringify({ routing: { rules: [
+    { type: 'field', inboundTag: ['api'], outboundTag: 'api' },
+    { type: 'field', domain: ['domain:legacy.example'], outboundTag: 'vpn' },
+    { type: 'field', inboundTag: lan, domain: ['ext:geosite_refilter.dat:REFILTER'], outboundTag: 'vpn' },
+    { type: 'field', inboundTag: lan, network: [], attrs: {}, outboundTag: 'direct' },
+  ], balancers: [] } })
+  await page.route('**/api/v1/geodata', (route) => route.fulfill({ json: [{ name: 'geosite_vendor.dat', kind: 'geosite', available: true, size: 100 }] }))
+  await page.route('**/api/v1/geodata/query', (route) => { const body = route.request().postDataJSON(); return route.fulfill({ json: { file: body.file, kind: 'geosite', snapshot: 'c'.repeat(64), items: [{ category: 'microsoft', type: 'category', value: 'microsoft', count: 2 }], total: 1, offset: 0, more: false } }) })
+  await selectConfig(page, '05_routing.json')
+  // A rule without inbound tags is flagged: it would pause node reviews.
+  await expect(page.locator('[data-rule="2"]').getByText('All inbounds · pauses node reviews')).toBeVisible()
+  await expect(page.locator('[data-rule="3"]').getByText('All inbounds · pauses node reviews')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Browse installed geodata', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Search installed geodata' })
+  await dialog.getByLabel('Find a service across all databases').fill('microsoft')
+  await dialog.getByRole('button', { name: 'Search all databases', exact: true }).click()
+  await dialog.getByRole('checkbox', { name: 'Select geosite_vendor.dat microsoft', exact: true }).check()
+  await dialog.getByLabel('Rule destination').selectOption('outbound:vpn')
+  await expect(dialog.getByLabel('Rule position')).toHaveValue('last')
+  await expect(dialog.getByLabel('Rule preview')).toContainText('Rule 4')
+  await expect(dialog.getByLabel('Rule preview')).toContainText('Placed before the final rule that sends all other traffic to direct')
+  await dialog.getByRole('button', { name: 'Add rule', exact: true }).click()
+  await expect(dialog.getByRole('status')).toContainText('Added as rule 4')
+  await dialog.getByRole('button', { name: 'Done browsing', exact: true }).click()
+  await page.getByRole('button', { name: 'Text', exact: true }).click()
+  const rules = JSON.parse(await page.getByRole('textbox', { name: 'Configuration text' }).innerText()).routing.rules
+  expect(rules).toHaveLength(5)
+  expect(rules[3]).toEqual({ type: 'field', domain: ['ext:geosite_vendor.dat:microsoft'], outboundTag: 'vpn', inboundTag: lan })
+  expect(rules[4]).toEqual({ type: 'field', inboundTag: lan, network: [], attrs: {}, outboundTag: 'direct' })
+  expect(writes).toEqual([])
+})
+
+test('category contents page contiguously, and a replaced database drops what was built from it', async ({ page }) => {
+  const { writes } = await mountEditor(page)
+  const queries = []
+  let replaced = false
+  await page.route('**/api/v1/geodata', (route) => route.fulfill({ json: [{ name: 'geosite_vendor.dat', kind: 'geosite', available: true, size: 100 }] }))
+  await page.route('**/api/v1/geodata/query', (route) => {
+    const body = route.request().postDataJSON(); queries.push(body)
+    if (replaced) return route.fulfill({ status: 409, json: { error: 'installed geodata changed; reload the file' } })
+    if (body.view === 'entries') {
+      const all = Array.from({ length: 120 }, (_, index) => ({ category: 'video', type: 'domain', value: `host-${index}.example` }))
+      return route.fulfill({ json: { file: body.file, kind: 'geosite', snapshot: 'c'.repeat(64), offset: body.offset, total: 120, more: body.offset + 50 < 120, items: all.slice(body.offset, body.offset + 50) } })
+    }
+    return route.fulfill({ json: { file: body.file, kind: 'geosite', snapshot: 'c'.repeat(64), offset: 0, total: 2, more: false, items: [{ category: 'video', type: 'category', value: 'video', count: 120 }, { category: 'music', type: 'category', value: 'music', count: 3 }] } })
+  })
+  await selectConfig(page, '05_routing.json')
+  await page.getByRole('button', { name: 'Browse installed geodata', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Search installed geodata' })
+  await dialog.getByRole('button', { name: 'Show categories', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Show contents of video', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Show more entries', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Show more entries', exact: true }).click()
+  await expect(dialog.getByText('Showing 120 of 120', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('host-100.example', { exact: true })).toBeVisible()
+  expect(queries.filter((query) => query.view === 'entries').map((query) => query.offset)).toEqual([0, 50, 100])
+  await expect(dialog.getByRole('button', { name: 'Show more entries', exact: true })).toHaveCount(0)
+  // The database is replaced after a category was selected.
+  await dialog.getByRole('checkbox', { name: 'Select geosite_vendor.dat music', exact: true }).check()
+  await expect(dialog.getByRole('button', { name: 'Add rule', exact: true })).toBeEnabled()
+  replaced = true
+  await dialog.getByRole('button', { name: 'Show contents of music', exact: true }).click()
+  await expect(dialog.getByRole('status')).toContainText('geosite_vendor.dat changed or could not be read')
+  await expect(dialog.getByRole('checkbox', { name: 'Select geosite_vendor.dat music', exact: true })).toHaveCount(0)
+  await expect(dialog.getByText('2. Selected categories (0)', { exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Add rule', exact: true })).toBeDisabled()
+  expect(writes).toEqual([])
+})
+
+test('an address finds categories by native membership, and a rescanned database drops a stale selection', async ({ page }) => {
+  const { documents, writes } = await mountEditor(page)
+  documents['05_routing.json'].text = JSON.stringify({ routing: { rules: [
+    { type: 'field', inboundTag: ['redirect', 'tproxy'], domain: ['ext:geosite_refilter.dat:REFILTER'], outboundTag: 'vpn' },
+    { type: 'field', inboundTag: ['socks'], network: 'udp', outboundTag: 'direct' },
+  ], balancers: [] } })
+  let snapshot = 'c'.repeat(64)
+  const queries = []
+  await page.route('**/api/v1/geodata', (route) => route.fulfill({ json: [{ name: 'geoip_vendor.dat', kind: 'geoip', available: true, size: 100 }] }))
+  await page.route('**/api/v1/geodata/query', (route) => {
+    const body = route.request().postDataJSON(); queries.push(body)
+    if (body.view === 'match') return route.fulfill({ json: { file: body.file, kind: 'geoip', snapshot, offset: 0, total: 1, more: false, items: [{ category: 'office', type: 'cidr', value: '192.0.2.0/24' }] } })
+    return route.fulfill({ json: { file: body.file, kind: 'geoip', snapshot, offset: 0, total: 0, more: false, items: [] } })
+  })
+  await selectConfig(page, '05_routing.json')
+  await page.getByRole('button', { name: 'Browse installed geodata', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Search installed geodata' })
+  await dialog.getByLabel('Find a service across all databases').fill('192.0.2.5')
+  await dialog.getByRole('button', { name: 'Search all databases', exact: true }).click()
+  await expect(dialog.getByText('IP ranges · matches via 192.0.2.0/24', { exact: true })).toBeVisible()
+  expect(queries.map((query) => query.view)).toEqual(['search', 'match'])
+  expect(queries[1]).toMatchObject({ search: '192.0.2.5', snapshot: 'c'.repeat(64) })
+  await dialog.getByRole('checkbox', { name: 'Select geoip_vendor.dat office', exact: true }).check()
+  await dialog.getByLabel('Rule destination').selectOption('outbound:vpn')
+  // The final UDP-only rule is not a catch-all: the new rule goes after it,
+  // and covers both the LAN and the SOCKS inbounds the draft uses.
+  await expect(dialog.getByLabel('Rule preview')).toContainText('Rule 3')
+  await expect(dialog.getByLabel('Rule preview')).not.toContainText('Placed before the final rule')
+  // Rescanning a replaced database drops the selection made from the old one.
+  snapshot = 'e'.repeat(64)
+  await dialog.getByRole('button', { name: 'Search all databases', exact: true }).click()
+  await expect(dialog.getByText('2. Selected categories (0)', { exact: true })).toBeVisible()
+  await dialog.getByRole('checkbox', { name: 'Select geoip_vendor.dat office', exact: true }).check()
+  await dialog.getByRole('button', { name: 'Add rule', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Done browsing', exact: true }).click()
+  await page.getByRole('button', { name: 'Text', exact: true }).click()
+  const rules = JSON.parse(await page.getByRole('textbox', { name: 'Configuration text' }).innerText()).routing.rules
+  expect(rules[2]).toEqual({ type: 'field', inboundTag: ['redirect', 'tproxy', 'socks'], ip: ['ext:geoip_vendor.dat:office'], outboundTag: 'vpn' })
+  expect(writes).toEqual([])
+})
+
+test('membership matches page past one large category, and an empty or failed rescan still drops a stale selection', async ({ page }) => {
+  const { writes } = await mountEditor(page)
+  let snapshot = 'c'.repeat(64), failing = false
+  const queries = []
+  await page.route('**/api/v1/geodata', (route) => route.fulfill({ json: [{ name: 'geoip_vendor.dat', kind: 'geoip', available: true, size: 100 }] }))
+  await page.route('**/api/v1/geodata/query', (route) => {
+    const body = route.request().postDataJSON(); queries.push(body)
+    if (failing) return route.fulfill({ status: 409, json: { error: 'installed geodata changed; reload the file' } })
+    if (body.view === 'match' && body.search === '192.0.2.5') {
+      // Fifty matching entries of one category fill the first page.
+      if (body.offset === 0) return route.fulfill({ json: { file: body.file, kind: 'geoip', snapshot, offset: 0, total: 51, more: true, items: Array.from({ length: 50 }, (_, index) => ({ category: 'big', type: 'cidr', value: `192.0.${index}.0/16` })) } })
+      return route.fulfill({ json: { file: body.file, kind: 'geoip', snapshot, offset: 50, total: 51, more: false, items: [{ category: 'late', type: 'cidr', value: '192.0.2.0/24' }] } })
+    }
+    return route.fulfill({ json: { file: body.file, kind: 'geoip', snapshot, offset: body.offset, total: 0, more: false, items: [] } })
+  })
+  await selectConfig(page, '05_routing.json')
+  await page.getByRole('button', { name: 'Browse installed geodata', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Search installed geodata' })
+  const find = dialog.getByLabel('Find a service across all databases')
+  await find.fill('192.0.2.5')
+  await dialog.getByRole('button', { name: 'Search all databases', exact: true }).click()
+  await expect(dialog.getByRole('checkbox', { name: 'Select geoip_vendor.dat big', exact: true })).toBeVisible()
+  await expect(dialog.getByRole('checkbox', { name: 'Select geoip_vendor.dat late', exact: true })).toHaveCount(0)
+  await dialog.getByRole('button', { name: 'More categories in geoip_vendor.dat', exact: true }).click()
+  await expect(dialog.getByText('IP ranges · matches via 192.0.2.0/24', { exact: true })).toBeVisible()
+  expect(queries.filter((query) => query.view === 'match').map((query) => [query.offset, query.snapshot])).toEqual([[0, 'c'.repeat(64)], [50, 'c'.repeat(64)]])
+  await expect(dialog.getByRole('button', { name: 'More categories in geoip_vendor.dat', exact: true })).toHaveCount(0)
+  // The database is replaced; a rescan that finds nothing still drops the
+  // selection made from the old snapshot.
+  await dialog.getByRole('checkbox', { name: 'Select geoip_vendor.dat late', exact: true }).check()
+  snapshot = 'e'.repeat(64)
+  await find.fill('absent')
+  await dialog.getByRole('button', { name: 'Search all databases', exact: true }).click()
+  await expect(dialog.getByRole('status')).toContainText('No category in the installed databases matches')
+  await expect(dialog.getByText('2. Selected categories (0)', { exact: true })).toBeVisible()
+  // A rescan that fails also drops it.
+  await find.fill('192.0.2.5')
+  await dialog.getByRole('button', { name: 'Search all databases', exact: true }).click()
+  await dialog.getByRole('checkbox', { name: 'Select geoip_vendor.dat big', exact: true }).check()
+  failing = true
+  await dialog.getByRole('button', { name: 'Search all databases', exact: true }).click()
+  await expect(dialog.getByRole('status')).toContainText('Some databases could not be read: geoip_vendor.dat')
+  await expect(dialog.getByText('2. Selected categories (0)', { exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Add rule', exact: true })).toBeDisabled()
+  expect(writes).toEqual([])
+})
+
+test('rules without an effective inbound are flagged, and a final "udp, tcp" rule is not a catch-all', async ({ page }) => {
+  const { documents, writes } = await mountEditor(page)
+  documents['05_routing.json'].text = JSON.stringify({ routing: { rules: [
+    { type: 'field', inboundTag: '', domain: ['domain:a.example'], outboundTag: 'vpn' },
+    { type: 'field', inboundTag: ['', ''], domain: ['domain:b.example'], outboundTag: 'vpn' },
+    { domain: ['domain:c.example'], outboundTag: 'vpn' },
+    { type: 'field', inboundTag: ['redirect', 'tproxy'], network: 'udp, tcp', outboundTag: 'direct' },
+  ], balancers: [] } })
+  await page.route('**/api/v1/geodata', (route) => route.fulfill({ json: [{ name: 'geosite_vendor.dat', kind: 'geosite', available: true, size: 100 }] }))
+  await page.route('**/api/v1/geodata/query', (route) => { const body = route.request().postDataJSON(); return route.fulfill({ json: { file: body.file, kind: 'geosite', snapshot: 'c'.repeat(64), items: [{ category: 'microsoft', type: 'category', value: 'microsoft', count: 2 }], total: 1, offset: 0, more: false } }) })
+  await selectConfig(page, '05_routing.json')
+  for (const rule of ['1', '2', '3']) await expect(page.locator(`[data-rule="${rule}"]`).getByText('All inbounds · pauses node reviews')).toBeVisible()
+  await expect(page.locator('[data-rule="4"]').getByText('All inbounds · pauses node reviews')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Browse installed geodata', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Search installed geodata' })
+  await dialog.getByLabel('Find a service across all databases').fill('microsoft')
+  await dialog.getByRole('button', { name: 'Search all databases', exact: true }).click()
+  await dialog.getByRole('checkbox', { name: 'Select geosite_vendor.dat microsoft', exact: true }).check()
+  await dialog.getByLabel('Rule destination').selectOption('outbound:vpn')
+  // "udp, tcp" admits UDP only in Xray: the new rule goes after it.
+  await expect(dialog.getByLabel('Rule preview')).toContainText('Rule 5')
+  await expect(dialog.getByLabel('Rule preview')).not.toContainText('Placed before the final rule')
+  await dialog.getByRole('button', { name: 'Add rule', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Done browsing', exact: true }).click()
+  await page.getByRole('button', { name: 'Text', exact: true }).click()
+  const rules = JSON.parse(await page.getByRole('textbox', { name: 'Configuration text' }).innerText()).routing.rules
+  expect(rules).toHaveLength(5)
+  expect(rules[3].network).toBe('udp, tcp')
+  expect(rules[4]).toEqual({ type: 'field', inboundTag: ['redirect', 'tproxy'], domain: ['ext:geosite_vendor.dat:microsoft'], outboundTag: 'vpn' })
+  expect(writes).toEqual([])
 })
 
 test('native database replacement invalidates pagination without changing configuration', async ({ page }) => {
@@ -304,14 +504,15 @@ test('native database replacement invalidates pagination without changing config
   })
   await selectConfig(page, '05_routing.json')
   await page.getByRole('button', { name: 'Browse installed geodata', exact: true }).click()
-  await expect(page.getByLabel('Database file', { exact: true })).toHaveValue('geoip.dat')
-  await page.locator('summary').filter({ hasText: 'Browse one database' }).click()
-  await page.getByRole('button', { name: 'Search installed database', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Next page', exact: true })).toBeEnabled()
-  await page.getByRole('button', { name: 'Next page', exact: true }).click()
+  await expect(page.getByLabel('Or list every category of one database', { exact: true })).toHaveValue('geoip.dat')
+  await page.getByRole('button', { name: 'Show categories', exact: true }).click()
+  await page.getByRole('checkbox', { name: 'Select geoip.dat region-1', exact: true }).check()
+  await page.getByRole('button', { name: 'More categories in geoip.dat', exact: true }).click()
   await expect(page.getByRole('status').filter({ hasText: 'installed geodata changed' })).toBeVisible()
   expect(queries[1]).toMatchObject({ snapshot: 'd'.repeat(64), offset: 50 })
-  await expect(page.getByRole('button', { name: 'Add category rule', exact: true })).toHaveCount(0)
+  // A changed database clears the list and the selection built from it.
+  await expect(page.getByRole('checkbox', { name: 'Select geoip.dat region-1', exact: true })).toHaveCount(0)
+  await expect(page.getByText('2. Selected categories (0)', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Done browsing', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Add traffic rule', exact: true })).toBeEnabled()
   expect(writes).toEqual([])
