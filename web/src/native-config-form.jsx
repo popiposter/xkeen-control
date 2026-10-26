@@ -8,7 +8,8 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Field, FieldLabel, FieldGroup, FieldSet, FieldLegend } from '@/components/ui/field'
 import { NativeSelect } from '@/components/ui/native-select'
-import { BalancerSummary, DnsOverview, RoutingOverview, RuleArrow, RuleConditions, SectionHeading, catchAllRule, ruleConditions, trafficInbounds } from './native-config-visual.jsx'
+import { BalancerSummary, DnsOverview, RoutingOverview, RuleArrow, RuleConditions, SectionHeading, ruleConditions } from './native-config-visual.jsx'
+import { catchAllRule, trafficInbounds } from './routing-rules.js'
 import { appendDocumentItem, documentNode, editDocumentPath, moveDocumentItem, nodeValue, prependDocumentItem } from './native-config-document'
 
 const GeodataBrowser = lazy(() => import('./native-geodata.jsx'))

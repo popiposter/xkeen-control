@@ -335,6 +335,84 @@ test('a category rule added after existing rules covers LAN inbounds and lands b
   expect(writes).toEqual([])
 })
 
+test('category contents page contiguously, and a replaced database drops what was built from it', async ({ page }) => {
+  const { writes } = await mountEditor(page)
+  const queries = []
+  let replaced = false
+  await page.route('**/api/v1/geodata', (route) => route.fulfill({ json: [{ name: 'geosite_vendor.dat', kind: 'geosite', available: true, size: 100 }] }))
+  await page.route('**/api/v1/geodata/query', (route) => {
+    const body = route.request().postDataJSON(); queries.push(body)
+    if (replaced) return route.fulfill({ status: 409, json: { error: 'installed geodata changed; reload the file' } })
+    if (body.view === 'entries') {
+      const all = Array.from({ length: 120 }, (_, index) => ({ category: 'video', type: 'domain', value: `host-${index}.example` }))
+      return route.fulfill({ json: { file: body.file, kind: 'geosite', snapshot: 'c'.repeat(64), offset: body.offset, total: 120, more: body.offset + 50 < 120, items: all.slice(body.offset, body.offset + 50) } })
+    }
+    return route.fulfill({ json: { file: body.file, kind: 'geosite', snapshot: 'c'.repeat(64), offset: 0, total: 2, more: false, items: [{ category: 'video', type: 'category', value: 'video', count: 120 }, { category: 'music', type: 'category', value: 'music', count: 3 }] } })
+  })
+  await selectConfig(page, '05_routing.json')
+  await page.getByRole('button', { name: 'Browse installed geodata', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Search installed geodata' })
+  await dialog.getByRole('button', { name: 'Show categories', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Show contents of video', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Show more entries', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Show more entries', exact: true }).click()
+  await expect(dialog.getByText('Showing 120 of 120', { exact: true })).toBeVisible()
+  await expect(dialog.getByText('host-100.example', { exact: true })).toBeVisible()
+  expect(queries.filter((query) => query.view === 'entries').map((query) => query.offset)).toEqual([0, 50, 100])
+  await expect(dialog.getByRole('button', { name: 'Show more entries', exact: true })).toHaveCount(0)
+  // The database is replaced after a category was selected.
+  await dialog.getByRole('checkbox', { name: 'Select geosite_vendor.dat music', exact: true }).check()
+  await expect(dialog.getByRole('button', { name: 'Add rule', exact: true })).toBeEnabled()
+  replaced = true
+  await dialog.getByRole('button', { name: 'Show contents of music', exact: true }).click()
+  await expect(dialog.getByRole('status')).toContainText('geosite_vendor.dat changed or could not be read')
+  await expect(dialog.getByRole('checkbox', { name: 'Select geosite_vendor.dat music', exact: true })).toHaveCount(0)
+  await expect(dialog.getByText('2. Selected categories (0)', { exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Add rule', exact: true })).toBeDisabled()
+  expect(writes).toEqual([])
+})
+
+test('an address finds categories by native membership, and a rescanned database drops a stale selection', async ({ page }) => {
+  const { documents, writes } = await mountEditor(page)
+  documents['05_routing.json'].text = JSON.stringify({ routing: { rules: [
+    { type: 'field', inboundTag: ['redirect', 'tproxy'], domain: ['ext:geosite_refilter.dat:REFILTER'], outboundTag: 'vpn' },
+    { type: 'field', inboundTag: ['socks'], network: 'udp', outboundTag: 'direct' },
+  ], balancers: [] } })
+  let snapshot = 'c'.repeat(64)
+  const queries = []
+  await page.route('**/api/v1/geodata', (route) => route.fulfill({ json: [{ name: 'geoip_vendor.dat', kind: 'geoip', available: true, size: 100 }] }))
+  await page.route('**/api/v1/geodata/query', (route) => {
+    const body = route.request().postDataJSON(); queries.push(body)
+    if (body.view === 'match') return route.fulfill({ json: { file: body.file, kind: 'geoip', snapshot, offset: 0, total: 1, more: false, items: [{ category: 'office', type: 'cidr', value: '192.0.2.0/24' }] } })
+    return route.fulfill({ json: { file: body.file, kind: 'geoip', snapshot, offset: 0, total: 0, more: false, items: [] } })
+  })
+  await selectConfig(page, '05_routing.json')
+  await page.getByRole('button', { name: 'Browse installed geodata', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Search installed geodata' })
+  await dialog.getByLabel('Find a service across all databases').fill('192.0.2.5')
+  await dialog.getByRole('button', { name: 'Search all databases', exact: true }).click()
+  await expect(dialog.getByText('IP ranges · matches via 192.0.2.0/24', { exact: true })).toBeVisible()
+  expect(queries.map((query) => query.view)).toEqual(['search', 'match'])
+  expect(queries[1]).toMatchObject({ search: '192.0.2.5', snapshot: 'c'.repeat(64) })
+  await dialog.getByRole('checkbox', { name: 'Select geoip_vendor.dat office', exact: true }).check()
+  await dialog.getByLabel('Rule destination').selectOption('outbound:vpn')
+  // The final UDP-only rule is not a catch-all: the new rule goes after it,
+  // and covers both the LAN and the SOCKS inbounds the draft uses.
+  await expect(dialog.getByLabel('Rule preview')).toContainText('Rule 3')
+  await expect(dialog.getByLabel('Rule preview')).not.toContainText('Placed before the final rule')
+  // Rescanning a replaced database drops the selection made from the old one.
+  snapshot = 'e'.repeat(64)
+  await dialog.getByRole('button', { name: 'Search all databases', exact: true }).click()
+  await expect(dialog.getByText('2. Selected categories (0)', { exact: true })).toBeVisible()
+  await dialog.getByRole('checkbox', { name: 'Select geoip_vendor.dat office', exact: true }).check()
+  await dialog.getByRole('button', { name: 'Add rule', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Done browsing', exact: true }).click()
+  await page.getByRole('button', { name: 'Text', exact: true }).click()
+  const rules = JSON.parse(await page.getByRole('textbox', { name: 'Configuration text' }).innerText()).routing.rules
+  expect(rules[2]).toEqual({ type: 'field', inboundTag: ['redirect', 'tproxy', 'socks'], ip: ['ext:geoip_vendor.dat:office'], outboundTag: 'vpn' })
+  expect(writes).toEqual([])
+})
+
 test('native database replacement invalidates pagination without changing configuration', async ({ page }) => {
   const { writes, state } = await mountEditor(page)
   state.targets = [{ tag: 'direct', kind: 'outbound', protocol: 'freedom' }]

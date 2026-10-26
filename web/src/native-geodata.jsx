@@ -8,7 +8,7 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Checkbox } from '@/components/ui/checkbox'
 import { IconSearch, IconDatabase, IconChevronDown, IconChevronRight, IconX } from '@tabler/icons-react'
 import { DestinationBadge } from './status-ui'
-import { catchAllRule, trafficInbounds } from './native-config-visual.jsx'
+import { catchAllRule, membershipKind, trafficInbounds } from './routing-rules.js'
 
 const pageSize = 50
 const inboundLabel = { redirect: 'LAN devices', tproxy: 'LAN devices', socks: 'Local SOCKS' }
@@ -21,6 +21,20 @@ function reference(file, kind, category) {
 
 function validPage(value, body) {
   return value && value.file === body.file && Array.isArray(value.items) && value.items.length <= pageSize && /^[a-f0-9]{64}$/.test(value.snapshot) && value.offset === body.offset && Number.isInteger(value.total)
+}
+
+// rows lists a group's categories: those found by name or text first, then
+// those found only by native membership, each with the entry that matched.
+function rows(group) {
+  const out = group.items.filter((item) => item.type === 'category').map((item) => ({ category: item.category, count: item.count, inverse: item.inverse }))
+  const index = new Map(out.map((row) => [row.category, row]))
+  for (const item of group.matches || []) {
+    if (!item.category) continue
+    let row = index.get(item.category)
+    if (!row) { row = { category: item.category, inverse: item.inverse }; index.set(item.category, row); out.push(row) }
+    if (!row.match) row.match = item.type === 'inverse' ? 'it lies outside the listed networks (inverse category)' : item.value
+  }
+  return out
 }
 
 function targetLabel(item) {
@@ -75,10 +89,32 @@ export default function NativeGeodata({ request, disabled, targets, rules = [], 
     return value
   }
 
+  // A read that finds the database replaced (or unreadable) drops everything
+  // built from that file: its listed categories, open contents and selection.
+  function invalidate(file, message) {
+    setGroups((previous) => previous.filter((group) => group.file !== file))
+    setOpen((previous) => previous?.file === file ? null : previous)
+    setSelected((previous) => previous.filter((item) => item.file !== file))
+    setNotice(message)
+  }
+
+  // New results replace the list; a selection whose file now has a different
+  // snapshot no longer names what the user inspected.
+  function showGroups(found) {
+    setOpen(null)
+    setGroups(found)
+    const snapshots = new Map(found.map((group) => [group.file, group.snapshot]))
+    setSelected((previous) => previous.filter((item) => !snapshots.has(item.file) || snapshots.get(item.file) === item.snapshot))
+  }
+
   async function searchAll() {
     const text = search.trim()
     if (!text) { setNotice('Enter a service, category, domain or IP fragment.'); return }
-    setBusy(true); setNotice(''); setOpen(null); setGroups([])
+    // An address or host name is also looked up by native matching, so
+    // 192.0.2.5 finds a category holding 192.0.2.0/24 and login.example.com
+    // one holding domain:example.com, not only literal text.
+    const membership = membershipKind(text)
+    setBusy(true); setNotice('')
     const found = [], failed = []
     try {
       // The reader serializes bounded scans. Search each installed file once;
@@ -88,22 +124,31 @@ export default function NativeGeodata({ request, disabled, targets, rules = [], 
           const body = { file: item.name, view: 'search', category: '', search: text, offset: 0, limit: pageSize, snapshot: '' }
           const page = await read(body)
           if (!alive.current) return
-          if (page.items.length) found.push({ ...page, query: body })
+          let matches = []
+          if (membership === (item.kind === 'geoip' ? 'ip' : 'domain')) {
+            const matchBody = { file: item.name, view: 'match', category: '', search: text, offset: 0, limit: pageSize, snapshot: page.snapshot }
+            const matched = await read(matchBody)
+            if (!alive.current) return
+            if (matched.snapshot !== page.snapshot) throw new Error('changed')
+            matches = matched.items
+          }
+          const group = { ...page, query: body, matches }
+          if (rows(group).length) found.push(group)
         } catch { failed.push(item.name) }
       }
       if (!alive.current) return
-      setGroups(found)
+      showGroups(found)
       setNotice(failed.length ? `Some databases could not be read: ${failed.join(', ')}. Results are partial.` : found.length ? '' : `No category in the installed databases matches “${text}”.`)
     } finally { if (alive.current) setBusy(false) }
   }
 
   async function browse() {
     if (!browseFile) return
-    setBusy(true); setNotice(''); setOpen(null); setGroups([])
+    setBusy(true); setNotice('')
     try {
       const body = { file: browseFile, view: 'categories', category: '', search: '', offset: 0, limit: pageSize, snapshot: '' }
       const page = await read(body)
-      if (alive.current) setGroups([{ ...page, query: body }])
+      if (alive.current) showGroups([{ ...page, query: body, matches: [] }])
     } catch (error) { if (alive.current) setNotice(error.message) }
     finally { if (alive.current) setBusy(false) }
   }
@@ -111,31 +156,34 @@ export default function NativeGeodata({ request, disabled, targets, rules = [], 
   async function more(group) {
     setBusy(true)
     try {
-      const body = { ...group.query, offset: group.offset + group.items.length, snapshot: group.snapshot }
+      const body = { ...group.query, offset: group.items.length, snapshot: group.snapshot }
       const next = await request('geodata/query', body)
       if (!alive.current) return
-      if (!validPage(next, body) || next.snapshot !== group.snapshot) throw new Error('This database changed; search again.')
-      setGroups((previous) => previous.map((item) => item.file === group.file ? { ...next, offset: group.offset, items: [...item.items, ...next.items], query: group.query } : item))
-    } catch (error) { if (alive.current) { setNotice(error.message); setSelected([]); setGroups([]) } }
+      if (!validPage(next, body) || next.snapshot !== group.snapshot) throw new Error('changed')
+      setGroups((previous) => previous.map((item) => item.file === group.file ? { ...item, more: next.more, total: next.total, items: [...item.items, ...next.items] } : item))
+    } catch (error) { if (alive.current) invalidate(group.file, `${group.file} changed or could not be read (${error.message === 'changed' ? 'database replaced' : error.message}); search again.`) }
     finally { if (alive.current) setBusy(false) }
   }
 
-  async function contents(group, category, offset = 0) {
+  async function contents(group, category, more = false) {
     const key = `${group.file}:${category}`
-    if (offset === 0 && open?.key === key) { setOpen(null); return }
+    if (!more && open?.key === key) { setOpen(null); return }
+    // Each page continues after the entries already shown.
+    const offset = more && open?.key === key ? open.items.length : 0
     setBusy(true); setNotice('')
     try {
       const body = { file: group.file, view: 'entries', category, search: '', offset, limit: pageSize, snapshot: group.snapshot }
       const page = await read(body)
       if (!alive.current) return
-      setOpen((previous) => ({ key, file: group.file, category, snapshot: page.snapshot, total: page.total, more: page.more, offset: page.offset, items: offset && previous?.key === key ? [...previous.items, ...page.items] : page.items }))
-    } catch (error) { if (alive.current) setNotice(error.message) }
+      if (page.snapshot !== group.snapshot) throw new Error('changed')
+      setOpen((previous) => ({ key, file: group.file, category, total: page.total, more: page.more, items: offset && previous?.key === key ? [...previous.items, ...page.items] : page.items }))
+    } catch (error) { if (alive.current) invalidate(group.file, `${group.file} changed or could not be read (${error.message === 'changed' ? 'database replaced' : error.message}); search again.`) }
     finally { if (alive.current) setBusy(false) }
   }
 
-  function toggle(group, item, checked) {
-    const key = `${group.file}:${item.category}`
-    setSelected((old) => checked ? [...old.filter((entry) => entry.key !== key), { key, file: group.file, kind: group.kind, category: item.category, count: item.count || 0, reference: reference(group.file, group.kind, item.category) }] : old.filter((entry) => entry.key !== key))
+  function toggle(group, row, checked) {
+    const key = `${group.file}:${row.category}`
+    setSelected((old) => checked ? [...old.filter((entry) => entry.key !== key), { key, file: group.file, kind: group.kind, snapshot: group.snapshot, category: row.category, reference: reference(group.file, group.kind, row.category) }] : old.filter((entry) => entry.key !== key))
   }
 
   const destination = targets.find((item) => `${item.kind}:${item.tag}` === target)
@@ -174,19 +222,19 @@ export default function NativeGeodata({ request, disabled, targets, rules = [], 
         </div>
         {groups.map((group) => <section key={group.file} className="rounded-lg border" aria-label={`Categories in ${group.file}`}>
           <h5 className="flex flex-wrap items-center gap-2 border-b px-3 py-2 text-sm font-medium"><IconDatabase className="text-info" />{group.file}<Badge variant="outline">{group.kind === 'geoip' ? 'IP ranges' : 'Sites'}</Badge><span className="text-muted-foreground">{group.total} {group.total === 1 ? 'category' : 'categories'}</span></h5>
-          <ul>{group.items.filter((item) => item.type === 'category').map((item) => {
+          <ul>{rows(group).map((item) => {
             const key = `${group.file}:${item.category}`
             const expanded = open?.key === key
             return <li key={key} className="border-b px-3 py-2 last:border-0">
               <div className="flex flex-wrap items-center gap-3">
                 <Checkbox aria-label={`Select ${group.file} ${item.category}`} checked={selected.some((entry) => entry.key === key)} disabled={locked} onCheckedChange={(checked) => toggle(group, item, checked)} />
-                <div className="min-w-0 flex-1"><strong className="break-all">{item.category}</strong><p className="text-xs text-muted-foreground">{item.count || 0} {group.kind === 'geoip' ? 'IP ranges' : 'domain entries'}{item.inverse ? ' · inverse match' : ''}</p></div>
+                <div className="min-w-0 flex-1"><strong className="break-all">{item.category}</strong><p className="text-xs text-muted-foreground">{item.count !== undefined ? `${item.count} ${group.kind === 'geoip' ? 'IP ranges' : 'domain entries'}` : group.kind === 'geoip' ? 'IP ranges' : 'Domain entries'}{item.inverse ? ' · inverse match' : ''}{item.match ? ` · matches via ${item.match}` : ''}</p></div>
                 <Button variant="ghost" size="sm" aria-expanded={expanded} aria-label={`${expanded ? 'Hide' : 'Show'} contents of ${item.category}`} disabled={locked} onClick={() => contents(group, item.category)}>{expanded ? <IconChevronDown /> : <IconChevronRight />}{expanded ? 'Hide contents' : 'Show contents'}</Button>
               </div>
               {expanded && <div className="mt-2 rounded-md bg-muted/40 p-2">
                 <p className="mb-1 text-xs text-muted-foreground">Showing {open.items.length} of {open.total}</p>
                 <ul className="grid gap-x-4 sm:grid-cols-2">{open.items.map((entry, index) => <li key={index} className="break-all font-mono text-xs">{entry.value}{entry.type && entry.type !== 'cidr' && entry.type !== 'domain' ? <span className="text-muted-foreground"> · {entry.type}</span> : ''}</li>)}</ul>
-                {open.more && <Button className="mt-2" variant="outline" size="sm" disabled={locked} onClick={() => contents(group, item.category, open.offset + open.items.length)}>Show more entries</Button>}
+                {open.more && <Button className="mt-2" variant="outline" size="sm" disabled={locked} onClick={() => contents(group, item.category, true)}>Show more entries</Button>}
               </div>}
             </li>
           })}</ul>
