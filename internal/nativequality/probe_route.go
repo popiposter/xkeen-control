@@ -26,38 +26,36 @@ func probeRouteShadowed(routing string) bool {
 		return true
 	}
 	for _, rule := range doc.Routing.Rules {
-		if len(rule.InboundTag) == 0 {
-			return true
-		}
+		// A list without one non-empty tag scopes nothing: treat it as
+		// unscoped.
+		scoped := false
 		for _, tag := range rule.InboundTag {
 			if tag == c1.ProbeInboundTag {
 				return true
 			}
+			scoped = scoped || tag != ""
+		}
+		if !scoped {
+			return true
 		}
 	}
 	return false
 }
 
-// stringList decodes an Xray StringList: an array of strings or one string,
-// either possibly comma-separated.
+// stringList decodes an Xray StringList exactly as Xray does: array elements
+// verbatim, a single string split at commas, nothing trimmed.
 type stringList []string
 
 func (l *stringList) UnmarshalJSON(data []byte) error {
 	var items []string
-	if err := json.Unmarshal(data, &items); err != nil {
-		var one string
-		if err := json.Unmarshal(data, &one); err != nil {
-			return err
-		}
-		items = []string{one}
+	if err := json.Unmarshal(data, &items); err == nil {
+		*l = items
+		return nil
 	}
-	*l = nil
-	for _, item := range items {
-		for _, part := range strings.Split(item, ",") {
-			if part = strings.TrimSpace(part); part != "" {
-				*l = append(*l, part)
-			}
-		}
+	var one string
+	if err := json.Unmarshal(data, &one); err != nil {
+		return err
 	}
+	*l = strings.Split(one, ",")
 	return nil
 }

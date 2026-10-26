@@ -8,11 +8,11 @@ export const systemInbounds = new Set(['api', 'probe', 'force-proxy-redirect', '
 // The XKeen interception inbounds: LAN TCP, LAN UDP and the local SOCKS port.
 export const defaultTrafficInbounds = ['redirect', 'tproxy', 'socks']
 
-// stringList reads an Xray StringList: an array of strings or one string,
-// either possibly comma-separated.
+// stringList reads an Xray StringList exactly as Xray does: array elements
+// verbatim, a single string split at commas, nothing trimmed.
 export function stringList(value) {
-  const items = Array.isArray(value) ? value : typeof value === 'string' ? [value] : []
-  return items.filter((item) => typeof item === 'string').flatMap((item) => item.split(',')).map((item) => item.trim()).filter(Boolean)
+  if (Array.isArray(value)) return value.filter((item) => typeof item === 'string')
+  return typeof value === 'string' ? value.split(',') : []
 }
 
 // trafficInbounds returns every non-system inbound the draft's rules name, in
@@ -24,7 +24,7 @@ export function trafficInbounds(rules = []) {
   const tags = []
   for (const rule of rules) {
     for (const tag of stringList(rule?.inboundTag)) {
-      if (systemInbounds.has(tag) || seen.has(tag)) continue
+      if (!tag || systemInbounds.has(tag) || seen.has(tag)) continue
       seen.add(tag)
       tags.push(tag)
     }
@@ -35,8 +35,16 @@ export function trafficInbounds(rules = []) {
 // everyNetwork reports a network condition that admits both TCP and UDP:
 // absent or empty (Xray adds no condition), or naming both.
 function everyNetwork(value) {
-  const parts = new Set(stringList(value).map((part) => part.toLowerCase()))
+  const parts = new Set(stringList(value).map((part) => part.trim().toLowerCase()).filter(Boolean))
   return parts.size === 0 || parts.has('tcp') && parts.has('udp')
+}
+
+// emptyCondition reports a condition value Xray ignores: absent, an empty
+// list, or an empty attributes map.
+function emptyCondition(key, value) {
+  if (value === undefined || value === null) return true
+  if (Array.isArray(value)) return value.length === 0
+  return key === 'attrs' && typeof value === 'object' && Object.keys(value).length === 0
 }
 
 // catchAllRule reports a rule that matches every connection reaching it
@@ -46,11 +54,14 @@ function everyNetwork(value) {
 export function catchAllRule(rule) {
   if (!rule || typeof rule !== 'object' || Array.isArray(rule)) return false
   if (!everyNetwork(rule.network)) return false
-  return Object.keys(rule).every((key) => ['type', 'outboundTag', 'balancerTag', 'ruleTag', 'inboundTag', 'network'].includes(key) || rule[key] === undefined || rule[key] === null || Array.isArray(rule[key]) && !rule[key].length)
+  return Object.keys(rule).every((key) => ['type', 'outboundTag', 'balancerTag', 'ruleTag', 'inboundTag', 'network'].includes(key) || emptyCondition(key, rule[key]))
 }
 
 const ipv4 = /^(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)$/
 const ipv6 = /^[0-9a-f]{0,4}(?::[0-9a-f]{0,4}){2,7}$/i
+// An IPv6 address ending in a dotted IPv4 part, such as ::ffff:192.0.2.5;
+// the reader unmaps it before matching.
+const ipv6WithIPv4 = /^[0-9a-f]{0,4}(?::[0-9a-f]{0,4}){1,6}:((?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d))$/i
 const hostname = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/i
 
 // membershipKind tells which databases can answer "which categories contain
@@ -59,7 +70,7 @@ const hostname = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0
 // name (geosite files), "" otherwise.
 export function membershipKind(text) {
   const value = String(text || '').trim().replace(/\.$/, '')
-  if (ipv4.test(value) || value.includes(':') && ipv6.test(value)) return 'ip'
+  if (ipv4.test(value) || value.includes(':') && (ipv6.test(value) || ipv6WithIPv4.test(value))) return 'ip'
   if (hostname.test(value)) return 'domain'
   return ''
 }

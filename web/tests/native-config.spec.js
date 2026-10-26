@@ -307,7 +307,7 @@ test('a category rule added after existing rules covers LAN inbounds and lands b
     { type: 'field', inboundTag: ['api'], outboundTag: 'api' },
     { type: 'field', domain: ['domain:legacy.example'], outboundTag: 'vpn' },
     { type: 'field', inboundTag: lan, domain: ['ext:geosite_refilter.dat:REFILTER'], outboundTag: 'vpn' },
-    { type: 'field', inboundTag: lan, network: [], outboundTag: 'direct' },
+    { type: 'field', inboundTag: lan, network: [], attrs: {}, outboundTag: 'direct' },
   ], balancers: [] } })
   await page.route('**/api/v1/geodata', (route) => route.fulfill({ json: [{ name: 'geosite_vendor.dat', kind: 'geosite', available: true, size: 100 }] }))
   await page.route('**/api/v1/geodata/query', (route) => { const body = route.request().postDataJSON(); return route.fulfill({ json: { file: body.file, kind: 'geosite', snapshot: 'c'.repeat(64), items: [{ category: 'microsoft', type: 'category', value: 'microsoft', count: 2 }], total: 1, offset: 0, more: false } }) })
@@ -331,7 +331,7 @@ test('a category rule added after existing rules covers LAN inbounds and lands b
   const rules = JSON.parse(await page.getByRole('textbox', { name: 'Configuration text' }).innerText()).routing.rules
   expect(rules).toHaveLength(5)
   expect(rules[3]).toEqual({ type: 'field', domain: ['ext:geosite_vendor.dat:microsoft'], outboundTag: 'vpn', inboundTag: lan })
-  expect(rules[4]).toEqual({ type: 'field', inboundTag: lan, network: [], outboundTag: 'direct' })
+  expect(rules[4]).toEqual({ type: 'field', inboundTag: lan, network: [], attrs: {}, outboundTag: 'direct' })
   expect(writes).toEqual([])
 })
 

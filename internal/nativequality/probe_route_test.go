@@ -12,6 +12,8 @@ func TestProbeRouteShadowedRequiresInboundScopedRules(t *testing.T) {
 		"with prefix": "// native comment\n" + `{"routing":{"rules":[{"inboundTag":["socks"],"outboundTag":"direct"}]}}`,
 		// Xray also accepts one string, comma-separated or not.
 		"string form": `{"routing":{"rules":[{"inboundTag":"redirect, tproxy","outboundTag":"direct"},{"inboundTag":"socks","outboundTag":"direct"}]}}`,
+		// Array elements are verbatim tags, as in Xray: no split at commas.
+		"comma in an array element": `{"routing":{"rules":[{"inboundTag":["redirect,probe"],"outboundTag":"direct"}]}}`,
 	} {
 		if probeRouteShadowed(routing) {
 			t.Fatalf("%s: inbound-scoped rules reported as shadowing", name)
@@ -24,6 +26,7 @@ func TestProbeRouteShadowedRequiresInboundScopedRules(t *testing.T) {
 		"unparseable":       `{"routing":`,
 		"probe in a string": `{"routing":{"rules":[{"inboundTag":"redirect,probe","outboundTag":"direct"}]}}`,
 		"empty string":      `{"routing":{"rules":[{"inboundTag":"","outboundTag":"direct"}]}}`,
+		"only empty tags":   `{"routing":{"rules":[{"inboundTag":["",""],"outboundTag":"direct"}]}}`,
 	} {
 		if !probeRouteShadowed(routing) {
 			t.Fatalf("%s: shadowing rule admitted", name)
