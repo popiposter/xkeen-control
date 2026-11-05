@@ -70,6 +70,24 @@ func TestRenderXHTTPAndFinalMask(t *testing.T) {
 	}
 }
 
+func TestRenderGRPCAuthorityRoundTrip(t *testing.T) {
+	profile := strings.Replace(syntheticProfileTwo, "type=tcp", "type=grpc&serviceName=stream&authority=grpc.example.com&headerType=", 1)
+	registry := NewRegistry()
+	registry.Nodes = []Node{testNode(t, profile, "node-44444444", true)}
+	canonical, err := json.Marshal(registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := ParseCanonical(canonical)
+	if err != nil || reloaded.Nodes[0].VLESS.Authority != "grpc.example.com" {
+		t.Fatalf("gRPC authority lost in registry: %v", err)
+	}
+	contents, err := Render(reloaded)
+	if err != nil || !strings.Contains(string(contents), `"authority": "grpc.example.com"`) {
+		t.Fatalf("gRPC authority missing from outbound: %v", err)
+	}
+}
+
 func TestEmptyRealityShortIDCanonicalAndRender(t *testing.T) {
 	registry := NewRegistry()
 	registry.Nodes = []Node{testNode(t, strings.Replace(syntheticProfile, "sid=abcd", "sid=", 1), "node-44444444", true)}

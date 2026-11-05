@@ -23,6 +23,7 @@ var supportedQueryKeys = map[string]struct{}{
 	"fp": {}, "fingerprint": {}, "pbk": {}, "publickey": {}, "sid": {}, "shortid": {},
 	"spx": {}, "spiderx": {}, "type": {}, "network": {}, "path": {}, "host": {},
 	"servicename": {}, "mode": {}, "fm": {},
+	"headertype": {}, "authority": {},
 }
 
 // ParseProfiles parses one or more newline-separated vless:// URIs. It does
@@ -87,6 +88,11 @@ func ParseProfile(raw string) (ParsedProfile, error) {
 		normalized[key] = items
 	}
 	values = normalized
+	// Some providers emit an empty headerType for the default TCP header.
+	// A non-empty value changes transport semantics and remains unsupported.
+	if header, present := values["headertype"]; present && header[0] != "" {
+		return ParsedProfile{}, errors.New("unsupported VLESS header type")
+	}
 	port, err := strconv.Atoi(parsed.Port())
 	if err != nil || parsed.Port() == "" {
 		return ParsedProfile{}, errors.New("invalid VLESS port")
@@ -107,11 +113,17 @@ func ParseProfile(raw string) (ParsedProfile, error) {
 		Path:        firstValue(values, "path", ""),
 		HostHeader:  firstValue(values, "host", ""),
 		ServiceName: firstValue(values, "servicename", ""),
+		Authority:   firstValue(values, "authority", ""),
 		Mode:        firstValue(values, "mode", ""),
 	}
 	profile.FinalMask, err = parseFinalMask(firstValue(values, "fm", ""))
 	if err != nil {
 		return ParsedProfile{}, err
+	}
+	// A TCP host accompanying an explicitly empty headerType has no header to
+	// apply to. Providers may emit it as inert metadata in their share links.
+	if profile.Network == "tcp" && len(values["headertype"]) == 1 {
+		profile.HostHeader = ""
 	}
 	if err := profile.Validate(); err != nil {
 		return ParsedProfile{}, err
@@ -347,6 +359,7 @@ type legacyStreamSettings struct {
 	} `json:"xhttpSettings"`
 	GRPCSettings struct {
 		ServiceName string `json:"serviceName"`
+		Authority   string `json:"authority"`
 		Mode        string `json:"mode"`
 	} `json:"grpcSettings"`
 	FinalMask *struct {
@@ -428,6 +441,7 @@ func MigrateLegacy(contents []byte) (Registry, error) {
 		}
 		if profile.Network == "grpc" {
 			profile.ServiceName = outbound.StreamSettings.GRPCSettings.ServiceName
+			profile.Authority = outbound.StreamSettings.GRPCSettings.Authority
 			profile.Mode = outbound.StreamSettings.GRPCSettings.Mode
 		}
 		if outbound.StreamSettings.FinalMask != nil {
