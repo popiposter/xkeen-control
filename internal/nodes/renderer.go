@@ -64,6 +64,7 @@ type wsSettings struct {
 
 type grpcSettings struct {
 	ServiceName string `json:"serviceName,omitempty"`
+	Authority   string `json:"authority,omitempty"`
 	Mode        string `json:"mode,omitempty"`
 }
 
@@ -159,7 +160,7 @@ func renderNode(node Node) ([]byte, error) {
 	case "xhttp", "splithttp":
 		stream.XHTTPSettings = &xhttpSettings{Path: profile.Path, Host: profile.HostHeader, Mode: profile.Mode}
 	case "grpc":
-		stream.GRPCSettings = &grpcSettings{ServiceName: profile.ServiceName, Mode: profile.Mode}
+		stream.GRPCSettings = &grpcSettings{ServiceName: profile.ServiceName, Authority: profile.Authority, Mode: profile.Mode}
 	}
 	if profile.FinalMask != nil {
 		fragment := profile.FinalMask.Fragment

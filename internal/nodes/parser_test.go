@@ -65,6 +65,28 @@ func TestParseSubscriptionBodyRawAndBase64(t *testing.T) {
 	}
 }
 
+func TestProviderSubscriptionEmptyHeaderAndGRPCAuthority(t *testing.T) {
+	grpc := strings.Replace(syntheticProfileTwo, "type=tcp", "type=grpc&serviceName=stream&authority=grpc.example.com", 1)
+	raw := strings.Replace(syntheticProfile, "type=tcp", "type=tcp&headerType=&host=unused.example.com&path=", 1) + "\n" +
+		strings.Replace(grpc, "type=grpc", "type=grpc&headerType=", 1) + "\nss://synthetic"
+	for name, body := range subscriptionEncodings(raw) {
+		got, err := ParseSubscriptionBody(body)
+		if err != nil || len(got) != 2 || got[0].VLESS.HostHeader != "" || got[1].VLESS.Authority != "grpc.example.com" {
+			t.Fatalf("provider format %s: count=%d error=%v", name, len(got), err)
+		}
+	}
+	for _, bad := range []string{
+		strings.Replace(raw, "headerType=", "headerType=http", 1),
+		strings.Replace(raw, "authority=grpc.example.com", "authority=bad%2Fhost", 1),
+		strings.Replace(raw, "type=tcp&headerType=", "type=tcp&headerType=&headerType=", 1),
+		strings.Replace(raw, "type=tcp&headerType=", "type=tcp", 1),
+	} {
+		if got, err := ParseSubscriptionBody([]byte(bad)); err == nil || got != nil {
+			t.Fatal("invalid transport snapshot was partially accepted")
+		}
+	}
+}
+
 func TestParseSubscriptionBodyRejectsEmptySnapshot(t *testing.T) {
 	for _, body := range [][]byte{nil, []byte("\r\n \t")} {
 		if _, err := ParseSubscriptionBody(body); err == nil {

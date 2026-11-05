@@ -93,6 +93,7 @@ type VLESS struct {
 	Path        string     `json:"path,omitempty"`
 	HostHeader  string     `json:"hostHeader,omitempty"`
 	ServiceName string     `json:"serviceName,omitempty"`
+	Authority   string     `json:"authority,omitempty"`
 	Mode        string     `json:"mode,omitempty"`
 	FinalMask   *FinalMask `json:"finalMask,omitempty"`
 }
@@ -307,7 +308,7 @@ func (v VLESS) Validate() error {
 	}
 	switch v.Network {
 	case "tcp":
-		if v.Path != "" || v.HostHeader != "" || v.ServiceName != "" || v.Mode != "" {
+		if v.Path != "" || v.HostHeader != "" || v.ServiceName != "" || v.Mode != "" || v.Authority != "" {
 			return errors.New("invalid TCP transport fields")
 		}
 	case "ws", "http":
@@ -317,7 +318,7 @@ func (v VLESS) Validate() error {
 		if v.HostHeader != "" && (!validHost(v.HostHeader) || len(v.HostHeader) > 253) {
 			return errors.New("invalid web transport host")
 		}
-		if v.ServiceName != "" || v.Mode != "" {
+		if v.ServiceName != "" || v.Mode != "" || v.Authority != "" {
 			return errors.New("invalid web transport fields")
 		}
 	case "xhttp", "splithttp":
@@ -327,11 +328,11 @@ func (v VLESS) Validate() error {
 		if v.HostHeader != "" && (!validHost(v.HostHeader) || len(v.HostHeader) > 253) {
 			return errors.New("invalid XHTTP transport host")
 		}
-		if v.ServiceName != "" || !validXHTTPMode(v.Mode) {
+		if v.ServiceName != "" || !validXHTTPMode(v.Mode) || v.Authority != "" {
 			return errors.New("invalid XHTTP transport fields")
 		}
 	case "grpc":
-		if !validDisplay(v.ServiceName, 128) || v.Path != "" || v.HostHeader != "" {
+		if !validDisplay(v.ServiceName, 128) || v.Path != "" || v.HostHeader != "" || (v.Authority != "" && (!validHost(v.Authority) || len(v.Authority) > 253)) {
 			return errors.New("invalid gRPC transport fields")
 		}
 	default:
@@ -353,6 +354,9 @@ func (v VLESS) SourceKey() string { return sourceKey(v) }
 
 func sourceKey(v VLESS) string {
 	canonical := fmt.Sprintf("%s|%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s", strings.ToLower(v.Host), v.Port, v.Security, v.ServerName, v.Fingerprint, v.PublicKey, v.ShortID, v.SpiderX, v.Network, v.Path, v.HostHeader, v.ServiceName, v.Mode)
+	if v.Authority != "" {
+		canonical += "|" + strings.ToLower(v.Authority)
+	}
 	digest := sha256.Sum256([]byte(canonical))
 	return "sha256-" + hex.EncodeToString(digest[:])
 }
