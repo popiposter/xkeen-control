@@ -188,6 +188,17 @@ restart loop. An active manual override defers recovery. If nothing answers,
 the configuration is left intact and proxied destinations keep the block
 fallback. The next complete automatic review replaces a provisional pool with its
 measured top six and clears the label.
+For a provisional pool with at least one positively healthy member, the same
+ten-minute recovery tick may start one early complete measured review after an
+hour. It requires the existing private receipt to identify the episode and
+prove no comparison started after it, all automatic review settings enabled,
+a reachable native API/Observatory without override, settled configuration and
+resources, and more than two hours until the next nightly window. The review
+uses the normal source-diverse shortlist, budgets and joint 05+07 Apply; it
+does not restore a stale saved pool. Its existing durable automatic-start intent
+prevents another early review for that episode after a restart. Missing or
+uncertain receipt and unknown member health leave the ordinary recovery/nightly
+path in place.
 Unusable selected member (unreleased, #229): native Observatory probes one fixed
 URL, so a member whose server passes only that destination stays alive and
 selected while every other destination fails. When Observatory reports a healthy

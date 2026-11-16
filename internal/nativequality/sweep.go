@@ -68,7 +68,7 @@ func (s *Service) startReviewDone(parent context.Context, trigger string, manual
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.cancel != nil || s.autoApplying || s.recovering || (trigger == "manual" || trigger == "operator") && s.maintenance.Phase != "" {
+	if s.closed || s.cancel != nil || s.autoApplying || s.recovering || ((trigger == "manual" || trigger == "operator" || trigger == "provisional-recheck") && s.maintenance.Phase != "") {
 		return nil, c1.ErrManualBusy
 	}
 	if s.status.InspectionRequired {
@@ -134,6 +134,11 @@ func (s *Service) startReviewDone(parent context.Context, trigger string, manual
 		quotaUnlock()
 		s.status.ReviewReason = "quota-unavailable-or-exhausted"
 		return nil, errQuota
+	}
+	if trigger == "provisional-recheck" && !provisionalRecheckEligible(previous, now, s.nextMaintenance, s.settings(), snapshot, resolved) {
+		quotaUnlock()
+		s.status.ReviewReason = "provisional-recheck-ineligible"
+		return nil, ErrUnavailable
 	}
 	// Every enabled node is probed; the speed phase then takes the fastest
 	// answering ones (revision 2026-10-11). There is no rotating subset.
