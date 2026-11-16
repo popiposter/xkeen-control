@@ -2,6 +2,34 @@
 
 ## Current release
 
+Signed stable [v0.4.24](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.24),
+published 2026-11-16 from independently reviewed [PR #237](https://github.com/popiposter/xkeen-control/pull/237)
+and exact merged source `e721a1f9abfa7cb027f1a60dedd4c1151ec495de`, tree
+`6777c47f91efbe90d94151558a0dc6d4e381552f`, source epoch `1794810936`.
+
+Protected [run #43817905073](https://github.com/popiposter/xkeen-control/actions/runs/43817905073)
+passed hosted FULL and signed publication. Fresh unauthenticated downloads
+verified exactly ten assets, both pinned-key signatures/manifests, all nine
+checksums, equal platform identity and static ARM64/MIPS soft-float binaries.
+The independently reviewed PR HEAD `7f14b1fed2e4429d1ceca1b36b037b3e1394a0e6`
+has the same tree as the merged source; local exact-HEAD FULL passed.
+
+| Binary | Bytes | SHA256 |
+| --- | ---: | --- |
+| linux/arm64 | 16,646,304 | `734683e3a8a76d9027fc4d3caa35737667657d56e4b30a88d31b99935fc811ec` |
+| linux/mipsle soft-float | 19,136,703 | `054640de570f8cfaf928185ad0fc4663554bd73c45b20cd69bea941eeeb2b30f` |
+
+[#235](https://github.com/popiposter/xkeen-control/issues/235) distributes
+the measured shortlist, repeat tests and selected pool across subscription
+sources. Signed v0.4.24 installation on KN1811 reached `installed-verified`
+with the public ARM64 binary hash, healthy panel/Xray/API and unchanged native
+routing, Observatory, generated outbounds and private registry hashes
+([bounded evidence](https://github.com/popiposter/xkeen-control/issues/238#issuecomment-6909606957)).
+The first live source-diverse nightly review is pending. Standby/return behavior
+remains [#236](https://github.com/popiposter/xkeen-control/issues/236).
+
+## Historical stable 0.4.12
+
 Signed stable [v0.4.12](https://github.com/popiposter/xkeen-control/releases/tag/v0.4.12), published 2026-10-10T01:23:27Z, from reviewed PR [#196](https://github.com/popiposter/xkeen-control/pull/196) and exact merged source `0079e13e41693a544d4d0fd18365687f91aa5ea6`, tree `574e13de160a4fb2b1170e6b9b5c2c84960c48d7`, source epoch 1791594962.
 
 Protected [run38012559950](https://github.com/popiposter/xkeen-control/actions/runs/38012559950) passed hosted FULL and publication. Independent unauthenticated download verification passed for exactly ten assets, both source-pinned signatures/manifests, hashes/sizes, static ARM64/MIPS soft-float identity and the published MIPS version under emulation. The local `gh run watch` connection ended with an API EOF after publication; direct hosted job readback and independent public verification both passed. No workflow retry occurred.
@@ -119,13 +147,13 @@ Subsequent signed0.4.5 hardware capability checks and installation passed; node 
 Package targets:`linux/arm64` and `linux/mipsle` soft-float with confirmed Entware `mipsel-3.4`/`mipsel-3.4_kn`. For an existing stock XKeen/Xray with Entware, install only the panel. Existing KN1810 preparation and hardware limits are described in [MIPS Keenetic](MIPS-KEENETIC.md):
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.12/install.sh) && sh -c "$xkeen_installer"
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.24/install.sh) && sh -c "$xkeen_installer"
 ```
 
 For a genuinely new supported Ultra KN1811/5.01.C.6.0-1, one private IPv4 bridge/one WAN and no host/custom DNS exceptions, use the explicit guided mode:
 
 ```sh
-xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.12/install.sh) && sh -c "$xkeen_installer" -- --setup
+xkeen_installer=$(curl -fsSL https://github.com/popiposter/xkeen-control/releases/download/v0.4.24/install.sh) && sh -c "$xkeen_installer" -- --setup
 ```
 
 It privately imports the source, prepares stock2.1 native components, the panel and compact selective routing with ordinary Keenetic DNS, then assigns HOME last. [Fresh prerequisites, ordering and interrupted setup](FRESH-KEENETIC.md) govern this restricted route; it never patches native code or reinstalls existing components. Other firmware/model/topology support remains unavailable.
