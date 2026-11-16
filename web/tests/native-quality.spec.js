@@ -90,6 +90,7 @@ test('early provisional re-review states keep healthy pool context', async ({ pa
   await open(page)
   const refresh = page.getByRole('button', { name: 'Refresh', exact: true })
   for (const [state, reason, expected] of [
+    ['recheck-eligible', 'provisional-degraded', /provisional pool still has a healthy member and qualifies for an early complete speed review/],
     ['recheck-running', 'provisional-degraded', /healthy provisional pool triggered an early complete speed review/],
     ['recheck-applied', '', /early measured review applied and verified its pool/],
     ['recheck-no-op', '', /early measured review completed with no native pool change/],

@@ -99,6 +99,7 @@ function recoveryText(recovery, nodesByTag) {
     }
   }
   switch (recovery?.state) {
+    case 'recheck-eligible': return 'A provisional pool still has a healthy member and qualifies for an early complete speed review. Checking current admission before it starts.'
     case 'recheck-running': return 'A healthy provisional pool triggered an early complete speed review. The current pool remains active while nodes are measured.'
     case 'recheck-applied': return 'The early measured review applied and verified its pool. Check the current pool and review results below.'
     case 'recheck-no-op': return 'The early measured review completed with no native pool change or restart. Check the measured recommendation below.'
