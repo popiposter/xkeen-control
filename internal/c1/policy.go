@@ -23,4 +23,7 @@ type NodeState struct {
 	ID      string
 	Tag     string
 	Enabled bool
+	// SourceGroup is a private stable source identity used only for balanced
+	// measurement. It must never contain a subscription URL or credential.
+	SourceGroup string
 }

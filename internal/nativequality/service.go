@@ -72,6 +72,8 @@ type Status struct {
 	QuotaState           string    `json:"quotaState"`
 	TotalEligible        int       `json:"totalEligible"`
 	SelectedForSpeed     int       `json:"selectedForSpeed"`
+	ShortlistSources     int       `json:"shortlistSources"`
+	RecommendedSources   int       `json:"recommendedSources"`
 	PoolDecision         string    `json:"poolDecision,omitempty"`
 	ActivePool           []string  `json:"activePool,omitempty"`
 	OrphanedPool         []string  `json:"orphanedPool,omitempty"`
@@ -116,6 +118,7 @@ type Service struct {
 	status            Status
 	result            c1.AdaptiveResult
 	pool              []string
+	sourceGroups      map[string]string
 	cancel            context.CancelFunc
 	done              chan struct{}
 	closed            bool
@@ -195,11 +198,16 @@ func (s *Service) Read() Status {
 			value.Ranking = append(value.Ranking, RankedNode{Tag: tag, Rank: i + 1, Cost: byMatch["^"+regexp.QuoteMeta(tag)+"$"]})
 		}
 	}
+	groups := make(map[string]string, len(s.sourceGroups))
+	for tag, group := range s.sourceGroups {
+		groups[tag] = group
+	}
 	s.mu.Unlock()
 	value.RecommendedPool = make([]string, 0, len(value.Ranking))
 	for _, node := range value.Ranking {
 		value.RecommendedPool = append(value.RecommendedPool, node.Tag)
 	}
+	value.RecommendedSources = sourceGroupCount(value.RecommendedPool, groups)
 	if !activeReview && s.Editor != nil && s.Nodes != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		w, err := s.Editor.Workspace(ctx)
@@ -312,8 +320,8 @@ func (s *Service) stageAge() time.Duration {
 
 // rankPool is the measured recommendation: the ranked best poolSize nodes.
 func (s *Service) rankPool(result c1.AdaptiveResult, costs []c1.NativeQualityCost) []string {
-	ranked := c1.NativeQualityRanking(result, costs)
-	return ranked[:min(len(ranked), s.poolSize())]
+	ranked := c1.NativeQualityRankingAll(result, costs)
+	return spreadRankedTags(ranked, s.sourceGroups, s.poolSize())
 }
 
 func (s *Service) profile() resourcepolicy.Profile {

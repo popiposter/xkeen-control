@@ -121,8 +121,10 @@ type PublicNode struct {
 	Enabled          bool   `json:"enabled"`
 	SourceType       string `json:"sourceType"`
 	SubscriptionName string `json:"subscriptionName,omitempty"`
-	Stale            bool   `json:"stale,omitempty"`
-	Missing          bool   `json:"missing,omitempty"`
+	// SourceGroup is for the in-process quality reader only, never the API.
+	SourceGroup string `json:"-"`
+	Stale       bool   `json:"stale,omitempty"`
+	Missing     bool   `json:"missing,omitempty"`
 }
 
 type PublicSubscription struct {
@@ -261,6 +263,9 @@ func (r Registry) PublicNodes() []PublicNode {
 		item := PublicNode{ID: node.ID, Name: node.Name, DisplayName: displayName, Address: displayAddress(node.VLESS.Host, node.VLESS.Port), CountryCode: countryCode, OutboundTag: node.OutboundTag, Enabled: node.Enabled, SourceType: node.Source.Type, Stale: node.Stale, Missing: node.Missing}
 		if node.Source.Type == "subscription" {
 			item.SubscriptionName = labels[node.Source.SubscriptionID]
+			if node.Source.SubscriptionID != "" {
+				item.SourceGroup = "subscription:" + node.Source.SubscriptionID
+			}
 		}
 		result = append(result, item)
 	}
