@@ -84,6 +84,26 @@ test('availability recovery and a provisional pool are labelled apart from a mea
   expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
 })
 
+test('early provisional re-review states keep healthy pool context', async ({ page }) => {
+  const model = await mountFeatureCompleteDashboard(page)
+  model.quality = { ...complete(), provisionalAt: '2026-11-16T03:38:01Z', recovery: { state: 'recheck-running', reason: 'provisional-degraded' }, reviewTrigger: 'provisional-recheck' }
+  await open(page)
+  const refresh = page.getByRole('button', { name: 'Refresh', exact: true })
+  for (const [state, reason, expected] of [
+    ['recheck-running', 'provisional-degraded', /healthy provisional pool triggered an early complete speed review/],
+    ['recheck-applied', '', /early measured review applied and verified its pool/],
+    ['recheck-no-op', '', /early measured review completed with no native pool change/],
+    ['recheck-failed', 'review-incomplete-or-expired', /early measured review did not complete a verified pool decision/],
+    ['deferred', 'provisional-recheck-admission', /provisional pool still has a healthy member.*early measured review is deferred/],
+  ]) {
+    model.quality = { ...model.quality, recovery: { state, reason } }
+    await refresh.click()
+    await expect(page.getByRole('status').filter({ hasText: expected })).toBeVisible()
+    await expect(page.getByRole('status').filter({ hasText: /No pool member is healthy/ })).toHaveCount(0)
+  }
+  expect(featureCompleteRequests(model, '/api/v1/performance/quality/apply', 'POST')).toEqual([])
+})
+
 test('availability recovery names a selected node that carried no traffic', async ({ page }) => {
   const model = await mountFeatureCompleteDashboard(page)
   const pool = ['proxy-node-00000002', 'proxy-node-00000003']

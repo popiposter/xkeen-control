@@ -77,6 +77,7 @@ const recoveryReasons = {
   'configuration-changed-or-pending': 'configuration changed or is pending',
   'configuration-pending-or-unavailable': 'configuration changes are pending or unavailable',
   'resource-pressure-or-unavailable': 'router resources are busy',
+  'provisional-recheck-admission': 'the measured review did not pass its current admission checks; the next recovery tick may reconsider it',
 }
 const validTime = (value) => value && new Date(value).getFullYear() >= 2020
 function recoveryText(recovery, nodesByTag) {
@@ -98,10 +99,16 @@ function recoveryText(recovery, nodesByTag) {
     }
   }
   switch (recovery?.state) {
+    case 'recheck-running': return 'A healthy provisional pool triggered an early complete speed review. The current pool remains active while nodes are measured.'
+    case 'recheck-applied': return 'The early measured review applied and verified its pool. Check the current pool and review results below.'
+    case 'recheck-no-op': return 'The early measured review completed with no native pool change or restart. Check the measured recommendation below.'
+    case 'recheck-failed': return `The early measured review did not complete a verified pool decision: ${reason}. Inspect its result before another operation.`
     case 'probing': case 'applying': return 'No pool member is healthy. Availability recovery is probing other enabled nodes…'
     case 'vpn-unavailable': return `No pool member is healthy and none of the ${recovery.probed || 0} probed nodes answered. VPN destinations are unavailable; the configuration was left unchanged and they stay blocked rather than going direct. Recovery retries other nodes every 10 minutes.`
     case 'applied': return `No pool member was healthy. Availability recovery applied a provisional pool of ${recovery.pool?.length || 0} nodes that answered a latency probe (${recovery.verified || 0} of ${recovery.probed || 0} answered).`
-    case 'deferred': return `No pool member is healthy, but availability recovery is deferred: ${reason}.`
+    case 'deferred': return recovery.reason === 'provisional-recheck-admission'
+      ? `A provisional pool still has a healthy member. Its early measured review is deferred: ${reason}.`
+      : `No pool member is healthy, but availability recovery is deferred: ${reason}.`
     case 'failed': return `Availability recovery could not apply a provisional pool: ${reason}. The configuration was kept.`
     case 'inspection-required': return `Availability recovery needs inspection: ${reason}.`
     default: return ''
