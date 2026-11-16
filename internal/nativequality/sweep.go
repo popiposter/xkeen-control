@@ -138,6 +138,7 @@ func (s *Service) startReviewDone(parent context.Context, trigger string, manual
 	// Every enabled node is probed; the speed phase then takes the fastest
 	// answering ones (revision 2026-10-11). There is no rotating subset.
 	plan := planAll(pool, activePool, snapshot.Balancer.NativeSelected, s.poolSize())
+	s.sourceGroups = sourceGroupsForNodes(nodes)
 	plan.Provisional = !previous.ProvisionalAt.IsZero()
 	// The speed phase is capped at the profile wall; the probe-all pre-phase
 	// and the separate native Apply have their own bounded margins. The Apply
@@ -259,9 +260,14 @@ func (s *Service) runSweep(ctx context.Context, cancel context.CancelFunc, done 
 	s.rttAlive = alive
 	s.status.RTTValidCount = len(ordered)
 	s.mu.Unlock()
-	ordered = fastestAnswering(ordered, limits.Candidates)
+	ordered = fastestAnswering(ordered, limits.Candidates, s.sourceGroups)
 	s.mu.Lock()
 	s.status.SelectedForSpeed = len(ordered)
+	tags := make([]string, 0, len(ordered))
+	for _, candidate := range ordered {
+		tags = append(tags, candidate.Tag)
+	}
+	s.status.ShortlistSources = sourceGroupCount(tags, s.sourceGroups)
 	s.mu.Unlock()
 	if reason == "" && len(ordered) < 2 {
 		reason = "rtt-candidates-insufficient"
@@ -523,7 +529,7 @@ func planAll(eligible, active []string, nativeSelected string, poolSize int) swe
 
 // fastestAnswering keeps the limit answering candidates with the lowest probe
 // RTT (ties by tag), in that order, for the speed phase.
-func fastestAnswering(admitted []c1.AdaptiveCandidateInput, limit int) []c1.AdaptiveCandidateInput {
+func fastestAnswering(admitted []c1.AdaptiveCandidateInput, limit int, groups map[string]string) []c1.AdaptiveCandidateInput {
 	out := append([]c1.AdaptiveCandidateInput(nil), admitted...)
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].RTTMS == out[j].RTTMS {
@@ -531,14 +537,83 @@ func fastestAnswering(admitted []c1.AdaptiveCandidateInput, limit int) []c1.Adap
 		}
 		return out[i].RTTMS < out[j].RTTMS
 	})
-	if len(out) > limit {
-		out = out[:limit]
+	tags := make([]string, 0, len(out))
+	byTag := make(map[string]c1.AdaptiveCandidateInput, len(out))
+	for _, candidate := range out {
+		tags = append(tags, candidate.Tag)
+		byTag[candidate.Tag] = candidate
+	}
+	selected := spreadRankedTags(tags, groups, limit)
+	out = out[:0]
+	for _, tag := range selected {
+		out = append(out, byTag[tag])
 	}
 	return out
 }
 
-// repeatCandidates returns the best-ranked valid first-pass nodes, at most
-// limit, in rank order, with the probe RTT they were admitted with.
+// spreadRankedTags admits the best member of every known source before a
+// second member, and so on. Unknown/manual nodes share one conservative group.
+// Tags are already sorted by the caller's quality metric and tie break.
+func spreadRankedTags(tags []string, groups map[string]string, limit int) []string {
+	if limit <= 0 {
+		return nil
+	}
+	const unknown = "unknown"
+	order := make([]string, 0)
+	buckets := make(map[string][]string)
+	for _, tag := range tags {
+		group := groups[tag]
+		if group == "" {
+			group = unknown
+		}
+		if _, exists := buckets[group]; !exists {
+			order = append(order, group)
+		}
+		buckets[group] = append(buckets[group], tag)
+	}
+	selected := make([]string, 0, min(limit, len(tags)))
+	for round := 0; len(selected) < limit; round++ {
+		added := false
+		for _, group := range order {
+			if round < len(buckets[group]) {
+				selected = append(selected, buckets[group][round])
+				added = true
+				if len(selected) == limit {
+					break
+				}
+			}
+		}
+		if !added {
+			break
+		}
+	}
+	return selected
+}
+
+func sourceGroupCount(tags []string, groups map[string]string) int {
+	seen := make(map[string]struct{})
+	for _, tag := range tags {
+		group := groups[tag]
+		if group == "" {
+			group = "unknown"
+		}
+		seen[group] = struct{}{}
+	}
+	return len(seen)
+}
+
+func sourceGroupsForNodes(nodes []c1.NodeState) map[string]string {
+	groups := make(map[string]string, len(nodes))
+	for _, node := range nodes {
+		if node.Enabled {
+			groups[node.Tag] = node.SourceGroup
+		}
+	}
+	return groups
+}
+
+// repeatCandidates spreads the best-ranked valid first-pass nodes across
+// sources before repeating them, with their original probe RTT.
 func (s *Service) repeatCandidates(result c1.AdaptiveResult, ordered []c1.AdaptiveCandidateInput, limit int) []c1.AdaptiveCandidateInput {
 	provisional := result
 	provisional.CompletedAt = time.Now().UTC()
@@ -575,9 +650,14 @@ func (s *Service) repeatCandidates(result c1.AdaptiveResult, ordered []c1.Adapti
 		}
 		return ranked[i].score < ranked[j].score
 	})
-	out := make([]c1.AdaptiveCandidateInput, 0, min(limit, len(ranked)))
-	for _, item := range ranked[:min(limit, len(ranked))] {
-		out = append(out, item.input)
+	tags := make([]string, 0, len(ranked))
+	for _, item := range ranked {
+		tags = append(tags, item.input.Tag)
+	}
+	selected := spreadRankedTags(tags, s.sourceGroups, limit)
+	out := make([]c1.AdaptiveCandidateInput, 0, len(selected))
+	for _, tag := range selected {
+		out = append(out, inputs[tag])
 	}
 	return out
 }

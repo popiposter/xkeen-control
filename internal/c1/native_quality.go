@@ -133,6 +133,13 @@ func NativeQualityCostsWithin(result AdaptiveResult, now time.Time, pool []strin
 // NativeQualityRanking uses the same RTT * sqrt(cost) tradeoff as native
 // leastLoad. It is sample evidence, not a promise about live native selection.
 func NativeQualityRanking(result AdaptiveResult, costs []NativeQualityCost) []string {
+	ranked := NativeQualityRankingAll(result, costs)
+	return ranked[:min(len(ranked), AdaptiveMaxCandidates)]
+}
+
+// NativeQualityRankingAll returns every valid measured candidate in native
+// quality order. Pool policy can then spread source groups before taking six.
+func NativeQualityRankingAll(result AdaptiveResult, costs []NativeQualityCost) []string {
 	values := map[string]float64{}
 	for _, cost := range costs {
 		values[cost.Match] = cost.Value
@@ -154,7 +161,7 @@ func NativeQualityRanking(result AdaptiveResult, costs []NativeQualityCost) []st
 		return a < b
 	})
 	var tags []string
-	for _, candidate := range candidates[:min(len(candidates), AdaptiveMaxCandidates)] {
+	for _, candidate := range candidates {
 		tags = append(tags, candidate.Tag)
 	}
 	return tags

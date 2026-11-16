@@ -228,7 +228,7 @@ func main() {
 		}
 		result := make([]c1.NodeState, 0, len(items))
 		for _, item := range items {
-			result = append(result, c1.NodeState{ID: item.ID, Tag: item.OutboundTag, Enabled: item.Enabled})
+			result = append(result, c1.NodeState{ID: item.ID, Tag: item.OutboundTag, Enabled: item.Enabled, SourceGroup: item.SourceGroup})
 		}
 		_ = ctx
 		return result
