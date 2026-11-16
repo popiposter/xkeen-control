@@ -2,14 +2,31 @@
 
 This is the current sequencing/status authority. Issues contain detailed task contracts; historical milestone logs are [archived](archive/README.md).
 
-## Planned node-selection architecture
+## Current state (2026-11-16)
 
-[#199](https://github.com/popiposter/xkeen-control/issues/199) defines one
+Signed stable [v0.4.24](RELEASES.md) is published from independently reviewed
+source `e721a1f9abfa7cb027f1a60dedd4c1151ec495de` and installed-verified on
+KN1811. [#235](https://github.com/popiposter/xkeen-control/issues/235) balances
+the RTT shortlist, repeat measurements and measured pool across subscription
+sources. The installed two-member provisional pool and native configuration were
+preserved by the panel update. The first live source-diverse nightly review is
+pending; its next scheduled window is 2026-11-17 at 04:00 router time.
+
+[#236](https://github.com/popiposter/xkeen-control/issues/236) tracks a measured
+standby/return design. Current availability recovery can apply a provisional
+pool when every active member is down, but a healthy provisional member does
+not trigger return to the prior measured pool. The next complete review is the
+current return path. The sections below retain their dated milestone context;
+they do not supersede this current installation/status readback.
+
+## Node-selection development history (through 2026-10-11)
+
+At the 2026-10-11 milestone, [#199](https://github.com/popiposter/xkeen-control/issues/199) defined one
 subscription, targeted-probe, speed-review, pool-Apply and Xray failover algorithm
 for ARM64 and MIPS. Only active-pool Observatory concurrency and bounded speed
 test breadth vary with hardware. The [target plan](../plan/architecture-node-quality-v1.md)
-is a proposal, not delivered behavior or router acceptance. The installed
-five-member KN1810 pool has not yet been automatically replaced. The
+was a proposal, not delivered behavior or router acceptance. The then-installed
+five-member KN1810 pool had not yet been automatically replaced. The
 [2026-10-10 audit](../plan/audit-project-2026-10-10.md) folded #194
 (subscription churn) and #198 (imported-pool initialization) into this target;
 both are closed. Dead code was removed in #202 and FULL was shortened to
@@ -29,17 +46,17 @@ six-member isolated pool dead the shipped `noHealthyMember` check turns true onc
 have explicit down records, and stays false while any is unknown
 ([all-down run](https://github.com/popiposter/xkeen-control/issues/199#issuecomment-6103255109)).
 Step 2 (natural review, Apply, the recovery attempt itself, VPN/DNS/browser and rollback)
-needs a signed build.
+needed a signed build at that milestone.
 
-**Release gate:** since #208, `main` makes the ARM64 automatic review apply verified
-pools and restart XKeen without operator action. TASK-008 step 1, including the recovery
-trigger with every member down, has passed (above). The broad-07 decision is made: a
-review that keeps an exact pool by policy also narrows 07 to it (#218). On both routers
-the first review takes an adoption path anyway (KN1810 fills its five-member pool, KN1811
-replaces an orphaned member), so both narrow 07. For the signed install: KN1811 currently runs an unsigned
-`dev` panel, and KN1810 has about 29 MiB free in `/tmp`, where the update stages a
-~19 MiB binary; check it first. Avoid the stock `xkeen -ug` minute (02:00 MSK on KN1810),
-which restarts Xray.
+**Historical release gate:** since #208, `main` has made the ARM64 automatic review
+apply verified pools and restart XKeen without operator action. TASK-008 step 1,
+including the recovery trigger with every member down, had passed (above). The
+broad-07 decision was made: a review that keeps an exact pool by policy also
+narrows 07 to it (#218). At this milestone, the first review on each router
+was expected to take an adoption path (KN1810 would fill its five-member pool;
+KN1811 would replace an orphaned member), which would narrow 07. The then-unsigned KN1811
+`dev` panel and KN1810's roughly 29 MiB free in `/tmp` were installation
+preflight observations, not current router state.
 
 **TASK-008 step 2 and the nightly window:** 0.4.13–0.4.15 fixed a review/recovery race,
 the fresh-install release marker and the RTT probe's maxRTT; the first manual review on
@@ -47,14 +64,14 @@ KN1811 then failed the 80% coverage rule with 7 of 10 valid speed results. The o
 chose one nightly maintenance window instead of the daily quota
 ([plan revision 2026-10-11](../plan/architecture-node-quality-v1.md)): subscriptions,
 settle, probe all, speed-test the 18 fastest, apply the best pool, then geodata, with a
-Telegram report. Signed 0.4.16 ships it and runs on KN1811, whose stock XKeen geodata
-cron was removed; its first nightly report is pending. In source after 0.4.16: the
-window time, steps, speed-test breadth, pool size, recovery and report become persisted
-operator settings in Performance (see [NODE-LIFECYCLE](NODE-LIFECYCLE.md)). Next:
-release them, then KN1810 (signed update and geodata cron removal) once its VPN is
-reachable.
+Telegram report. Signed 0.4.16 shipped it and ran on KN1811, whose stock XKeen geodata
+cron was removed; its first nightly report was pending then. Source after 0.4.16
+added persisted operator settings for window time, steps, speed-test breadth,
+pool size, recovery and report in Performance (see [NODE-LIFECYCLE](NODE-LIFECYCLE.md)).
+That milestone planned a later settings release and KN1810 update once its VPN
+became reachable.
 
-## Delivered
+## Earlier delivered milestones (through 0.4.12)
 
 **Stable0.4.12 published and independently verified for ARM64 and MIPS soft-float.** Native-shell implementation #121/PR122, guided fresh setup #145/PR147, MIPS panel delivery #150/PR151 and compact fresh routing #181/PR182 are delivered. #183/PR184 fixes MIPS speed telemetry, #185/PR186 pins the protected release image, #188/PR189 adds bounded MIPS automatic pool review, #191/PR192 rotates an 18-node subset, and #195/PR196 defers futile reviews before traffic. [Release evidence](RELEASES.md) binds exact source and public bytes. Signed0.4.12 installation passed on KN1810 with source/hash and native preservation readback. A live 18-node comparison under0.4.11 completed but retained the five-node pool; automatic Apply and fresh setup remain untested.
 
@@ -203,4 +220,4 @@ No new native admission protocol, panel restart supervisor, component updater or
 
 [Plan index](../plan/README.md) distinguishes delivered specifications, current command/quality references and historical audits. The native-shell v2 plan is a completed source implementation record; unrun hardware acceptance lives in the tasks above. Do not resume its superseded protocol or old chronological checkpoints.
 
-Future changes start from current main with an issue, a normal checkout/Draft PR, proportional iteration and one final required exact-source gate. Docs-only updates use link/content/diff checks. Merge needs explicit operator authorization; publication/install qualification remain distinct.
+Future changes start from current main with an issue, a normal checkout/Draft PR, proportional iteration and one final required exact-source gate. Docs-only updates use link/content/diff checks. Merge follows independent review, exact-source qualification and the standing authority in [AGENTS.md](../AGENTS.md); publication/install qualification remain distinct.
