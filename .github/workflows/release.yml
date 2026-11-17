@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Semver release version (stable or beta prerelease)"
+        description: "Semver without a v prefix (e.g. 0.4.25 or 0.4.25-beta.1)"
         required: true
         type: string
       channel:
@@ -33,6 +33,14 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Reject noncanonical version input
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          case "$VERSION" in
+            [0-9]*) ;;
+            *) echo 'Release version must start with a digit (omit the v prefix)' >&2; exit 2 ;;
+          esac
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_ref }}
