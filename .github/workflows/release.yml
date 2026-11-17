@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Semver release version (stable or beta prerelease)"
+        description: "Semver without a v prefix (e.g. 0.4.25 or 0.4.25-beta.1)"
         required: true
         type: string
       channel:
@@ -68,6 +68,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Validate release version and channel
+        env:
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: go run ./cmd/xkeen-release validate-version "$VERSION" "$CHANNEL"
       - uses: actions/setup-node@v7
         with:
           node-version: 24

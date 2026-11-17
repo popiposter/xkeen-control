@@ -34,9 +34,16 @@ func (value *assetsFlag) Set(raw string) error {
 
 func main() {
 	if len(os.Args) < 2 {
-		fatal("usage: xkeen-release {manifest|sign|verify|verify-assets|verify-pinned-key}")
+		fatal("usage: xkeen-release {validate-version|manifest|sign|verify|verify-assets|verify-pinned-key}")
 	}
 	switch os.Args[1] {
+	case "validate-version":
+		if len(os.Args) != 4 {
+			fatal("usage: xkeen-release validate-version VERSION CHANNEL")
+		}
+		if err := release.ValidatePublicationVersion(os.Args[2], os.Args[3]); err != nil {
+			fatal(err.Error())
+		}
 	case "manifest":
 		manifestCommand(os.Args[2:])
 	case "sign":
