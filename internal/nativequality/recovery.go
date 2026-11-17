@@ -70,6 +70,30 @@ func recoveryGap(q quotaReceipt, now time.Time) bool {
 	return !q.RecoveryAppliedAt.IsZero() && now.Sub(q.RecoveryAppliedAt) < recoveryApplyGap || !q.ProvisionalAt.IsZero() && now.Sub(q.ProvisionalAt) < recoveryApplyGap
 }
 
+// provisionalRecheckEligible uses only the existing durable receipt and fresh
+// native health. A lost receipt never becomes an inferred review episode.
+func provisionalRecheckEligible(q quotaReceipt, now, next time.Time, settings Settings, snapshot xrayapi.Snapshot, pool []string) bool {
+	if !settings.Enabled || !settings.Recovery || !settings.Review || !settings.AutoApply || q.ProvisionalAt.IsZero() || q.InspectionRequired || !q.LastComparisonStartedAt.Before(q.ProvisionalAt) && !q.LastComparisonStartedAt.IsZero() {
+		return false
+	}
+	lastApply := q.ProvisionalAt
+	if q.RecoveryAppliedAt.After(lastApply) {
+		lastApply = q.RecoveryAppliedAt
+	}
+	if now.Sub(lastApply) < time.Hour || next.IsZero() || !next.After(now.Add(2*time.Hour)) {
+		return false
+	}
+	if !snapshot.APIReachable || !snapshot.RoutingReachable || !snapshot.ObservatoryReachable || snapshot.Balancer.Override != "" || len(pool) == 0 {
+		return false
+	}
+	for _, tag := range pool {
+		if observedAlive(snapshot, tag) {
+			return true
+		}
+	}
+	return false
+}
+
 // noHealthyMember reports whether no configured pool member is healthy. Every
 // resolved member must have a native Observatory record that says it is down;
 // a member without a record is unknown, never an outage. A pool whose members
@@ -121,6 +145,35 @@ func (s *Service) recoverPool(parent context.Context) {
 	s.recovering = false
 	s.recovery = outcome
 	s.mu.Unlock()
+	if outcome.State == "recheck-eligible" {
+		if done, err := s.startReviewDone(parent, "provisional-recheck", false); err != nil {
+			s.mu.Lock()
+			s.recovery = RecoveryStatus{State: "deferred", Reason: "provisional-recheck-admission", CheckedAt: time.Now().UTC()}
+			s.mu.Unlock()
+		} else {
+			s.mu.Lock()
+			s.recovery = RecoveryStatus{State: "recheck-running", Reason: "provisional-degraded", CheckedAt: time.Now().UTC()}
+			s.mu.Unlock()
+			go func() {
+				<-done
+				s.mu.Lock()
+				defer s.mu.Unlock()
+				if s.recovery.State != "recheck-running" || s.status.ReviewTrigger != "provisional-recheck" {
+					return
+				}
+				state := "recheck-failed"
+				if s.status.State == "completed" {
+					switch s.status.AppliedState {
+					case "applied":
+						state = "recheck-applied"
+					case "no-op":
+						state = "recheck-no-op"
+					}
+				}
+				s.recovery = RecoveryStatus{State: state, Reason: s.status.ReviewReason, CheckedAt: time.Now().UTC()}
+			}()
+		}
+	}
 	if outcome.State == "applied" && s.Recovered != nil {
 		s.Recovered(parent, outcome)
 	}
@@ -172,6 +225,14 @@ func (s *Service) recoveryAttempt(parent context.Context) RecoveryStatus {
 		cancel()
 		outcome, next := s.checkSelected(parent, path, q, now, w, routing, observatory, index, resolved, snapshot)
 		if !next {
+			if outcome.State == "healthy" {
+				s.mu.Lock()
+				window := s.nextMaintenance
+				s.mu.Unlock()
+				if provisionalRecheckEligible(q, now, window, s.settings(), snapshot, resolved) {
+					return RecoveryStatus{State: "recheck-eligible", Reason: "provisional-degraded", Provisional: true}
+				}
+			}
 			return outcome
 		}
 		unusable = outcome.Unusable
