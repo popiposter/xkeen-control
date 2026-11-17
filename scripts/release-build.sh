@@ -3,11 +3,8 @@ set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 VERSION="${VERSION:?VERSION is required}"
-case "$VERSION" in
-	[0-9]*) ;;
-	*) echo 'Release version must start with a digit (omit the v prefix)' >&2; exit 2 ;;
-esac
 CHANNEL="${CHANNEL:?CHANNEL is required}"
+(cd "$ROOT" && go run ./cmd/xkeen-release validate-version "$VERSION" "$CHANNEL")
 COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" show -s --format=%ct HEAD)}"
 OUT="${OUT:-$ROOT/dist/release}"

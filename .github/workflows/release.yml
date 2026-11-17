@@ -33,14 +33,6 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Reject noncanonical version input
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          case "$VERSION" in
-            [0-9]*) ;;
-            *) echo 'Release version must start with a digit (omit the v prefix)' >&2; exit 2 ;;
-          esac
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_ref }}
@@ -76,6 +68,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Validate release version and channel
+        env:
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: go run ./cmd/xkeen-release validate-version "$VERSION" "$CHANNEL"
       - uses: actions/setup-node@v7
         with:
           node-version: 24

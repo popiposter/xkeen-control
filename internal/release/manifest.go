@@ -113,17 +113,8 @@ func (m Manifest) Validate() error {
 	if m.SchemaVersion != ManifestSchema || m.Product != Product || m.OS != SupportedOS || BinaryArtifact(m.Architecture) == "" {
 		return errors.New("manifest identity is unsupported")
 	}
-	if !validSemver(m.Version) {
-		return errors.New("manifest version is invalid")
-	}
-	if m.Channel != "stable" && m.Channel != "beta" {
-		return errors.New("manifest channel is invalid")
-	}
-	if m.Channel == "stable" && strings.Contains(m.Version, "-") {
-		return errors.New("stable manifest cannot be prerelease")
-	}
-	if m.Channel == "beta" && !strings.Contains(m.Version, "-") {
-		return errors.New("beta manifest must be prerelease")
+	if err := validateVersionChannel(m.Version, m.Channel); err != nil {
+		return err
 	}
 	if len(m.SourceCommit) != 40 || !isLowerHex(m.SourceCommit) || m.SourceDateEpoch <= 0 {
 		return errors.New("manifest source provenance is invalid")
@@ -273,6 +264,31 @@ func fileSHA256(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func ValidatePublicationVersion(version, channel string) error {
+	if strings.HasPrefix(version, "v") {
+		return errors.New("release version must omit the v prefix")
+	}
+	return validateVersionChannel(version, channel)
+}
+
+func validateVersionChannel(version, channel string) error {
+	if !validSemver(version) {
+		return errors.New("manifest version is invalid")
+	}
+	if channel != "stable" && channel != "beta" {
+		return errors.New("manifest channel is invalid")
+	}
+	versionWithoutBuild, _, _ := strings.Cut(version, "+")
+	prerelease := strings.Contains(versionWithoutBuild, "-")
+	if channel == "stable" && prerelease {
+		return errors.New("stable manifest cannot be prerelease")
+	}
+	if channel == "beta" && !prerelease {
+		return errors.New("beta manifest must be prerelease")
+	}
+	return nil
 }
 
 func validSemver(value string) bool {
