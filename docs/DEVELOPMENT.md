@@ -54,7 +54,7 @@ Frontend iteration runs Node unit tests and selected browser specs; shared shell
 style, fixture, dependency or HTTP/session changes select the whole browser suite.
 Known page modules also select cross-workspace integration and responsive tests.
 Test-only changes skip the production web build and embedded comparison; the plan
-reports `webBuild: 0`. The browser tests use the Vite development server.
+reports `webBuild: 0`. The browser tests use the Rsbuild development server.
 A deleted spec broadens browser selection instead of producing an empty pass.
 Race tests and dependency audit remain final/release checks.
 The FULL web lane audits dependencies immediately after its clean install, before
@@ -137,6 +137,10 @@ Stable release `v0.1.1` from source `8f15246099538426ef08163b832c3aa6f73e8265` c
 ## Frontend embedding
 
 `web/` is source. Built assets consumed by Go `embed` live under `internal/webassets/dist/` and are tracked so a clean checkout can compile/test without an implicit frontend build.
+
+Rsbuild bundles the React panel and Tailwind runs through PostCSS. The toolchain
+replacement removes Vite's affected `picomatch` dependency chain (#242); the
+full and release checks still audit all locked frontend dependencies.
 
 When frontend source changes:
 

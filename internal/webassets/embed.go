@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Files is populated by scripts/build-control-plane.sh from the Vite
+// Files is populated by scripts/build-control-plane.sh from the frontend
 // production build. Keeping the embed boundary in a tiny package makes it
 // impossible for HTTP handlers to read arbitrary router files.
 //

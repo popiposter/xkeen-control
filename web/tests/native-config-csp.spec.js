@@ -10,8 +10,8 @@ test('production text editor keeps its layout and syntax styles under document C
   const nonce = 'synthetic-document-style-nonce'
   const policy = `default-src 'self'; script-src 'self'; style-src 'self' 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data:`
   const html = (await readFile(path.join(root, 'index.html'), 'utf8')).replace('<head>', `<head><meta name="style-nonce" content="${nonce}">`)
-  await page.route('**/assets/*', async (route) => {
-    const filename = path.basename(new URL(route.request().url()).pathname)
+  await page.route('http://127.0.0.1:*/assets/**', async (route) => {
+    const filename = new URL(route.request().url()).pathname.slice('/assets/'.length)
     const types = { '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' }
     await route.fulfill({ body: await readFile(path.join(root, 'assets', filename)), contentType: types[path.extname(filename)] || 'application/octet-stream' })
   })

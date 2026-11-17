@@ -18,9 +18,9 @@ members, updates their credentials/name, adds new members and removes absent one
 Other subscriptions and unmanaged native outbounds are preserved.
 
 New WL-name profiles are disabled by default (case-insensitive separate word);
-RU/BY country defaults also apply, including manual imports. Defaults affect only
+RU/BY/TR country defaults also apply, including manual imports. Defaults affect only
 new members: matching profiles retain every saved enabled/disabled choice on refresh,
-with a disabled subscription gating its members. Explicitly enabled WL/RU/BY members
+with a disabled subscription gating its members. Explicitly enabled WL/RU/BY/TR members
 are not forcibly disabled by refresh. A removed and later reintroduced identity is
 a new member and receives defaults again.
 

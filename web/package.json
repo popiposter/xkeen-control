@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "rsbuild dev",
+    "build": "rsbuild build",
     "test:ui": "playwright test",
     "test:backup-restore-ui": "playwright test tests/native-transfer.spec.js",
     "test:dns-ui": "playwright test tests/native-config.spec.js",
@@ -40,9 +40,9 @@
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
-    "@tailwindcss/vite": "4.3.3",
-    "@vitejs/plugin-react": "5.0.4",
-    "tailwindcss": "4.3.3",
-    "vite": "7.3.7"
+    "@rsbuild/core": "2.3.3",
+    "@rsbuild/plugin-react": "2.1.1",
+    "@tailwindcss/postcss": "4.3.3",
+    "tailwindcss": "4.3.3"
   }
 }

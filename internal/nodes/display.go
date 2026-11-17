@@ -111,7 +111,7 @@ func inferCountry(name, host string) (countryHint, bool) {
 
 func subscriptionCountryDisabledByDefault(name, host string) bool {
 	hint, ok := inferCountry(name, host)
-	return ok && (hint.code == "RU" || hint.code == "BY")
+	return ok && (hint.code == "RU" || hint.code == "BY" || hint.code == "TR")
 }
 
 func nodeNameWL(name string) bool {

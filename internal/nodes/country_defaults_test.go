@@ -14,6 +14,8 @@ func TestSubscriptionCountryHints(t *testing.T) {
 	for _, tc := range []struct{ name, host, country string }{
 		{"🇷🇺 Edge", "edge.example.com", "RU"},
 		{"🇧🇾 Edge", "edge.example.com", "BY"},
+		{"Turkey\u00a0", "edge.example.com", "TR"},
+		{"🇹🇷 Edge", "edge.example.com", "TR"},
 		{"РОССИЯ", "edge.example.com", "RU"},
 		{"Белоруссия", "edge.example.com", "BY"},
 		{"Беларусь", "edge.example.com", "BY"},
@@ -53,7 +55,7 @@ func TestSubscriptionCountryHints(t *testing.T) {
 			if code != tc.country {
 				t.Fatalf("country = %q, want %q", code, tc.country)
 			}
-			if got := subscriptionCountryDisabledByDefault(tc.name, tc.host); got != (code == "RU" || code == "BY") {
+			if got := subscriptionCountryDisabledByDefault(tc.name, tc.host); got != (code == "RU" || code == "BY" || code == "TR") {
 				t.Fatal("subscription default differs from public country projection")
 			}
 		})
@@ -65,6 +67,7 @@ var countrySubscriptionFixtures = []struct {
 	enabled bool
 }{
 	{"🇷🇺 Edge", false}, {"Беларусь", false}, {"BY-1", false}, {"RU-1", false},
+	{"Turkey\u00a0", false},
 	{"Germany", true}, {"Unknown", true}, {"Hosted by Provider", true}, {"Powered by Example", true},
 	{"Germany WL Mobile Vless", false}, {"Poland wl Mobile Vless", false}, {"Newland", true},
 }
@@ -139,7 +142,7 @@ func assertCountryDefaults(t *testing.T, registry Registry, parentEnabled bool) 
 	}
 	wantByName := make(map[string]bool)
 	for _, fixture := range countrySubscriptionFixtures {
-		wantByName[fixture.name] = parentEnabled && fixture.enabled
+		wantByName[strings.TrimSpace(fixture.name)] = parentEnabled && fixture.enabled
 	}
 	for _, node := range registry.Nodes {
 		want, known := wantByName[node.Name]
@@ -244,16 +247,16 @@ func TestCountryDefaultsManualPreviewApplyAndExplicitEnable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var russianID string
+	var turkeyID string
 	for _, node := range registry.Nodes {
 		if node.Enabled != strings.Contains(string(rendered), node.OutboundTag) {
 			t.Fatal("runtime outbounds differ from saved country defaults")
 		}
-		if strings.Contains(node.Name, "🇷🇺") {
-			russianID = node.ID
+		if node.Name == "Turkey" {
+			turkeyID = node.ID
 		}
 	}
-	preview, err = manager.PreviewState("csrf", russianID, true)
+	preview, err = manager.PreviewState("csrf", turkeyID, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +275,7 @@ func TestCountryDefaultsManualPreviewApplyAndExplicitEnable(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, node := range updated.Nodes {
-		if node.ID == russianID && !node.Enabled {
+		if node.ID == turkeyID && !node.Enabled {
 			t.Fatal("explicit node enable was lost")
 		}
 	}

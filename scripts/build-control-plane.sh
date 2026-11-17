@@ -27,8 +27,7 @@ cd "$WEB_DIR"
 mkdir -p "$ASSET_DIR"
 find "$ASSET_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 cp -R "$WEB_DIR/dist/." "$ASSET_DIR/"
-# Vite preserves CRLF from index.html on Windows bind mounts. Embedded assets
-# are normalized so repository hygiene and arm64 builds stay deterministic.
+# Normalize CRLF from Windows bind mounts for deterministic embedded assets.
 find "$ASSET_DIR" -type f \( -name '*.html' -o -name '*.css' -o -name '*.js' -o -name '*.svg' \) -exec sed -i 's/\r$//' {} +
 fi
 [ -s "$ASSET_DIR/index.html" ] || { echo 'embedded assets missing' >&2; exit 1; }
