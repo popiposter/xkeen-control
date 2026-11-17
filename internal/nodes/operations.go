@@ -681,7 +681,7 @@ func buildSubscriptionCandidate(before Registry, target Subscription, parsed []P
 			node.VLESS = item.profile.VLESS
 			node.SourceKey = item.key
 			// Defaults apply only to new members. Refresh preserves every saved
-			// choice, including disabled ordinary nodes and explicitly enabled RU/BY.
+			// choice, including disabled ordinary nodes and explicitly enabled country defaults.
 			node.Enabled = node.Enabled && target.Enabled
 			node.Stale, node.Missing = false, false
 			if item.profile.Name != "Imported node" {
