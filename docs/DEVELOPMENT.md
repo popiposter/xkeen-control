@@ -138,6 +138,10 @@ Stable release `v0.1.1` from source `8f15246099538426ef08163b832c3aa6f73e8265` c
 
 `web/` is source. Built assets consumed by Go `embed` live under `internal/webassets/dist/` and are tracked so a clean checkout can compile/test without an implicit frontend build.
 
+Rsbuild bundles the React panel and Tailwind runs through PostCSS. The toolchain
+replacement removes Vite's affected `picomatch` dependency chain (#242); the
+full and release checks still audit all locked frontend dependencies.
+
 When frontend source changes:
 
 1. run the documented frontend build;
